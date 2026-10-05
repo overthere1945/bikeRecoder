@@ -24,3 +24,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "bikeRecoder"
 include(":app")
+include(":core")
