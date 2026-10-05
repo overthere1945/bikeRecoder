@@ -56,8 +56,8 @@ private fun routeOf(vertices: List<GeoPoint>, turns: Map<Int, TurnType> = emptyM
     )
 }
 
-private fun fixAt(eastM: Double, northM: Double, sec: Int, accuracyM: Float = 5f): LocationFix =
-    LocationFix(pointAt(eastM, northM), accuracyM, speedMps = 5f, bearingDeg = 90f, timeMillis = T0 + sec * 1_000L)
+private fun fixAt(eastM: Double, northM: Double, sec: Int, accuracyM: Float = 5f, speedMps: Float? = 5f): LocationFix =
+    LocationFix(pointAt(eastM, northM), accuracyM, speedMps, bearingDeg = 90f, timeMillis = T0 + sec * 1_000L)
 
 private fun gpx(name: String): List<LocationFix> =
     GpxParser.parse(checkNotNull(NavigationSessionTest::class.java.getResource("/gpx/$name.gpx")).readText())
@@ -260,20 +260,102 @@ class NavigationSessionTest {
     }
 
     @Test
-    fun `back on route before retry clears it and detector resumes`() = runTest {
+    fun `back on route during retry wait resumes normal detection with announcement`() = runTest {
+        val router = FakeRouter { RouteResult.Failure(RouteFailure.NO_ROUTE, "none") }
+        val session = session(straight, listOf(destination), router)
+        val updates = collect(session)
+
+        for (s in 0..9) feed(session, fixAt(5.0 * s, 0.0, s))
+        for (s in 10..18) feed(session, fixAt(5.0 * s, 100.0, s)) // 18초 실패, 재시도 예정 48초
+        for (s in 19..25) feed(session, fixAt(5.0 * s, 0.0, s)) // 경로 복귀 → 재시도 취소
+        for (s in 26..33) feed(session, fixAt(5.0 * s, 100.0, s)) // 48초 전에 다시 이탈, 8초째(34초) 전
+        assertEquals(1, router.calls)
+
+        feed(session, fixAt(5.0 * 34, 100.0, 34)) // 일반 이탈 판정(8초, 마지막 종료 후 15초 이상)
+        assertEquals(2, router.calls)
+        assertEquals(2, updates.texts().count { it == phrases.offRoute })
+    }
+
+    @Test
+    fun `spike after returning to route does not trigger the cancelled retry`() = runTest {
         val router = FakeRouter { RouteResult.Failure(RouteFailure.NO_ROUTE, "none") }
         val session = session(straight, listOf(destination), router)
         collect(session)
 
         for (s in 0..9) feed(session, fixAt(5.0 * s, 0.0, s))
-        for (s in 10..18) feed(session, fixAt(5.0 * s, 100.0, s)) // 18초 실패, 재시도 48초
-        for (s in 19..60) feed(session, fixAt(5.0 * s, 0.0, s)) // 경로 복귀
-        assertEquals(1, router.calls)
+        for (s in 10..18) feed(session, fixAt(5.0 * s, 100.0, s)) // 18초 실패, 재시도 예정 48초
+        for (s in 19..47) feed(session, fixAt(5.0 * s, 0.0, s)) // 경로 복귀
+        feed(session, fixAt(5.0 * 48, 80.0, 48)) // 원래 재시도 시각에 80m 튐 한 점
+        for (s in 49..70) feed(session, fixAt(5.0 * s, 0.0, s))
 
-        for (s in 61..68) feed(session, fixAt(5.0 * s, 100.0, s)) // 다시 이탈, 8초째(69초) 전
         assertEquals(1, router.calls)
-        feed(session, fixAt(5.0 * 69, 100.0, 69))
-        assertEquals(2, router.calls)
+    }
+
+    @Test
+    fun `unusable rerouted route is treated as failure`() = runTest {
+        val vertices = listOf(pointAt(0.0, 0.0), pointAt(500.0, 0.0), pointAt(1_000.0, 0.0))
+        val route = routeOf(vertices).copy(stopPointIndices = listOf(1, 2))
+        val waypoint = Stop(1, "경유지", vertices[1], isDestination = false)
+        val dest = Stop(2, "목적지", vertices[2], isDestination = true)
+        // 남은 stop은 2개인데 stop 인덱스가 1개뿐인 경로.
+        val router = FakeRouter { RouteResult.Success(routeOf(listOf(it.start, vertices[2]))) }
+        val session = session(route, listOf(waypoint, dest), router)
+        val updates = collect(session)
+
+        for (s in 0..9) feed(session, fixAt(5.0 * s, 0.0, s))
+        for (s in 10..19) feed(session, fixAt(5.0 * s, 100.0, s)) // 18초 재탐색 → 19초 업데이트에 결과
+
+        assertEquals(1, router.calls)
+        assertEquals(listOf<NavEvent>(NavEvent.RerouteFailed), updates.flatMap { it.events })
+        assertEquals(1, updates.texts().count { it == phrases.rerouteFailed })
+        assertEquals(route, updates.last().state.route)
+        assertFalse(updates.last().state.rerouting)
+    }
+
+    @Test
+    fun `waypoint reached while rerouting keeps only remaining stops on the new route`() = runTest {
+        val vertices = listOf(pointAt(0.0, 0.0), pointAt(500.0, 0.0), pointAt(1_000.0, 0.0))
+        val route = routeOf(vertices).copy(stopPointIndices = listOf(1, 2))
+        val waypoint = Stop(1, "경유지", vertices[1], isDestination = false)
+        val dest = Stop(2, "목적지", vertices[2], isDestination = true)
+        val gate = CompletableDeferred<RouteResult>()
+        val router = FakeRouter { gate.await() }
+        val session = session(route, listOf(waypoint, dest), router)
+        val updates = collect(session)
+
+        for (s in 0..4) feed(session, fixAt(400.0 + 5.0 * s, 0.0, s))
+        for (s in 5..13) feed(session, fixAt(400.0 + 5.0 * s, 100.0, s)) // 13초 재탐색(응답 대기)
+        assertEquals(listOf(waypoint.point, dest.point), router.requests.single().stops)
+        for (s in 14..20) feed(session, fixAt(470.0 + 5.0 * (s - 14), 0.0, s)) // 복귀, 경유지 도달
+
+        // 요청 당시 stop 2개(경유지, 목적지)에 대한 경로가 돌아온다.
+        val newRoute = routeOf(listOf(pointAt(465.0, 100.0), vertices[1], vertices[2])).copy(stopPointIndices = listOf(1, 2))
+        gate.complete(RouteResult.Success(newRoute))
+        runCurrent()
+        for (s in 21..130) feed(session, fixAt(500.0 + 5.0 * (s - 20), 0.0, s))
+
+        assertEquals(
+            listOf(NavEvent.StopReached(waypoint), NavEvent.Rerouted(newRoute), NavEvent.StopReached(dest)),
+            updates.flatMap { it.events },
+        )
+        assertEquals(1, updates.texts().count { it == phrases.arrivedWaypoint })
+        assertEquals(phrases.arrivedDestination, updates.texts().last())
+    }
+
+    @Test
+    fun `inaccurate fix does not change speed`() = runTest {
+        val session = session(straight, listOf(destination), FakeRouter { error("no reroute expected") })
+        val updates = collect(session)
+
+        for (s in 0..9) feed(session, fixAt(5.0 * s, 0.0, s, speedMps = null))
+        val before = updates.last().state.speedMps
+        assertEquals(5.0, before, 0.05)
+
+        feed(session, fixAt(45.0 + 300.0, 0.0, 10, accuracyM = 50f, speedMps = null)) // 300m 점프, 정확도 50m
+        assertEquals(before, updates.last().state.speedMps)
+
+        feed(session, fixAt(55.0, 0.0, 11, speedMps = null)) // 직전 채택 위치(9초, 45m) 기준 10m/2초
+        assertEquals(5.0, updates.last().state.speedMps, 0.05)
     }
 
     @Test
@@ -338,18 +420,20 @@ class NavigationSessionTest {
         val updates = collect(session)
 
         feed(session, fixAt(0.0, 0.0, 0))
-        val last = T0
-        session.onTick(last + 5_000)
-        session.onTick(last + 10_000 - 1)
+        val t0 = 1_000_000L // tick 시계는 fix 시각과 무관하다.
+        session.onTick(t0)
+        session.onTick(t0 + 5_000)
+        session.onTick(t0 + 10_000 - 1)
         assertEquals(1, updates.size)
 
-        session.onTick(last + 10_001)
+        session.onTick(t0 + 10_001)
         assertEquals(2, updates.size)
         assertTrue(updates.last().state.gpsWeak)
         assertEquals(listOf(Utterance(phrases.gpsWeak, Priority.EVENT)), updates.last().utterances)
+        assertEquals(updates.first().state.etaMillis, updates.last().state.etaMillis) // 마지막 fix 기준 ETA 유지
 
-        session.onTick(last + 11_000)
-        session.onTick(last + 30_000)
+        session.onTick(t0 + 11_000)
+        session.onTick(t0 + 30_000)
         assertEquals(2, updates.size)
         assertEquals(1, updates.texts().count { it == phrases.gpsWeak })
 
@@ -357,6 +441,22 @@ class NavigationSessionTest {
         assertEquals(3, updates.size)
         assertFalse(updates.last().state.gpsWeak)
         assertEquals(emptyList(), updates.last().utterances)
+    }
+
+    @Test
+    fun `gps watchdog ignores fix clock skew`() = runTest {
+        val session = session(straight, listOf(destination), FakeRouter { error("no reroute expected") })
+        val updates = collect(session)
+        val tickBase = 5_000_000_000_000L // fix 시각(2026-10-06)과 전혀 다른 시계
+
+        for (s in 0..60) {
+            feed(session, fixAt(5.0 * s, 0.0, s))
+            session.onTick(tickBase + s * 1_000L)
+        }
+
+        assertEquals(61, updates.size)
+        assertTrue(updates.none { it.state.gpsWeak })
+        assertEquals(0, updates.texts().count { it == phrases.gpsWeak })
     }
 
     @Test
