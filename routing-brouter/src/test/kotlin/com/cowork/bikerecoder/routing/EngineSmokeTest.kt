@@ -1,14 +1,10 @@
-package btools.router
+package com.cowork.bikerecoder.routing
 
-// Deliberately declared in BRouter's own `btools.router` package (even though the file lives
-// under this module's usual `src/test/kotlin` tree, not a `btools/router` directory) so that it
-// can read `OsmTrack.voiceHints.list`, which BRouter's (unmodified, vendored) VoiceHintList
-// declares without an access modifier, i.e. package-private. `errorMessage`/`foundTrack` on
-// RoutingEngine are `protected`, which also resolves via same-package access from here.
-
+import btools.router.OsmNodeNamed
+import btools.router.RoutingContext
+import btools.router.RoutingEngine
+import btools.router.hintCount
 import com.cowork.bikerecoder.core.model.RouteProfile
-import com.cowork.bikerecoder.routing.ProfileInstaller
-import com.cowork.bikerecoder.routing.SegmentFixture
 import java.io.File
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -55,9 +51,14 @@ class EngineSmokeTest {
             e.quite = true
             e.doRun(60_000L)
 
+            // errorMessage/foundTrack are exposed via RoutingEngine's public getErrorMessage()/
+            // getFoundTrack(), so Kotlin's property syntax works fine from this (the module's
+            // normal) package. Only voiceHints.list needs the same-package shim in
+            // btools.router.VoiceHintAccess, since BRouter's VoiceHintList declares `list`
+            // without an access modifier (Java package-private) and has no public getter.
             assertNull(e.errorMessage, p.name)
             assertTrue(e.foundTrack.distance in 5_000..12_000, "${p.name}: ${e.foundTrack.distance} m")
-            assertTrue(e.foundTrack.voiceHints.list.isNotEmpty(), p.name)
+            assertTrue(e.foundTrack.voiceHints.hintCount() > 0, p.name)
         }
     }
 }
