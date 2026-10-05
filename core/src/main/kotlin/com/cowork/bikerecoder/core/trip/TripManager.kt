@@ -35,21 +35,8 @@ class TripManager(
         store.activeTrip()?.let { complete(it.id) }
 
         val now = clock()
-        val tripId = store.insertTrip(
-            Trip(
-                id = 0,
-                type = type,
-                status = TripStatus.ACTIVE,
-                profile = profile,
-                createdAt = now,
-                lastActiveAt = now,
-                completedAt = null,
-            ),
-        )
-        store.replaceStops(tripId, renumbered(tripId, stops))
-
-        return Trip(
-            id = tripId,
+        val trip = Trip(
+            id = 0,
             type = type,
             status = TripStatus.ACTIVE,
             profile = profile,
@@ -57,10 +44,15 @@ class TripManager(
             lastActiveAt = now,
             completedAt = null,
         )
+        val tripId = store.insertTrip(trip)
+        store.replaceStops(tripId, renumbered(tripId, stops))
+
+        return trip.copy(id = tripId)
     }
 
     /** 경유지를 교체한다(0..n-1로 재번호). 경로가 바뀌므로 기존 오프라인 지도를 지운다. */
     suspend fun changeStops(tripId: Long, stops: List<TripStop>) {
+        requireTrip(tripId)
         store.replaceStops(tripId, renumbered(tripId, stops))
         offline.deleteForTrip(tripId)
         touch(tripId)
@@ -88,6 +80,7 @@ class TripManager(
     /** 완료된 당일 여행을 다일 여행으로 전환해 다시 ACTIVE로 만든다. */
     suspend fun convertToMultiDay(tripId: Long) {
         val trip = requireTrip(tripId)
+        check(trip.status == TripStatus.COMPLETED) { "convertToMultiDay는 완료된 여행에만 사용할 수 있습니다: $tripId" }
         store.updateTrip(
             trip.copy(
                 type = TripType.MULTI_DAY,

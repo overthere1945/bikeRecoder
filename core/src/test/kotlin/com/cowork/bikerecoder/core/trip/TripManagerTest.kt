@@ -224,6 +224,20 @@ class TripManagerTest {
     }
 
     @Test
+    fun `convert active trip to multi day throws`() = runTest {
+        val store = FakeTripStore()
+        store.trips[1] = Trip(
+            id = 1, type = TripType.SINGLE_DAY, status = TripStatus.ACTIVE, profile = RouteProfile.BALANCED,
+            createdAt = 0L, lastActiveAt = 0L, completedAt = null,
+        )
+        val manager = TripManager(store, FakeOfflineMapController(), clock = { 999L })
+
+        kotlin.test.assertFailsWith<IllegalStateException> {
+            manager.convertToMultiDay(1)
+        }
+    }
+
+    @Test
     fun `change stops deletes offline maps`() = runTest {
         val store = FakeTripStore()
         store.trips[1] = Trip(
@@ -246,6 +260,20 @@ class TripManagerTest {
         val trip = store.trip(1)
         assertTrue(trip != null)
         assertEquals(now, trip.lastActiveAt)
+    }
+
+    @Test
+    fun `change stops on unknown trip throws and leaves store and offline untouched`() = runTest {
+        val store = FakeTripStore()
+        val offline = FakeOfflineMapController()
+        val manager = TripManager(store, offline, clock = { 0L })
+
+        kotlin.test.assertFailsWith<IllegalStateException> {
+            manager.changeStops(999, listOf(stop("new")))
+        }
+
+        assertTrue(offline.deleted.isEmpty())
+        assertTrue(store.stopsByTrip[999].orEmpty().isEmpty())
     }
 
     @Test
