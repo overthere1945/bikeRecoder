@@ -1,5 +1,7 @@
 # bikeRecoder
 
+Bicycle navigation, route tracking, and photo video generator app based on travel routes.
+
 자전거 주행을 기록하고, 자전거도로를 우선하는 길안내를 하며, 주행 경로를 사진과 MP4 영상으로 만들어 주는 개인용 안드로이드 앱입니다. 서버 없이 모든 처리를 휴대폰 안에서 합니다.
 
 - 현재 버전: **V1.0.0 (개발 중)** — 버전 규칙: [docs/VERSIONING.md](docs/VERSIONING.md), 변경 이력: [CHANGELOG.md](CHANGELOG.md)
@@ -72,6 +74,8 @@ docs/                 설계 스펙, 버전 규칙, 검증 기록
 - [변경 이력](CHANGELOG.md)
 
 ## 라이선스와 출처 표기
+
+- 앱 코드: MIT License ([LICENSE](LICENSE))
 
 - 지도: OpenFreeMap © OpenMapTiles Data from OpenStreetMap
 - 경로 탐색: BRouter © BRouter contributors (MIT License)
