@@ -17,7 +17,6 @@ import java.math.RoundingMode
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZonedDateTime
-import java.util.Locale
 
 /** 음성 안내에 쓰이는 모든 한국어 문구를 생성한다. */
 class KoreanPhrases(private val zone: ZoneId = ZoneId.of("Asia/Seoul")) {
@@ -33,8 +32,8 @@ class KoreanPhrases(private val zone: ZoneId = ZoneId.of("Asia/Seoul")) {
         val roundedM = Math.round(m / 10.0) * 10
         if (roundedM < 1_000L) return "${roundedM}미터"
 
-        val km = BigDecimal(m / 1_000.0).setScale(1, RoundingMode.HALF_UP)
-        return String.format(Locale.ROOT, "%s킬로미터", km.toPlainString())
+        val km = BigDecimal(m).divide(BigDecimal(1_000), 1, RoundingMode.HALF_UP)
+        return "${km.toPlainString()}킬로미터"
     }
 
     /** [epochMillis]를 [zone] 기준 "오전/오후 h시 m분"으로 표기한다(시는 12시간제, 분은 0패딩 없음). */

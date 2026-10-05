@@ -23,6 +23,7 @@ class KoreanPhrasesTest {
         assertEquals("200미터", p.distance(204.0))
         assertEquals("1.0킬로미터", p.distance(1_000.0))
         assertEquals("42.1킬로미터", p.distance(42_080.0))
+        assertEquals("1.2킬로미터", p.distance(1_150.0))
     }
 
     @Test
