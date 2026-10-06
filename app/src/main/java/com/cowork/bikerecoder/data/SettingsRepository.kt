@@ -1,7 +1,9 @@
 package com.cowork.bikerecoder.data
 
 import android.content.Context
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -22,7 +24,11 @@ data class AppSettings(
     val ttsNoticeShown: Boolean = false,
 )
 
-private val Context.settingsDataStore by preferencesDataStore(name = "settings")
+/** A corrupt settings file is replaced by the defaults instead of crashing every start-up. */
+private val Context.settingsDataStore by preferencesDataStore(
+    name = "settings",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+)
 
 class SettingsRepository(context: Context) {
     private val dataStore = context.applicationContext.settingsDataStore
