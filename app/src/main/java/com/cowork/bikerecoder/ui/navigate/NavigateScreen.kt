@@ -140,8 +140,7 @@ fun NavigateScreen(viewModel: NavigateViewModel, tileSource: TileSource, onClose
             is NavUiState.Active -> ActiveContent(
                 state = state,
                 tileSource = tileSource,
-                mapDownloadPercent = offlineProgress
-                    ?.takeIf { it.tripId == state.tripId && it.error == null }?.percent,
+                mapDownloadText = offlineProgress?.takeIf { it.tripId == state.tripId }?.chipText,
                 onMute = viewModel::setMuted,
                 onEnd = { askEnd = true },
             )
@@ -188,7 +187,7 @@ private fun KeepScreenOn(enabled: Boolean) {
 private fun ActiveContent(
     state: NavUiState.Active,
     tileSource: TileSource,
-    mapDownloadPercent: Int?,
+    mapDownloadText: String?,
     onMute: (Boolean) -> Unit,
     onEnd: () -> Unit,
 ) {
@@ -214,7 +213,7 @@ private fun ActiveContent(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             TurnCard(nav)
-            if (mapDownloadPercent != null) MapDownloadIndicator(mapDownloadPercent)
+            if (mapDownloadText != null) MapDownloadIndicator(mapDownloadText)
             if (nav.gpsWeak) Banner("GPS 신호 약함")
             if (nav.rerouting) Banner("경로를 다시 탐색하는 중…")
         }
@@ -291,14 +290,14 @@ private fun turnIcon(type: TurnType): ImageVector = when (type) {
 
 /** Small, unobtrusive "map is being saved for offline use" chip; hidden when nothing is downloading. */
 @Composable
-private fun MapDownloadIndicator(percent: Int) {
+private fun MapDownloadIndicator(text: String) {
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceVariant,
         contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
     ) {
         Text(
-            "지도 저장 중 ${percent}%",
+            text,
             style = MaterialTheme.typography.labelMedium,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
         )

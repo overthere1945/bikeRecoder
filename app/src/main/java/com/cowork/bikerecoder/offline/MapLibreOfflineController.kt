@@ -43,23 +43,6 @@ import org.maplibre.geojson.Point
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-/**
- * Corridor download progress. [completed]/[required] count MapLibre resources of the corridor region
- * (before the first status arrives, [required] is the planner's tile estimate). A non-null [error] means the
- * download failed and its partial regions were removed; the UI shows nothing for it (it is logged).
- */
-data class OfflineProgress(
-    val tripId: Long,
-    val completed: Long,
-    val required: Long,
-    val estimatedBytes: Long,
-    val error: String? = null,
-) {
-    /** 0..100, or 0 while nothing is known. */
-    val percent: Int
-        get() = if (required <= 0) 0 else (completed * 100 / required).coerceIn(0, 100).toInt()
-}
-
 class OfflineException(message: String) : Exception(message)
 
 /**
@@ -95,6 +78,9 @@ class MapLibreOfflineController(
 
     override suspend fun downloadForTrip(tripId: Long, route: Route, fromDistanceAlongM: Double) {
         synchronized(lock) {
+            // A download already running for this trip is left alone, even if called with another route. That is
+            // safe because a route change goes through TripManager.changeStops, which calls deleteForTrip (it
+            // cancels the running download) before the new route is downloaded.
             if (inFlight[tripId]?.isActive == true) return
             val job = scope.launch(start = CoroutineStart.LAZY) { download(tripId, route, fromDistanceAlongM) }
             inFlight[tripId] = job
@@ -106,7 +92,7 @@ class MapLibreOfflineController(
     override suspend fun deleteForTrip(tripId: Long) {
         val running = synchronized(lock) { inFlight.remove(tripId) }
         running?.cancelAndJoin()
-        mutex.withLock { removeTripRegions(tripId) }
+        mutex.withLock { removeTripRegions(tripId, strict = false) }
         _progress.compareAndSetIf(tripId) { null }
     }
 
@@ -137,15 +123,23 @@ class MapLibreOfflineController(
         var failed = false
         try {
             val plan = CorridorPlanner.plan(route, fromDistanceAlongM, maxTiles = maxTiles)
+
+            // Wi-Fi only: wait for the network BEFORE taking the mutex or deleting anything, so a long wait
+            // blocks neither other trips' downloads nor deleteForTrip, and an existing map stays until a
+            // replacement can really be downloaded. Nothing is shown while waiting.
+            if (settings.settings.first().wifiOnlyOfflineMaps) {
+                if (mutex.withLock { decide(tripId) } == DownloadDecision.SKIP) return
+                network.awaitUnmetered()
+            }
+
             mutex.withLock {
                 when (decide(tripId)) {
                     DownloadDecision.SKIP -> return
-                    DownloadDecision.REPLACE -> removeTripRegions(tripId)
+                    DownloadDecision.REPLACE -> removeTripRegions(tripId, strict = true)
                     DownloadDecision.DOWNLOAD -> Unit
                 }
                 val estimatedBytes = plan.estimatedTiles * ESTIMATED_BYTES_PER_TILE
                 _progress.value = OfflineProgress(tripId, 0, plan.estimatedTiles, estimatedBytes)
-                if (settings.settings.first().wifiOnlyOfflineMaps) network.awaitUnmetered()
 
                 val pixelRatio = appContext.resources.displayMetrics.density
                 val corridor = OfflineGeometryRegionDefinition(
@@ -154,6 +148,7 @@ class MapLibreOfflineController(
                 downloadRegion(tripId, RegionKind.CORRIDOR, plan.truncated, corridor) { status ->
                     _progress.value = OfflineProgress(
                         tripId, status.completedResourceCount, status.requiredResourceCount, estimatedBytes,
+                        started = true,
                     )
                 }
                 val box = plan.overview
@@ -171,7 +166,7 @@ class MapLibreOfflineController(
             log.warn("Offline map download for trip $tripId failed; removing its partial regions", e)
             withContext(NonCancellable) {
                 try {
-                    mutex.withLock { removeTripRegions(tripId) }
+                    mutex.withLock { removeTripRegions(tripId, strict = false) }
                 } catch (cleanup: Exception) {
                     log.warn("Could not remove the partial offline regions of trip $tripId", cleanup)
                 }
@@ -204,11 +199,13 @@ class MapLibreOfflineController(
             region.setObserver(object : OfflineRegion.OfflineRegionObserver {
                 override fun onStatusChanged(status: OfflineRegionStatus) {
                     onStatus(status)
-                    if (status.isComplete) done.complete(Unit)
+                    // An early 0/0 status can already say "complete"; only a precise count is final.
+                    if (status.isComplete && status.isRequiredResourceCountPrecise) done.complete(Unit)
                 }
 
+                /** Per resource (404 for empty tiles, network errors MapLibre retries): log and keep going. */
                 override fun onError(error: OfflineRegionError) {
-                    done.completeExceptionally(OfflineException("${error.reason}: ${error.message}"))
+                    log.warn("Offline region ${region.id}: ${error.reason}: ${error.message}", null)
                 }
 
                 override fun mapboxTileCountLimitExceeded(limit: Long) {
@@ -250,8 +247,12 @@ class MapLibreOfflineController(
         }
     }
 
-    /** Deletes the trip's regions (by ref or by metadata) and their refs. Failures are logged and their refs kept. */
-    private suspend fun removeTripRegions(tripId: Long) {
+    /**
+     * Deletes the trip's regions (by ref or by metadata) and their refs. A region that cannot be deleted is
+     * logged and its refs are kept; with [strict] that also throws, so a download never creates new regions
+     * next to stale ones.
+     */
+    private suspend fun removeTripRegions(tripId: Long, strict: Boolean) {
         var allDeleted = true
         for (found in findTripRegions(tripId)) {
             try {
@@ -263,7 +264,11 @@ class MapLibreOfflineController(
                 log.warn("Could not delete offline region ${found.region.id} of trip $tripId", e)
             }
         }
-        if (allDeleted) refs.deleteForTrip(tripId)
+        if (allDeleted) {
+            refs.deleteForTrip(tripId)
+        } else if (strict) {
+            throw OfflineException("could not delete the previous offline regions of trip $tripId")
+        }
     }
 
     // ---- MapLibre callbacks as suspend functions (main thread) ----

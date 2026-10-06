@@ -143,7 +143,12 @@ class MapLibreOfflineControllerTest {
         assertEquals(setOf(RegionKind.CORRIDOR, RegionKind.OVERVIEW), metas(regions).map { it.kind }.toSet())
         assertEquals(2, regions.size)
         assertTrue(metas(regions).none { it.truncated })
-        regions.forEach { assertTrue("region ${it.id} complete", status(it).isComplete) }
+        regions.forEach {
+            val status = status(it)
+            assertTrue("region ${it.id} complete", status.isComplete)
+            assertTrue("region ${it.id} count precise", status.isRequiredResourceCountPrecise)
+            assertTrue("region ${it.id} has resources", status.completedResourceCount > 0)
+        }
         val saved = refs.forTrip(TRIP)
         assertEquals(setOf("CORRIDOR", "OVERVIEW"), saved.map { it.kind }.toSet())
         assertEquals(regions.map { it.id }.toSet(), saved.map { it.mapLibreRegionId }.toSet())
