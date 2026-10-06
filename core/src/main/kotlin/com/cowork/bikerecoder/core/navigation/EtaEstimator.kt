@@ -79,11 +79,12 @@ class EtaEstimator(
  * 주행 거리를 누적한다. 정확도가 낮은([maxAccuracyM] 초과) 위치는 버리고,
  * 남은 위치들 사이의 거리를 단순히 합산한다. 시각(날짜 경계 포함)과는 무관하게 세션 단위로 계속 누적된다.
  */
-class Odometer(private val maxAccuracyM: Float = 30f) {
+class Odometer(private val maxAccuracyM: Float = 30f, initialDistanceM: Double = 0.0) {
 
     private var lastPoint: GeoPoint? = null
 
-    var distanceM: Double = 0.0
+    /** [initialDistanceM](이어서 안내할 때 이미 이동한 거리)부터 누적한다. */
+    var distanceM: Double = initialDistanceM
         private set
 
     fun onFix(fix: LocationFix) {

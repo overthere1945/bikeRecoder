@@ -64,6 +64,9 @@ data class NavUpdate(val state: NavState, val utterances: List<Utterance>, val e
  * 스레드: 모든 공개 메서드는 [scope]의 디스패처와 같은 단일 스레드(예: Main)에서 호출해야 한다.
  * 재탐색 결과도 그 [scope]의 코루틴 안에서 적용되므로 잠금을 쓰지 않는다.
  * 위치·감지기·ETA 시각은 `fix.timeMillis`, GPS 감시는 `onTick(nowMillis)`만 쓴다.
+ *
+ * [initialDistanceM]: 같은 날 이어서 안내할 때 그날 이미 이동한 거리. 주행 거리([sessionDistanceM])는 여기서부터
+ * 이어지고, 1km 안내는 이미 지난 km를 다시 말하지 않는다(스펙 §6.6 "오늘 이동 거리").
  */
 class NavigationSession(
     initialRoute: Route,
@@ -74,6 +77,7 @@ class NavigationSession(
     private val scope: CoroutineScope,
     private val gpsTimeoutMs: Long = 10_000,
     private val rerouteRetryMs: Long = 30_000,
+    initialDistanceM: Double = 0.0,
 ) {
 
     private companion object {
@@ -84,12 +88,14 @@ class NavigationSession(
     private val _updates = MutableSharedFlow<NavUpdate>(extraBufferCapacity = 64)
     val updates: SharedFlow<NavUpdate> = _updates.asSharedFlow()
 
-    private val odometer = Odometer()
+    private val odometer = Odometer(initialDistanceM = initialDistanceM)
+
+    /** 오늘 이동 거리: [initialDistanceM] + 이 세션에서 이동한 거리. */
     val sessionDistanceM: Double get() = odometer.distanceM
 
     private val eta = EtaEstimator()
     private val offRoute = OffRouteDetector()
-    private val scheduler = VoiceScheduler(initialRoute, phrases)
+    private val scheduler = VoiceScheduler(initialRoute, phrases, initialDistanceM = initialDistanceM)
 
     private var route: Route = initialRoute
     private var tracker = RouteProgressTracker(initialRoute)

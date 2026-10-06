@@ -20,6 +20,8 @@ import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripStore
 import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.core.voice.KoreanPhrases
+import com.cowork.bikerecoder.data.DayDistances
+import com.cowork.bikerecoder.data.MemoryDayDistances
 import com.cowork.bikerecoder.location.LocationSource
 import com.cowork.bikerecoder.tts.VoiceOutput
 import com.cowork.bikerecoder.ui.common.routeFailureText
@@ -39,6 +41,10 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import kotlin.math.floor
 
 /** What the navigation screen and the foreground-service notification show. */
 sealed interface NavUiState {
@@ -84,7 +90,9 @@ enum class FinishReason { ARRIVED, STOPPED_TODAY, COMPLETED }
  * Starting a trip takes the first fix of a fresh [locationSource] as the start point, routes from there to
  * the trip's unvisited stops with the trip's profile, then feeds every later fix to the session, drives
  * [NavigationSession.onTick] every [tickIntervalMs] by [clock] (independent of fix times) and touches the
- * trip every [touchIntervalMs]. Session updates are spoken (unless [voiceEnabled] is off), reached stops are
+ * trip every [touchIntervalMs]. Today's distance of the trip ([dayDistances], by [zone]'s calendar date at the
+ * start) seeds the session, so a same-day resume continues the kilometre announcements; it is saved at
+ * every new kilometre and when the session ends. Session updates are spoken (unless [voiceEnabled] is off), reached stops are
  * marked visited, and reaching the destination completes the trip. Every way out of a session (arrival,
  * [stopToday], [completeTrip], [close], a new start) stops the location source and the ticks.
  *
@@ -106,6 +114,8 @@ class NavigationController(
     private val touchIntervalMs: Long = 60_000,
     private val firstFixTimeoutMs: Long = FIRST_FIX_TIMEOUT_MS,
     private val log: WarnLog = androidWarnLog(TAG),
+    private val dayDistances: DayDistances = MemoryDayDistances(),
+    private val zone: ZoneId = ZoneId.of("Asia/Seoul"),
 ) {
     constructor(container: AppContainer, scope: CoroutineScope) : this(
         router = container.router,
@@ -116,6 +126,7 @@ class NavigationController(
         locationSource = { container.locationSourceFactory() },
         voiceEnabled = container.settings.settings.map { it.voiceEnabled },
         scope = scope,
+        dayDistances = container.dayDistances,
     )
 
     private val _ui = MutableStateFlow<NavUiState>(NavUiState.Idle)
@@ -130,6 +141,10 @@ class NavigationController(
         var stops: List<Stop> = emptyList()
         var lastFix: LocationFix? = null
         var voiceOn = true
+
+        /** The local date today's distance is counted for, and the last whole kilometre saved. */
+        var day: LocalDate? = null
+        var savedKm = 0
         val jobs = mutableListOf<Job>()
 
         fun cancelJobs() {
@@ -217,8 +232,10 @@ class NavigationController(
     }
 
     private fun endRun() {
-        run?.cancelJobs()
+        val r = run ?: return
+        r.cancelJobs()
         run = null
+        scope.launch { saveDayDistance(r) }
     }
 
     private suspend fun prepare(r: Run) {
@@ -287,7 +304,20 @@ class NavigationController(
         }
         if (run !== r) return
 
-        val session = NavigationSession(route, stops, trip.profile, router, phrases, scope)
+        val day = LocalDate.ofInstant(Instant.ofEpochMilli(clock()), zone)
+        val ridden = try {
+            dayDistances.distanceOn(trip.id, day)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn("Could not read today's distance of trip ${trip.id}", e)
+            0.0
+        }
+        if (run !== r) return
+        r.day = day
+        r.savedKm = floor(ridden / 1_000.0).toInt()
+
+        val session = NavigationSession(route, stops, trip.profile, router, phrases, scope, initialDistanceM = ridden)
         r.stops = stops
         r.session = session
         // Subscribed before anything can emit (the shared flow has no replay).
@@ -321,6 +351,11 @@ class NavigationController(
     private suspend fun handle(r: Run, update: NavUpdate) {
         if (run !== r) return
         if (r.voiceOn) update.utterances.forEach { voice.speak(it.text) }
+        val km = floor((r.session?.sessionDistanceM ?: 0.0) / 1_000.0).toInt()
+        if (km > r.savedKm) {
+            r.savedKm = km
+            scope.launch { saveDayDistance(r) }
+        }
         var arrived = false
         for (event in update.events) {
             if (event !is NavEvent.StopReached) continue
@@ -343,6 +378,7 @@ class NavigationController(
         val trip = r.trip ?: return@withContext
         run = null
         r.cancelJobs()
+        saveDayDistance(r)
         val saved = when (reason) {
             FinishReason.ARRIVED, FinishReason.COMPLETED -> saving("complete trip ${trip.id}") {
                 tripManager.complete(trip.id)
@@ -352,6 +388,15 @@ class NavigationController(
         // A new start during the write wins.
         if (run == null) {
             _ui.value = NavUiState.Finished(trip.id, trip.type, reason, error = if (saved) null else MSG_SAVE_FAILED)
+        }
+    }
+
+    /** Best effort: today's distance of [r]'s session so far (nothing before the session started). */
+    private suspend fun saveDayDistance(r: Run) {
+        val session = r.session ?: return
+        val day = r.day ?: return
+        ignoringErrors("save today's distance of trip ${r.tripId}") {
+            dayDistances.save(r.tripId, day, session.sessionDistanceM)
         }
     }
 

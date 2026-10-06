@@ -18,6 +18,8 @@ data class Utterance(val text: String, val priority: Priority)
  * 회전 지시마다 "멀리"(far)와 "가까이"(near) 안내를 각각 최대 1번씩 내보내고, 서로 가까운 연속 회전은
  * `then`으로 합친다. 1km마다 정기 안내를 큐에 쌓되, 다음 회전 안내가 임박하면 그 회전의 near 안내가
  * 끝난 다음 업데이트로 미룬다. 스레드 안전하지 않으며 코루틴을 쓰지 않는다.
+ *
+ * @param initialDistanceM 이미 이동한 오늘 거리(같은 날 이어서 안내할 때). 그 km 단위까지는 이미 안내한 것으로 본다.
  */
 class VoiceScheduler(
     private var route: Route,
@@ -28,12 +30,13 @@ class VoiceScheduler(
     private val nearM: Double = 30.0,
     private val mergeWithinM: Double = 50.0,
     private val deferPeriodicSec: Double = 15.0,
+    initialDistanceM: Double = 0.0,
 ) {
     private val farSpoken = mutableSetOf<Int>()
     private val nearSpoken = mutableSetOf<Int>()
     private val pendingEvents = mutableListOf<String>()
 
-    private var lastKmFloor: Int = 0
+    private var lastKmFloor: Int = floor(initialDistanceM / 1_000.0).toInt()
     private var pendingKmReport: Int? = null
 
     /** 다음 업데이트에서 말할 이벤트성 문구를 큐에 넣는다. */

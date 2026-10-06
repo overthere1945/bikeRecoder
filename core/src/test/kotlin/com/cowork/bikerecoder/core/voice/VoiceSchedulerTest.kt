@@ -138,6 +138,17 @@ class VoiceSchedulerTest {
     }
 
     @Test
+    fun `seeded distance does not repeat announced kilometres`() {
+        val route = straightRoute(10_000.0)
+        val scheduler = VoiceScheduler(route, phrases, initialDistanceM = 3_400.0)
+        val eta = 1_700_000_000_000L
+
+        assertEquals(emptyList(), scheduler.onUpdate(progressAt(route, 0.0), 5.0, sessionDistanceM = 3_450.0, etaMillis = eta))
+        val at4km = scheduler.onUpdate(progressAt(route, 0.0), 5.0, sessionDistanceM = 4_000.0, etaMillis = eta)
+        assertEquals(listOf(Utterance(phrases.kmReport(4, progressAt(route, 0.0).remainingM, eta), Priority.PERIODIC)), at4km)
+    }
+
+    @Test
     fun `replaceRoute keeps km counter`() {
         val route1 = straightRoute(5_000.0)
         val scheduler = VoiceScheduler(route1, phrases)

@@ -71,14 +71,16 @@ class NavigationSessionTest {
     private val straight = straightRoute(2_000.0)
     private val destination = Stop(1, "목적지", pointAt(2_000.0, 0.0), isDestination = true)
 
-    private fun TestScope.session(route: Route, stops: List<Stop>, router: Router) = NavigationSession(
-        initialRoute = route,
-        stops = stops,
-        profile = RouteProfile.BALANCED,
-        router = router,
-        phrases = phrases,
-        scope = backgroundScope,
-    )
+    private fun TestScope.session(route: Route, stops: List<Stop>, router: Router, initialDistanceM: Double = 0.0) =
+        NavigationSession(
+            initialRoute = route,
+            stops = stops,
+            profile = RouteProfile.BALANCED,
+            router = router,
+            phrases = phrases,
+            scope = backgroundScope,
+            initialDistanceM = initialDistanceM,
+        )
 
     /** 세션의 모든 업데이트를 즉시 수집한다. */
     private fun TestScope.collect(session: NavigationSession): List<NavUpdate> {
@@ -150,6 +152,20 @@ class NavigationSessionTest {
         assertTrue(updates.none { it.state.rerouting })
         assertEquals(listOf("200미터 앞에서 좌회전입니다"), updates.flatMap { it.utterances }.filter { it.priority == Priority.TURN }.map { it.text })
         assertEquals(150.0, updates.last().state.progress.distanceAlongM, 5.0)
+    }
+
+    @Test
+    fun `resumed with today's distance continues the kilometre count`() = runTest {
+        val session = session(straight, listOf(destination), FakeRouter { error("no reroute expected") }, initialDistanceM = 3_400.0)
+        val updates = collect(session)
+        assertEquals(3_400.0, session.sessionDistanceM)
+
+        for (s in 0..130) feed(session, fixAt(5.0 * s, 0.0, s)) // 650m → 오늘 4.05km
+
+        val kmReports = updates.flatMap { it.utterances }.filter { it.priority == Priority.PERIODIC }.map { it.text }
+        assertEquals(listOf("4킬로미터"), kmReports.map { it.substringBefore(" ") })
+        assertTrue(kmReports.single().startsWith("4킬로미터 이동."))
+        assertEquals(3_400.0 + GeoMath.distanceM(pointAt(0.0, 0.0), pointAt(650.0, 0.0)), session.sessionDistanceM, 1.0)
     }
 
     @Test

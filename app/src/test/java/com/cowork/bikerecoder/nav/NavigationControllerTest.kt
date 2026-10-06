@@ -9,6 +9,7 @@ import com.cowork.bikerecoder.core.trip.TripManager
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripStop
 import com.cowork.bikerecoder.core.trip.TripType
+import com.cowork.bikerecoder.data.MemoryDayDistances
 import com.cowork.bikerecoder.location.GpxLocationSource
 import com.cowork.bikerecoder.location.LocationSource
 import com.cowork.bikerecoder.ui.common.routeFailureText
@@ -29,6 +30,7 @@ import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.time.LocalDate
 
 /**
  * The controller on JVM fakes with virtual time: the same GPX/GeoJSON fixtures as the device
@@ -57,6 +59,7 @@ class NavigationControllerTest {
         val router: AssetRouter,
         var source: ScriptedLocationSource,
         voiceEnabled: Flow<Boolean>,
+        val dayDistances: MemoryDayDistances = MemoryDayDistances(),
     ) {
         val tripManager = TripManager(store, offline, clock = { scope.testScheduler.currentTime })
         val controller = NavigationController(
@@ -70,6 +73,7 @@ class NavigationControllerTest {
             scope = scope.backgroundScope,
             clock = { scope.testScheduler.currentTime },
             log = log,
+            dayDistances = dayDistances,
         )
 
         suspend fun trip(type: TripType, vararg stops: TripStop): Long =
@@ -109,6 +113,54 @@ class NavigationControllerTest {
         assertEquals(listOf(destination), request.stops)
         assertEquals(RouteProfile.CYCLEWAY_FIRST, request.profile)
         assertFalse(h.source.collecting, "location source stopped at arrival")
+    }
+
+    /** The test clock starts at epoch 0 = 1970-01-01 09:00 in Asia/Seoul. */
+    private val testDay = LocalDate.of(1970, 1, 1)
+
+    @Test
+    fun resumingTheSameDayContinuesTodaysKilometres() = runTest {
+        val h = harness("scenario_follow.gpx")
+        val tripId = h.trip(TripType.MULTI_DAY, stop("도착", destination, isDestination = true))
+        h.dayDistances.save(tripId, testDay, 3_400.0)
+
+        h.controller.start(tripId)
+        h.awaitFinished()
+
+        val kmReports = voice.spoken.filter { it.contains("킬로미터 이동") }
+        assertEquals(listOf("4킬로미터", "5킬로미터"), kmReports.map { it.substringBefore(" ") }, voice.spoken.toString())
+        val saved = h.dayDistances.distanceOn(tripId, testDay)
+        assertTrue(saved > 3_400.0 + 2_300.0, "today's distance saved at the end: $saved")
+    }
+
+    @Test
+    fun aNewDayStartsTheKilometresAtZero() = runTest {
+        val h = harness("scenario_follow.gpx")
+        val tripId = h.trip(TripType.MULTI_DAY, stop("도착", destination, isDestination = true))
+        h.dayDistances.save(tripId, testDay.minusDays(1), 3_400.0)
+
+        h.controller.start(tripId)
+        h.awaitFinished()
+
+        val kmReports = voice.spoken.filter { it.contains("킬로미터 이동") }
+        assertEquals(listOf("1킬로미터", "2킬로미터"), kmReports.map { it.substringBefore(" ") })
+        assertTrue(h.dayDistances.distanceOn(tripId, testDay) in 2_300.0..2_600.0)
+    }
+
+    @Test
+    fun todaysDistanceIsSavedEveryKilometreAndWhenStoppedForToday() = runTest {
+        val h = harness("scenario_follow.gpx")
+        val tripId = h.trip(TripType.MULTI_DAY, stop("도착", destination, isDestination = true))
+
+        h.controller.start(tripId)
+        h.controller.ui.first { it is NavUiState.Active && it.state.progress.distanceAlongM > 1_100.0 }
+        runCurrent()
+        val atOneKm = h.dayDistances.distanceOn(tripId, testDay)
+        assertTrue(atOneKm >= 1_000.0, "saved when the first kilometre was passed: $atOneKm")
+
+        h.controller.stopToday()
+        h.awaitFinished()
+        assertTrue(h.dayDistances.distanceOn(tripId, testDay) > atOneKm + 50.0, "saved again at the end")
     }
 
     @Test

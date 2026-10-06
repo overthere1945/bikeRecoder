@@ -7,6 +7,8 @@ import com.cowork.bikerecoder.core.trip.OfflineMapController
 import com.cowork.bikerecoder.core.trip.TripManager
 import com.cowork.bikerecoder.core.trip.TripStore
 import com.cowork.bikerecoder.data.AppDatabase
+import com.cowork.bikerecoder.data.DataStoreDayDistances
+import com.cowork.bikerecoder.data.DayDistances
 import com.cowork.bikerecoder.data.RoomTripStore
 import com.cowork.bikerecoder.data.SettingsRepository
 import com.cowork.bikerecoder.location.FusedLocationSource
@@ -47,6 +49,7 @@ class AppContainer(context: Context) {
     val okHttp: OkHttpClient = OkHttpClient()
     val db: AppDatabase = AppDatabase.create(appContext)
     val settings: SettingsRepository = SettingsRepository(appContext)
+    val dayDistances: DayDistances = DataStoreDayDistances(appContext)
 
     private val segmentDir = File(appContext.filesDir, "segments4")
     val segments: SegmentRepository = SegmentRepository(segmentDir, okHttp)
