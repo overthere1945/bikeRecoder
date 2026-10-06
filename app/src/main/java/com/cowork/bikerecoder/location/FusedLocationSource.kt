@@ -36,6 +36,7 @@ class FusedLocationSource(context: Context) : LocationSource {
         }
         try {
             client.requestLocationUpdates(request, callback, Looper.getMainLooper())
+                .addOnFailureListener { close(it) } // 비동기 실패(권한 회수, Play 서비스 없음 등)
         } catch (e: SecurityException) {
             close(e)
         }

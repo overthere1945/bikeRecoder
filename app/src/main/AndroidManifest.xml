@@ -4,6 +4,13 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- API 30+ 패키지 가시성: TTS 엔진(삼성 SMT, Google TTS)을 찾으려면 필요. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <application
         android:name=".BikeApp"
         android:allowBackup="true"

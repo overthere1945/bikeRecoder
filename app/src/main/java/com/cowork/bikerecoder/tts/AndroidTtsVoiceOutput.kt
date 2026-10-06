@@ -15,10 +15,10 @@ import kotlinx.coroutines.flow.asStateFlow
 /**
  * Android [TextToSpeech] 기반 한국어 [VoiceOutput].
  *
- * 엔진 우선순위: 삼성 SMT → Google TTS. 둘 다 한국어를 못 쓰면 `available = false`.
+ * 엔진 우선순위: 삼성 SMT → Google TTS ([TtsEngineSelector]). 둘 다 한국어를 못 쓰면 `available = false`.
  * 발화는 QUEUE_ADD로 쌓고, 대기열이 비어 있다가 채워질 때 내비게이션 오디오 포커스(MAY_DUCK)를
  * 요청하며 마지막 발화가 끝나면(onDone/onError/onStop) 반환한다.
- * 초기화가 끝나기 전의 [speak]는 보관했다가 초기화 성공 후 재생하고, 실패하면 버린다.
+ * 초기화가 끝나기 전의 [speak]는 보관했다가 초기화 성공 후 순서대로 재생하고, 실패하면 버린다.
  */
 class AndroidTtsVoiceOutput(context: Context) : VoiceOutput {
     private val appContext = context.applicationContext
@@ -38,10 +38,9 @@ class AndroidTtsVoiceOutput(context: Context) : VoiceOutput {
     override var muted: Boolean = false
 
     private val lock = Any()
-    private var tts: TextToSpeech? = null
-    private var ready = false
+    private var engine: TtsEngineHandle? = null
+    private var selecting = true
     private var closed = false
-    private var engineIndex = 0
     private val preInitQueue = ArrayList<String>()
     private val pendingIds = HashSet<String>()
     private var hasFocus = false
@@ -58,64 +57,31 @@ class AndroidTtsVoiceOutput(context: Context) : VoiceOutput {
     }
 
     init {
-        startEngine()
+        TtsEngineSelector(
+            engines = ENGINES,
+            factory = { name, onInit ->
+                // init 콜백이 생성자 안에서 동기 호출돼도 selector가 처리한다.
+                val tts = TextToSpeech(appContext, { status -> onInit(status == TextToSpeech.SUCCESS) }, name)
+                TextToSpeechHandle(tts, audioAttributes, progressListener)
+            },
+            onSelected = ::onEngineSelected,
+        ).start()
     }
 
-    private fun startEngine() {
-        if (engineIndex >= ENGINES.size) {
-            failInit()
-            return
-        }
-        // init 콜백이 생성자 반환 전에 불릴 수 있으므로 holder로 인스턴스를 넘긴다.
-        val holder = arrayOfNulls<TextToSpeech>(1)
-        val created = TextToSpeech(appContext, { status ->
-            val instance = holder[0] ?: synchronized(lock) { tts }
-            onEngineInit(instance, status)
-        }, ENGINES[engineIndex])
-        holder[0] = created
+    private fun onEngineSelected(selected: TtsEngineHandle?) {
         synchronized(lock) {
-            if (closed) {
-                created.shutdown()
-                return
-            }
-            tts = created
-        }
-    }
-
-    private fun onEngineInit(instance: TextToSpeech?, status: Int) {
-        val usable = status == TextToSpeech.SUCCESS && instance != null && configure(instance)
-        var flush: List<String> = emptyList()
-        synchronized(lock) {
-            if (closed) {
-                instance?.shutdown()
-                return
-            }
-            if (usable) {
-                ready = true
-                _available.value = true
-                flush = preInitQueue.toList()
+            selecting = false
+            if (closed || selected == null) {
+                selected?.shutdown()
                 preInitQueue.clear()
-            } else {
-                instance?.shutdown()
-                tts = null
-                engineIndex++
+                return
             }
-        }
-        if (usable) flush.forEach { enqueue(it) } else startEngine()
-    }
-
-    private fun configure(engine: TextToSpeech): Boolean {
-        val lang = engine.setLanguage(Locale.KOREAN)
-        if (lang < TextToSpeech.LANG_AVAILABLE) return false
-        engine.setAudioAttributes(audioAttributes)
-        engine.setOnUtteranceProgressListener(progressListener)
-        return true
-    }
-
-    private fun failInit() {
-        synchronized(lock) {
-            _available.value = false
+            engine = selected
+            _available.value = true
+            // 락 안에서 flush해 동시에 들어오는 speak()보다 항상 먼저 재생되도록 한다.
+            val queued = preInitQueue.toList()
             preInitQueue.clear()
+            queued.forEach { enqueueLocked(it) }
         }
     }
 
@@ -123,36 +89,33 @@ class AndroidTtsVoiceOutput(context: Context) : VoiceOutput {
         if (muted || text.isBlank()) return
         synchronized(lock) {
             if (closed) return
-            if (!ready) {
-                // 초기화가 끝났거나(실패 포함) 엔진이 모두 소진됐다면 버린다.
-                if (engineIndex < ENGINES.size) preInitQueue.add(text)
-                return
+            when {
+                engine != null -> enqueueLocked(text)
+                selecting -> preInitQueue.add(text)
+                // 모든 엔진 실패: 버린다.
             }
         }
-        enqueue(text)
     }
 
-    private fun enqueue(text: String) {
-        val engine: TextToSpeech
+    private fun enqueueLocked(text: String) {
+        val e = engine ?: return
+        if (closed || muted) return
         val id = "nav-${idCounter.incrementAndGet()}"
-        synchronized(lock) {
-            if (closed || muted) return
-            engine = tts ?: return
-            if (pendingIds.isEmpty() && !hasFocus) {
-                hasFocus = audioManager.requestAudioFocus(focusRequest) != AudioManager.AUDIOFOCUS_REQUEST_FAILED
-            }
-            pendingIds.add(id)
+        if (pendingIds.isEmpty() && !hasFocus) {
+            hasFocus = audioManager.requestAudioFocus(focusRequest) != AudioManager.AUDIOFOCUS_REQUEST_FAILED
         }
-        val result = engine.speak(text, TextToSpeech.QUEUE_ADD, null, id)
-        if (result == TextToSpeech.ERROR) finished(id)
+        pendingIds.add(id)
+        if (!e.speak(text, id)) finishedLocked(id)
     }
 
     private fun finished(utteranceId: String?) {
         if (utteranceId == null) return
-        synchronized(lock) {
-            if (!pendingIds.remove(utteranceId)) return
-            if (pendingIds.isEmpty()) abandonFocusLocked()
-        }
+        synchronized(lock) { finishedLocked(utteranceId) }
+    }
+
+    private fun finishedLocked(utteranceId: String) {
+        if (!pendingIds.remove(utteranceId)) return
+        if (pendingIds.isEmpty()) abandonFocusLocked()
     }
 
     private fun abandonFocusLocked() {
@@ -163,20 +126,44 @@ class AndroidTtsVoiceOutput(context: Context) : VoiceOutput {
     }
 
     override fun shutdown() {
-        val engine: TextToSpeech?
+        val toStop: TtsEngineHandle?
         synchronized(lock) {
             if (closed) return
             closed = true
-            ready = false
-            engine = tts
-            tts = null
+            toStop = engine
+            engine = null
             preInitQueue.clear()
             pendingIds.clear()
             abandonFocusLocked()
             _available.value = false
         }
-        engine?.stop()
-        engine?.shutdown()
+        toStop?.stop()
+        toStop?.shutdown()
+    }
+
+    private class TextToSpeechHandle(
+        private val tts: TextToSpeech?,
+        private val audioAttributes: AudioAttributes,
+        private val listener: UtteranceProgressListener,
+    ) : TtsEngineHandle {
+        override fun configureKorean(): Boolean {
+            val t = tts ?: return false
+            if (t.setLanguage(Locale.KOREAN) < TextToSpeech.LANG_AVAILABLE) return false
+            t.setAudioAttributes(audioAttributes)
+            t.setOnUtteranceProgressListener(listener)
+            return true
+        }
+
+        override fun speak(text: String, utteranceId: String): Boolean =
+            tts?.speak(text, TextToSpeech.QUEUE_ADD, null, utteranceId) != TextToSpeech.ERROR
+
+        override fun stop() {
+            tts?.stop()
+        }
+
+        override fun shutdown() {
+            tts?.shutdown()
+        }
     }
 
     private companion object {

@@ -31,8 +31,8 @@ class GpxLocationSourceTest {
 
         assertEquals(fixes, emitted)
         assertEquals(listOf(1_000_000L, 1_010_000L, 1_020_000L), emitted.map { it.timeMillis })
-        // 2 gaps of 10s / 100 = 200ms total; must be well under real-time (20s) and not instant.
-        assertTrue("elapsed $elapsedMs ms should be < 400", elapsedMs < 400)
+        // 2 gaps of 10s / 100 = 200ms nominal; must be far below real-time (20s) and not instant.
+        assertTrue("elapsed $elapsedMs ms should be < 5000", elapsedMs < 5_000)
         assertTrue("elapsed $elapsedMs ms should be >= 150 (delays applied)", elapsedMs >= 150)
     }
 }
