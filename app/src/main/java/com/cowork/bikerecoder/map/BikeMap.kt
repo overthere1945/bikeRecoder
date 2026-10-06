@@ -3,14 +3,17 @@ package com.cowork.bikerecoder.map
 import android.graphics.Color
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -33,6 +36,7 @@ import kotlinx.coroutines.CancellationException
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.gestures.MoveGestureDetector
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
@@ -46,6 +50,12 @@ import org.maplibre.android.style.sources.GeoJsonSource
 
 /** What BikeMap draws on top of the base map. */
 data class MapOverlay(val route: Route?, val stops: List<Stop>, val user: LocationFix?)
+
+/**
+ * One-shot request to frame [points] (a single point just centres on it, at most [maxZoom]).
+ * Deliberately has no equals: every new instance is a new request, even for identical points.
+ */
+class CameraFit(val points: List<GeoPoint>, val maxZoom: Double = 16.0)
 
 enum class CameraMode {
     /** The user controls the camera; BikeMap never moves it on its own. */
@@ -62,6 +72,8 @@ private const val ROUTE_COLOR = "#1E88E5"
 private const val FOLLOW_ZOOM = 17.0
 private const val FOLLOW_TILT = 50.0
 private const val FOLLOW_ANIMATION_MS = 800
+private const val FIT_ANIMATION_MS = 600
+private const val FIT_PADDING_PX = 120
 private const val EMPTY_COLLECTION = """{"type":"FeatureCollection","features":[]}"""
 
 @Composable
@@ -74,6 +86,7 @@ fun BikeMap(
     modifier: Modifier = Modifier,
     initialCenter: GeoPoint? = null,
     initialZoom: Double = 13.0,
+    fit: CameraFit? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -84,7 +97,8 @@ fun BikeMap(
     val currentOnLongPress by rememberUpdatedState(onLongPress)
     val currentOnUserGesture by rememberUpdatedState(onUserGesture)
 
-    val styleResult by produceState<Result<String>?>(initialValue = null, tileSource) {
+    var styleAttempt by remember { mutableIntStateOf(0) }
+    val styleResult by produceState<Result<String>?>(initialValue = null, tileSource, styleAttempt) {
         value = try {
             Result.success(tileSource.styleJson())
         } catch (e: CancellationException) {
@@ -182,6 +196,31 @@ fun BikeMap(
         loaded.getSourceAs<GeoJsonSource>(USER_SOURCE)?.setGeoJson(userGeoJson(overlay.user))
     }
 
+    // Frame the requested points once the style (and so the map size) is ready.
+    LaunchedEffect(style, fit) {
+        val m = map ?: return@LaunchedEffect
+        if (style == null || fit == null || fit.points.isEmpty()) return@LaunchedEffect
+        val single = fit.points.first()
+        try {
+            if (fit.points.size == 1) {
+                m.animateCamera(
+                    CameraUpdateFactory.newLatLngZoom(
+                        LatLng(single.lat, single.lon),
+                        m.cameraPosition.zoom.coerceAtLeast(14.0).coerceAtMost(fit.maxZoom),
+                    ),
+                    FIT_ANIMATION_MS,
+                )
+            } else {
+                val bounds = LatLngBounds.Builder().apply {
+                    fit.points.forEach { include(LatLng(it.lat, it.lon)) }
+                }.build()
+                m.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, FIT_PADDING_PX), FIT_ANIMATION_MS)
+            }
+        } catch (e: IllegalStateException) {
+            // Degenerate bounds (identical points) or a not-yet-sized map: leave the camera alone.
+        }
+    }
+
     // FOLLOW: animate to the user. FREE: no automatic camera moves.
     LaunchedEffect(map, cameraMode, overlay.user) {
         val m = map ?: return@LaunchedEffect
@@ -210,13 +249,16 @@ fun BikeMap(
                 .padding(horizontal = 4.dp, vertical = 1.dp),
         )
         if (styleResult?.isFailure == true) {
-            Text(
-                text = "지도를 불러오지 못했습니다",
+            Column(
                 modifier = Modifier
                     .align(Alignment.Center)
                     .background(androidx.compose.ui.graphics.Color.White.copy(alpha = 0.85f))
                     .padding(horizontal = 12.dp, vertical = 8.dp),
-            )
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(text = "지도를 불러오지 못했습니다")
+                TextButton(onClick = { styleAttempt++ }) { Text("다시 시도") }
+            }
         }
     }
 }

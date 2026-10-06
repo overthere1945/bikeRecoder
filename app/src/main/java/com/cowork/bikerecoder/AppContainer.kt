@@ -20,7 +20,16 @@ import com.cowork.bikerecoder.search.KakaoLocalClient
 import com.cowork.bikerecoder.search.PlaceSearch
 import com.cowork.bikerecoder.tts.AndroidTtsVoiceOutput
 import com.cowork.bikerecoder.tts.VoiceOutput
+import com.cowork.bikerecoder.core.model.LocationFix
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.stateIn
 import okhttp3.OkHttpClient
 import java.io.File
 
@@ -60,4 +69,14 @@ class AppContainer(context: Context) {
 
     /** Replaceable in tests. */
     var locationSourceFactory: () -> LocationSource = { FusedLocationSource(appContext) }
+
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /**
+     * Latest fix, shared by every screen that needs "where am I". The location source only runs while
+     * something collects this (plus a 5 s grace period); a missing permission just leaves it at null.
+     */
+    val currentLocation: StateFlow<LocationFix?> = flow { emitAll(locationSourceFactory().fixes()) }
+        .catch { if (it !is SecurityException) throw it }
+        .stateIn(appScope, SharingStarted.WhileSubscribed(5_000), null)
 }
