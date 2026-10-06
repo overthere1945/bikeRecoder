@@ -30,6 +30,17 @@ class RouteProgressTrackerTest {
     }
 
     @Test
+    fun `first fix near the start of a loop snaps to the start, not the end`() {
+        val route = loopRoute()
+        val tracker = RouteProgressTracker(route)
+
+        // 서쪽 3m·북쪽 5m: 마지막 선분(북→남, x=0)이 첫 선분(y=0)보다 가깝다.
+        val progress = tracker.update(pointAt(-3.0, 5.0))
+
+        assertEquals(0.0, progress.distanceAlongM, 10.0)
+    }
+
+    @Test
     fun `next instruction is first ahead`() {
         val instructions = listOf(
             Instruction(pointIndex = 0, type = TurnType.STRAIGHT, roundaboutExit = 0, distanceFromStartM = 300.0),

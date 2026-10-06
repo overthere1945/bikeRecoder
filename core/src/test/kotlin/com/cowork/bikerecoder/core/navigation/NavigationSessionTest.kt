@@ -130,6 +130,29 @@ class NavigationSessionTest {
     }
 
     @Test
+    fun `loop route first fix beside the start does not snap to the end`() = runTest {
+        val start = pointAt(0.0, 0.0)
+        val route = routeOf(
+            listOf(start, pointAt(300.0, 0.0), pointAt(300.0, 300.0), pointAt(0.0, 300.0), start),
+            mapOf(1 to TurnType.LEFT, 2 to TurnType.LEFT, 3 to TurnType.LEFT),
+        )
+        val dest = Stop(1, "출발점", start, isDestination = true)
+        val router = FakeRouter { error("no reroute expected") }
+        val session = session(route, listOf(dest), router)
+        val updates = collect(session)
+
+        feed(session, fixAt(-3.0, 5.0, 0)) // 출발점 옆(마지막 선분이 더 가깝다)
+        for (s in 1..30) feed(session, fixAt(5.0 * s, 0.0, s))
+
+        assertEquals(0, router.calls)
+        assertEquals(0, updates.texts().count { it == phrases.offRoute })
+        assertTrue(updates.flatMap { it.events }.isEmpty())
+        assertTrue(updates.none { it.state.rerouting })
+        assertEquals(listOf("200미터 앞에서 좌회전입니다"), updates.flatMap { it.utterances }.filter { it.priority == Priority.TURN }.map { it.text })
+        assertEquals(150.0, updates.last().state.progress.distanceAlongM, 5.0)
+    }
+
+    @Test
     fun `waypoint reached announces and continues to destination`() = runTest {
         val vertices = listOf(pointAt(0.0, 0.0), pointAt(500.0, 0.0), pointAt(1_000.0, 0.0))
         val route = routeOf(vertices).copy(stopPointIndices = listOf(1, 2))

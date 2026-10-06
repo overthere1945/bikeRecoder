@@ -17,7 +17,9 @@ data class Progress(
 /**
  * 경로 위에서 현재 위치를 매칭해 진행 거리/잔여 거리/다음 안내를 계산한다.
  *
- * 직전 매칭 지점부터 `distanceAlong + lookAheadM` 이내의 선분만 검사한다(첫 update는 전체 검사).
+ * 직전 매칭 지점부터 `distanceAlong + lookAheadM` 이내의 선분만 검사한다. 첫 update는 경로 시작부터
+ * `lookAheadM` 이내만 검사한다: 모든 경로(재탐색 포함)는 현재 위치에서 시작하므로, 순환 경로(출발 = 목적지)의
+ * 첫 위치가 끝으로 붙지 않는다.
  * `distanceAlongM`은 단조 비감소(뒤로 가지 않는다).
  */
 class RouteProgressTracker(private val route: Route, private val lookAheadM: Double = 500.0) {
@@ -33,15 +35,8 @@ class RouteProgressTracker(private val route: Route, private val lookAheadM: Dou
         val points = route.points
         val cumulative = route.cumulativeM
 
-        val startIdx: Int
-        val maxAlongM: Double
-        if (!hasMatched) {
-            startIdx = 0
-            maxAlongM = Double.MAX_VALUE
-        } else {
-            startIdx = segmentIndexContaining(lastDistanceAlongM)
-            maxAlongM = lastDistanceAlongM + lookAheadM
-        }
+        val startIdx = if (hasMatched) segmentIndexContaining(lastDistanceAlongM) else 0
+        val maxAlongM = lastDistanceAlongM + lookAheadM
 
         var bestDistanceM = Double.MAX_VALUE
         var bestAlongM = lastDistanceAlongM
