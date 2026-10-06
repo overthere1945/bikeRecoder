@@ -22,3 +22,8 @@
 - R9: TestRoutes.pointAt (111_320 m/deg) vs GeoMath (R=6_371_008.8): derive expected distances via GeoMath; do not rewrite pointAt.
 - R11: NavigationSession GPS watchdog runs on tick time only (onTick clock), independent of fix.timeMillis.
 - R12: session.updates is MutableSharedFlow(extraBufferCapacity=64) with tryEmit — the Android side (T19) must collect it inside the foreground service, never a UI-lifecycle collector.
+- R13: BRouter turnInstructionMode=1 is unresolved without RoutingParamCollector → zero voice hints; T11 sets a concrete mode (3 = osmand-style; EL/ER → JSON 8/9 = KEEP_LEFT/KEEP_RIGHT) on RoutingContext before doRun.
+- R14: instrumented tests run on the connected phone SM-S938N (Android 16, API 36, serial R3CY903ZYQV); no AVD creation (supersedes R3). Tests must clean up after themselves (in-memory DBs, no leftover files/offline regions).
+- Connected-test filter: use -Pandroid.testInstrumentationRunnerArguments.class=<FQCN> (connectedDebugAndroidTest has no --tests); prefix ANDROID_SERIAL=R3CY903ZYQV.
+- R16: onboarding skips persisted in AppSettings.skippedOnboardingSteps; fine location mandatory; background/notifications/battery/segments skippable via [나중에]; start = main iff effective step == DONE.
+- R17: 50 m destination rule only when no waypoints (stops.size == 1).
