@@ -1,6 +1,8 @@
 package com.cowork.bikerecoder.nav
 
 import com.cowork.bikerecoder.AppContainer
+import com.cowork.bikerecoder.WarnLog
+import com.cowork.bikerecoder.androidWarnLog
 import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.model.Stop
 import com.cowork.bikerecoder.core.navigation.NavEvent
@@ -14,6 +16,7 @@ import com.cowork.bikerecoder.core.routing.Router
 import com.cowork.bikerecoder.core.trip.OfflineMapController
 import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripManager
+import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripStore
 import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.core.voice.KoreanPhrases
@@ -31,9 +34,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** What the navigation screen and the foreground-service notification show. */
 sealed interface NavUiState {
@@ -52,10 +57,22 @@ sealed interface NavUiState {
         val muted: Boolean,
     ) : NavUiState
 
-    /** The start failed (no location, no route, ...); [message] is shown with [다시 시도]. No session runs. */
-    data class Failed(val tripId: Long, val message: String) : NavUiState
+    /**
+     * The start failed (no location, no route, ...); [message] is shown, with [다시 시도] if [canRetry].
+     * No session runs.
+     */
+    data class Failed(val tripId: Long, val message: String, val canRetry: Boolean = true) : NavUiState
 
-    data class Finished(val tripId: Long, val type: TripType, val reason: FinishReason) : NavUiState
+    /**
+     * Guidance ended for [reason]. [error] is set when the trip's new state could not be saved (the screen
+     * shows it instead of reporting success).
+     */
+    data class Finished(
+        val tripId: Long,
+        val type: TripType,
+        val reason: FinishReason,
+        val error: String? = null,
+    ) : NavUiState
 }
 
 enum class FinishReason { ARRIVED, STOPPED_TODAY, COMPLETED }
@@ -87,6 +104,8 @@ class NavigationController(
     private val phrases: KoreanPhrases = KoreanPhrases(),
     private val tickIntervalMs: Long = 1_000,
     private val touchIntervalMs: Long = 60_000,
+    private val firstFixTimeoutMs: Long = FIRST_FIX_TIMEOUT_MS,
+    private val log: WarnLog = androidWarnLog(TAG),
 ) {
     constructor(container: AppContainer, scope: CoroutineScope) : this(
         router = container.router,
@@ -143,6 +162,7 @@ class NavigationController(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                log.warn("Starting guidance of trip $tripId failed", e)
                 fail(r, MSG_START_FAILED)
             }
         }
@@ -174,8 +194,12 @@ class NavigationController(
         val finished = _ui.value as? NavUiState.Finished ?: return
         if (finished.type != TripType.SINGLE_DAY || finished.reason == FinishReason.STOPPED_TODAY) return
         scope.launch {
-            withContext(NonCancellable) { ignoringErrors { tripManager.convertToMultiDay(finished.tripId) } }
-            if (_ui.value == finished) _ui.value = NavUiState.Idle
+            val saved = withContext(NonCancellable) {
+                saving("convert trip ${finished.tripId} to multi-day") { tripManager.convertToMultiDay(finished.tripId) }
+            }
+            if (_ui.value == finished) {
+                _ui.value = if (saved) NavUiState.Idle else finished.copy(error = MSG_SAVE_FAILED)
+            }
         }.join()
     }
 
@@ -198,10 +222,12 @@ class NavigationController(
     }
 
     private suspend fun prepare(r: Run) {
-        val trip = tripStore.trip(r.tripId) ?: return fail(r, MSG_NO_TRIP)
+        val trip = tripStore.trip(r.tripId) ?: return fail(r, MSG_NO_TRIP, canRetry = false)
+        // A stale "안내가 중단되었습니다" notification or [이어서 안내] must not revive a finished trip.
+        if (trip.status != TripStatus.ACTIVE) return fail(r, MSG_TRIP_ENDED, canRetry = false)
         r.trip = trip
         val stops = tripManager.remainingStops(r.tripId).map { Stop(it.id, it.name, it.point, it.isDestination) }
-        if (stops.isEmpty()) return fail(r, MSG_NO_STOPS)
+        if (stops.isEmpty()) return fail(r, MSG_NO_STOPS, canRetry = false)
 
         val firstFix = CompletableDeferred<LocationFix>()
         r.jobs += scope.launch {
@@ -211,19 +237,25 @@ class NavigationController(
                     val session = r.session
                     if (session != null) session.onFix(fix) else firstFix.complete(fix)
                 }
+                if (!firstFix.isCompleted) log.warn("Location source ended without a fix", null)
                 firstFix.completeExceptionally(IllegalStateException("location source ended without a fix"))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 // Before the start this fails the start; later the session's GPS watchdog reports it.
+                log.warn("Location source failed", e)
                 firstFix.completeExceptionally(e)
             }
         }
         val start = try {
-            firstFix.await()
+            withTimeoutOrNull(firstFixTimeoutMs) { firstFix.await() }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            null // Already logged by the collector.
+        }
+        if (start == null) {
+            if (!firstFix.isCompleted) log.warn("No location fix within $firstFixTimeoutMs ms", null)
             return fail(r, MSG_NO_LOCATION)
         }
 
@@ -233,20 +265,42 @@ class NavigationController(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            log.warn("Router threw", e)
             RouteResult.Failure(RouteFailure.OTHER, e.message.orEmpty())
         }
         if (run !== r) return
         val route = when (result) {
-            is RouteResult.Failure -> return fail(r, routeFailureText(result.reason))
+            is RouteResult.Failure -> {
+                log.warn("Route to the stops of trip ${trip.id} failed: ${result.reason} ${result.detail}", null)
+                return fail(r, routeFailureText(result.reason))
+            }
             is RouteResult.Success -> result.route
         }
+        // The setting must be known before the session can speak (DataStore answers asynchronously).
+        r.voiceOn = try {
+            voiceEnabled.first()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn("Could not read the voice setting; speaking", e)
+            true
+        }
+        if (run !== r) return
 
         val session = NavigationSession(route, stops, trip.profile, router, phrases, scope)
         r.stops = stops
         r.session = session
         // Subscribed before anything can emit (the shared flow has no replay).
         r.jobs += scope.launch(start = CoroutineStart.UNDISPATCHED) { session.updates.collect { handle(r, it) } }
-        r.jobs += scope.launch { voiceEnabled.collect { r.voiceOn = it } }
+        r.jobs += scope.launch {
+            try {
+                voiceEnabled.collect { r.voiceOn = it }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.warn("Voice setting updates failed", e)
+            }
+        }
         r.jobs += scope.launch {
             while (true) {
                 delay(tickIntervalMs)
@@ -256,10 +310,10 @@ class NavigationController(
         r.jobs += scope.launch {
             while (true) {
                 delay(touchIntervalMs)
-                ignoringErrors { tripManager.touch(trip.id) }
+                ignoringErrors("touch trip ${trip.id}") { tripManager.touch(trip.id) }
             }
         }
-        r.jobs += scope.launch { ignoringErrors { offline.downloadForTrip(trip.id, route, 0.0) } }
+        r.jobs += scope.launch { ignoringErrors("offline maps of trip ${trip.id}") { offline.downloadForTrip(trip.id, route, 0.0) } }
         // The latest fix (the start point, or newer if routing took a while) is the session's first.
         r.lastFix?.let(session::onFix)
     }
@@ -271,7 +325,7 @@ class NavigationController(
         for (event in update.events) {
             if (event !is NavEvent.StopReached) continue
             r.stops = r.stops.filterNot { it.id == event.stop.id }
-            ignoringErrors { tripManager.markVisited(event.stop.id) }
+            ignoringErrors("mark stop ${event.stop.id} visited") { tripManager.markVisited(event.stop.id) }
             if (event.stop.isDestination) arrived = true
         }
         if (arrived) {
@@ -289,31 +343,48 @@ class NavigationController(
         val trip = r.trip ?: return@withContext
         run = null
         r.cancelJobs()
-        ignoringErrors {
-            when (reason) {
-                FinishReason.ARRIVED, FinishReason.COMPLETED -> tripManager.complete(trip.id)
-                FinishReason.STOPPED_TODAY -> tripManager.endToday(trip.id)
-            }
+        val saved = when (reason) {
+            FinishReason.ARRIVED, FinishReason.COMPLETED -> saving("complete trip ${trip.id}") {
+                tripManager.complete(trip.id)
+            } || isCompleted(trip.id) // complete() saves first, then deletes the offline maps
+            FinishReason.STOPPED_TODAY -> saving("end today of trip ${trip.id}") { tripManager.endToday(trip.id) }
         }
         // A new start during the write wins.
-        if (run == null) _ui.value = NavUiState.Finished(trip.id, trip.type, reason)
+        if (run == null) {
+            _ui.value = NavUiState.Finished(trip.id, trip.type, reason, error = if (saved) null else MSG_SAVE_FAILED)
+        }
     }
 
     /** The start of [r] failed: stop its location source; [r] stays current so the trip can still be ended. */
-    private fun fail(r: Run, message: String) {
+    private fun fail(r: Run, message: String, canRetry: Boolean = true) {
         if (run !== r) return
         r.cancelJobs()
-        _ui.value = NavUiState.Failed(r.tripId, message)
+        _ui.value = NavUiState.Failed(r.tripId, message, canRetry)
     }
 
-    private suspend inline fun ignoringErrors(block: () -> Unit) {
-        try {
-            block()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            // Best effort: a failed trip write must not stop guidance.
-        }
+    /** Best effort while guiding: a failed write is logged and must not stop guidance. */
+    private suspend inline fun ignoringErrors(what: String, block: () -> Unit) {
+        saving(what, block)
+    }
+
+    /** Runs a trip write; false (logged) if it failed. */
+    private suspend inline fun saving(what: String, block: () -> Unit): Boolean = try {
+        block()
+        true
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        log.warn("Could not $what", e)
+        false
+    }
+
+    private suspend fun isCompleted(tripId: Long): Boolean = try {
+        tripStore.trip(tripId)?.status == TripStatus.COMPLETED
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        log.warn("Could not read trip $tripId", e)
+        false
     }
 
     companion object {
@@ -321,5 +392,12 @@ class NavigationController(
         const val MSG_NO_TRIP = "여행 정보를 찾을 수 없습니다"
         const val MSG_NO_STOPS = "남은 경유지가 없습니다"
         const val MSG_START_FAILED = "안내를 시작하지 못했습니다"
+        const val MSG_TRIP_ENDED = "이미 끝난 여행입니다"
+        const val MSG_SAVE_FAILED = "여행 상태를 저장하지 못했습니다"
+
+        /** Without a fix for this long the start fails (and can be retried). */
+        const val FIRST_FIX_TIMEOUT_MS = 30_000L
+
+        private const val TAG = "NavigationController"
     }
 }

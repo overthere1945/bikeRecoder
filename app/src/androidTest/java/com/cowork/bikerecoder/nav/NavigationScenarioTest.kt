@@ -10,8 +10,6 @@ import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.model.Route
 import com.cowork.bikerecoder.core.model.RouteProfile
-import com.cowork.bikerecoder.core.routing.RouteRequest
-import com.cowork.bikerecoder.core.routing.RouteResult
 import com.cowork.bikerecoder.core.routing.Router
 import com.cowork.bikerecoder.core.trip.OfflineMapController
 import com.cowork.bikerecoder.core.trip.TripManager
@@ -23,15 +21,12 @@ import com.cowork.bikerecoder.data.RoomTripStore
 import com.cowork.bikerecoder.location.GpxLocationSource
 import com.cowork.bikerecoder.location.LocationSource
 import com.cowork.bikerecoder.routing.BRouterGeoJsonParser
-import com.cowork.bikerecoder.tts.VoiceOutput
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onCompletion
@@ -47,7 +42,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * GPX scenarios (spec §7.3) against the real controller on the main thread, an in-memory Room DB,
@@ -57,26 +51,6 @@ import java.util.concurrent.CopyOnWriteArrayList
  */
 @RunWith(AndroidJUnit4::class)
 class NavigationScenarioTest {
-
-    private class AssetRouter(private val jsons: List<String>) : Router {
-        val requests = CopyOnWriteArrayList<RouteRequest>()
-
-        override suspend fun route(request: RouteRequest): RouteResult {
-            requests += request
-            val json = jsons[minOf(requests.size - 1, jsons.lastIndex)]
-            return RouteResult.Success(BRouterGeoJsonParser.parse(json, request.profile, request.stops))
-        }
-    }
-
-    private class RecordingVoiceOutput : VoiceOutput {
-        val spoken = CopyOnWriteArrayList<String>()
-        override val available: StateFlow<Boolean> = MutableStateFlow(true)
-        @Volatile override var muted = false
-        override fun speak(text: String) {
-            if (!muted) spoken += text
-        }
-        override fun shutdown() = Unit
-    }
 
     /** GpxLocationSource(speedup = 20) that reports when its replay has ended. */
     private class Replay(fixes: List<LocationFix>) : LocationSource {

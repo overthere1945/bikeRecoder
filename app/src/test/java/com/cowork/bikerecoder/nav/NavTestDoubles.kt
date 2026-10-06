@@ -3,22 +3,15 @@ package com.cowork.bikerecoder.nav
 import com.cowork.bikerecoder.core.gpx.GpxParser
 import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.model.Route
-import com.cowork.bikerecoder.core.routing.RouteRequest
-import com.cowork.bikerecoder.core.routing.RouteResult
-import com.cowork.bikerecoder.core.routing.Router
 import com.cowork.bikerecoder.core.trip.OfflineMapController
 import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripStop
 import com.cowork.bikerecoder.core.trip.TripStore
 import com.cowork.bikerecoder.location.LocationSource
-import com.cowork.bikerecoder.routing.BRouterGeoJsonParser
-import com.cowork.bikerecoder.tts.VoiceOutput
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flow
 
 /** Reads a scenario fixture (shared with androidTest via the test resources dir). */
@@ -29,31 +22,6 @@ fun fixture(name: String): String =
 fun gpxFixture(name: String): List<LocationFix> = GpxParser.parse(fixture(name))
 
 object NavTestDoubles
-
-/** Returns the parsed GeoJSON assets in call order (the last one repeats); records every request. */
-class AssetRouter(private val jsons: List<String>) : Router {
-    val requests = mutableListOf<RouteRequest>()
-    var failure: RouteResult.Failure? = null
-
-    override suspend fun route(request: RouteRequest): RouteResult {
-        requests += request
-        failure?.let { return it }
-        val json = jsons[minOf(requests.size - 1, jsons.lastIndex)]
-        return RouteResult.Success(BRouterGeoJsonParser.parse(json, request.profile, request.stops))
-    }
-}
-
-class RecordingVoiceOutput : VoiceOutput {
-    val spoken = mutableListOf<String>()
-    override val available: StateFlow<Boolean> = MutableStateFlow(true)
-    override var muted: Boolean = false
-
-    override fun speak(text: String) {
-        if (!muted) spoken += text
-    }
-
-    override fun shutdown() = Unit
-}
 
 /**
  * Replays [fixes] like GpxLocationSource (gap / [speedup]) and then, unlike it, stays open until cancelled
@@ -97,7 +65,11 @@ class FakeTripStore : TripStore {
         return id
     }
 
+    /** Updates matching this throw (a failing database write). */
+    var failUpdate: (Trip) -> Boolean = { false }
+
     override suspend fun updateTrip(trip: Trip) {
+        if (failUpdate(trip)) throw java.io.IOException("disk full")
         trips[trip.id] = trip
     }
 
@@ -113,6 +85,14 @@ class FakeTripStore : TripStore {
             val i = list.indexOfFirst { it.id == stopId }
             if (i >= 0) list[i] = list[i].copy(visitedAt = at)
         }
+    }
+}
+
+/** Records what was logged. */
+class RecordingLog : com.cowork.bikerecoder.WarnLog {
+    val messages: MutableList<String> = java.util.concurrent.CopyOnWriteArrayList()
+    override fun warn(message: String, error: Throwable?) {
+        messages += message
     }
 }
 

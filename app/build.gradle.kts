@@ -63,6 +63,9 @@ android {
     sourceSets {
         // The navigation scenario fixtures (GeoJSON routes + GPX tracks) are shared with the JVM tests.
         getByName("test").resources.directories.add("src/androidTest/assets")
+        // Test doubles shared by the JVM tests and the device scenario test.
+        getByName("test").kotlin.directories.add("src/sharedTest/java")
+        getByName("androidTest").kotlin.directories.add("src/sharedTest/java")
     }
     testOptions {
         unitTests.all {

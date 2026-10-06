@@ -18,6 +18,8 @@ data class AppSettings(
     val keepScreenOn: Boolean = true,
     val wifiOnlyOfflineMaps: Boolean = false,
     val skippedOnboardingSteps: Set<OnboardingStep> = emptySet(),
+    /** The "Korean TTS missing" hint was shown (it is shown once ever, spec §6.9). */
+    val ttsNoticeShown: Boolean = false,
 )
 
 private val Context.settingsDataStore by preferencesDataStore(name = "settings")
@@ -35,6 +37,7 @@ class SettingsRepository(context: Context) {
             prefs[KEEP_SCREEN_ON] = next.keepScreenOn
             prefs[WIFI_ONLY] = next.wifiOnlyOfflineMaps
             prefs[SKIPPED_ONBOARDING] = next.skippedOnboardingSteps.map { it.name }.toSet()
+            prefs[TTS_NOTICE_SHOWN] = next.ttsNoticeShown
         }
     }
 
@@ -51,6 +54,7 @@ class SettingsRepository(context: Context) {
                 ?.mapNotNull { name -> OnboardingStep.entries.firstOrNull { it.name == name } }
                 ?.toSet()
                 ?: defaults.skippedOnboardingSteps,
+            ttsNoticeShown = this[TTS_NOTICE_SHOWN] ?: defaults.ttsNoticeShown,
         )
     }
 
@@ -60,5 +64,6 @@ class SettingsRepository(context: Context) {
         val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
         val WIFI_ONLY = booleanPreferencesKey("wifi_only_offline_maps")
         val SKIPPED_ONBOARDING = stringSetPreferencesKey("skipped_onboarding_steps")
+        val TTS_NOTICE_SHOWN = booleanPreferencesKey("tts_notice_shown")
     }
 }

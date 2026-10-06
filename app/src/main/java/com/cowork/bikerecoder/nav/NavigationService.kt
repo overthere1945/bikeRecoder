@@ -97,8 +97,12 @@ class NavigationService : Service() {
     companion object {
         private const val TAG = "NavigationService"
 
-        /** Call from the visible activity, right before [NavigationController.begin]. */
+        /**
+         * Call from the visible activity, right before [NavigationController.begin]. Guidance is starting
+         * again, so an earlier "안내가 중단되었습니다" notification is withdrawn.
+         */
         fun start(context: Context) {
+            NavNotifications.cancelInterrupted(context)
             try {
                 ContextCompat.startForegroundService(context, Intent(context, NavigationService::class.java))
             } catch (e: Exception) {

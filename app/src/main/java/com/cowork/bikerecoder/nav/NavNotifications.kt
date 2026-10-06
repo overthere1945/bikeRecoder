@@ -77,6 +77,10 @@ object NavNotifications {
         notify(context, INTERRUPTED_ID, notification)
     }
 
+    fun cancelInterrupted(context: Context) {
+        context.getSystemService(NotificationManager::class.java).cancel(INTERRUPTED_ID)
+    }
+
     private fun activityIntent(context: Context, requestCode: Int, extras: Intent.() -> Unit): PendingIntent {
         val intent = Intent(context, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)

@@ -26,4 +26,4 @@ fun endChoices(type: TripType): List<EndChoice> = when (type) {
 
 /** The completion screen offers [여러 날로 바꾸기] for a single-day trip that was completed. */
 fun canConvertToMultiDay(finished: NavUiState.Finished): Boolean =
-    finished.type == TripType.SINGLE_DAY && finished.reason != FinishReason.STOPPED_TODAY
+    finished.type == TripType.SINGLE_DAY && finished.reason != FinishReason.STOPPED_TODAY && finished.error == null

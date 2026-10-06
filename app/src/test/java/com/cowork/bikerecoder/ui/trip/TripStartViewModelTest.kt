@@ -194,12 +194,14 @@ class TripStartViewModelTest {
         val broken = object : com.cowork.bikerecoder.core.trip.TripStore by store {
             override suspend fun activeTrip() = error("disk full")
         }
-        val vm = TripStartViewModel(TripManager(broken, offline, clock = { 1L }), broken)
+        val log = com.cowork.bikerecoder.nav.RecordingLog()
+        val vm = TripStartViewModel(TripManager(broken, offline, clock = { 1L }), broken, log)
 
         vm.onStartPressed(plan)
         runCurrent()
 
         assertEquals(TripStartState.Error(TripStartViewModel.MSG_FAILED), vm.state.value)
+        assertEquals(1, log.messages.size, "the failure is logged")
         vm.dismiss()
         assertEquals(TripStartState.Idle, vm.state.value)
     }

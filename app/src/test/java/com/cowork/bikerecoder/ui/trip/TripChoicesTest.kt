@@ -29,5 +29,6 @@ class TripChoicesTest {
         assertTrue(canConvertToMultiDay(NavUiState.Finished(1, TripType.SINGLE_DAY, FinishReason.COMPLETED)))
         assertFalse(canConvertToMultiDay(NavUiState.Finished(1, TripType.MULTI_DAY, FinishReason.ARRIVED)))
         assertFalse(canConvertToMultiDay(NavUiState.Finished(1, TripType.MULTI_DAY, FinishReason.COMPLETED)))
+        assertFalse(canConvertToMultiDay(NavUiState.Finished(1, TripType.SINGLE_DAY, FinishReason.ARRIVED, error = "x")))
     }
 }

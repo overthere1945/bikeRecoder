@@ -13,6 +13,7 @@ import com.cowork.bikerecoder.location.GpxLocationSource
 import com.cowork.bikerecoder.location.LocationSource
 import com.cowork.bikerecoder.ui.common.routeFailureText
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
@@ -39,6 +40,7 @@ class NavigationControllerTest {
     private val store = FakeTripStore()
     private val offline = RecordingOfflineMaps()
     private val voice = RecordingVoiceOutput()
+    private val log = RecordingLog()
     private val follow = fixture("route_follow.geojson")
     private val reroute = fixture("route_reroute.geojson")
 
@@ -67,6 +69,7 @@ class NavigationControllerTest {
             voiceEnabled = voiceEnabled,
             scope = scope.backgroundScope,
             clock = { scope.testScheduler.currentTime },
+            log = log,
         )
 
         suspend fun trip(type: TripType, vararg stops: TripStop): Long =
@@ -234,7 +237,9 @@ class NavigationControllerTest {
 
     @Test
     fun voiceDisabledInSettingsSpeaksNothing() = runTest {
-        val h = harness("scenario_follow.gpx", voiceEnabled = flowOf(false))
+        // Like DataStore, the setting arrives asynchronously — here only after the first turn prompts (600 m in,
+        // 6 s at 20×) were due. Nothing may be spoken before it is known.
+        val h = harness("scenario_follow.gpx", voiceEnabled = flow { delay(10_000); emit(false) })
         val tripId = h.trip(TripType.SINGLE_DAY, stop("도착", destination, isDestination = true))
 
         h.controller.start(tripId)
@@ -319,7 +324,7 @@ class NavigationControllerTest {
             ).id
             val controller = NavigationController(
                 router, tripManager, store, offline, voice, { source }, flowOf(true), backgroundScope,
-                clock = { testScheduler.currentTime },
+                clock = { testScheduler.currentTime }, log = log,
             )
 
             controller.start(tripId)
@@ -327,6 +332,77 @@ class NavigationControllerTest {
             assertEquals(NavUiState.Failed(tripId, NavigationController.MSG_NO_LOCATION), controller.ui.value)
             assertTrue(router.requests.isEmpty())
         }
+        assertTrue(log.messages.isNotEmpty(), "the location failure is logged")
+    }
+
+    @Test
+    fun noFixWithinTimeoutFailsTheStart() = runTest {
+        val silent = ScriptedLocationSource(emptyList())
+        val h = Harness(this, AssetRouter(listOf(follow)), silent, flowOf(true))
+        val tripId = h.trip(TripType.SINGLE_DAY, stop("도착", destination, isDestination = true))
+
+        h.controller.begin(tripId)
+        advanceTimeBy(NavigationController.FIRST_FIX_TIMEOUT_MS - 1)
+        runCurrent()
+        assertEquals(NavUiState.Starting(tripId), h.controller.ui.value)
+
+        advanceTimeBy(2)
+        runCurrent()
+        assertEquals(NavUiState.Failed(tripId, NavigationController.MSG_NO_LOCATION), h.controller.ui.value)
+        assertFalse(silent.collecting, "location source stopped")
+        assertTrue(h.router.requests.isEmpty())
+    }
+
+    @Test
+    fun aTripThatIsNoLongerActiveIsNotStarted() = runTest {
+        // E.g. a stale "안내가 중단되었습니다" notification tapped after the trip was completed.
+        val h = harness("scenario_follow.gpx")
+        val tripId = h.trip(TripType.SINGLE_DAY, stop("도착", destination, isDestination = true))
+        h.tripManager.complete(tripId)
+
+        h.controller.start(tripId)
+
+        assertEquals(NavUiState.Failed(tripId, NavigationController.MSG_TRIP_ENDED, canRetry = false), h.controller.ui.value)
+        assertEquals(0, h.source.collections)
+        assertTrue(h.router.requests.isEmpty())
+        assertEquals(TripStatus.COMPLETED, store.trips.getValue(tripId).status)
+    }
+
+    @Test
+    fun aFailedCompleteOrStopTodayIsReportedNotShownAsSuccess() = runTest {
+        for (type in TripType.entries) {
+            val h = harness("scenario_waypoint.gpx")
+            val tripId = h.trip(type, stop("도착", destination, isDestination = true))
+            h.controller.start(tripId)
+            h.awaitActive()
+            store.failUpdate = { true }
+            log.messages.clear()
+
+            if (type == TripType.MULTI_DAY) h.controller.stopToday() else h.controller.completeTrip()
+            val finished = h.awaitFinished()
+            store.failUpdate = { false }
+
+            assertEquals(NavigationController.MSG_SAVE_FAILED, finished.error, "$type")
+            assertEquals(TripStatus.ACTIVE, store.trips.getValue(tripId).status)
+            assertFalse(h.source.collecting, "guidance stopped")
+            assertTrue(log.messages.isNotEmpty(), "the failure is logged")
+            h.controller.close()
+        }
+    }
+
+    @Test
+    fun aFailedConvertToMultiDayIsReportedNotShownAsSuccess() = runTest {
+        val h = harness("scenario_follow.gpx")
+        val tripId = h.trip(TripType.SINGLE_DAY, stop("도착", destination, isDestination = true))
+        h.controller.start(tripId)
+        val finished = h.awaitFinished()
+        store.failUpdate = { true }
+
+        h.controller.convertToMultiDay()
+
+        assertEquals(finished.copy(error = NavigationController.MSG_SAVE_FAILED), h.controller.ui.value)
+        assertEquals(TripStatus.COMPLETED, store.trips.getValue(tripId).status)
+        assertTrue(log.messages.isNotEmpty(), "the failure is logged")
     }
 }
 

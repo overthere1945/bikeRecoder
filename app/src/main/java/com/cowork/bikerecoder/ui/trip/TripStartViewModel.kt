@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
+import com.cowork.bikerecoder.WarnLog
+import com.cowork.bikerecoder.androidWarnLog
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.trip.StartPrompt
 import com.cowork.bikerecoder.core.trip.Trip
@@ -60,6 +62,7 @@ fun List<PlannedStop>.toTripStops(): List<TripStop> = mapIndexed { index, stop -
 class TripStartViewModel(
     private val tripManager: TripManager,
     private val tripStore: TripStore,
+    private val log: WarnLog = androidWarnLog(TAG),
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<TripStartState>(TripStartState.Idle)
@@ -123,6 +126,7 @@ class TripStartViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                log.warn("Starting a trip failed", e)
                 TripStartState.Error(MSG_FAILED)
             }
         }
@@ -135,6 +139,7 @@ class TripStartViewModel(
 
     companion object {
         const val MSG_FAILED = "여행을 시작하지 못했습니다"
+        private const val TAG = "TripStartViewModel"
 
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer { TripStartViewModel(container.tripManager, container.tripStore) }

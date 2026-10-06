@@ -38,7 +38,6 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import java.util.concurrent.atomic.AtomicBoolean
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class NavigateViewModelTest {
@@ -59,15 +58,17 @@ class NavigateViewModelTest {
     private fun TestScope.setup(
         args: Map<String, Any?> = emptyMap(),
         voice: VoiceOutput = RecordingVoiceOutput(),
-        noticeShown: AtomicBoolean = AtomicBoolean(false),
+        noticeShown: MutableStateFlow<Boolean> = MutableStateFlow(false),
     ): Setup {
         val tripManager = TripManager(store, offline, clock = { testScheduler.currentTime })
         val controller = NavigationController(
             AssetRouter(listOf(fixture("route_follow.geojson"))), tripManager, store, offline, voice,
             { ScriptedLocationSource(gpxFixture("scenario_waypoint.gpx")) }, flowOf(true), backgroundScope,
-            clock = { testScheduler.currentTime },
+            clock = { testScheduler.currentTime }, log = com.cowork.bikerecoder.nav.RecordingLog(),
         )
-        val vm = NavigateViewModel(controller, voice, flowOf(true), SavedStateHandle(args), noticeShown)
+        val vm = NavigateViewModel(
+            controller, voice, flowOf(true), SavedStateHandle(args), noticeShown, { noticeShown.value = true },
+        )
         return Setup(vm, tripManager, controller)
     }
 
@@ -131,11 +132,11 @@ class NavigateViewModelTest {
     }
 
     @Test
-    fun missingKoreanTtsIsNoticedOncePerProcess() = runTest(dispatcher) {
+    fun missingKoreanTtsIsNoticedOnceEver() = runTest(dispatcher) {
         val unavailable = object : VoiceOutput by RecordingVoiceOutput() {
             override val available = MutableStateFlow(false)
         }
-        val shown = AtomicBoolean(false)
+        val shown = MutableStateFlow(false) // the persisted settings flag
         val first = setup(voice = unavailable, noticeShown = shown)
         advanceTimeBy(NavigateViewModel.TTS_GRACE_MS + 1)
         runCurrent()
@@ -143,10 +144,24 @@ class NavigateViewModelTest {
         first.vm.ttsNoticeShown()
         assertFalse(first.vm.ttsNotice.value)
 
+        assertTrue(shown.value, "persisted")
+
         val second = setup(voice = unavailable, noticeShown = shown)
         advanceTimeBy(NavigateViewModel.TTS_GRACE_MS + 1)
         runCurrent()
         assertFalse(second.vm.ttsNotice.value)
+    }
+
+    @Test
+    fun aTtsNoticeShownInAnEarlierRunIsNotShownAgain() = runTest(dispatcher) {
+        val unavailable = object : VoiceOutput by RecordingVoiceOutput() {
+            override val available = MutableStateFlow(false)
+        }
+        val s = setup(voice = unavailable, noticeShown = MutableStateFlow(true))
+        advanceTimeBy(NavigateViewModel.TTS_GRACE_MS + 1)
+        runCurrent()
+
+        assertFalse(s.vm.ttsNotice.value)
     }
 
     @Test

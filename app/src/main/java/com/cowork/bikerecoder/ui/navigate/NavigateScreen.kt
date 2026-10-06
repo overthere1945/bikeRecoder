@@ -126,9 +126,13 @@ fun NavigateScreen(viewModel: NavigateViewModel, tileSource: TileSource, onClose
             is NavUiState.Starting -> StartingContent(onCancel = viewModel::close)
             is NavUiState.Failed -> FailedContent(
                 message = state.message,
-                onRetry = {
-                    NavigationService.start(context)
-                    viewModel.begin(state.tripId)
+                onRetry = if (state.canRetry) {
+                    {
+                        NavigationService.start(context)
+                        viewModel.begin(state.tripId)
+                    }
+                } else {
+                    null
                 },
                 onClose = viewModel::close,
             )
@@ -139,7 +143,10 @@ fun NavigateScreen(viewModel: NavigateViewModel, tileSource: TileSource, onClose
                 onEnd = { askEnd = true },
             )
             is NavUiState.Finished ->
-                if (state.reason == FinishReason.STOPPED_TODAY) {
+                if (state.error != null) {
+                    // The trip's new state was not saved: say so instead of reporting success.
+                    FailedContent(message = state.error, onRetry = null, onClose = viewModel::close)
+                } else if (state.reason == FinishReason.STOPPED_TODAY) {
                     // Nothing to confirm: the main screen's banner offers [이어서 안내].
                     LaunchedEffect(state) { viewModel.close() }
                 } else {
@@ -332,10 +339,10 @@ private fun StartingContent(onCancel: () -> Unit) {
 }
 
 @Composable
-private fun FailedContent(message: String, onRetry: () -> Unit, onClose: () -> Unit) {
+private fun FailedContent(message: String, onRetry: (() -> Unit)?, onClose: () -> Unit) {
     CenteredPanel {
         Text(message, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
-        Button(onClick = onRetry) { Text("다시 시도") }
+        if (onRetry != null) Button(onClick = onRetry) { Text("다시 시도") }
         TextButton(onClick = onClose) { Text("닫기") }
     }
 }

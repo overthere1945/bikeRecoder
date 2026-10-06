@@ -8,10 +8,13 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
+import com.cowork.bikerecoder.WarnLog
+import com.cowork.bikerecoder.androidWarnLog
 import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.nav.NavigationController
 import com.cowork.bikerecoder.tts.VoiceOutput
 import com.cowork.bikerecoder.ui.trip.EndAction
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -22,23 +25,22 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
-import java.util.concurrent.atomic.AtomicBoolean
-
-/** The "Korean TTS missing" hint is shown once per process. */
-private val ttsNoticeShownInProcess = AtomicBoolean(false)
 
 /**
  * The guidance screen's view of the app-wide [NavigationController]. The screen itself never owns the
  * session: leaving it (or the UI being destroyed) does not stop guidance.
  *
  * @param savedState carries [ARG_TRIP], the trip to start once the screen is resumed (-1 = none).
+ * @param ttsNoticeShown / [markTtsNoticeShown]: the persisted "Korean TTS missing" hint flag (shown once ever).
  */
 class NavigateViewModel(
     private val controller: NavigationController,
     voice: VoiceOutput,
     keepScreenOn: Flow<Boolean>,
     private val savedState: SavedStateHandle,
-    ttsNoticeShown: AtomicBoolean = ttsNoticeShownInProcess,
+    ttsNoticeShown: Flow<Boolean>,
+    markTtsNoticeShown: suspend () -> Unit,
+    log: WarnLog = androidWarnLog(TAG),
 ) : ViewModel() {
 
     val ui: StateFlow<NavUiState> = controller.ui
@@ -53,7 +55,15 @@ class NavigateViewModel(
         viewModelScope.launch {
             // The engine reports availability only after its asynchronous init; give it a moment.
             val ready = withTimeoutOrNull(TTS_GRACE_MS) { voice.available.first { it } }
-            if (ready == null && ttsNoticeShown.compareAndSet(false, true)) _ttsNotice.value = true
+            if (ready != null || ttsNoticeShown.first()) return@launch
+            try {
+                markTtsNoticeShown()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.warn("Could not save that the TTS notice was shown", e) // Show it anyway.
+            }
+            _ttsNotice.value = true
         }
     }
 
@@ -96,6 +106,7 @@ class NavigateViewModel(
         const val ARG_TRIP = "trip"
         private const val KEY_STARTED = "started"
         const val TTS_GRACE_MS = 5_000L
+        private const val TAG = "NavigateViewModel"
 
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer {
@@ -104,6 +115,8 @@ class NavigateViewModel(
                     voice = container.voice,
                     keepScreenOn = container.settings.settings.map { it.keepScreenOn },
                     savedState = createSavedStateHandle(),
+                    ttsNoticeShown = container.settings.settings.map { it.ttsNoticeShown },
+                    markTtsNoticeShown = { container.settings.update { it.copy(ttsNoticeShown = true) } },
                 )
             }
         }
