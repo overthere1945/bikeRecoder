@@ -63,7 +63,7 @@ class MapLibreOfflineControllerTest {
 
     private fun controller(maxTiles: Long = MapLibreOfflineController.DEFAULT_MAX_TILES) = MapLibreOfflineController(
         context,
-        OpenFreeMapSource(okhttp3.OkHttpClient()),
+        OpenFreeMapSource(okhttp3.OkHttpClient(), cacheFile = null),
         refs,
         SettingsRepository(context),
         object : NetworkWaiter(context) {

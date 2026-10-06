@@ -69,7 +69,8 @@ class AppContainer(context: Context) {
     }
 
     val placeSearch: PlaceSearch = KakaoLocalClient(okHttp, BuildConfig.KAKAO_REST_API_KEY)
-    val tileSource: TileSource = OpenFreeMapSource(okHttp)
+    /** The style survives restarts in filesDir so an offline cold start still shows the corridor maps. */
+    val tileSource: TileSource = OpenFreeMapSource(okHttp, File(appContext.filesDir, "map-style/liberty-ko.json"))
     val tripStore: TripStore = RoomTripStore(db)
     val offlineMaps: MapLibreOfflineController = MapLibreOfflineController(
         appContext, tileSource, db.offlineRegionRefDao(), settings, NetworkWaiter(appContext), clock = System::currentTimeMillis,
