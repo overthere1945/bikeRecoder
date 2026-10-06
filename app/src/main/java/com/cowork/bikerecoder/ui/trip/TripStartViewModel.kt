@@ -57,7 +57,7 @@ fun List<PlannedStop>.toTripStops(): List<TripStop> = mapIndexed { index, stop -
  * [안내 시작] on the plan screen → which trip to guide (spec §5):
  * no active multi-day trip → ask the type ([당일] default / [여러 날]) and start a new trip (completing any
  * active one); an active multi-day trip → ask to continue it ([이어서]: its stops are replaced only if the
- * plan differs from its unvisited stops; it keeps its own profile) or [새로 시작] (→ ask the type).
+ * plan differs from its unvisited stops, and it takes the plan's profile) or [새로 시작] (→ ask the type).
  */
 class TripStartViewModel(
     private val tripManager: TripManager,
@@ -92,6 +92,8 @@ class TripStartViewModel(
         val ask = _state.value as? TripStartState.AskContinue ?: return
         work {
             val tripId = ask.trip.id
+            // The route is computed from the trip's profile: the one chosen on the plan screen wins.
+            tripManager.changeProfile(tripId, p.profile)
             val remaining = tripManager.remainingStops(tripId).map { it.name to it.point }
             if (remaining != p.stops.map { it.name to it.point }) tripManager.changeStops(tripId, p.stops.toTripStops())
             TripStartState.Ready(tripId)

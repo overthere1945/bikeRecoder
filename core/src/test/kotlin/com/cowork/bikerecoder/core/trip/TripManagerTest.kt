@@ -118,6 +118,26 @@ class TripManagerTest {
     }
 
     @Test
+    fun `changing the profile persists it and drops the old corridor maps`() = runTest {
+        val store = FakeTripStore()
+        store.trips[1] = Trip(
+            id = 1, type = TripType.MULTI_DAY, status = TripStatus.ACTIVE, profile = RouteProfile.BALANCED,
+            createdAt = 0L, lastActiveAt = 0L, completedAt = null,
+        )
+        val offline = FakeOfflineMapController()
+        val manager = TripManager(store, offline, clock = { 9_000L })
+
+        manager.changeProfile(1, RouteProfile.BALANCED)
+        assertTrue(offline.deleted.isEmpty(), "same profile: nothing changes")
+
+        manager.changeProfile(1, RouteProfile.SHORTEST)
+
+        assertEquals(RouteProfile.SHORTEST, store.trip(1)?.profile)
+        assertEquals(9_000L, store.trip(1)?.lastActiveAt)
+        assertEquals(listOf(1L), offline.deleted)
+    }
+
+    @Test
     fun `starting new trip completes previous`() = runTest {
         val store = FakeTripStore()
         store.trips[1] = Trip(

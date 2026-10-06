@@ -116,7 +116,7 @@ class TripStartViewModelTest {
         val idsBefore = store.stops(old).map { it.id }
         val vm = viewModel()
 
-        vm.onStartPressed(plan)
+        vm.onStartPressed(plan.copy(profile = RouteProfile.SHORTEST))
         runCurrent()
         vm.continueTrip()
         runCurrent()
@@ -132,7 +132,7 @@ class TripStartViewModelTest {
         val c = PlannedStop(3, "잠실", GeoPoint(37.51, 127.10))
         val vm = viewModel()
 
-        vm.onStartPressed(StartPlan(RouteProfile.BALANCED, listOf(a, c)))
+        vm.onStartPressed(StartPlan(RouteProfile.SHORTEST, listOf(a, c)))
         runCurrent()
         vm.continueTrip()
         runCurrent()
@@ -144,13 +144,27 @@ class TripStartViewModelTest {
     }
 
     @Test
+    fun continueUsesTheProfileChosenOnThePlanScreen() = runTest(dispatcher) {
+        val old = existingTrip(TripType.MULTI_DAY) // SHORTEST
+        val vm = viewModel()
+
+        vm.onStartPressed(plan) // BALANCED, same stops
+        runCurrent()
+        vm.continueTrip()
+        runCurrent()
+
+        assertEquals(TripStartState.Ready(old), vm.state.value)
+        assertEquals(RouteProfile.BALANCED, store.trips.getValue(old).profile)
+    }
+
+    @Test
     fun continueComparesAgainstTheUnvisitedStopsOnly() = runTest(dispatcher) {
         val old = existingTrip(TripType.MULTI_DAY)
         store.markVisited(store.stops(old).first().id, 500L)
         val vm = viewModel()
 
         // The plan from the main banner holds only what is left: unchanged.
-        vm.onStartPressed(StartPlan(RouteProfile.BALANCED, listOf(b)))
+        vm.onStartPressed(StartPlan(RouteProfile.SHORTEST, listOf(b)))
         runCurrent()
         vm.continueTrip()
         runCurrent()

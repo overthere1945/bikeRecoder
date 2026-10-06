@@ -58,6 +58,14 @@ class TripManager(
         touch(tripId)
     }
 
+    /** 경로 선호를 바꾼다(이어서 진행할 때 계획 화면에서 고른 값). 바뀌면 경로도 바뀌므로 기존 오프라인 지도를 지운다. */
+    suspend fun changeProfile(tripId: Long, profile: RouteProfile) {
+        val trip = requireTrip(tripId)
+        if (trip.profile == profile) return
+        store.updateTrip(trip.copy(profile = profile, lastActiveAt = clock()))
+        offline.deleteForTrip(tripId)
+    }
+
     suspend fun markVisited(stopId: Long) {
         store.markVisited(stopId, clock())
     }
