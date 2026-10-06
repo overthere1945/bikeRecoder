@@ -69,6 +69,7 @@ android {
 
 dependencies {
     implementation(project(":core"))
+    implementation(project(":routing-brouter"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.ktx)
