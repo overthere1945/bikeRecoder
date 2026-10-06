@@ -8,7 +8,9 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.cowork.bikerecoder.MainActivity
 import com.cowork.bikerecoder.R
@@ -93,11 +95,20 @@ object NavNotifications {
         )
     }
 
+    /**
+     * Whether a notification may be posted: the app's notifications must be enabled, and from Android 13
+     * (API 33) the POST_NOTIFICATIONS runtime permission must be granted too (it does not exist before).
+     */
+    fun canPost(sdkInt: Int, notificationsEnabled: Boolean, postPermissionGranted: Boolean): Boolean =
+        notificationsEnabled && (sdkInt < Build.VERSION_CODES.TIRAMISU || postPermissionGranted)
+
     /** Without POST_NOTIFICATIONS (skippable in onboarding) the notification is simply not shown. */
     private fun notify(context: Context, id: Int, notification: Notification) {
-        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+        val manager = NotificationManagerCompat.from(context)
+        val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
-        if (!granted) return
+        if (!canPost(Build.VERSION.SDK_INT, manager.areNotificationsEnabled(), granted)) return
         context.getSystemService(NotificationManager::class.java).notify(id, notification)
     }
 }

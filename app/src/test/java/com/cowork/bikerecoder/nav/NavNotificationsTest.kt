@@ -6,6 +6,8 @@ import com.cowork.bikerecoder.core.navigation.Progress
 import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.routing.BRouterGeoJsonParser
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class NavNotificationsTest {
@@ -38,5 +40,20 @@ class NavNotificationsTest {
     @Test
     fun startingShowsRouteComputation() {
         assertEquals("경로를 계산하는 중…", NavNotifications.contentText(NavUiState.Starting(1)))
+    }
+
+    @Test
+    fun beforeAndroid13OnlyTheAppNotificationSwitchCounts() {
+        // API 30–32 have no POST_NOTIFICATIONS runtime permission: checkSelfPermission reports it denied.
+        assertTrue(NavNotifications.canPost(sdkInt = 30, notificationsEnabled = true, postPermissionGranted = false))
+        assertTrue(NavNotifications.canPost(sdkInt = 32, notificationsEnabled = true, postPermissionGranted = false))
+        assertFalse(NavNotifications.canPost(sdkInt = 32, notificationsEnabled = false, postPermissionGranted = false))
+    }
+
+    @Test
+    fun fromAndroid13ThePermissionIsAlsoRequired() {
+        assertTrue(NavNotifications.canPost(sdkInt = 33, notificationsEnabled = true, postPermissionGranted = true))
+        assertFalse(NavNotifications.canPost(sdkInt = 33, notificationsEnabled = true, postPermissionGranted = false))
+        assertFalse(NavNotifications.canPost(sdkInt = 36, notificationsEnabled = false, postPermissionGranted = true))
     }
 }
