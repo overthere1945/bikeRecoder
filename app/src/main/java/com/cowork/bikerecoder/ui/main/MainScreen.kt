@@ -52,6 +52,7 @@ fun MainScreen(
     onOpenSearch: () -> Unit,
     onOpenSettings: () -> Unit,
     onResumeTrip: (tripId: Long) -> Unit,
+    onShowGuidance: () -> Unit,
     onSetDestination: (name: String, point: GeoPoint) -> Unit,
     onAddWaypoint: (name: String, point: GeoPoint) -> Unit,
 ) {
@@ -106,18 +107,15 @@ fun MainScreen(
                     IconButton(onClick = onOpenSettings) { GlyphIcon("⚙", "설정") }
                 }
             }
-            state.banner?.let { banner ->
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
-                    ) {
-                        Text(
-                            "🚩 ${banner.destinationName} · 여러 날 ${banner.dayNumber}일차",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f),
-                        )
-                        TextButton(onClick = { onResumeTrip(banner.tripId) }) { Text("이어서 안내") }
+            if (state.guiding) {
+                BannerCard(text = "안내 중", action = "보기", onAction = onShowGuidance)
+            }
+            state.visibleBanner?.let { banner ->
+                BannerCard(text = banner.text, action = banner.action.label) {
+                    when (banner.action) {
+                        BannerAction.RESUME -> onResumeTrip(banner.tripId)
+                        // The chosen place goes into the plan; [안내 시작] → [이어서] adds it to this trip.
+                        BannerAction.NEXT_DESTINATION -> onOpenSearch()
                     }
                 }
             }
@@ -156,5 +154,18 @@ fun MainScreen(
             },
             onDismiss = viewModel::dismissPressed,
         )
+    }
+}
+
+@Composable
+private fun BannerCard(text: String, action: String, onAction: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+        ) {
+            Text(text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            TextButton(onClick = onAction) { Text(action) }
+        }
     }
 }

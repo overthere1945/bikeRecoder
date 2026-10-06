@@ -15,6 +15,7 @@ import com.cowork.bikerecoder.location.FusedLocationSource
 import com.cowork.bikerecoder.location.LocationSource
 import com.cowork.bikerecoder.map.OpenFreeMapSource
 import com.cowork.bikerecoder.map.TileSource
+import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.nav.NavigationController
 import com.cowork.bikerecoder.offline.MapLibreOfflineController
 import com.cowork.bikerecoder.offline.NetworkWaiter
@@ -30,12 +31,17 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -125,8 +131,19 @@ class AppContainer(context: Context) {
             CoroutineExceptionHandler { _, e -> Log.e(TAG, "Unhandled error in navigation", e) },
     )
 
+    private val navigationCreated = MutableStateFlow<NavigationController?>(null)
+
     /** Created on first use (it binds the TTS engine). */
-    val navigation: NavigationController by lazy { NavigationController(this, navigationScope) }
+    val navigation: NavigationController by lazy {
+        NavigationController(this, navigationScope).also { navigationCreated.value = it }
+    }
+
+    /** The guidance state without creating [navigation] (Idle until it exists). */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val navigationUi: Flow<NavUiState> = navigationCreated.flatMapLatest { it?.ui ?: flowOf(NavUiState.Idle) }
+
+    /** The current guidance state, without creating [navigation]. */
+    val navigationState: NavUiState get() = navigationCreated.value?.ui?.value ?: NavUiState.Idle
 
     private companion object {
         const val TAG = "AppContainer"

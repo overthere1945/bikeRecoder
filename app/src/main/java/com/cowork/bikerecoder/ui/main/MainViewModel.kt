@@ -10,19 +10,34 @@ import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.trip.TripManager
 import com.cowork.bikerecoder.core.trip.TripStore
 import com.cowork.bikerecoder.core.trip.TripType
+import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.search.PlaceSearch
 import com.cowork.bikerecoder.search.SearchResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.Locale
 
+/** The trip banner's button. */
+enum class BannerAction(val label: String) {
+    /** Guide the trip's remaining stops. */
+    RESUME("이어서 안내"),
+
+    /** Nothing left to guide (e.g. converted after arriving): pick the next destination for the same trip (R21). */
+    NEXT_DESTINATION("다음 목적지 정하기"),
+}
+
 /** "🚩 {destinationName} · 여러 날 {dayNumber}일차" banner for the active multi-day trip. */
-data class TripBanner(val tripId: Long, val destinationName: String, val dayNumber: Int)
+data class TripBanner(val tripId: Long, val destinationName: String, val dayNumber: Int, val action: BannerAction) {
+    val text: String get() = "🚩 $destinationName · 여러 날 ${dayNumber}일차"
+}
 
 /** A trip left idle for 3+ days, asked about once when the main screen first opens. */
 data class StaleTrip(val tripId: Long, val destinationName: String)
@@ -37,12 +52,18 @@ data class MainUiState(
     val banner: TripBanner? = null,
     val staleTrip: StaleTrip? = null,
     val pressed: PressedPlace? = null,
-)
+    /** Guidance is starting or running (any trip type): the "안내 중 [보기]" banner is shown. */
+    val guiding: Boolean = false,
+) {
+    /** The trip banner gives way to the guidance banner while guiding. */
+    val visibleBanner: TripBanner? get() = banner.takeUnless { guiding }
+}
 
 class MainViewModel(
     private val tripManager: TripManager,
     private val tripStore: TripStore,
     private val placeSearch: PlaceSearch,
+    guidance: Flow<NavUiState>,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(MainUiState())
@@ -56,6 +77,17 @@ class MainViewModel(
             _state.update { it.copy(staleTrip = stale?.let { t -> StaleTrip(t.id, destinationName(t.id)) }) }
         }
         refreshBanner()
+        viewModelScope.launch {
+            guidance
+                .map { it is NavUiState.Starting || it is NavUiState.Active }
+                .distinctUntilChanged()
+                .collect { guiding ->
+                    val wasGuiding = _state.value.guiding
+                    _state.update { it.copy(guiding = guiding) }
+                    // Guidance ended (arrived, stopped for today, ...): the trip may have changed.
+                    if (wasGuiding && !guiding) refreshBanner()
+                }
+        }
     }
 
     /** Re-reads the active multi-day trip (e.g. after returning from navigation or completing a trip). */
@@ -63,7 +95,13 @@ class MainViewModel(
         viewModelScope.launch {
             val banner = runCatchingNonCancel {
                 tripStore.activeTrip()?.takeIf { it.type == TripType.MULTI_DAY }?.let { trip ->
-                    TripBanner(trip.id, destinationName(trip.id), tripManager.dayNumber(trip))
+                    // Never offer [이어서 안내] for a trip with nothing left to guide.
+                    val action = if (tripManager.remainingStops(trip.id).isEmpty()) {
+                        BannerAction.NEXT_DESTINATION
+                    } else {
+                        BannerAction.RESUME
+                    }
+                    TripBanner(trip.id, destinationName(trip.id), tripManager.dayNumber(trip), action)
                 }
             }
             _state.update { it.copy(banner = banner) }
@@ -120,7 +158,9 @@ class MainViewModel(
 
     companion object {
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
-            initializer { MainViewModel(container.tripManager, container.tripStore, container.placeSearch) }
+            initializer {
+                MainViewModel(container.tripManager, container.tripStore, container.placeSearch, container.navigationUi)
+            }
         }
     }
 }

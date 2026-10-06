@@ -9,7 +9,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -69,6 +72,17 @@ sealed interface LaunchRequest {
     data object ShowNavigation : LaunchRequest
 }
 
+/**
+ * The routes the app opens with on a fresh start: onboarding until it is done; otherwise main, with the
+ * guidance screen on top while guidance is starting or running (e.g. the activity was closed during a
+ * single-day trip, which has no main-screen banner leading back).
+ */
+fun initialRoutes(onboardingDone: Boolean, guidance: NavUiState): List<String> = when {
+    !onboardingDone -> listOf(Routes.ONBOARDING)
+    guidance is NavUiState.Starting || guidance is NavUiState.Active -> listOf(Routes.MAIN, Routes.navigate())
+    else -> listOf(Routes.MAIN)
+}
+
 @Composable
 fun BikeNavHost(
     container: AppContainer,
@@ -90,9 +104,17 @@ fun BikeNavHost(
         Surface(modifier = Modifier.fillMaxSize()) {}
         return
     }
-    val startDestination = remember {
+    val initial = remember {
         val state = readPermissionState(context, container.segments)
-        if (effectiveOnboardingStep(state, skippedSteps) == OnboardingStep.DONE) Routes.MAIN else Routes.ONBOARDING
+        initialRoutes(effectiveOnboardingStep(state, skippedSteps) == OnboardingStep.DONE, container.navigationState)
+    }
+    val startDestination = initial.first()
+    // Once per fresh start (a recreated activity restores its own back stack).
+    var initialOpened by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (initialOpened) return@LaunchedEffect
+        initialOpened = true
+        initial.drop(1).forEach { navController.openNavigate(it) }
     }
 
     val setDestinationAndOpenPlan: (String, GeoPoint) -> Unit = { name, point ->
@@ -136,6 +158,7 @@ fun BikeNavHost(
                 onOpenSearch = { navController.navigate(Routes.SEARCH) },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                 onResumeTrip = { tripId -> navController.openNavigate(Routes.navigate(tripId)) },
+                onShowGuidance = { navController.openNavigate(Routes.navigate()) },
                 onSetDestination = setDestinationAndOpenPlan,
                 onAddWaypoint = addWaypointAndOpenPlan,
             )
