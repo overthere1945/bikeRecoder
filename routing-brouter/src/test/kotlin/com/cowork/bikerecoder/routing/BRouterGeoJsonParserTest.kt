@@ -78,6 +78,20 @@ class BRouterGeoJsonParserTest {
     }
 
     @Test
+    fun `roundabout exit number is positive for both directions`() {
+        fun exit(cmd: Int, exit: Int) = BRouterGeoJsonParser.parse(
+            fixture.replace("[2,13,2,50.0,0]", "[2,$cmd,$exit,50.0,0]"),
+            RouteProfile.BALANCED,
+            listOf(last),
+        ).instructions[1]
+
+        assertEquals(2, exit(13, 2).roundaboutExit)
+        val left = exit(14, -2)
+        assertEquals(TurnType.ROUNDABOUT, left.type)
+        assertEquals(2, left.roundaboutExit)
+    }
+
+    @Test
     fun `route without voicehints or ascent still parses`() {
         val json = """
             {"type":"FeatureCollection","features":[{"type":"Feature","properties":{

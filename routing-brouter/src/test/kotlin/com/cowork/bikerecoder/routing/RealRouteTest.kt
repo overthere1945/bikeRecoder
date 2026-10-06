@@ -9,9 +9,14 @@ import java.io.File
 import java.nio.file.Files
 import kotlin.system.measureTimeMillis
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
@@ -128,5 +133,34 @@ class RealRouteTest {
         }
         val failure = assertIs<RouteResult.Failure>(result, result.toString())
         assertEquals(RouteFailure.NO_SEGMENT_DATA, failure.reason, failure.detail)
+    }
+
+    @Test
+    fun `time limit returns TIMEOUT`() {
+        val tiny = BRouterRouter(segDir, profileDir, maxRunningTimeMs = 1)
+        val result = runBlocking {
+            tiny.route(RouteRequest(GeoPoint(37.5663, 126.9779), null, listOf(GeoPoint(37.2982, 127.6372)), RouteProfile.BALANCED))
+        }
+        println("tiny time limit -> $result")
+        val failure = assertIs<RouteResult.Failure>(result, result.toString())
+        assertEquals(RouteFailure.TIMEOUT, failure.reason, failure.detail)
+    }
+
+    @Test
+    fun `cancelling the caller surfaces CancellationException and frees the router quickly`() {
+        val request = RouteRequest(GeoPoint(37.5663, 126.9779), null, listOf(GeoPoint(37.2982, 127.6372)), RouteProfile.BALANCED)
+        runBlocking {
+            val call = async(Dispatchers.IO) { router.route(request) }
+            delay(500)
+            assertTrue(call.isActive, "route finished before it could be cancelled")
+            call.cancel()
+            val ms = measureTimeMillis { call.join() }
+            println("cancel took $ms ms")
+            assertTrue(call.isCancelled)
+            assertFailsWith<CancellationException> { call.await() }
+            assertTrue(ms < 1_000, "engine kept running after cancellation: $ms ms")
+            // the mutex was released: a normal route still works
+            assertIs<RouteResult.Success>(router.route(RouteRequest(yeouido, null, listOf(banpo), RouteProfile.BALANCED)))
+        }
     }
 }

@@ -10,9 +10,14 @@ import com.cowork.bikerecoder.core.routing.RouteRequest
 import com.cowork.bikerecoder.core.routing.RouteResult
 import com.cowork.bikerecoder.core.routing.Router
 import java.io.File
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -36,17 +41,35 @@ class BRouterRouter(
     internal suspend fun routeRaw(request: RouteRequest): Pair<RouteResult, String?> =
         mutex.withLock {
             withContext(dispatcher) {
+                val scopeJob = coroutineContext.job
+                val engineRef = AtomicReference<RoutingEngine?>()
+                // The engine is blocking and ignores coroutine cancellation, so on cancellation
+                // terminate it; otherwise the mutex stays held until the time limit. Unconfined
+                // so the handler can run even while every dispatcher thread is busy routing.
+                val watcher = launch(Dispatchers.Unconfined) {
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        if (scopeJob.isCancelled) engineRef.get()?.terminate()
+                    }
+                }
                 try {
-                    compute(request)
+                    compute(request, engineRef) { scopeJob.isActive }
                 } catch (e: CancellationException) {
                     throw e
-                } catch (e: Throwable) {
+                } catch (e: Exception) {
                     Pair(RouteResult.Failure(RouteFailure.OTHER, e.message ?: e.toString()), null)
+                } finally {
+                    watcher.cancel()
                 }
             }
         }
 
-    private fun compute(request: RouteRequest): Pair<RouteResult, String?> {
+    private fun compute(
+        request: RouteRequest,
+        engineRef: AtomicReference<RoutingEngine?>,
+        isActive: () -> Boolean,
+    ): Pair<RouteResult, String?> {
         val waypoints = buildList {
             add(node(request.start, "from"))
             request.stops.forEachIndexed { i, stop ->
@@ -68,12 +91,17 @@ class BRouterRouter(
 
         val engine = RoutingEngine(null, null, segmentDir, waypoints, rc)
         engine.quite = true
+        engineRef.set(engine)
+        // Cancelled before the engine was published: the watcher could not terminate it.
+        if (!isActive()) throw CancellationException("route cancelled")
         engine.doRun(maxRunningTimeMs)
 
         engine.errorMessage?.let { message ->
             val reason = when {
                 "datafile" in message -> RouteFailure.NO_SEGMENT_DATA
-                "operation killed" in message -> RouteFailure.TIMEOUT
+                // BRouter's own limit reports "<op> timeout after N seconds"; a terminate()
+                // reports "operation killed by thread-priority-watchdog".
+                "operation killed" in message || "timeout after" in message -> RouteFailure.TIMEOUT
                 else -> RouteFailure.NO_ROUTE
             }
             return Pair(RouteResult.Failure(reason, message), null)

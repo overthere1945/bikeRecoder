@@ -7,6 +7,7 @@ import com.cowork.bikerecoder.core.model.Route
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.model.RouteSummary
 import com.cowork.bikerecoder.core.model.TurnType
+import kotlin.math.abs
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -61,7 +62,8 @@ object BRouterGeoJsonParser {
             Instruction(
                 pointIndex = index,
                 type = type,
-                roundaboutExit = if (type == TurnType.ROUNDABOUT) hint[2].jsonPrimitive.content.toInt() else 0,
+                // Left-hand roundabouts (cmd 14) report a negative exit number; the app wants the count.
+                roundaboutExit = if (type == TurnType.ROUNDABOUT) abs(hint[2].jsonPrimitive.content.toInt()) else 0,
                 distanceFromStartM = cumulativeM[index],
             )
         }
