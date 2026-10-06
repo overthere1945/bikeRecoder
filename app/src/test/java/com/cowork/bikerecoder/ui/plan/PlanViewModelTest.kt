@@ -222,6 +222,50 @@ class PlanViewModelTest {
     }
 
     @Test
+    fun `resuming after the segments were downloaded recomputes the failed route`() = runTest {
+        segmentsReady = false
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+        assertFalse(vm.state.value.canStart)
+
+        segmentsReady = true // downloaded in Settings
+        vm.onResume()
+        settle()
+
+        assertInstanceOf(RouteUiState.Ready::class.java, vm.state.value.route)
+        assertTrue(vm.state.value.canStart)
+        assertEquals(1, router.requests.size)
+    }
+
+    @Test
+    fun `resuming with a ready route and the segments still there does not recompute`() = runTest {
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+
+        vm.onResume()
+        settle()
+
+        assertEquals(1, router.requests.size)
+        assertTrue(vm.state.value.canStart)
+    }
+
+    @Test
+    fun `resuming after the segments were deleted disables start`() = runTest {
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+
+        segmentsReady = false
+        vm.onResume()
+        settle()
+
+        assertFalse(vm.state.value.canStart)
+        assertEquals(RouteUiState.Error("경로 데이터가 없습니다. 설정에서 내려받으세요"), vm.state.value.route)
+    }
+
+    @Test
     fun `ready route with segments gone is not startable after the next recompute`() = runTest {
         val vm = viewModel()
         vm.setDestination("A", a)

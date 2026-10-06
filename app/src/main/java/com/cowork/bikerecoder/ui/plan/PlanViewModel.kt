@@ -104,6 +104,22 @@ class PlanViewModel(
         edit { it.withInputs(profile = p) }
     }
 
+    /**
+     * The plan screen is visible again (e.g. back from Settings): a failed route is recomputed (the route data
+     * may have been downloaded meanwhile), and a ready one only if the route data is gone. A ready route is
+     * not recomputed otherwise, so it does not flicker on every resume.
+     */
+    fun onResume() {
+        val s = _state.value
+        if (s.stops.isEmpty()) return
+        val stale = when (s.route) {
+            is RouteUiState.Error -> true
+            is RouteUiState.Ready -> !segmentsReady()
+            else -> false
+        }
+        if (stale) changes.update { it + 1 }
+    }
+
     /** Empties the plan and goes back to the settings' default profile (call when navigation starts). */
     fun clear() {
         profileChosen = false
