@@ -94,6 +94,7 @@ private val etaFormat = DateTimeFormatter.ofPattern("a h:mm", Locale.KOREAN)
 fun NavigateScreen(viewModel: NavigateViewModel, tileSource: TileSource, onClose: () -> Unit) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
+    val offlineProgress by viewModel.offlineProgress.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     var askEnd by rememberSaveable { mutableStateOf(false) }
@@ -139,6 +140,8 @@ fun NavigateScreen(viewModel: NavigateViewModel, tileSource: TileSource, onClose
             is NavUiState.Active -> ActiveContent(
                 state = state,
                 tileSource = tileSource,
+                mapDownloadPercent = offlineProgress
+                    ?.takeIf { it.tripId == state.tripId && it.error == null }?.percent,
                 onMute = viewModel::setMuted,
                 onEnd = { askEnd = true },
             )
@@ -185,6 +188,7 @@ private fun KeepScreenOn(enabled: Boolean) {
 private fun ActiveContent(
     state: NavUiState.Active,
     tileSource: TileSource,
+    mapDownloadPercent: Int?,
     onMute: (Boolean) -> Unit,
     onEnd: () -> Unit,
 ) {
@@ -210,6 +214,7 @@ private fun ActiveContent(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             TurnCard(nav)
+            if (mapDownloadPercent != null) MapDownloadIndicator(mapDownloadPercent)
             if (nav.gpsWeak) Banner("GPS 신호 약함")
             if (nav.rerouting) Banner("경로를 다시 탐색하는 중…")
         }
@@ -282,6 +287,22 @@ private fun turnIcon(type: TurnType): ImageVector = when (type) {
     TurnType.KEEP_RIGHT -> Icons.Filled.ForkRight
     TurnType.U_TURN -> Icons.Filled.UTurnLeft
     TurnType.ROUNDABOUT -> Icons.Filled.RoundaboutRight
+}
+
+/** Small, unobtrusive "map is being saved for offline use" chip; hidden when nothing is downloading. */
+@Composable
+private fun MapDownloadIndicator(percent: Int) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    ) {
+        Text(
+            "지도 저장 중 ${percent}%",
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+        )
+    }
 }
 
 @Composable

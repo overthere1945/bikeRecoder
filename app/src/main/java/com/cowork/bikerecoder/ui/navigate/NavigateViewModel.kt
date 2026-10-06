@@ -12,6 +12,7 @@ import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
 import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.nav.NavigationController
+import com.cowork.bikerecoder.offline.OfflineProgress
 import com.cowork.bikerecoder.tts.VoiceOutput
 import com.cowork.bikerecoder.ui.trip.EndAction
 import kotlinx.coroutines.CancellationException
@@ -40,6 +41,8 @@ class NavigateViewModel(
     private val savedState: SavedStateHandle,
     ttsNoticeShown: Flow<Boolean>,
     markTtsNoticeShown: suspend () -> Unit,
+    /** The corridor map download of the running trip (null = nothing to show). */
+    val offlineProgress: StateFlow<OfflineProgress?> = MutableStateFlow(null),
     log: WarnLog = androidWarnLog(TAG),
 ) : ViewModel() {
 
@@ -117,6 +120,7 @@ class NavigateViewModel(
                     savedState = createSavedStateHandle(),
                     ttsNoticeShown = container.settings.settings.map { it.ttsNoticeShown },
                     markTtsNoticeShown = { container.settings.update { it.copy(ttsNoticeShown = true) } },
+                    offlineProgress = container.offlineMaps.progress,
                 )
             }
         }

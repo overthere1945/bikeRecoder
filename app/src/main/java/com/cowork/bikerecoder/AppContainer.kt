@@ -14,7 +14,8 @@ import com.cowork.bikerecoder.location.LocationSource
 import com.cowork.bikerecoder.map.OpenFreeMapSource
 import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.nav.NavigationController
-import com.cowork.bikerecoder.offline.NoopOfflineMapController
+import com.cowork.bikerecoder.offline.MapLibreOfflineController
+import com.cowork.bikerecoder.offline.NetworkWaiter
 import com.cowork.bikerecoder.offline.SegmentRepository
 import com.cowork.bikerecoder.routing.BRouterRouter
 import com.cowork.bikerecoder.routing.ProfileInstaller
@@ -23,6 +24,7 @@ import com.cowork.bikerecoder.search.PlaceSearch
 import com.cowork.bikerecoder.tts.AndroidTtsVoiceOutput
 import com.cowork.bikerecoder.tts.VoiceOutput
 import com.cowork.bikerecoder.core.model.LocationFix
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,6 +36,7 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.io.File
 
@@ -65,7 +68,10 @@ class AppContainer(context: Context) {
     val placeSearch: PlaceSearch = KakaoLocalClient(okHttp, BuildConfig.KAKAO_REST_API_KEY)
     val tileSource: TileSource = OpenFreeMapSource(okHttp)
     val tripStore: TripStore = RoomTripStore(db)
-    val offline: OfflineMapController = NoopOfflineMapController()
+    val offlineMaps: MapLibreOfflineController = MapLibreOfflineController(
+        appContext, tileSource, db.offlineRegionRefDao(), settings, NetworkWaiter(appContext), clock = System::currentTimeMillis,
+    )
+    val offline: OfflineMapController = offlineMaps
     val tripManager: TripManager = TripManager(tripStore, offline, clock = System::currentTimeMillis)
 
     /** Created on first use so the TTS engine is not bound at app start. */
@@ -78,6 +84,19 @@ class AppContainer(context: Context) {
         SupervisorJob() + Dispatchers.Default +
             CoroutineExceptionHandler { _, e -> Log.e(TAG, "Unhandled error in app scope", e) },
     )
+
+    init {
+        // Off the critical path: the 100 MB general tile cache limit only needs to be set once per process.
+        appScope.launch {
+            try {
+                offlineMaps.configureAmbientCache()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not set the map cache size", e)
+            }
+        }
+    }
 
     /**
      * Latest fix, shared by every screen that needs "where am I". The location source only runs while
