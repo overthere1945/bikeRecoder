@@ -24,6 +24,9 @@ data class SegmentInfo(
     val sizeBytes: Long?,
 )
 
+/** Result of [SegmentRepository.checkUpdate]. */
+enum class UpdateCheck { NEWER, SAME, UNKNOWN }
+
 /** Manages the BRouter `.rd5` routing data files in [dir]. Pure JVM; no Android APIs. */
 class SegmentRepository(
     private val dir: File,
@@ -110,20 +113,24 @@ class SegmentRepository(
             }
         }
 
-    suspend fun hasUpdate(name: String): Boolean = withContext(Dispatchers.IO) {
+    /** True when [name] is missing locally or the server has a newer one; false when the check failed. */
+    suspend fun hasUpdate(name: String): Boolean = checkUpdate(name) == UpdateCheck.NEWER
+
+    /** Asks the server about [name]; [UpdateCheck.UNKNOWN] when it could not be answered (offline, HTTP error, no date). */
+    suspend fun checkUpdate(name: String): UpdateCheck = withContext(Dispatchers.IO) {
         val local = file(name)
-        if (!local.isFile) return@withContext true
+        if (!local.isFile) return@withContext UpdateCheck.NEWER
         try {
             val request = Request.Builder().url(baseUrl.resolve("$name.rd5")!!).head().build()
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@use false
-                val remote = response.headers.getDate("Last-Modified") ?: return@use false
-                remote.time / 1000 > local.lastModified() / 1000
+                if (!response.isSuccessful) return@use UpdateCheck.UNKNOWN
+                val remote = response.headers.getDate("Last-Modified") ?: return@use UpdateCheck.UNKNOWN
+                if (remote.time / 1000 > local.lastModified() / 1000) UpdateCheck.NEWER else UpdateCheck.SAME
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            false
+            UpdateCheck.UNKNOWN
         }
     }
 

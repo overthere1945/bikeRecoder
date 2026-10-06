@@ -225,6 +225,29 @@ class MapLibreOfflineControllerTest {
         assertEquals(0L, c.totalBytes())
     }
 
+    @Test
+    fun deleteAllCancelsARunningDownloadAndLeavesNothing() = runBlocking {
+        val foreign = allRegions().filter { OfflineRegionMeta.decode(it.metadata)?.let { m -> m.tripId != TRIP } == true }
+        Assume.assumeTrue("device has trip maps of its own; not deleting them", foreign.isEmpty())
+        val c = controller()
+
+        c.downloadForTrip(TRIP, shortRoute(), 0.0)
+        // In flight: the corridor region exists (its ref is stored at creation) and progress is shown.
+        withTimeout(60_000) {
+            while (refs.forTrip(TRIP).isEmpty() || c.progress.value == null) kotlinx.coroutines.delay(10)
+        }
+
+        withTimeout(60_000) { c.deleteAll() }
+
+        // deleteAll joined the cancelled job: nothing is running and nothing is left behind.
+        withTimeout(5_000) { c.awaitDownloads() }
+        assertNull(c.progress.value)
+        assertTrue(ourRegions().isEmpty())
+        assertTrue(refs.all().isEmpty())
+        kotlinx.coroutines.delay(1_000)
+        assertTrue("no region is created after the cancel", ourRegions().isEmpty())
+    }
+
     private companion object {
         /** No real trip has such an id, so this test never touches the user's own offline regions. */
         const val TRIP = 987_654_321L

@@ -290,7 +290,12 @@ private fun SegmentRow(
         when (status) {
             SegmentStatus.Checking -> Text("확인 중…", style = MaterialTheme.typography.bodyMedium)
             SegmentStatus.UpdateAvailable -> Text("새 버전이 있습니다", style = MaterialTheme.typography.bodyMedium)
-            SegmentStatus.UpToDate -> Text("새 업데이트가 없습니다", style = MaterialTheme.typography.bodyMedium)
+            SegmentStatus.UpToDate -> Text("최신 버전입니다", style = MaterialTheme.typography.bodyMedium)
+            SegmentStatus.CheckFailed -> Text(
+                "업데이트를 확인하지 못했습니다. 인터넷 연결을 확인해 주세요.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
             is SegmentStatus.Downloading -> Text(
                 if (status.totalBytes > 0) "받는 중 ${formatBytes(status.readBytes)} / ${formatBytes(status.totalBytes)}"
                 else "받는 중 ${formatBytes(status.readBytes)}",
@@ -305,7 +310,11 @@ private fun SegmentRow(
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (info.installed) {
-                if (status == SegmentStatus.UpdateAvailable) {
+                // An installed file is only downloaded again through [업데이트], so a running or failed download
+                // keeps that action (to retry) instead of falling back to [업데이트 확인].
+                val updating = status == SegmentStatus.UpdateAvailable || status is SegmentStatus.Downloading ||
+                    status == SegmentStatus.Failed
+                if (updating) {
                     OutlinedButton(onClick = onDownload, enabled = !busy, modifier = Modifier.testTag(SettingsTags.segmentDownload(info.name))) {
                         Text("업데이트")
                     }

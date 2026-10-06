@@ -96,7 +96,19 @@ class MapLibreOfflineController(
         _progress.compareAndSetIf(tripId) { null }
     }
 
-    override suspend fun totalBytes(): Long = ownRegions().sumOf { status(it)?.completedResourceSize ?: 0L }
+    /**
+     * Deliberately not under [mutex] (a running download holds it for its whole duration and the settings screen
+     * must not wait for that). A region deleted while we ask for its size counts as 0 instead of failing the sum.
+     */
+    override suspend fun totalBytes(): Long = ownRegions().sumOf { region ->
+        try {
+            status(region)?.completedResourceSize ?: 0L
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            0L
+        }
+    }
 
     override suspend fun deleteAll() {
         val running = synchronized(lock) { inFlight.values.toList().also { inFlight.clear() } }

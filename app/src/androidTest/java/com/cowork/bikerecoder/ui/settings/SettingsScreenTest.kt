@@ -16,6 +16,7 @@ import com.cowork.bikerecoder.data.AppSettings
 import com.cowork.bikerecoder.offline.OfflineMapStorage
 import com.cowork.bikerecoder.offline.SegmentRepository
 import kotlinx.coroutines.flow.MutableStateFlow
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -51,8 +52,8 @@ class SettingsScreenTest {
         val viewModel = SettingsViewModel(
             settings = settings,
             updateSettings = { transform -> settings.value = transform(settings.value) },
-            // Unreachable base URL: the tests never tap a button that talks to the server.
-            segments = SegmentRepository(segmentDir, OkHttpClient()),
+            // A dead address, so nothing a test taps can reach the real server.
+            segments = SegmentRepository(segmentDir, OkHttpClient(), "http://127.0.0.1:1/".toHttpUrl()),
             mapStorage = storage,
         )
         composeRule.setContent { MaterialTheme { SettingsScreen(viewModel = viewModel, onBack = {}) } }

@@ -160,6 +160,29 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `update check that cannot reach the server is a failure, not up to date`() {
+        File(dir, "E125_N35.rd5").writeBytes(ByteArray(10))
+        server.enqueue(MockResponse.Builder().code(500).build())
+
+        viewModel.checkUpdate("E125_N35")
+
+        awaitState { it.statusOf("E125_N35") == SegmentStatus.CheckFailed }
+    }
+
+    @Test
+    fun `update check with the same remote date is up to date`() {
+        File(dir, "E125_N35.rd5").apply { writeBytes(ByteArray(10)); setLastModified(1_700_000_000_000L) }
+        server.enqueue(
+            MockResponse.Builder().addHeader("Last-Modified", java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME
+                .format(java.time.ZonedDateTime.ofInstant(Date(1_700_000_000_000L).toInstant(), java.time.ZoneOffset.UTC))).build(),
+        )
+
+        viewModel.checkUpdate("E125_N35")
+
+        awaitState { it.statusOf("E125_N35") == SegmentStatus.UpToDate }
+    }
+
+    @Test
     fun `delete removes the file`() {
         File(dir, "E125_N30.rd5").writeBytes(ByteArray(10))
         viewModel.delete("E125_N30")

@@ -11,6 +11,7 @@ import com.cowork.bikerecoder.data.AppSettings
 import com.cowork.bikerecoder.offline.OfflineMapStorage
 import com.cowork.bikerecoder.offline.SegmentInfo
 import com.cowork.bikerecoder.offline.SegmentRepository
+import com.cowork.bikerecoder.offline.UpdateCheck
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
@@ -26,6 +27,9 @@ sealed interface SegmentStatus {
     data object Checking : SegmentStatus
     data object UpdateAvailable : SegmentStatus
     data object UpToDate : SegmentStatus
+
+    /** The server could not be asked (offline, HTTP error). */
+    data object CheckFailed : SegmentStatus
 
     /** [totalBytes] is -1 while the server has not told the size. */
     data class Downloading(val readBytes: Long, val totalBytes: Long) : SegmentStatus
@@ -63,6 +67,7 @@ class SettingsViewModel(
     /** Running operation per segment name; touched on the main thread only. */
     private val segmentJobs = HashMap<String, Job>()
     private var mapJob: Job? = null
+    private var sizeJob: Job? = null
 
     init {
         viewModelScope.launch { settings.collect { s -> _state.update { it.copy(settings = s) } } }
@@ -84,8 +89,14 @@ class SettingsViewModel(
 
     /** Asks the server whether [name] has a newer version. Ignored while another operation on [name] runs. */
     fun checkUpdate(name: String) = runSegmentJob(name, SegmentStatus.Checking) {
-        val newer = segments.hasUpdate(name)
-        setStatus(name, if (newer) SegmentStatus.UpdateAvailable else SegmentStatus.UpToDate)
+        setStatus(
+            name,
+            when (segments.checkUpdate(name)) {
+                UpdateCheck.NEWER -> SegmentStatus.UpdateAvailable
+                UpdateCheck.SAME -> SegmentStatus.UpToDate
+                UpdateCheck.UNKNOWN -> SegmentStatus.CheckFailed
+            },
+        )
     }
 
     /** Downloads (or replaces) [name]. Ignored while another operation on [name] runs. */
@@ -135,7 +146,8 @@ class SettingsViewModel(
     // ---- offline maps ----
 
     fun refreshMapSize() {
-        viewModelScope.launch {
+        sizeJob?.cancel()
+        sizeJob = viewModelScope.launch {
             val size = try {
                 MapStorageState.Size(mapStorage.totalBytes())
             } catch (e: CancellationException) {

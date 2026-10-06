@@ -207,6 +207,38 @@ class SegmentRepositoryTest {
     }
 
     @Test
+    fun `checkUpdate distinguishes newer, same and unknown`() = runTest {
+        val local = File(dir, "E125_N35.rd5").apply {
+            writeBytes(ByteArray(1))
+            setLastModified(Instant.parse("2026-10-01T00:00:00Z").toEpochMilli())
+        }
+        server.enqueue(MockResponse.Builder().addHeader("Last-Modified", httpDate("2026-10-05T00:00:00Z")).build())
+        assertEquals(UpdateCheck.NEWER, repo.checkUpdate("E125_N35"))
+        server.enqueue(MockResponse.Builder().addHeader("Last-Modified", httpDate("2026-10-01T00:00:00Z")).build())
+        assertEquals(UpdateCheck.SAME, repo.checkUpdate("E125_N35"))
+        assertTrue(local.exists())
+    }
+
+    @Test
+    fun `checkUpdate is unknown on HTTP error, dropped connection and missing date`() = runTest {
+        File(dir, "E125_N35.rd5").writeBytes(ByteArray(1))
+        server.enqueue(MockResponse.Builder().code(500).build())
+        assertEquals(UpdateCheck.UNKNOWN, repo.checkUpdate("E125_N35"))
+
+        server.enqueue(MockResponse.Builder().onResponseStart(SocketEffect.CloseSocket()).build())
+        assertEquals(UpdateCheck.UNKNOWN, repo.checkUpdate("E125_N35"))
+
+        server.enqueue(MockResponse.Builder().build())
+        assertEquals(UpdateCheck.UNKNOWN, repo.checkUpdate("E125_N35"))
+    }
+
+    @Test
+    fun `checkUpdate of a missing file is newer without a request`() = runTest {
+        assertEquals(UpdateCheck.NEWER, repo.checkUpdate("E125_N35"))
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
     fun `cancelled download aborts promptly and leaves nothing`() = runBlocking {
         server.enqueue(
             MockResponse.Builder()
