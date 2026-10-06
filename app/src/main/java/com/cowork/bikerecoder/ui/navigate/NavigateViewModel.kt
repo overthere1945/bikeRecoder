@@ -44,6 +44,8 @@ class NavigateViewModel(
     /** The corridor map download of the running trip (null = nothing to show). */
     val offlineProgress: StateFlow<OfflineProgress?> = MutableStateFlow(null),
     log: WarnLog = androidWarnLog(TAG),
+    /** "화면이 꺼지면 안내가 멈출 수 있습니다" when the location foreground service could not start. */
+    val serviceWarning: StateFlow<String?> = MutableStateFlow(null),
 ) : ViewModel() {
 
     val ui: StateFlow<NavUiState> = controller.ui
@@ -121,6 +123,7 @@ class NavigateViewModel(
                     ttsNoticeShown = container.settings.settings.map { it.ttsNoticeShown },
                     markTtsNoticeShown = { container.settings.update { it.copy(ttsNoticeShown = true) } },
                     offlineProgress = container.offlineMaps.progress,
+                    serviceWarning = container.guidanceService.warning,
                 )
             }
         }

@@ -59,6 +59,7 @@ class NavigateViewModelTest {
         args: Map<String, Any?> = emptyMap(),
         voice: VoiceOutput = RecordingVoiceOutput(),
         noticeShown: MutableStateFlow<Boolean> = MutableStateFlow(false),
+        serviceStatus: com.cowork.bikerecoder.nav.GuidanceServiceStatus = com.cowork.bikerecoder.nav.GuidanceServiceStatus(),
     ): Setup {
         val tripManager = TripManager(store, offline, clock = { testScheduler.currentTime })
         val controller = NavigationController(
@@ -68,6 +69,7 @@ class NavigateViewModelTest {
         )
         val vm = NavigateViewModel(
             controller, voice, flowOf(true), SavedStateHandle(args), noticeShown, { noticeShown.value = true },
+            serviceWarning = serviceStatus.warning,
         )
         return Setup(vm, tripManager, controller)
     }
@@ -81,6 +83,17 @@ class NavigateViewModelTest {
         controller.start(id)
         controller.ui.first { it is NavUiState.Active }
         return id
+    }
+
+    @Test
+    fun aFailedForegroundServiceIsShownAsAScreenOffWarning() = runTest(dispatcher) {
+        val status = com.cowork.bikerecoder.nav.GuidanceServiceStatus()
+        val s = setup(serviceStatus = status)
+        assertNull(s.vm.serviceWarning.value)
+
+        status.foregroundFailed()
+
+        assertEquals("화면이 꺼지면 안내가 멈출 수 있습니다", s.vm.serviceWarning.value)
     }
 
     @Test

@@ -15,6 +15,7 @@ import com.cowork.bikerecoder.location.FusedLocationSource
 import com.cowork.bikerecoder.location.LocationSource
 import com.cowork.bikerecoder.map.OpenFreeMapSource
 import com.cowork.bikerecoder.map.TileSource
+import com.cowork.bikerecoder.nav.GuidanceServiceStatus
 import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.nav.NavigationController
 import com.cowork.bikerecoder.offline.MapLibreOfflineController
@@ -130,6 +131,9 @@ class AppContainer(context: Context) {
         SupervisorJob() + Dispatchers.Main.immediate +
             CoroutineExceptionHandler { _, e -> Log.e(TAG, "Unhandled error in navigation", e) },
     )
+
+    /** Set by the navigation foreground service; shown on the guidance screen when it could not start. */
+    val guidanceService: GuidanceServiceStatus = GuidanceServiceStatus()
 
     private val navigationCreated = MutableStateFlow<NavigationController?>(null)
 

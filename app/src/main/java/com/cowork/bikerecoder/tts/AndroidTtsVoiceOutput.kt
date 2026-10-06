@@ -34,6 +34,9 @@ class AndroidTtsVoiceOutput(context: Context) : VoiceOutput {
     private val _available = MutableStateFlow(false)
     override val available: StateFlow<Boolean> = _available.asStateFlow()
 
+    private val _speaking = MutableStateFlow(false)
+    override val speaking: StateFlow<Boolean> = _speaking.asStateFlow()
+
     @Volatile
     override var muted: Boolean = false
 
@@ -74,6 +77,7 @@ class AndroidTtsVoiceOutput(context: Context) : VoiceOutput {
             if (closed || selected == null) {
                 selected?.shutdown()
                 preInitQueue.clear()
+                updateSpeakingLocked()
                 return
             }
             engine = selected
@@ -82,6 +86,7 @@ class AndroidTtsVoiceOutput(context: Context) : VoiceOutput {
             val queued = preInitQueue.toList()
             preInitQueue.clear()
             queued.forEach { enqueueLocked(it) }
+            updateSpeakingLocked()
         }
     }
 
@@ -94,6 +99,7 @@ class AndroidTtsVoiceOutput(context: Context) : VoiceOutput {
                 selecting -> preInitQueue.add(text)
                 // 모든 엔진 실패: 버린다.
             }
+            updateSpeakingLocked()
         }
     }
 
@@ -116,6 +122,11 @@ class AndroidTtsVoiceOutput(context: Context) : VoiceOutput {
     private fun finishedLocked(utteranceId: String) {
         if (!pendingIds.remove(utteranceId)) return
         if (pendingIds.isEmpty()) abandonFocusLocked()
+        updateSpeakingLocked()
+    }
+
+    private fun updateSpeakingLocked() {
+        _speaking.value = pendingIds.isNotEmpty() || preInitQueue.isNotEmpty()
     }
 
     private fun abandonFocusLocked() {
@@ -135,6 +146,7 @@ class AndroidTtsVoiceOutput(context: Context) : VoiceOutput {
             preInitQueue.clear()
             pendingIds.clear()
             abandonFocusLocked()
+            updateSpeakingLocked()
             _available.value = false
         }
         toStop?.stop()

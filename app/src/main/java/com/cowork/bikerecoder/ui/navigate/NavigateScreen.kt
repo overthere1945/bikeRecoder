@@ -95,6 +95,7 @@ fun NavigateScreen(viewModel: NavigateViewModel, tileSource: TileSource, onClose
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
     val offlineProgress by viewModel.offlineProgress.collectAsStateWithLifecycle()
+    val serviceWarning by viewModel.serviceWarning.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     var askEnd by rememberSaveable { mutableStateOf(false) }
@@ -141,6 +142,7 @@ fun NavigateScreen(viewModel: NavigateViewModel, tileSource: TileSource, onClose
                 state = state,
                 tileSource = tileSource,
                 mapDownloadText = offlineProgress?.takeIf { it.tripId == state.tripId }?.chipText,
+                serviceWarning = serviceWarning,
                 onMute = viewModel::setMuted,
                 onEnd = { askEnd = true },
             )
@@ -188,6 +190,7 @@ private fun ActiveContent(
     state: NavUiState.Active,
     tileSource: TileSource,
     mapDownloadText: String?,
+    serviceWarning: String?,
     onMute: (Boolean) -> Unit,
     onEnd: () -> Unit,
 ) {
@@ -214,6 +217,7 @@ private fun ActiveContent(
         ) {
             TurnCard(nav)
             if (mapDownloadText != null) MapDownloadIndicator(mapDownloadText)
+            if (serviceWarning != null) Banner(serviceWarning)
             if (nav.gpsWeak) Banner("GPS 신호 약함")
             if (nav.rerouting) Banner("경로를 다시 탐색하는 중…")
         }

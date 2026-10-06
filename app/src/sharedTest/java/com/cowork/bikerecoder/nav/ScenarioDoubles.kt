@@ -31,6 +31,7 @@ class AssetRouter(private val jsons: List<String>) : Router {
 class RecordingVoiceOutput : VoiceOutput {
     val spoken: MutableList<String> = CopyOnWriteArrayList()
     override val available: StateFlow<Boolean> = MutableStateFlow(true)
+    override val speaking: StateFlow<Boolean> = MutableStateFlow(false)
     @Volatile override var muted: Boolean = false
 
     override fun speak(text: String) {
