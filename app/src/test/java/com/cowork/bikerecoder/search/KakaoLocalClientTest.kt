@@ -1,13 +1,22 @@
 package com.cowork.bikerecoder.search
 
 import com.cowork.bikerecoder.core.model.GeoPoint
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
@@ -181,5 +190,76 @@ class KakaoLocalClientTest {
         server.enqueue(json("""{"documents":[]}"""))
 
         assertEquals(SearchResult.Ok<String?>(null), kakao.addressOf(GeoPoint(37.5, 127.0)))
+    }
+
+    @Test
+    fun `401 and 403 on addressOf map to errors`() = runTest {
+        server.enqueue(MockResponse.Builder().code(401).body("{}").build())
+        server.enqueue(MockResponse.Builder().code(403).body("{}").build())
+
+        assertEquals(SearchResult.Err(SearchError.INVALID_KEY), kakao.addressOf(GeoPoint(37.5, 127.0)))
+        assertEquals(SearchResult.Err(SearchError.MAP_NOT_ENABLED), kakao.addressOf(GeoPoint(37.5, 127.0)))
+    }
+
+    @Test
+    fun `response without documents is empty`() = runTest {
+        // Missing "documents" is treated like an empty list (defaults), not as a parse error.
+        server.enqueue(json("""{"meta":{"total_count":0}}"""))
+        server.enqueue(json("""{"meta":{"total_count":0}}"""))
+
+        assertEquals(SearchResult.Ok(emptyList<Place>()), kakao.keyword("시청", null))
+        assertEquals(SearchResult.Ok<String?>(null), kakao.addressOf(GeoPoint(37.5, 127.0)))
+    }
+
+    @Test
+    fun `malformed document is skipped not fatal`() = runTest {
+        server.enqueue(
+            json(
+                """{"documents":[
+                  {"place_name":"깨짐","address_name":"a","x":"abc","y":"37.5"},
+                  {"place_name":"좌표없음","address_name":"b"},
+                  {"place_name":"정상","address_name":"c","x":"127.0","y":"37.5","distance":"10"}
+                ]}""",
+            ),
+        )
+
+        val places = (kakao.keyword("시청", null) as SearchResult.Ok).value
+
+        assertEquals(listOf("정상"), places.map { it.name })
+    }
+
+    @Test
+    fun `key with invalid header characters maps to INVALID_KEY without throwing`() = runTest {
+        val bad = client("bad\nkey")
+        val korean = client("여기에-키-입력")
+
+        assertEquals(SearchResult.Err(SearchError.INVALID_KEY), bad.keyword("시청", null))
+        assertEquals(SearchResult.Err(SearchError.INVALID_KEY), bad.addressOf(GeoPoint(37.5, 127.0)))
+        assertEquals(SearchResult.Err(SearchError.INVALID_KEY), korean.keyword("시청", null))
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun `cancelled search aborts promptly`() = runBlocking {
+        server.enqueue(
+            MockResponse.Builder()
+                .body("{}")
+                .headersDelay(60, TimeUnit.SECONDS)
+                .build(),
+        )
+        val job = async(Dispatchers.Default) { kakao.keyword("시청", null) }
+        withTimeout(5_000) { while (server.requestCount == 0) delay(10) }
+        delay(200)
+
+        job.cancel()
+        withTimeout(2_000) { job.join() }
+
+        assertTrue(job.isCancelled)
+        try {
+            job.await()
+            fail("search should have been cancelled")
+        } catch (expected: CancellationException) {
+            // cancellation surfaced to the caller
+        }
     }
 }

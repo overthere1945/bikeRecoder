@@ -3,6 +3,10 @@ package com.cowork.bikerecoder.search
 import com.cowork.bikerecoder.core.model.GeoPoint
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -34,8 +38,8 @@ class KakaoLocalClient(
         @SerialName("place_name") val placeName: String = "",
         @SerialName("road_address_name") val roadAddressName: String = "",
         @SerialName("address_name") val addressName: String = "",
-        val x: String,
-        val y: String,
+        val x: String = "",
+        val y: String = "",
         val distance: String = "",
     )
 
@@ -68,11 +72,14 @@ class KakaoLocalClient(
             .addQueryParameter("size", PAGE_SIZE)
             .build()
         return fetch(url) { body ->
-            json.decodeFromString<KeywordResponse>(body).documents.map { doc ->
+            // A document without usable coordinates is skipped instead of failing the whole list.
+            json.decodeFromString<KeywordResponse>(body).documents.mapNotNull { doc ->
+                val lat = doc.y.trim().toDoubleOrNull() ?: return@mapNotNull null
+                val lon = doc.x.trim().toDoubleOrNull() ?: return@mapNotNull null
                 Place(
                     name = doc.placeName,
                     address = doc.roadAddressName.ifBlank { doc.addressName },
-                    point = GeoPoint(lat = doc.y.toDouble(), lon = doc.x.toDouble()),
+                    point = GeoPoint(lat = lat, lon = lon),
                     distanceM = doc.distance.trim().toIntOrNull(),
                 )
             }
@@ -95,25 +102,47 @@ class KakaoLocalClient(
 
     private suspend fun <T> fetch(url: HttpUrl, parse: (String) -> T): SearchResult<T> =
         withContext(Dispatchers.IO) {
-            val request = Request.Builder()
-                .url(url)
-                .header("Authorization", "KakaoAK $apiKey")
-                .build()
+            // OkHttp rejects header values with control / non-ASCII characters (e.g. a malformed key).
+            val request = try {
+                Request.Builder()
+                    .url(url)
+                    .header("Authorization", "KakaoAK $apiKey")
+                    .build()
+            } catch (e: IllegalArgumentException) {
+                return@withContext SearchResult.Err(SearchError.INVALID_KEY)
+            }
+            val call = client.newCall(request)
             try {
-                client.newCall(request).execute().use { response ->
-                    when {
-                        response.code == 401 -> SearchResult.Err(SearchError.INVALID_KEY)
-                        response.code == 403 -> SearchResult.Err(SearchError.MAP_NOT_ENABLED)
-                        !response.isSuccessful -> SearchResult.Err(SearchError.OTHER)
-                        else -> SearchResult.Ok(parse(response.body.string()))
+                // Blocking socket reads are not cancellable by themselves; abort the call on coroutine cancellation.
+                coroutineScope {
+                    val watcher = launch {
+                        try {
+                            awaitCancellation()
+                        } finally {
+                            call.cancel()
+                        }
+                    }
+                    try {
+                        call.execute().use { response ->
+                            when {
+                                response.code == 401 -> SearchResult.Err(SearchError.INVALID_KEY)
+                                response.code == 403 -> SearchResult.Err(SearchError.MAP_NOT_ENABLED)
+                                !response.isSuccessful -> SearchResult.Err(SearchError.OTHER)
+                                else -> SearchResult.Ok(parse(response.body.string()))
+                            }
+                        }
+                    } finally {
+                        watcher.cancel()
                     }
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: IOException) {
+                // An abort caused by cancellation (call.cancel -> IOException) must surface as cancellation.
+                ensureActive()
                 SearchResult.Err(SearchError.NETWORK)
             } catch (e: Exception) {
-                // Parse errors (SerializationException, NumberFormatException, ...) carry no key material.
+                // Parse errors (SerializationException, ...) carry no key material.
                 SearchResult.Err(SearchError.OTHER)
             }
         }
