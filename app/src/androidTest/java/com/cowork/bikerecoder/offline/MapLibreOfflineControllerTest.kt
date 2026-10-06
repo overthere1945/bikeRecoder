@@ -24,7 +24,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.maplibre.android.MapLibre
 import org.maplibre.android.offline.OfflineManager
 import org.maplibre.android.offline.OfflineRegion
 import org.maplibre.android.offline.OfflineRegionStatus
@@ -45,8 +44,9 @@ class MapLibreOfflineControllerTest {
 
     @Before
     fun setUp() {
+        // MapLibre is initialised by BikeApp (and by the controller, on the main thread); calling
+        // MapLibre.getInstance here would run on the instrumentation thread and throw.
         context = ApplicationProvider.getApplicationContext()
-        MapLibre.getInstance(context)
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
     }
 
@@ -54,9 +54,9 @@ class MapLibreOfflineControllerTest {
     fun tearDown() = runBlocking {
         try {
             // Whatever the test did (or failed half-way through), leave no region of this trip behind.
-            ourRegions().forEach { delete(it) }
+            if (::context.isInitialized) ourRegions().forEach { delete(it) }
         } finally {
-            db.close()
+            if (::db.isInitialized) db.close()
         }
     }
 

@@ -321,7 +321,7 @@ class MapLibreOfflineController(
         suspendCancellableCoroutine { cont ->
             region.getStatus(
                 object : OfflineRegion.OfflineRegionStatusCallback {
-                    override fun onStatus(status: OfflineRegionStatus?) = cont.resume(status?.isComplete == true)
+                    override fun onStatus(status: OfflineRegionStatus?) = cont.resume(status?.let { it.isComplete && it.isRequiredResourceCountPrecise } == true)
                     override fun onError(error: String?) = cont.resumeWithException(OfflineException(error ?: "status"))
                 },
             )
