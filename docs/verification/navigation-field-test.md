@@ -4,7 +4,7 @@
 
 ## 자동 검증
 
-실행일: 2026-10-06 (브랜치 `feature/navigation-v1.0.0`)
+실행일: 2026-10-07 (브랜치 `feature/navigation-v1.0.0`, 최종 리뷰 수정 반영 후)
 
 ### PC 단위·통합 테스트
 
@@ -18,11 +18,11 @@
 
 | 모음 | 클래스 수 | 테스트 수 | 실패 | 건너뜀 |
 |---|---|---|---|---|
-| `:core:test` | 13 | 78 | 0 | 0 |
+| `:core:test` | 13 | 83 | 0 | 0 |
 | `:routing-brouter:test` | 4 | 16 | 0 | 0 |
 | `:routing-brouter:integrationTest` (실제 서울 경로) | 2 | 9 | 0 | 0 |
-| `:app:testDebugUnitTest` | 18 | 154 | 0 | 0 |
-| 합계 | 37 | 257 | 0 | 0 |
+| `:app:testDebugUnitTest` | 23 | 184 | 0 | 0 |
+| 합계 | 42 | 292 | 0 | 0 |
 
 ### 기기 테스트 (Galaxy S25 Ultra (SM-S938N), Android 16 / API 36)
 
@@ -32,7 +32,7 @@
 ANDROID_SERIAL=R3CY903ZYQV ./gradlew :app:connectedDebugAndroidTest
 ```
 
-결과: BUILD SUCCESSFUL (1분 50초, 전체 androidTest). 리뷰 수정 후 재실행한 결과이며, 첫 재실행은 실행 도중 기기의 USB 연결 이벤트로 중단되어 같은 명령으로 다시 실행했습니다.
+결과: BUILD SUCCESSFUL (1분 47초, 전체 androidTest). 최종 리뷰 수정 후 재실행한 결과이며, 첫 재실행은 실행 도중 기기의 USB 연결 끊김(logcat `USB_STATE=DISCONNECTED`)으로 중단되어 같은 명령으로 다시 실행했습니다.
 
 | 클래스 | 테스트 수 | 실패 |
 |---|---|---|
