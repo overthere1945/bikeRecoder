@@ -1,8 +1,6 @@
 package com.cowork.bikerecoder
 
 import android.content.Context
-import com.cowork.bikerecoder.core.routing.RouteRequest
-import com.cowork.bikerecoder.core.routing.RouteResult
 import com.cowork.bikerecoder.core.routing.Router
 import com.cowork.bikerecoder.core.trip.OfflineMapController
 import com.cowork.bikerecoder.core.trip.TripManager
@@ -23,7 +21,6 @@ import com.cowork.bikerecoder.search.PlaceSearch
 import com.cowork.bikerecoder.tts.AndroidTtsVoiceOutput
 import com.cowork.bikerecoder.tts.VoiceOutput
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import java.io.File
 
@@ -63,12 +60,4 @@ class AppContainer(context: Context) {
 
     /** Replaceable in tests. */
     var locationSourceFactory: () -> LocationSource = { FusedLocationSource(appContext) }
-}
-
-/** Builds the real router (and installs its profiles) on [Dispatchers.IO] the first time it is needed. */
-private class LazyRouter(create: () -> Router) : Router {
-    private val delegate by lazy(create)
-
-    override suspend fun route(request: RouteRequest): RouteResult =
-        withContext(Dispatchers.IO) { delegate }.route(request)
 }

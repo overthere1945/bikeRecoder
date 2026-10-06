@@ -7,6 +7,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -19,10 +21,11 @@ import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.map.BikeMap
 import com.cowork.bikerecoder.map.CameraMode
 import com.cowork.bikerecoder.map.MapOverlay
+import kotlinx.coroutines.flow.first
 import com.cowork.bikerecoder.ui.onboarding.OnboardingScreen
 import com.cowork.bikerecoder.ui.onboarding.OnboardingStep
 import com.cowork.bikerecoder.ui.onboarding.OnboardingViewModel
-import com.cowork.bikerecoder.ui.onboarding.nextOnboardingStep
+import com.cowork.bikerecoder.ui.onboarding.effectiveOnboardingStep
 import com.cowork.bikerecoder.ui.onboarding.readPermissionState
 
 object Routes {
@@ -38,9 +41,17 @@ object Routes {
 fun BikeNavHost(container: AppContainer) {
     val navController = rememberNavController()
     val context = LocalContext.current
+    // The persisted skip choices decide the start destination; show nothing until they are read.
+    val skipped by produceState<Set<OnboardingStep>?>(initialValue = null) {
+        value = container.settings.settings.first().skippedOnboardingSteps
+    }
+    val skippedSteps = skipped ?: run {
+        Surface(modifier = Modifier.fillMaxSize()) {}
+        return
+    }
     val startDestination = remember {
         val state = readPermissionState(context, container.segments)
-        if (nextOnboardingStep(state) == OnboardingStep.DONE) Routes.MAIN else Routes.ONBOARDING
+        if (effectiveOnboardingStep(state, skippedSteps) == OnboardingStep.DONE) Routes.MAIN else Routes.ONBOARDING
     }
 
     NavHost(navController = navController, startDestination = startDestination) {

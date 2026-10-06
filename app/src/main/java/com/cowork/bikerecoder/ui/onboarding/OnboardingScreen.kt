@@ -59,7 +59,7 @@ fun OnboardingScreen(viewModel: OnboardingViewModel, onDone: () -> Unit) {
 
     // The user may come back from system Settings with a changed permission/battery state.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refresh() }
-    LaunchedEffect(step) { if (step == OnboardingStep.DONE) onDone() }
+    LaunchedEffect(step, ui.skipLoaded) { if (ui.skipLoaded && step == OnboardingStep.DONE) onDone() }
 
     // A denied request shows the "open Settings" hint; it resets whenever the step changes.
     var denied by remember(step) { mutableStateOf(false) }
@@ -80,7 +80,7 @@ fun OnboardingScreen(viewModel: OnboardingViewModel, onDone: () -> Unit) {
 
     val copy = copyFor(step)
     Surface(modifier = Modifier.fillMaxSize()) {
-        if (copy == null) return@Surface
+        if (copy == null || !ui.skipLoaded) return@Surface
         Column(
             modifier = Modifier.fillMaxSize().systemBarsPadding().padding(24.dp),
             verticalArrangement = Arrangement.Center,
@@ -101,7 +101,6 @@ fun OnboardingScreen(viewModel: OnboardingViewModel, onDone: () -> Unit) {
                     download = ui.download,
                     buttonLabel = copy.button,
                     onDownload = viewModel::downloadSegments,
-                    onSkip = viewModel::skipSegments,
                 )
             } else {
                 Button(
@@ -145,6 +144,14 @@ fun OnboardingScreen(viewModel: OnboardingViewModel, onDone: () -> Unit) {
                     }
                 }
             }
+
+            // Everything except the mandatory fine location can be postponed; the choice is persisted.
+            if (step != OnboardingStep.FINE_LOCATION) {
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(onClick = { viewModel.skipStep(step) }, modifier = Modifier.fillMaxWidth()) {
+                    Text("나중에")
+                }
+            }
         }
     }
 }
@@ -154,7 +161,6 @@ private fun SegmentsActions(
     download: SegmentDownload,
     buttonLabel: String,
     onDownload: () -> Unit,
-    onSkip: () -> Unit,
 ) {
     when (download) {
         is SegmentDownload.Downloading -> {
@@ -186,8 +192,6 @@ private fun SegmentsActions(
         SegmentDownload.Idle ->
             Button(onClick = onDownload, modifier = Modifier.fillMaxWidth()) { Text(buttonLabel) }
     }
-    Spacer(Modifier.height(8.dp))
-    OutlinedButton(onClick = onSkip, modifier = Modifier.fillMaxWidth()) { Text("나중에") }
 }
 
 /** "{받은 MB} / {전체 MB}"; the total is omitted while the server has not told us the size. */

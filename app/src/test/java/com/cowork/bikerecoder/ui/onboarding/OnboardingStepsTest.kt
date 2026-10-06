@@ -27,4 +27,29 @@ class OnboardingStepsTest {
         assertEquals(NOTIFICATIONS, nextOnboardingStep(PermissionState(true, true, false, true, true)))
         assertEquals(BATTERY, nextOnboardingStep(PermissionState(true, true, true, false, true)))
     }
+
+    @Test
+    fun `effective step skips skipped steps`() {
+        val allButSegments = PermissionState(true, true, true, true, false)
+        assertEquals(DONE, effectiveOnboardingStep(allButSegments, setOf(SEGMENTS)))
+        assertEquals(SEGMENTS, effectiveOnboardingStep(allButSegments, emptySet()))
+        assertEquals(
+            NOTIFICATIONS,
+            effectiveOnboardingStep(PermissionState(true, false, false, true, true), setOf(BACKGROUND_LOCATION)),
+        )
+        assertEquals(DONE, effectiveOnboardingStep(PermissionState(true, false, false, false, false), setOf(BACKGROUND_LOCATION, NOTIFICATIONS, BATTERY, SEGMENTS)))
+    }
+
+    @Test
+    fun `fine location can never be skipped`() {
+        assertEquals(
+            FINE_LOCATION,
+            effectiveOnboardingStep(PermissionState(false, false, false, false, false), OnboardingStep.entries.toSet()),
+        )
+    }
+
+    @Test
+    fun `granted steps are not affected by skip set`() {
+        assertEquals(DONE, effectiveOnboardingStep(PermissionState(true, true, true, true, true), setOf(SEGMENTS)))
+    }
 }

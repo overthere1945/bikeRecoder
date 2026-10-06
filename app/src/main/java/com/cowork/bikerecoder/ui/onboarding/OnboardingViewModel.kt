@@ -12,11 +12,14 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
+import com.cowork.bikerecoder.data.SettingsRepository
 import com.cowork.bikerecoder.offline.SegmentRepository
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -46,27 +49,47 @@ sealed interface SegmentDownload {
     data object Failed : SegmentDownload
 }
 
+/** Persisted "나중에" choices. */
+interface OnboardingSkipStore {
+    val skipped: Flow<Set<OnboardingStep>>
+    suspend fun update(transform: (Set<OnboardingStep>) -> Set<OnboardingStep>)
+}
+
+class SettingsOnboardingSkipStore(private val settings: SettingsRepository) : OnboardingSkipStore {
+    override val skipped: Flow<Set<OnboardingStep>> = settings.settings.map { it.skippedOnboardingSteps }
+    override suspend fun update(transform: (Set<OnboardingStep>) -> Set<OnboardingStep>) {
+        settings.update { it.copy(skippedOnboardingSteps = transform(it.skippedOnboardingSteps)) }
+    }
+}
+
 data class OnboardingUiState(
     val permissions: PermissionState,
-    val segmentsSkipped: Boolean = false,
+    /** False until the persisted skip set has been read; the screen shows nothing before that. */
+    val skipLoaded: Boolean = false,
+    val skipped: Set<OnboardingStep> = emptySet(),
     val download: SegmentDownload = SegmentDownload.Idle,
 ) {
-    /** The step to show. Skipping the route-data step ("나중에") counts as finished. */
-    val step: OnboardingStep
-        get() = nextOnboardingStep(permissions).let {
-            if (it == OnboardingStep.SEGMENTS && segmentsSkipped) OnboardingStep.DONE else it
-        }
+    val step: OnboardingStep get() = effectiveOnboardingStep(permissions, skipped)
 }
 
 class OnboardingViewModel(
     private val readState: () -> PermissionState,
     private val segments: SegmentRepository,
+    private val skipStore: OnboardingSkipStore,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(OnboardingUiState(readState()))
     val state: StateFlow<OnboardingUiState> = _state.asStateFlow()
 
     private var downloadJob: Job? = null
+
+    init {
+        viewModelScope.launch {
+            skipStore.skipped.collect { skipped ->
+                _state.update { it.copy(skipLoaded = true, skipped = skipped) }
+            }
+        }
+    }
 
     /** Re-reads permissions/battery/segments, e.g. when the user comes back from system Settings. */
     fun refresh() {
@@ -83,9 +106,15 @@ class OnboardingViewModel(
             val missing = segments.list().filter { it.required && !it.installed }.map { it.name }
             for ((i, name) in missing.withIndex()) {
                 _state.update { it.copy(download = SegmentDownload.Downloading(i + 1, missing.size, 0L, -1L)) }
+                var shownTenthsOfMb = -1L
                 val result = segments.download(name) { read, total ->
-                    _state.update {
-                        it.copy(download = SegmentDownload.Downloading(i + 1, missing.size, read, total))
+                    // Only publish when the displayed value (0.1 MB) changes, not on every 64 KB buffer.
+                    val tenths = read * 10 / BYTES_PER_MB
+                    if (tenths != shownTenthsOfMb) {
+                        shownTenthsOfMb = tenths
+                        _state.update {
+                            it.copy(download = SegmentDownload.Downloading(i + 1, missing.size, read, total))
+                        }
                     }
                 }
                 if (result.isFailure) {
@@ -94,21 +123,32 @@ class OnboardingViewModel(
                 }
             }
             _state.update { it.copy(download = SegmentDownload.Idle, permissions = readState()) }
+            skipStore.update { it - OnboardingStep.SEGMENTS }
         }
     }
 
-    /** [나중에]: finish onboarding without route data (the plan screen keeps its start button disabled). */
-    fun skipSegments() {
-        downloadJob?.cancel()
-        _state.update { it.copy(segmentsSkipped = true, download = SegmentDownload.Idle) }
+    /**
+     * [나중에]: remember the choice and move on. Fine location is mandatory and cannot be skipped.
+     * Skipping route data leaves the plan screen's start button disabled.
+     */
+    fun skipStep(step: OnboardingStep) {
+        if (step == OnboardingStep.FINE_LOCATION || step == OnboardingStep.DONE) return
+        if (step == OnboardingStep.SEGMENTS) {
+            downloadJob?.cancel()
+            _state.update { it.copy(download = SegmentDownload.Idle) }
+        }
+        viewModelScope.launch { skipStore.update { it + step } }
     }
 
     companion object {
+        private const val BYTES_PER_MB = 1024L * 1024L
+
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 OnboardingViewModel(
                     readState = { readPermissionState(container.appContext, container.segments) },
                     segments = container.segments,
+                    skipStore = SettingsOnboardingSkipStore(container.settings),
                 )
             }
         }

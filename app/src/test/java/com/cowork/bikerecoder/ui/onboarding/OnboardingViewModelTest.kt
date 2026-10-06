@@ -3,6 +3,8 @@ package com.cowork.bikerecoder.ui.onboarding
 import com.cowork.bikerecoder.offline.SegmentRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -31,6 +33,15 @@ class OnboardingViewModelTest {
     private lateinit var server: MockWebServer
     private lateinit var repo: SegmentRepository
     private lateinit var viewModel: OnboardingViewModel
+    private val skipStore = InMemorySkipStore()
+
+    private class InMemorySkipStore : OnboardingSkipStore {
+        val state = MutableStateFlow<Set<OnboardingStep>>(emptySet())
+        override val skipped: Flow<Set<OnboardingStep>> = state
+        override suspend fun update(transform: (Set<OnboardingStep>) -> Set<OnboardingStep>) {
+            state.value = transform(state.value)
+        }
+    }
 
     @BeforeEach
     fun setUp() {
@@ -41,6 +52,7 @@ class OnboardingViewModelTest {
         viewModel = OnboardingViewModel(
             readState = { PermissionState(true, true, true, true, repo.hasRequired()) },
             segments = repo,
+            skipStore = skipStore,
         )
     }
 
@@ -89,9 +101,44 @@ class OnboardingViewModelTest {
 
     @Test
     fun `skipping the segment step finishes onboarding without route data`() {
-        viewModel.skipSegments()
+        viewModel.skipStep(OnboardingStep.SEGMENTS)
         assertEquals(OnboardingStep.DONE, viewModel.state.value.step)
         assertFalse(viewModel.state.value.permissions.segmentsReady)
+    }
+
+    @Test
+    fun `skip persists across a new view model over the same store`() {
+        viewModel.skipStep(OnboardingStep.SEGMENTS)
+        val second = OnboardingViewModel(
+            readState = { PermissionState(true, true, true, true, repo.hasRequired()) },
+            segments = repo,
+            skipStore = skipStore,
+        )
+        assertEquals(OnboardingStep.DONE, second.state.value.step)
+        assertEquals(setOf(OnboardingStep.SEGMENTS), skipStore.state.value)
+    }
+
+    @Test
+    fun `fine location cannot be skipped`() {
+        val vm = OnboardingViewModel(
+            readState = { PermissionState(false, false, false, false, false) },
+            segments = repo,
+            skipStore = skipStore,
+        )
+        vm.skipStep(OnboardingStep.FINE_LOCATION)
+        assertEquals(OnboardingStep.FINE_LOCATION, vm.state.value.step)
+        assertTrue(skipStore.state.value.isEmpty())
+    }
+
+    @Test
+    fun `successful download removes the segments skip`() {
+        viewModel.skipStep(OnboardingStep.SEGMENTS)
+        server.enqueue(ok())
+        server.enqueue(ok())
+        viewModel.downloadSegments()
+        awaitState { it.permissions.segmentsReady }
+        runBlocking { withTimeout(10_000) { skipStore.skipped.first { OnboardingStep.SEGMENTS !in it } } }
+        assertTrue(skipStore.state.value.isEmpty())
     }
 
     @Test
