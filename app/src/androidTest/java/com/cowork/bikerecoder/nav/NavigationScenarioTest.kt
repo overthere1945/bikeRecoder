@@ -174,6 +174,9 @@ class NavigationScenarioTest {
 
         assertEquals(voice.spoken.toString(), 1, voice.spoken.count { it == "경로를 벗어났습니다. 다시 탐색합니다" })
         assertEquals(2, router.requests.size)
+        val reroute = router.requests.last().let { BRouterGeoJsonParser.parse(asset("route_reroute.geojson"), it.profile, it.stops) }
+        val active = c.ui.value as NavUiState.Active
+        assertEquals("route replaced by the reroute", reroute.points, active.state.route.points)
     }
 
     @Test
