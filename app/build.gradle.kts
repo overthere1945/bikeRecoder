@@ -89,6 +89,7 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.maplibre)
+    implementation(libs.play.services.location)
 
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.okhttp.mockwebserver)
