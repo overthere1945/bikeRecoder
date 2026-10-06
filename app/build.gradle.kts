@@ -88,6 +88,7 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.maplibre)
 
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.okhttp.mockwebserver)
