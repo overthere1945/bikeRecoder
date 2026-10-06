@@ -12,12 +12,14 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.onAllNodesWithText
 import com.cowork.bikerecoder.core.model.GeoPoint
+import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.model.Route
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.model.RouteSummary
 import com.cowork.bikerecoder.core.routing.RouteRequest
 import com.cowork.bikerecoder.core.routing.RouteResult
 import com.cowork.bikerecoder.core.routing.Router
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -52,7 +54,7 @@ class PlanScreenTest {
     private val viewModel = PlanViewModel(
         router = router,
         defaultProfile = flowOf(RouteProfile.CYCLEWAY_FIRST),
-        currentLocation = { GeoPoint(35.10, 129.00) },
+        locations = MutableStateFlow(LocationFix(GeoPoint(35.10, 129.00), 5f, null, null, System.currentTimeMillis())),
         segmentsReady = { true },
     )
 

@@ -23,6 +23,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.cowork.bikerecoder.AppContainer
+import com.cowork.bikerecoder.core.model.GeoPoint
 import kotlinx.coroutines.flow.first
 import com.cowork.bikerecoder.ui.onboarding.OnboardingScreen
 import com.cowork.bikerecoder.ui.onboarding.OnboardingStep
@@ -68,6 +69,15 @@ fun BikeNavHost(container: AppContainer) {
         if (effectiveOnboardingStep(state, skippedSteps) == OnboardingStep.DONE) Routes.MAIN else Routes.ONBOARDING
     }
 
+    val setDestinationAndOpenPlan: (String, GeoPoint) -> Unit = { name, point ->
+        planViewModel.setDestination(name, point)
+        navController.openPlan()
+    }
+    val addWaypointAndOpenPlan: (String, GeoPoint) -> Unit = { name, point ->
+        planViewModel.addWaypoint(name, point)
+        navController.openPlan()
+    }
+
     NavHost(navController = navController, startDestination = startDestination) {
         composable(Routes.ONBOARDING) {
             val viewModel: OnboardingViewModel = viewModel(factory = OnboardingViewModel.factory(container))
@@ -90,14 +100,8 @@ fun BikeNavHost(container: AppContainer) {
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                 // Task 19 wires the real resume flow; the trip id travels with it.
                 onResumeTrip = { _ -> navController.navigate(Routes.NAVIGATE) },
-                onSetDestination = { name, point ->
-                    planViewModel.setDestination(name, point)
-                    navController.openPlan()
-                },
-                onAddWaypoint = { name, point ->
-                    planViewModel.addWaypoint(name, point)
-                    navController.openPlan()
-                },
+                onSetDestination = setDestinationAndOpenPlan,
+                onAddWaypoint = addWaypointAndOpenPlan,
             )
         }
         composable(Routes.SEARCH) {
@@ -107,14 +111,8 @@ fun BikeNavHost(container: AppContainer) {
             SearchScreen(
                 viewModel = viewModel,
                 onBack = { navController.popBackStack() },
-                onSetDestination = { name, point ->
-                    planViewModel.setDestination(name, point)
-                    navController.openPlan()
-                },
-                onAddWaypoint = { name, point ->
-                    planViewModel.addWaypoint(name, point)
-                    navController.openPlan()
-                },
+                onSetDestination = setDestinationAndOpenPlan,
+                onAddWaypoint = addWaypointAndOpenPlan,
             )
         }
         composable(Routes.PLAN) {

@@ -141,7 +141,8 @@ fun MainScreen(
     }
 
     state.pressed?.let { pressed ->
-        val name = if (pressed.loading) "선택한 위치" else pressed.title
+        // While the address is loading the title falls back to the coordinates.
+        val name = pressed.title
         PlaceActionSheet(
             title = if (pressed.loading) "주소를 확인하는 중…" else pressed.title,
             subtitle = null,

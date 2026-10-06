@@ -1,6 +1,7 @@
 package com.cowork.bikerecoder.ui.plan
 
 import com.cowork.bikerecoder.core.model.GeoPoint
+import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.model.Route
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.model.RouteSummary
@@ -11,6 +12,7 @@ import com.cowork.bikerecoder.core.routing.Router
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -49,7 +51,9 @@ class PlanViewModelTest {
     private val c = GeoPoint(35.4, 129.3)
 
     private val router = FakeRouter()
-    private var location: GeoPoint? = here
+    private var now = 1_000_000L
+    private fun fix(p: GeoPoint, at: Long = now) = LocationFix(p, 5f, null, null, at)
+    private val locations = MutableStateFlow<LocationFix?>(fix(here))
     private var segmentsReady = true
 
     @BeforeEach
@@ -65,8 +69,9 @@ class PlanViewModelTest {
     private fun viewModel() = PlanViewModel(
         router = router,
         defaultProfile = flowOf(RouteProfile.CYCLEWAY_FIRST),
-        currentLocation = { location },
+        locations = locations,
         segmentsReady = { segmentsReady },
+        clock = { now },
     )
 
     private fun TestScope.settle() {
@@ -117,13 +122,28 @@ class PlanViewModelTest {
     }
 
     @Test
-    fun `waypoint added before any destination stays a waypoint when destination is set`() = runTest {
+    fun `the last stop is always the destination`() = runTest {
         val vm = viewModel()
-        vm.addWaypoint("B", b)
+        vm.addWaypoint("B", b) // a lone stop is the destination
+        assertEquals(listOf("B"), vm.state.value.stops.map { it.name })
+        vm.addWaypoint("C", c) // goes in front of B
+        assertEquals(listOf("C", "B"), vm.state.value.stops.map { it.name })
+        vm.setDestination("A", a) // replaces the destination (B) only
+        assertEquals(listOf("C", "A"), vm.state.value.stops.map { it.name })
+    }
+
+    @Test
+    fun `removing the destination makes the last remaining stop the destination`() = runTest {
+        val vm = viewModel()
         vm.setDestination("A", a)
-        assertEquals(listOf("B", "A"), vm.state.value.stops.map { it.name })
-        vm.setDestination("C", c) // replaces the destination only
+        vm.addWaypoint("B", b)
+        vm.addWaypoint("C", c) // [B, C, A]
+        vm.remove(vm.state.value.stops.last().key) // remove A
         assertEquals(listOf("B", "C"), vm.state.value.stops.map { it.name })
+        vm.setDestination("D", GeoPoint(35.5, 129.4)) // replaces C, the new destination
+        assertEquals(listOf("B", "D"), vm.state.value.stops.map { it.name })
+        vm.addWaypoint("E", c) // goes in front of D
+        assertEquals(listOf("B", "E", "D"), vm.state.value.stops.map { it.name })
     }
 
     @Test
@@ -216,16 +236,101 @@ class PlanViewModelTest {
 
     @Test
     fun `unknown location waits and then routes once it appears`() = runTest {
-        location = null
+        locations.value = null
         val vm = viewModel()
         vm.setDestination("A", a)
         settle()
         assertEquals(RouteUiState.Error("현재 위치를 확인하는 중입니다"), vm.state.value.route)
         assertTrue(router.requests.isEmpty())
-        location = here
-        advanceTimeBy(PlanViewModel.LOCATION_POLL_MS + 1)
+        locations.value = fix(here)
         runCurrent()
         assertInstanceOf(RouteUiState.Ready::class.java, vm.state.value.route)
+    }
+
+    @Test
+    fun `a stale fix is ignored until a fresh one arrives`() = runTest {
+        locations.value = fix(here, at = now - PlanViewModel.MAX_FIX_AGE_MS - 1)
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+        assertEquals(RouteUiState.Error("현재 위치를 확인하는 중입니다"), vm.state.value.route)
+        assertTrue(router.requests.isEmpty())
+        val freshHere = GeoPoint(35.11, 129.01)
+        locations.value = fix(freshHere)
+        runCurrent()
+        assertInstanceOf(RouteUiState.Ready::class.java, vm.state.value.route)
+        assertEquals(freshHere, router.lastRequest.start)
+    }
+
+    @Test
+    fun `a fix exactly at the age limit is still fresh`() = runTest {
+        locations.value = fix(here, at = now - PlanViewModel.MAX_FIX_AGE_MS)
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+        assertInstanceOf(RouteUiState.Ready::class.java, vm.state.value.route)
+    }
+
+    @Test
+    fun `waiting for a location stops listening when the plan changes`() = runTest {
+        locations.value = null
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+        assertEquals(1, locations.subscriptionCount.value) // the recompute is waiting on the flow
+        vm.remove(vm.state.value.stops.single().key)
+        settle()
+        assertEquals(0, locations.subscriptionCount.value) // cancelled with the computation
+    }
+
+    @Test
+    fun `a loop plan whose destination is the current location is routed`() = runTest {
+        val vm = viewModel()
+        vm.setDestination("Home", here)
+        vm.addWaypoint("Far", GeoPoint(here.lat + 0.018, here.lon)) // about 2 km away
+        settle()
+        assertInstanceOf(RouteUiState.Ready::class.java, vm.state.value.route)
+        assertEquals(listOf(GeoPoint(here.lat + 0.018, here.lon), here), router.lastRequest.stops)
+        assertTrue(vm.state.value.canStart)
+    }
+
+    @Test
+    fun `profile flipped and flipped back in one dispatch still ends Ready`() = runTest {
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+        vm.setProfile(RouteProfile.SHORTEST)
+        vm.setProfile(RouteProfile.CYCLEWAY_FIRST)
+        settle()
+        assertInstanceOf(RouteUiState.Ready::class.java, vm.state.value.route)
+        assertEquals(RouteProfile.CYCLEWAY_FIRST, vm.state.value.profile)
+        assertEquals(2, router.requests.size)
+    }
+
+    @Test
+    fun `clear empties the plan and re-applies the current default profile`() = runTest {
+        val default = MutableStateFlow(RouteProfile.BALANCED)
+        val vm = PlanViewModel(router, default, locations, { true }, { now })
+        runCurrent()
+        vm.setDestination("A", a)
+        vm.setProfile(RouteProfile.SHORTEST)
+        settle()
+        assertTrue(vm.state.value.canStart)
+
+        default.value = RouteProfile.CYCLEWAY_FIRST // a settings change while the user's choice is active
+        runCurrent()
+        assertEquals(RouteProfile.SHORTEST, vm.state.value.profile)
+
+        vm.clear()
+        settle()
+        assertTrue(vm.state.value.stops.isEmpty())
+        assertEquals(RouteUiState.Idle, vm.state.value.route)
+        assertFalse(vm.state.value.canStart)
+        assertEquals(RouteProfile.CYCLEWAY_FIRST, vm.state.value.profile)
+
+        default.value = RouteProfile.BALANCED // later settings changes apply to the cleared plan
+        runCurrent()
+        assertEquals(RouteProfile.BALANCED, vm.state.value.profile)
     }
 
     @Test
@@ -258,11 +363,11 @@ class PlanViewModelTest {
 
     @Test
     fun `default profile from settings is applied until the user chooses one`() = runTest {
-        val vm = PlanViewModel(router, flowOf(RouteProfile.BALANCED), { here }, { true })
+        val vm = PlanViewModel(router, flowOf(RouteProfile.BALANCED), locations, { true }, { now })
         runCurrent()
         assertEquals(RouteProfile.BALANCED, vm.state.value.profile)
 
-        val vm2 = PlanViewModel(router, flowOf(RouteProfile.BALANCED), { here }, { true })
+        val vm2 = PlanViewModel(router, flowOf(RouteProfile.BALANCED), locations, { true }, { now })
         vm2.setProfile(RouteProfile.SHORTEST)
         runCurrent()
         assertEquals(RouteProfile.SHORTEST, vm2.state.value.profile)

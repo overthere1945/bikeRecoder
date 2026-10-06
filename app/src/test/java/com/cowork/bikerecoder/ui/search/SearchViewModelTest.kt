@@ -1,12 +1,10 @@
-package com.cowork.bikerecoder.ui
+package com.cowork.bikerecoder.ui.search
 
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.search.Place
 import com.cowork.bikerecoder.search.PlaceSearch
 import com.cowork.bikerecoder.search.SearchError
 import com.cowork.bikerecoder.search.SearchResult
-import com.cowork.bikerecoder.ui.search.SearchUiState
-import com.cowork.bikerecoder.ui.search.SearchViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher

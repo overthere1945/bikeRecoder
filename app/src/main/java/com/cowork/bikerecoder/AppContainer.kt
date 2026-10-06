@@ -1,6 +1,7 @@
 package com.cowork.bikerecoder
 
 import android.content.Context
+import android.util.Log
 import com.cowork.bikerecoder.core.routing.Router
 import com.cowork.bikerecoder.core.trip.OfflineMapController
 import com.cowork.bikerecoder.core.trip.TripManager
@@ -21,6 +22,7 @@ import com.cowork.bikerecoder.search.PlaceSearch
 import com.cowork.bikerecoder.tts.AndroidTtsVoiceOutput
 import com.cowork.bikerecoder.tts.VoiceOutput
 import com.cowork.bikerecoder.core.model.LocationFix
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -29,6 +31,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import okhttp3.OkHttpClient
 import java.io.File
@@ -70,13 +73,26 @@ class AppContainer(context: Context) {
     /** Replaceable in tests. */
     var locationSourceFactory: () -> LocationSource = { FusedLocationSource(appContext) }
 
-    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val appScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Default +
+            CoroutineExceptionHandler { _, e -> Log.e(TAG, "Unhandled error in app scope", e) },
+    )
 
     /**
      * Latest fix, shared by every screen that needs "where am I". The location source only runs while
-     * something collects this (plus a 5 s grace period); a missing permission just leaves it at null.
+     * something collects this (plus a 5 s grace period). Any failure of the source (missing permission,
+     * Play services unavailable or updating, ...) is logged and resets the value to null; it never
+     * propagates into [appScope]. Collecting again restarts the source.
      */
     val currentLocation: StateFlow<LocationFix?> = flow { emitAll(locationSourceFactory().fixes()) }
-        .catch { if (it !is SecurityException) throw it }
+        .map<LocationFix, LocationFix?> { it }
+        .catch { e ->
+            Log.w(TAG, "Location updates failed", e)
+            emit(null)
+        }
         .stateIn(appScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    private companion object {
+        const val TAG = "AppContainer"
+    }
 }
