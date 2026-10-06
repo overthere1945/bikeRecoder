@@ -207,12 +207,16 @@ fun BikeMap(
         }
     }
 
-    // Overlay data goes through GeoJsonSource updates only; the style is never reloaded for it.
-    LaunchedEffect(style, overlay) {
-        val loaded = style ?: return@LaunchedEffect
-        loaded.getSourceAs<GeoJsonSource>(ROUTE_SOURCE)?.setGeoJson(routeGeoJson(overlay.route))
-        loaded.getSourceAs<GeoJsonSource>(STOPS_SOURCE)?.setGeoJson(stopsGeoJson(overlay.stops))
-        loaded.getSourceAs<GeoJsonSource>(USER_SOURCE)?.setGeoJson(userGeoJson(overlay.user))
+    // Overlay data goes through GeoJsonSource updates only; the style is never reloaded for it. Each source is
+    // updated only when its own data changes, so a new fix does not re-upload the whole route.
+    LaunchedEffect(style, overlay.route) {
+        style?.getSourceAs<GeoJsonSource>(ROUTE_SOURCE)?.setGeoJson(routeGeoJson(overlay.route))
+    }
+    LaunchedEffect(style, overlay.stops) {
+        style?.getSourceAs<GeoJsonSource>(STOPS_SOURCE)?.setGeoJson(stopsGeoJson(overlay.stops))
+    }
+    LaunchedEffect(style, overlay.user) {
+        style?.getSourceAs<GeoJsonSource>(USER_SOURCE)?.setGeoJson(userGeoJson(overlay.user))
     }
 
     // Frame the requested points once the style (and so the map size) is ready.
