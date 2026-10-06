@@ -13,6 +13,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.IOException
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 data class SegmentInfo(
     val name: String,
@@ -88,12 +91,7 @@ class SegmentRepository(
                                 throw IOException("Incomplete download of $name.rd5: $read of $total bytes")
                             }
                             val target = file(name)
-                            if (target.exists() && !target.delete()) {
-                                throw IOException("Cannot replace $target")
-                            }
-                            if (!part.renameTo(target)) {
-                                throw IOException("Cannot rename $part to $target")
-                            }
+                            moveReplacing(part, target)
                             response.headers.getDate("Last-Modified")?.let { target.setLastModified(it.time) }
                             Result.success(target)
                         }
@@ -106,6 +104,8 @@ class SegmentRepository(
                 throw e
             } catch (e: Exception) {
                 part.delete()
+                // An abort caused by cancellation (call.cancel -> IOException) must surface as cancellation.
+                ensureActive()
                 Result.failure(e)
             }
         }
@@ -124,6 +124,14 @@ class SegmentRepository(
             throw e
         } catch (e: Exception) {
             false
+        }
+    }
+
+    private fun moveReplacing(from: File, to: File) {
+        try {
+            Files.move(from.toPath(), to.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        } catch (e: AtomicMoveNotSupportedException) {
+            Files.move(from.toPath(), to.toPath(), StandardCopyOption.REPLACE_EXISTING)
         }
     }
 

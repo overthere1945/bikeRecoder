@@ -1,6 +1,12 @@
 package com.cowork.bikerecoder.offline
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import mockwebserver3.SocketEffect
@@ -9,11 +15,14 @@ import okio.Buffer
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
+import java.util.concurrent.TimeUnit
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.ZonedDateTime
@@ -165,12 +174,62 @@ class SegmentRepositoryTest {
     }
 
     @Test
-    fun `update when missing locally and false on network failure`() = runTest {
-        server.enqueue(MockResponse.Builder().build())
+    fun `update when missing locally needs no request`() = runTest {
         assertTrue(repo.hasUpdate("E125_N35"))
+        assertEquals(0, server.requestCount)
+    }
 
+    @Test
+    fun `no update on network failure`() = runTest {
         File(dir, "E125_N35.rd5").writeBytes(ByteArray(1))
         server.close()
         assertFalse(repo.hasUpdate("E125_N35"))
+    }
+
+    @Test
+    fun `no update on non-2xx head`() = runTest {
+        File(dir, "E125_N35.rd5").apply {
+            writeBytes(ByteArray(1))
+            setLastModified(Instant.parse("2026-10-01T00:00:00Z").toEpochMilli())
+        }
+        server.enqueue(
+            MockResponse.Builder().code(404)
+                .addHeader("Last-Modified", httpDate("2026-10-05T00:00:00Z")).build(),
+        )
+        assertFalse(repo.hasUpdate("E125_N35"))
+    }
+
+    @Test
+    fun `no update when last-modified header missing`() = runTest {
+        File(dir, "E125_N35.rd5").writeBytes(ByteArray(1))
+        server.enqueue(MockResponse.Builder().build())
+        assertFalse(repo.hasUpdate("E125_N35"))
+    }
+
+    @Test
+    fun `cancelled download aborts promptly and leaves nothing`() = runBlocking {
+        server.enqueue(
+            MockResponse.Builder()
+                .body(Buffer().write(ByteArray(4096)))
+                .bodyDelay(60, TimeUnit.SECONDS)
+                .build(),
+        )
+        val job = async(Dispatchers.Default) { repo.download("E125_N35") { _, _ -> } }
+        // wait until the request has reached the server, so the download is in flight
+        withTimeout(5_000) { while (server.requestCount == 0) delay(10) }
+        delay(200)
+
+        job.cancel()
+        withTimeout(2_000) { job.join() }
+
+        assertTrue(job.isCancelled)
+        try {
+            job.await()
+            fail("download should have been cancelled")
+        } catch (expected: CancellationException) {
+            // cancellation surfaced to the caller
+        }
+        assertFalse(File(dir, "E125_N35.rd5").exists())
+        assertFalse(File(dir, "E125_N35.rd5.part").exists())
     }
 }
