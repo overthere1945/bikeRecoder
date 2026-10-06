@@ -64,7 +64,7 @@ class MapLibreOfflineController(
     /** Planner limit; lowered by tests to get a truncated plan from a short route. */
     private val maxTiles: Long = DEFAULT_MAX_TILES,
     private val log: WarnLog = androidWarnLog(TAG),
-) : OfflineMapController {
+) : OfflineMapController, OfflineMapStorage {
 
     private val appContext: Context = context.applicationContext
     private val _progress = MutableStateFlow<OfflineProgress?>(null)
@@ -94,6 +94,35 @@ class MapLibreOfflineController(
         running?.cancelAndJoin()
         mutex.withLock { removeTripRegions(tripId, strict = false) }
         _progress.compareAndSetIf(tripId) { null }
+    }
+
+    override suspend fun totalBytes(): Long = ownRegions().sumOf { status(it)?.completedResourceSize ?: 0L }
+
+    override suspend fun deleteAll() {
+        val running = synchronized(lock) { inFlight.values.toList().also { inFlight.clear() } }
+        running.forEach { it.cancelAndJoin() }
+        mutex.withLock {
+            val deleted = mutableListOf<Long>()
+            var failures = 0
+            for (region in ownRegions()) {
+                try {
+                    deleteRegion(region)
+                    deleted += region.id
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    failures++
+                    log.warn("Could not delete offline region ${region.id}", e)
+                }
+            }
+            if (failures == 0) {
+                refs.deleteAll()
+            } else {
+                deleted.forEach { refs.deleteByRegionId(it) }
+            }
+            _progress.value = null
+            if (failures > 0) throw OfflineException("could not delete $failures offline region(s)")
+        }
     }
 
     /** Suspends until every download started so far has finished (successfully or not). */
@@ -233,6 +262,12 @@ class MapLibreOfflineController(
         }
     }
 
+    /** Every region this app created: identified by its metadata, or by a stored ref. */
+    private suspend fun ownRegions(): List<OfflineRegion> {
+        val refIds = refs.all().map { it.mapLibreRegionId }.toSet()
+        return listRegions().filter { OfflineRegionMeta.decode(it.metadata) != null || it.id in refIds }
+    }
+
     private suspend fun decide(tripId: Long): DownloadDecision {
         val found = findTripRegions(tripId)
         if (found.isEmpty()) return DownloadDecision.DOWNLOAD
@@ -317,16 +352,20 @@ class MapLibreOfflineController(
         }
     }
 
-    private suspend fun isComplete(region: OfflineRegion): Boolean = withContext(Dispatchers.Main) {
+    private suspend fun status(region: OfflineRegion): OfflineRegionStatus? = withContext(Dispatchers.Main) {
         suspendCancellableCoroutine { cont ->
             region.getStatus(
                 object : OfflineRegion.OfflineRegionStatusCallback {
-                    override fun onStatus(status: OfflineRegionStatus?) = cont.resume(status?.let { it.isComplete && it.isRequiredResourceCountPrecise } == true)
+                    override fun onStatus(status: OfflineRegionStatus?) = cont.resume(status)
+
                     override fun onError(error: String?) = cont.resumeWithException(OfflineException(error ?: "status"))
                 },
             )
         }
     }
+
+    private suspend fun isComplete(region: OfflineRegion): Boolean =
+        status(region)?.let { it.isComplete && it.isRequiredResourceCountPrecise } == true
 
     private fun corridorGeometry(plan: CorridorPlan): MultiPolygon =
         MultiPolygon.fromLngLats(

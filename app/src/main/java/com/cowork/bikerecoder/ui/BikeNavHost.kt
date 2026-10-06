@@ -3,18 +3,13 @@ package com.cowork.bikerecoder.ui
 import android.content.Context
 import android.content.ContextWrapper
 import androidx.activity.ComponentActivity
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -39,6 +34,8 @@ import com.cowork.bikerecoder.ui.plan.PlanMap
 import com.cowork.bikerecoder.ui.plan.PlanScreen
 import com.cowork.bikerecoder.ui.plan.PlanViewModel
 import com.cowork.bikerecoder.ui.search.SearchScreen
+import com.cowork.bikerecoder.ui.settings.SettingsScreen
+import com.cowork.bikerecoder.ui.settings.SettingsViewModel
 import com.cowork.bikerecoder.ui.search.SearchViewModel
 import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.ui.navigate.NavigateScreen
@@ -211,7 +208,10 @@ fun BikeNavHost(
                 },
             )
         }
-        composable(Routes.SETTINGS) { ComingSoon() }
+        composable(Routes.SETTINGS) {
+            val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(container))
+            SettingsScreen(viewModel = viewModel, onBack = { navController.popBackStack() })
+        }
     }
 }
 
@@ -232,13 +232,4 @@ private fun Context.findActivity(): ComponentActivity {
         c = c.baseContext
     }
     error("BikeNavHost must be hosted in a ComponentActivity")
-}
-
-@Composable
-private fun ComingSoon() {
-    Surface(modifier = Modifier.fillMaxSize()) {
-        Box(modifier = Modifier.fillMaxSize().systemBarsPadding(), contentAlignment = Alignment.Center) {
-            Text("준비 중", style = MaterialTheme.typography.titleLarge)
-        }
-    }
 }

@@ -60,17 +60,46 @@ docs/                 설계 스펙, 버전 규칙, 검증 기록
 ## 테스트
 
 ```bash
-./gradlew :core:test :routing-brouter:test          # 단위 테스트 (PC)
-./gradlew :routing-brouter:integrationTest           # 실제 서울 경로 계산 테스트
-./gradlew :app:connectedAndroidTest                  # 기기/에뮬레이터 GPX 재생 테스트
+./gradlew :core:test :routing-brouter:test :app:testDebugUnitTest   # 단위 테스트 (PC)
+./gradlew :routing-brouter:integrationTest                           # 실제 서울 경로 계산 테스트
+./gradlew :app:connectedDebugAndroidTest                             # 기기 테스트 (Compose UI, Room, GPX 재생, 오프라인 지도)
 ```
 
-실주행 체크리스트는 `docs/verification/`에 기록합니다.
+기기 테스트는 실제 기기 또는 에뮬레이터가 필요합니다. 둘 중 하나를 고르세요.
+
+**방법 1: USB로 연결한 휴대폰 (기본)** — 개발자 옵션에서 USB 디버깅을 켜고 연결한 뒤 `adb devices`에 `device`로 표시되는지 확인합니다. 기기가 둘 이상이면 시리얼을 지정합니다.
+
+```bash
+adb devices
+ANDROID_SERIAL=<시리얼> ./gradlew :app:connectedDebugAndroidTest
+```
+
+테스트 클래스 하나만 실행하려면 `connectedDebugAndroidTest`에는 `--tests`가 없으므로 인스트루먼테이션 인자를 씁니다.
+
+```bash
+ANDROID_SERIAL=<시리얼> ./gradlew :app:connectedDebugAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=com.cowork.bikerecoder.ui.settings.SettingsScreenTest
+```
+
+일부 테스트(오프라인 지도 등)는 인터넷이 필요합니다. 기기에 설치된 앱을 직접 지우거나 USB를 뽑으면 실행이 실패합니다.
+
+**방법 2: 에뮬레이터 (선택)** — 시스템 이미지를 받고 AVD를 만들어 띄웁니다.
+
+```bash
+$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "system-images;android-37.0;google_apis;x86_64"
+$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager create avd -n bike37 -k "system-images;android-37.0;google_apis;x86_64" -d pixel_8
+$ANDROID_HOME/emulator/emulator -avd bike37 -no-snapshot &
+```
+
+에뮬레이터가 뜨면 방법 1과 같은 `connectedDebugAndroidTest` 명령을 `ANDROID_SERIAL` 없이(기기가 하나일 때) 실행합니다.
+
+자동 검증 결과와 실주행 체크리스트는 [docs/verification/navigation-field-test.md](docs/verification/navigation-field-test.md)에 기록합니다.
 
 ## 문서
 
 - [내비게이션 설계 스펙](docs/superpowers/specs/2026-10-05-navigation-design.md)
 - [버전 관리 규칙](docs/VERSIONING.md)
+- [내비게이션 검증·실주행 체크리스트](docs/verification/navigation-field-test.md)
 - [변경 이력](CHANGELOG.md)
 
 ## 라이선스와 출처 표기

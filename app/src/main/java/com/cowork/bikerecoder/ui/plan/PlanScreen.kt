@@ -55,7 +55,7 @@ object PlanTags {
     const val START = "plan_start"
 }
 
-private fun RouteProfile.labelKo() = when (this) {
+internal fun RouteProfile.labelKo() = when (this) {
     RouteProfile.CYCLEWAY_FIRST -> "자전거도로 최우선"
     RouteProfile.BALANCED -> "균형"
     RouteProfile.SHORTEST -> "최단거리"

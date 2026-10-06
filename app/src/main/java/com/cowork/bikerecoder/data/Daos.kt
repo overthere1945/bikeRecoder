@@ -54,6 +54,12 @@ interface OfflineRegionRefDao {
     @Query("DELETE FROM offline_region_ref WHERE tripId = :tripId")
     suspend fun deleteForTrip(tripId: Long)
 
+    @Query("DELETE FROM offline_region_ref")
+    suspend fun deleteAll()
+
+    @Query("DELETE FROM offline_region_ref WHERE mapLibreRegionId = :regionId")
+    suspend fun deleteByRegionId(regionId: Long)
+
     @Query("SELECT * FROM offline_region_ref ORDER BY id ASC")
     suspend fun all(): List<OfflineRegionRefEntity>
 }

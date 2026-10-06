@@ -21,6 +21,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -195,6 +196,33 @@ class MapLibreOfflineControllerTest {
         assertTrue("previous regions deleted", regions.map { it.id }.none { it in truncated.map { t -> t.id } })
         assertFalse(metas(regions).any { it.truncated })
         assertEquals(regions.map { it.id }.toSet(), refs.forTrip(TRIP).map { it.mapLibreRegionId }.toSet())
+    }
+
+    @Test
+    fun totalBytesCoversTheDownloadedRegions() = runBlocking {
+        val c = controller()
+        download(c)
+
+        val ours = ourRegions().sumOf { status(it).completedResourceSize }
+
+        assertTrue("our regions have a size", ours > 0)
+        assertTrue("total includes them", c.totalBytes() >= ours)
+    }
+
+    @Test
+    fun deleteAllRemovesEveryTripRegionAndRef() = runBlocking {
+        // deleteAll wipes every trip map of the app; never run it where the device holds regions we did not create.
+        val foreign = allRegions().filter { OfflineRegionMeta.decode(it.metadata)?.let { m -> m.tripId != TRIP } == true }
+        Assume.assumeTrue("device has trip maps of its own; not deleting them", foreign.isEmpty())
+        val c = controller()
+        download(c)
+        assertEquals(2, ourRegions().size)
+
+        c.deleteAll()
+
+        assertTrue(ourRegions().isEmpty())
+        assertTrue(refs.all().isEmpty())
+        assertEquals(0L, c.totalBytes())
     }
 
     private companion object {
