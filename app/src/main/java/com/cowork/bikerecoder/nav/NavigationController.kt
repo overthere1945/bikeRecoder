@@ -87,7 +87,8 @@ enum class FinishReason { ARRIVED, STOPPED_TODAY, COMPLETED }
  * Runs one [NavigationSession] at a time, outside any UI lifecycle: the app-wide singleton lives in
  * [AppContainer.navigation] and the location foreground service keeps the process alive while it runs.
  *
- * Starting a trip takes the first fix of a fresh [locationSource] as the start point, routes from there to
+ * Starting a trip takes the first fix within [START_ACCURACY_M] of a fresh [locationSource] (or, after
+ * [firstFixTimeoutMs], the most accurate one seen) as the start point, routes from there to
  * the trip's unvisited stops with the trip's profile, then feeds every later fix to the session, drives
  * [NavigationSession.onTick] every [tickIntervalMs] by [clock] (independent of fix times) and touches the
  * trip every [touchIntervalMs]. Today's distance of the trip ([dayDistances], by [zone]'s calendar date at the
@@ -246,14 +247,22 @@ class NavigationController(
         val stops = tripManager.remainingStops(r.tripId).map { Stop(it.id, it.name, it.point, it.isDestination) }
         if (stops.isEmpty()) return fail(r, MSG_NO_STOPS, canRetry = false)
 
+        // The start point: the first fix within START_ACCURACY_M, else (at the timeout) the most accurate one seen.
         val firstFix = CompletableDeferred<LocationFix>()
+        var bestFix: LocationFix? = null
         r.jobs += scope.launch {
             try {
                 locationSource().fixes().collect { fix ->
                     r.lastFix = fix
                     val session = r.session
-                    if (session != null) session.onFix(fix) else firstFix.complete(fix)
+                    if (session != null) {
+                        session.onFix(fix)
+                    } else {
+                        if (bestFix.let { it == null || fix.accuracyM < it.accuracyM }) bestFix = fix
+                        if (fix.accuracyM <= START_ACCURACY_M) firstFix.complete(fix)
+                    }
                 }
+                bestFix?.let { firstFix.complete(it) }
                 if (!firstFix.isCompleted) log.warn("Location source ended without a fix", null)
                 firstFix.completeExceptionally(IllegalStateException("location source ended without a fix"))
             } catch (e: CancellationException) {
@@ -265,11 +274,11 @@ class NavigationController(
             }
         }
         val start = try {
-            withTimeoutOrNull(firstFixTimeoutMs) { firstFix.await() }
+            withTimeoutOrNull(firstFixTimeoutMs) { firstFix.await() } ?: bestFix
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            null // Already logged by the collector.
+            bestFix // The failure is already logged by the collector.
         }
         if (start == null) {
             if (!firstFix.isCompleted) log.warn("No location fix within $firstFixTimeoutMs ms", null)
@@ -440,8 +449,14 @@ class NavigationController(
         const val MSG_TRIP_ENDED = "이미 끝난 여행입니다"
         const val MSG_SAVE_FAILED = "여행 상태를 저장하지 못했습니다"
 
-        /** Without a fix for this long the start fails (and can be retried). */
+        /**
+         * The start waits this long for a fix within [START_ACCURACY_M]; then it takes the most accurate fix
+         * seen, and without any fix it fails (and can be retried).
+         */
         const val FIRST_FIX_TIMEOUT_MS = 30_000L
+
+        /** A start point this accurate is taken at once (the session's accuracy limit, spec §6). */
+        const val START_ACCURACY_M = 30f
 
         private const val TAG = "NavigationController"
     }

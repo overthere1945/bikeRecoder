@@ -406,6 +406,36 @@ class NavigationControllerTest {
     }
 
     @Test
+    fun theStartWaitsForAnAccurateFirstFix() = runTest {
+        val track = gpxFixture("scenario_follow.gpx")
+        val fixes = listOf(track[0].copy(accuracyM = 80f), track[1].copy(accuracyM = 45f)) + track.drop(2)
+        val h = Harness(this, AssetRouter(listOf(follow)), ScriptedLocationSource(fixes), flowOf(true))
+        val tripId = h.trip(TripType.SINGLE_DAY, stop("도착", destination, isDestination = true))
+
+        h.controller.start(tripId)
+
+        assertEquals(track[2].point, h.router.requests.single().start, "the first fix within 30 m")
+    }
+
+    @Test
+    fun withoutAnAccurateFixTheBestOneIsUsedAfterTheTimeout() = runTest {
+        val track = gpxFixture("scenario_follow.gpx")
+        val fixes = listOf(track[0].copy(accuracyM = 80f), track[1].copy(accuracyM = 45f), track[2].copy(accuracyM = 60f))
+        val h = Harness(this, AssetRouter(listOf(follow)), ScriptedLocationSource(fixes), flowOf(true))
+        val tripId = h.trip(TripType.SINGLE_DAY, stop("도착", destination, isDestination = true))
+
+        h.controller.begin(tripId)
+        advanceTimeBy(NavigationController.FIRST_FIX_TIMEOUT_MS - 1)
+        runCurrent()
+        assertEquals(NavUiState.Starting(tripId), h.controller.ui.value)
+        assertTrue(h.router.requests.isEmpty())
+
+        advanceTimeBy(2)
+        runCurrent()
+        assertEquals(track[1].point, h.router.requests.single().start, "the most accurate fix seen")
+    }
+
+    @Test
     fun aTripThatIsNoLongerActiveIsNotStarted() = runTest {
         // E.g. a stale "안내가 중단되었습니다" notification tapped after the trip was completed.
         val h = harness("scenario_follow.gpx")
