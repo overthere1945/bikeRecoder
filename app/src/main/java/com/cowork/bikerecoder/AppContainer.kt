@@ -13,6 +13,7 @@ import com.cowork.bikerecoder.location.FusedLocationSource
 import com.cowork.bikerecoder.location.LocationSource
 import com.cowork.bikerecoder.map.OpenFreeMapSource
 import com.cowork.bikerecoder.map.TileSource
+import com.cowork.bikerecoder.nav.NavigationController
 import com.cowork.bikerecoder.offline.NoopOfflineMapController
 import com.cowork.bikerecoder.offline.SegmentRepository
 import com.cowork.bikerecoder.routing.BRouterRouter
@@ -91,6 +92,18 @@ class AppContainer(context: Context) {
             emit(null)
         }
         .stateIn(appScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /**
+     * Guidance runs here, outside any UI lifecycle, on the main thread (the session must be driven from a
+     * single thread). The location foreground service keeps the process alive while it runs.
+     */
+    private val navigationScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Main.immediate +
+            CoroutineExceptionHandler { _, e -> Log.e(TAG, "Unhandled error in navigation", e) },
+    )
+
+    /** Created on first use (it binds the TTS engine). */
+    val navigation: NavigationController by lazy { NavigationController(this, navigationScope) }
 
     private companion object {
         const val TAG = "AppContainer"

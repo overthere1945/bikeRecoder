@@ -14,6 +14,7 @@ import com.cowork.bikerecoder.core.routing.RouteFailure
 import com.cowork.bikerecoder.core.routing.RouteRequest
 import com.cowork.bikerecoder.core.routing.RouteResult
 import com.cowork.bikerecoder.core.routing.Router
+import com.cowork.bikerecoder.ui.common.routeFailureText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -167,7 +168,7 @@ class PlanViewModel(
         }
         when (result) {
             is RouteResult.Success -> publish(stops, profile, RouteUiState.Ready(result.route), startable = dataReady)
-            is RouteResult.Failure -> publish(stops, profile, RouteUiState.Error(messageFor(result.reason)), startable = false)
+            is RouteResult.Failure -> publish(stops, profile, RouteUiState.Error(routeFailureText(result.reason)), startable = false)
         }
     }
 
@@ -178,18 +179,11 @@ class PlanViewModel(
         }
     }
 
-    private fun messageFor(reason: RouteFailure): String = when (reason) {
-        RouteFailure.NO_SEGMENT_DATA -> MSG_NO_SEGMENTS
-        RouteFailure.NO_ROUTE -> "경로를 찾을 수 없습니다"
-        RouteFailure.TIMEOUT -> "경로 계산 시간이 너무 깁니다. 경유지를 추가해 주세요"
-        RouteFailure.OTHER -> "경로를 계산하지 못했습니다"
-    }
-
     companion object {
         const val RECOMPUTE_DEBOUNCE_MS = 300L
         const val MAX_FIX_AGE_MS = 30_000L
         private const val MIN_DESTINATION_DISTANCE_M = 50.0
-        private const val MSG_NO_SEGMENTS = "경로 데이터가 없습니다. 설정에서 내려받으세요"
+        private val MSG_NO_SEGMENTS = routeFailureText(RouteFailure.NO_SEGMENT_DATA)
         private const val MSG_NO_LOCATION = "현재 위치를 확인하는 중입니다"
         private const val MSG_TOO_CLOSE = "목적지가 현재 위치와 너무 가깝습니다"
 

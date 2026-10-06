@@ -1,0 +1,325 @@
+package com.cowork.bikerecoder.nav
+
+import com.cowork.bikerecoder.AppContainer
+import com.cowork.bikerecoder.core.model.LocationFix
+import com.cowork.bikerecoder.core.model.Stop
+import com.cowork.bikerecoder.core.navigation.NavEvent
+import com.cowork.bikerecoder.core.navigation.NavState
+import com.cowork.bikerecoder.core.navigation.NavUpdate
+import com.cowork.bikerecoder.core.navigation.NavigationSession
+import com.cowork.bikerecoder.core.routing.RouteFailure
+import com.cowork.bikerecoder.core.routing.RouteRequest
+import com.cowork.bikerecoder.core.routing.RouteResult
+import com.cowork.bikerecoder.core.routing.Router
+import com.cowork.bikerecoder.core.trip.OfflineMapController
+import com.cowork.bikerecoder.core.trip.Trip
+import com.cowork.bikerecoder.core.trip.TripManager
+import com.cowork.bikerecoder.core.trip.TripStore
+import com.cowork.bikerecoder.core.trip.TripType
+import com.cowork.bikerecoder.core.voice.KoreanPhrases
+import com.cowork.bikerecoder.location.LocationSource
+import com.cowork.bikerecoder.tts.VoiceOutput
+import com.cowork.bikerecoder.ui.common.routeFailureText
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/** What the navigation screen and the foreground-service notification show. */
+sealed interface NavUiState {
+    data object Idle : NavUiState
+
+    /** Waiting for the first fix or computing the route to the unvisited stops. */
+    data class Starting(val tripId: Long) : NavUiState
+
+    /** Guidance is running. [stops] are the stops not reached yet; [fix] is the latest location. */
+    data class Active(
+        val tripId: Long,
+        val type: TripType,
+        val state: NavState,
+        val stops: List<Stop>,
+        val fix: LocationFix?,
+        val muted: Boolean,
+    ) : NavUiState
+
+    /** The start failed (no location, no route, ...); [message] is shown with [다시 시도]. No session runs. */
+    data class Failed(val tripId: Long, val message: String) : NavUiState
+
+    data class Finished(val tripId: Long, val type: TripType, val reason: FinishReason) : NavUiState
+}
+
+enum class FinishReason { ARRIVED, STOPPED_TODAY, COMPLETED }
+
+/**
+ * Runs one [NavigationSession] at a time, outside any UI lifecycle: the app-wide singleton lives in
+ * [AppContainer.navigation] and the location foreground service keeps the process alive while it runs.
+ *
+ * Starting a trip takes the first fix of a fresh [locationSource] as the start point, routes from there to
+ * the trip's unvisited stops with the trip's profile, then feeds every later fix to the session, drives
+ * [NavigationSession.onTick] every [tickIntervalMs] by [clock] (independent of fix times) and touches the
+ * trip every [touchIntervalMs]. Session updates are spoken (unless [voiceEnabled] is off), reached stops are
+ * marked visited, and reaching the destination completes the trip. Every way out of a session (arrival,
+ * [stopToday], [completeTrip], [close], a new start) stops the location source and the ticks.
+ *
+ * Threading: every public method must be called on [scope]'s single thread (Main in the app); the session
+ * runs on the same [scope]. Trip writes run in [scope], so they finish even if the caller goes away.
+ */
+class NavigationController(
+    private val router: Router,
+    private val tripManager: TripManager,
+    private val tripStore: TripStore,
+    private val offline: OfflineMapController,
+    private val voice: VoiceOutput,
+    private val locationSource: () -> LocationSource,
+    private val voiceEnabled: Flow<Boolean>,
+    private val scope: CoroutineScope,
+    private val clock: () -> Long = System::currentTimeMillis,
+    private val phrases: KoreanPhrases = KoreanPhrases(),
+    private val tickIntervalMs: Long = 1_000,
+    private val touchIntervalMs: Long = 60_000,
+) {
+    constructor(container: AppContainer, scope: CoroutineScope) : this(
+        router = container.router,
+        tripManager = container.tripManager,
+        tripStore = container.tripStore,
+        offline = container.offline,
+        voice = container.voice,
+        locationSource = { container.locationSourceFactory() },
+        voiceEnabled = container.settings.settings.map { it.voiceEnabled },
+        scope = scope,
+    )
+
+    private val _ui = MutableStateFlow<NavUiState>(NavUiState.Idle)
+    val ui: StateFlow<NavUiState> = _ui.asStateFlow()
+
+    private var muted = false
+
+    /** Everything belonging to one start of one trip. */
+    private class Run(val tripId: Long) {
+        var trip: Trip? = null
+        var session: NavigationSession? = null
+        var stops: List<Stop> = emptyList()
+        var lastFix: LocationFix? = null
+        var voiceOn = true
+        val jobs = mutableListOf<Job>()
+
+        fun cancelJobs() {
+            jobs.toList().forEach { it.cancel() }
+            jobs.clear()
+        }
+    }
+
+    private var run: Run? = null
+
+    /**
+     * Starts guidance for [tripId] without waiting: the state is [NavUiState.Starting] when this returns.
+     * Does nothing (returns the running job, or null) if that trip is already starting or running.
+     */
+    fun begin(tripId: Long): Job? {
+        val current = run
+        val state = _ui.value
+        if (current != null && current.tripId == tripId &&
+            (state is NavUiState.Starting || state is NavUiState.Active)
+        ) {
+            return null
+        }
+        endRun()
+        val r = Run(tripId)
+        run = r
+        _ui.value = NavUiState.Starting(tripId)
+        val job = scope.launch {
+            try {
+                prepare(r)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                fail(r, MSG_START_FAILED)
+            }
+        }
+        r.jobs += job
+        return job
+    }
+
+    /** Routes from the current location to the unvisited stops and starts the session (or fails). */
+    suspend fun start(tripId: Long) {
+        begin(tripId)?.join()
+    }
+
+    /** MULTI_DAY only: guidance stops for today, the trip stays active. */
+    fun stopToday() {
+        val r = run ?: return
+        if (r.trip?.type != TripType.MULTI_DAY) return
+        scope.launch { finish(r, FinishReason.STOPPED_TODAY) }
+    }
+
+    /** Completes the trip (deleting its offline maps) and stops guidance. */
+    suspend fun completeTrip() {
+        val r = run ?: return
+        if (r.trip == null) return
+        scope.launch { finish(r, FinishReason.COMPLETED) }.join()
+    }
+
+    /** From a finished single-day trip: reopen it as an active multi-day trip, then go idle. */
+    suspend fun convertToMultiDay() {
+        val finished = _ui.value as? NavUiState.Finished ?: return
+        if (finished.type != TripType.SINGLE_DAY || finished.reason == FinishReason.STOPPED_TODAY) return
+        scope.launch {
+            withContext(NonCancellable) { ignoringErrors { tripManager.convertToMultiDay(finished.tripId) } }
+            if (_ui.value == finished) _ui.value = NavUiState.Idle
+        }.join()
+    }
+
+    fun setMuted(m: Boolean) {
+        muted = m
+        voice.muted = m
+        val state = _ui.value
+        if (state is NavUiState.Active) _ui.value = state.copy(muted = m)
+    }
+
+    /** Stops whatever runs without changing the trip (cancel a start, close an error or a finished trip). */
+    fun close() {
+        endRun()
+        _ui.value = NavUiState.Idle
+    }
+
+    private fun endRun() {
+        run?.cancelJobs()
+        run = null
+    }
+
+    private suspend fun prepare(r: Run) {
+        val trip = tripStore.trip(r.tripId) ?: return fail(r, MSG_NO_TRIP)
+        r.trip = trip
+        val stops = tripManager.remainingStops(r.tripId).map { Stop(it.id, it.name, it.point, it.isDestination) }
+        if (stops.isEmpty()) return fail(r, MSG_NO_STOPS)
+
+        val firstFix = CompletableDeferred<LocationFix>()
+        r.jobs += scope.launch {
+            try {
+                locationSource().fixes().collect { fix ->
+                    r.lastFix = fix
+                    val session = r.session
+                    if (session != null) session.onFix(fix) else firstFix.complete(fix)
+                }
+                firstFix.completeExceptionally(IllegalStateException("location source ended without a fix"))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Before the start this fails the start; later the session's GPS watchdog reports it.
+                firstFix.completeExceptionally(e)
+            }
+        }
+        val start = try {
+            firstFix.await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return fail(r, MSG_NO_LOCATION)
+        }
+
+        val request = RouteRequest(start.point, start.bearingDeg, stops.map { it.point }, trip.profile)
+        val result = try {
+            router.route(request)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            RouteResult.Failure(RouteFailure.OTHER, e.message.orEmpty())
+        }
+        if (run !== r) return
+        val route = when (result) {
+            is RouteResult.Failure -> return fail(r, routeFailureText(result.reason))
+            is RouteResult.Success -> result.route
+        }
+
+        val session = NavigationSession(route, stops, trip.profile, router, phrases, scope)
+        r.stops = stops
+        r.session = session
+        // Subscribed before anything can emit (the shared flow has no replay).
+        r.jobs += scope.launch(start = CoroutineStart.UNDISPATCHED) { session.updates.collect { handle(r, it) } }
+        r.jobs += scope.launch { voiceEnabled.collect { r.voiceOn = it } }
+        r.jobs += scope.launch {
+            while (true) {
+                delay(tickIntervalMs)
+                session.onTick(clock())
+            }
+        }
+        r.jobs += scope.launch {
+            while (true) {
+                delay(touchIntervalMs)
+                ignoringErrors { tripManager.touch(trip.id) }
+            }
+        }
+        r.jobs += scope.launch { ignoringErrors { offline.downloadForTrip(trip.id, route, 0.0) } }
+        // The latest fix (the start point, or newer if routing took a while) is the session's first.
+        r.lastFix?.let(session::onFix)
+    }
+
+    private suspend fun handle(r: Run, update: NavUpdate) {
+        if (run !== r) return
+        if (r.voiceOn) update.utterances.forEach { voice.speak(it.text) }
+        var arrived = false
+        for (event in update.events) {
+            if (event !is NavEvent.StopReached) continue
+            r.stops = r.stops.filterNot { it.id == event.stop.id }
+            ignoringErrors { tripManager.markVisited(event.stop.id) }
+            if (event.stop.isDestination) arrived = true
+        }
+        if (arrived) {
+            finish(r, FinishReason.ARRIVED)
+            return
+        }
+        if (run !== r) return
+        val trip = r.trip ?: return
+        _ui.value = NavUiState.Active(r.tripId, trip.type, update.state, r.stops, r.lastFix, muted)
+    }
+
+    /** Ends [r]'s session and records the outcome. May be called from [r]'s own update collector. */
+    private suspend fun finish(r: Run, reason: FinishReason) = withContext(NonCancellable) {
+        if (run !== r) return@withContext
+        val trip = r.trip ?: return@withContext
+        run = null
+        r.cancelJobs()
+        ignoringErrors {
+            when (reason) {
+                FinishReason.ARRIVED, FinishReason.COMPLETED -> tripManager.complete(trip.id)
+                FinishReason.STOPPED_TODAY -> tripManager.endToday(trip.id)
+            }
+        }
+        // A new start during the write wins.
+        if (run == null) _ui.value = NavUiState.Finished(trip.id, trip.type, reason)
+    }
+
+    /** The start of [r] failed: stop its location source; [r] stays current so the trip can still be ended. */
+    private fun fail(r: Run, message: String) {
+        if (run !== r) return
+        r.cancelJobs()
+        _ui.value = NavUiState.Failed(r.tripId, message)
+    }
+
+    private suspend inline fun ignoringErrors(block: () -> Unit) {
+        try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Best effort: a failed trip write must not stop guidance.
+        }
+    }
+
+    companion object {
+        const val MSG_NO_LOCATION = "현재 위치를 확인할 수 없습니다. 위치 권한과 GPS를 확인하세요"
+        const val MSG_NO_TRIP = "여행 정보를 찾을 수 없습니다"
+        const val MSG_NO_STOPS = "남은 경유지가 없습니다"
+        const val MSG_START_FAILED = "안내를 시작하지 못했습니다"
+    }
+}

@@ -38,6 +38,9 @@ import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.gestures.MoveGestureDetector
+import org.maplibre.android.gestures.RotateGestureDetector
+import org.maplibre.android.gestures.ShoveGestureDetector
+import org.maplibre.android.gestures.StandardScaleGestureDetector
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
@@ -166,6 +169,22 @@ fun BikeMap(
                 override fun onMoveBegin(detector: MoveGestureDetector) = currentOnUserGesture()
                 override fun onMove(detector: MoveGestureDetector) = Unit
                 override fun onMoveEnd(detector: MoveGestureDetector) = Unit
+            })
+            // Pinch, rotate and tilt are user gestures too (FOLLOW must not snap back after them).
+            m.addOnScaleListener(object : MapLibreMap.OnScaleListener {
+                override fun onScaleBegin(detector: StandardScaleGestureDetector) = currentOnUserGesture()
+                override fun onScale(detector: StandardScaleGestureDetector) = Unit
+                override fun onScaleEnd(detector: StandardScaleGestureDetector) = Unit
+            })
+            m.addOnRotateListener(object : MapLibreMap.OnRotateListener {
+                override fun onRotateBegin(detector: RotateGestureDetector) = currentOnUserGesture()
+                override fun onRotate(detector: RotateGestureDetector) = Unit
+                override fun onRotateEnd(detector: RotateGestureDetector) = Unit
+            })
+            m.addOnShoveListener(object : MapLibreMap.OnShoveListener {
+                override fun onShoveBegin(detector: ShoveGestureDetector) = currentOnUserGesture()
+                override fun onShove(detector: ShoveGestureDetector) = Unit
+                override fun onShoveEnd(detector: ShoveGestureDetector) = Unit
             })
             if (initialCenter != null) {
                 m.moveCamera(
