@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.core.voice
 
+import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.model.TurnType
 import com.cowork.bikerecoder.core.model.TurnType.KEEP_LEFT
 import com.cowork.bikerecoder.core.model.TurnType.KEEP_RIGHT
@@ -26,6 +27,9 @@ class KoreanPhrases(private val zone: ZoneId = ZoneId.of("Asia/Seoul")) {
     val offRoute: String = "경로를 벗어났습니다. 다시 탐색합니다"
     val rerouteFailed: String = "경로를 다시 찾지 못했습니다"
     val gpsWeak: String = "GPS 신호가 약합니다"
+    val recordingStarted: String = "기록을 시작합니다"
+    val recordingPaused: String = "일시정지되었습니다"
+    val recordingResumed: String = "기록을 다시 시작합니다"
 
     /** [m]을 10m 단위로 반올림한다. 결과가 1,000m 이상이면 소수 첫째 자리 킬로미터로 표기한다. */
     fun distance(m: Double): String {
@@ -83,4 +87,21 @@ class KoreanPhrases(private val zone: ZoneId = ZoneId.of("Asia/Seoul")) {
     /** "{km}킬로미터 이동. 남은 거리 {distance}, 도착 예정 {clockTime}입니다." */
     fun kmReport(km: Int, remainingM: Double, etaMillis: Long): String =
         "${km}킬로미터 이동. 남은 거리 ${distance(remainingM)}, 도착 예정 ${clockTime(etaMillis)}입니다."
+
+    /** "{km}킬로미터 이동. 평균 속도 {x.x}킬로미터, 이동 시간 {시간}입니다." */
+    fun rideKmReport(km: Int, avgSpeedMps: Double, movingTimeMs: Long): String =
+        "${km}킬로미터 이동. 평균 속도 ${RideFormat.speedKmh(avgSpeedMps)}킬로미터, " +
+            "이동 시간 ${RideFormat.duration(movingTimeMs)}입니다."
+
+    /** 기록과 안내를 함께 할 때: "...이동 시간 {시간}. 남은 거리 {거리}, 도착 예정 {시각}입니다." */
+    fun rideKmReportWithNav(
+        km: Int,
+        avgSpeedMps: Double,
+        movingTimeMs: Long,
+        remainingM: Double,
+        etaMillis: Long,
+    ): String =
+        "${km}킬로미터 이동. 평균 속도 ${RideFormat.speedKmh(avgSpeedMps)}킬로미터, " +
+            "이동 시간 ${RideFormat.duration(movingTimeMs)}. " +
+            "남은 거리 ${distance(remainingM)}, 도착 예정 ${clockTime(etaMillis)}입니다."
 }

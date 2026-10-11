@@ -4,6 +4,7 @@ import com.cowork.bikerecoder.core.model.TurnType.LEFT
 import com.cowork.bikerecoder.core.model.TurnType.RIGHT
 import com.cowork.bikerecoder.core.model.TurnType.ROUNDABOUT
 import org.junit.jupiter.api.Test
+import java.time.Instant
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import kotlin.test.assertEquals
@@ -55,4 +56,28 @@ class KoreanPhrasesTest {
         assertEquals("경로를 다시 찾지 못했습니다", p.rerouteFailed)
         assertEquals("GPS 신호가 약합니다", p.gpsWeak)
     }
+
+    @Test
+    fun `recording phrases`() {
+        assertEquals("기록을 시작합니다", p.recordingStarted)
+        assertEquals("일시정지되었습니다", p.recordingPaused)
+        assertEquals("기록을 다시 시작합니다", p.recordingResumed)
+    }
+
+    @Test
+    fun `km report while recording only`() =
+        assertEquals("3킬로미터 이동. 평균 속도 18.0킬로미터, 이동 시간 10분입니다.", p.rideKmReport(3, 5.0, 600_000))
+
+    @Test
+    fun `km report combined with guidance`() = assertEquals(
+        "1킬로미터 이동. 평균 속도 18.0킬로미터, 이동 시간 3분. 남은 거리 1.2킬로미터, 도착 예정 오후 3시 5분입니다.",
+        p.rideKmReportWithNav(1, 5.0, 200_000, 1_200.0, Instant.parse("2026-10-12T06:05:00Z").toEpochMilli()),
+    )
+
+    @Test
+    fun `km report reads hours when moving time is an hour or more`() =
+        assertEquals(
+            "20킬로미터 이동. 평균 속도 18.0킬로미터, 이동 시간 1시간 6분입니다.",
+            p.rideKmReport(20, 5.0, 4_000_000),
+        )
 }
