@@ -51,7 +51,23 @@ class VoiceScheduler(
         nearSpoken.clear()
     }
 
-    fun onUpdate(progress: Progress, speedMps: Double, sessionDistanceM: Double, etaMillis: Long): List<Utterance> {
+    /** km 기준을 [distanceM]이 속한 km로 다시 맞추고 보류 중인 km 안내를 버린다(지난 km를 몰아서 말하지 않는다). */
+    fun resetKmBase(distanceM: Double) {
+        lastKmFloor = floor(distanceM / 1_000.0).toInt()
+        pendingKmReport = null
+    }
+
+    /**
+     * @param kmPhrase 1km 안내 문장을 만든다. 기본은 안내 엔진의 [KoreanPhrases.kmReport]이고,
+     * 기록 중에는 호출자가 기록 쪽 문장으로 바꾼다. 회전 임박 시 미루기 규칙은 문장과 상관없이 같다.
+     */
+    fun onUpdate(
+        progress: Progress,
+        speedMps: Double,
+        sessionDistanceM: Double,
+        etaMillis: Long,
+        kmPhrase: (km: Int) -> String = { phrases.kmReport(it, progress.remainingM, etaMillis) },
+    ): List<Utterance> {
         val emitted = mutableListOf<Utterance>()
 
         // km 보류 여부는 이번 업데이트에서 회전 상태를 바꾸기 전, 이전까지의 상태로 판단한다.
@@ -69,7 +85,7 @@ class VoiceScheduler(
         }
         val km = pendingKmReport
         if (km != null && !imminent) {
-            emitted.add(Utterance(phrases.kmReport(km, progress.remainingM, etaMillis), Priority.PERIODIC))
+            emitted.add(Utterance(kmPhrase(km), Priority.PERIODIC))
             pendingKmReport = null
         }
 

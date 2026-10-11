@@ -23,6 +23,14 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 
+/** 기록 중일 때 안내 엔진의 1km 안내 기준 거리와 문장을 대신한다. 소스가 없으면(null) V1.0.0 동작. */
+interface KmAnnouncementSource {
+    /** 그날 기록 거리(m). */
+    fun distanceM(): Double
+
+    fun phrase(km: Int, remainingM: Double, etaMillis: Long): String
+}
+
 /** 안내 화면에 그릴 현재 상태. */
 data class NavState(
     val route: Route,
@@ -115,6 +123,7 @@ class NavigationSession(
     private var latestFixMillis = 0L
     private var etaMillis = 0L
     private var lastAcceptedFix: LocationFix? = null
+    private var kmSource: KmAnnouncementSource? = null
 
     /** 진행 중인 재탐색. null이 아니면 rerouting 상태다. */
     private var rerouteJob: Job? = null
@@ -142,8 +151,26 @@ class NavigationSession(
         }
 
         etaMillis = eta.etaMillis(fix.timeMillis, progress.remainingM)
-        val utterances = scheduler.onUpdate(progress, speedMps, odometer.distanceM, etaMillis)
+        val source = kmSource
+        val utterances = if (source != null) {
+            val currentProgress = progress
+            val currentEtaMillis = etaMillis
+            scheduler.onUpdate(currentProgress, speedMps, source.distanceM(), currentEtaMillis) { km ->
+                source.phrase(km, currentProgress.remainingM, currentEtaMillis)
+            }
+        } else {
+            scheduler.onUpdate(progress, speedMps, odometer.distanceM, etaMillis)
+        }
         emit(utterances)
+    }
+
+    /**
+     * 1km 안내의 기준 거리와 문장을 [source]로 바꾼다(null이면 주행 거리 오도미터와 기본 문장으로 되돌린다).
+     * 설정·해제할 때마다 km 기준을 그 거리로 다시 맞추므로 지난 km를 몰아서 말하지 않는다.
+     */
+    fun setKmSource(source: KmAnnouncementSource?) {
+        kmSource = source
+        scheduler.resetKmBase(source?.distanceM() ?: odometer.distanceM)
     }
 
     fun onTick(nowMillis: Long) {
