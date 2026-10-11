@@ -11,7 +11,7 @@ import javax.xml.parsers.ParserConfigurationException
 
 /**
  * GPX 트랙(`trkpt`)을 [LocationFix] 목록으로 읽는다(테스트·GPX 재생용).
- * 각 점은 lat/lon 속성과 ISO-8601 `<time>`을 가져야 한다. 정확도는 5m로 두고 속도·방향은 비운다.
+ * 각 점은 lat/lon 속성과 ISO-8601 `<time>`을 가져야 한다. `<ele>`가 있으면 altitudeM에 넣는다. 정확도는 5m로 두고 속도·방향·수직 정확도는 비운다.
  */
 object GpxParser {
 
@@ -34,12 +34,14 @@ object GpxParser {
             val element = trackPoints.item(i) as Element
             val time = element.getElementsByTagNameNS("*", "time").item(0)?.textContent?.trim()
                 ?: throw IllegalArgumentException("trkpt #$i has no <time>")
+            val altitude = element.getElementsByTagNameNS("*", "ele").item(0)?.textContent?.trim()?.toDoubleOrNull()
             LocationFix(
                 point = GeoPoint(element.getAttribute("lat").toDouble(), element.getAttribute("lon").toDouble()),
                 accuracyM = ACCURACY_M,
                 speedMps = null,
                 bearingDeg = null,
                 timeMillis = Instant.parse(time).toEpochMilli(),
+                altitudeM = altitude,
             )
         }
     }

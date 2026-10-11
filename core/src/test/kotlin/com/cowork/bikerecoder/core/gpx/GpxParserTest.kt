@@ -46,4 +46,38 @@ class GpxParserTest {
         assertEquals(50, fixes.size)
         assertEquals(Instant.parse("2026-10-06T00:00:49Z").toEpochMilli(), fixes.last().timeMillis)
     }
+
+    @Test
+    fun `ele becomes altitude`() {
+        val gpx = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <gpx version="1.1" creator="test" xmlns="http://www.topografix.com/GPX/1/1">
+              <trk><trkseg>
+                <trkpt lat="37.5" lon="127.0"><ele>123.4</ele><time>2026-10-06T00:00:00Z</time></trkpt>
+              </trkseg></trk>
+            </gpx>
+        """.trimIndent()
+
+        val fix = GpxParser.parse(gpx).single()
+
+        assertEquals(123.4, fix.altitudeM)
+        assertNull(fix.verticalAccuracyM)
+    }
+
+    @Test
+    fun `missing ele leaves altitude null`() {
+        val gpx = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <gpx version="1.1" creator="test" xmlns="http://www.topografix.com/GPX/1/1">
+              <trk><trkseg>
+                <trkpt lat="37.5" lon="127.0"><time>2026-10-06T00:00:00Z</time></trkpt>
+              </trkseg></trk>
+            </gpx>
+        """.trimIndent()
+
+        val fix = GpxParser.parse(gpx).single()
+
+        assertNull(fix.altitudeM)
+        assertNull(fix.verticalAccuracyM)
+    }
 }
