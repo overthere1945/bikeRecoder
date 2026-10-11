@@ -80,4 +80,30 @@ class AutoPauseDetectorTest {
         assertFalse(f.resumeAt(8, 5.0)) // 빠름 시작이 t=8초로 다시 잡힌다
         assertTrue(f.resumeAt(10, 5.0))
     }
+
+    @Test
+    fun `a fast fix restarts the slow streak`() {
+        val d = AutoPauseDetector()
+        val results = (0..3).map { d.pauseAt(it, 2.0) } +
+            d.pauseAt(4, 10.0) +
+            (5..8).map { d.pauseAt(it, 2.0) }
+        assertTrue(results.none { it }) // 끊기지 않았다면 t=5초에 true
+    }
+
+    @Test
+    fun `a slow fix restarts the fast streak`() {
+        val d = pausedDetector()
+        assertFalse(d.resumeAt(6, 5.0))
+        assertFalse(d.resumeAt(7, 2.0))
+        assertFalse(d.resumeAt(8, 5.0))
+        assertFalse(d.resumeAt(9, 5.0))
+        assertTrue(d.resumeAt(10, 5.0)) // 빠름 시작이 t=8초로 다시 잡힌다
+    }
+
+    @Test
+    fun `reset forgets the stop point`() {
+        val d = pausedDetector()
+        d.reset()
+        assertFalse(d.resumeAt(6, 0.0, north(20.0)))
+    }
 }

@@ -6,6 +6,9 @@ import com.cowork.bikerecoder.core.model.GeoPoint
 /**
  * 자동 일시정지 판정. 입력 속도는 위치 한 건의 속도다(이동 평균 아님).
  * 느림/빠름이 시작된 시각을 기억하고 조건이 깨지면 지운다. 비교는 Double 그대로, 허용 오차 없음.
+ *
+ * 정지 지점이 없으면(일시정지 판정 전·[reset] 후) 재개는 속도 조건만 본다.
+ * 위치 공백(fix 사이의 긴 간격) 처리는 호출자 몫이고, 상태가 바뀔 때(재개·종료 등) 호출자가 [reset]을 불러야 한다.
  */
 class AutoPauseDetector(
     private val pauseBelowMps: Double = 3.0 / 3.6,
