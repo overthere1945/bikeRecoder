@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.ride
 
+import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
 import com.cowork.bikerecoder.core.model.GeoMath
@@ -95,6 +96,18 @@ class RideController(
     private val saveIntervalMs: Long = 5_000,
     private val log: WarnLog = androidWarnLog(TAG),
 ) {
+    constructor(container: AppContainer, scope: CoroutineScope) : this(
+        rideStore = container.rideStore,
+        tripStore = container.tripStore,
+        tripManager = container.tripManager,
+        navigation = container.navigation,
+        voice = container.voice,
+        location = container.rideLocation,
+        pressure = container.barometer,
+        settings = container.settings.settings,
+        scope = scope,
+    )
+
     private val _ui = MutableStateFlow<RideUiState>(RideUiState.Idle)
     val ui: StateFlow<RideUiState> = _ui.asStateFlow()
 

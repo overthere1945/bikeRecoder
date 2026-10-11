@@ -3,16 +3,21 @@ package com.cowork.bikerecoder
 import android.content.Context
 import android.util.Log
 import com.cowork.bikerecoder.core.routing.Router
+import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.trip.OfflineMapController
 import com.cowork.bikerecoder.core.trip.TripManager
 import com.cowork.bikerecoder.core.trip.TripStore
 import com.cowork.bikerecoder.data.AppDatabase
 import com.cowork.bikerecoder.data.DataStoreDayDistances
 import com.cowork.bikerecoder.data.DayDistances
+import com.cowork.bikerecoder.data.RoomRideStore
 import com.cowork.bikerecoder.data.RoomTripStore
 import com.cowork.bikerecoder.data.SettingsRepository
+import com.cowork.bikerecoder.location.BarometerSource
 import com.cowork.bikerecoder.location.FusedLocationSource
 import com.cowork.bikerecoder.location.LocationSource
+import com.cowork.bikerecoder.location.PressureSource
+import com.cowork.bikerecoder.location.SharedLocationSource
 import com.cowork.bikerecoder.map.OpenFreeMapSource
 import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.nav.GuidanceServiceStatus
@@ -21,6 +26,8 @@ import com.cowork.bikerecoder.nav.NavigationController
 import com.cowork.bikerecoder.offline.MapLibreOfflineController
 import com.cowork.bikerecoder.offline.NetworkWaiter
 import com.cowork.bikerecoder.offline.SegmentRepository
+import com.cowork.bikerecoder.ride.RideController
+import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.routing.BRouterRouter
 import com.cowork.bikerecoder.routing.ProfileInstaller
 import com.cowork.bikerecoder.search.KakaoLocalClient
@@ -84,6 +91,10 @@ class AppContainer(context: Context) {
     )
     val offline: OfflineMapController = offlineMaps
     val tripManager: TripManager = TripManager(tripStore, offline, clock = System::currentTimeMillis)
+    val rideStore: RideStore = RoomRideStore(db)
+
+    /** The device barometer; null without one (altitude then comes from GPS only). */
+    val barometer: PressureSource? = BarometerSource(appContext).takeIf { it.available }
 
     /** Created on first use so the TTS engine is not bound at app start. */
     val voice: VoiceOutput by lazy { AndroidTtsVoiceOutput(appContext) }
@@ -124,22 +135,29 @@ class AppContainer(context: Context) {
         .stateIn(appScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /**
-     * Guidance runs here, outside any UI lifecycle, on the main thread (the session must be driven from a
-     * single thread). The location foreground service keeps the process alive while it runs.
+     * Guidance and recording run here, outside any UI lifecycle, on the main thread: [NavigationController],
+     * [RideController] and their sessions must be driven from one single thread. The ride foreground service keeps
+     * the process alive while either runs.
      */
-    private val navigationScope = CoroutineScope(
+    private val rideScope = CoroutineScope(
         SupervisorJob() + Dispatchers.Main.immediate +
-            CoroutineExceptionHandler { _, e -> Log.e(TAG, "Unhandled error in navigation", e) },
+            CoroutineExceptionHandler { _, e -> Log.e(TAG, "Unhandled error in the ride scope", e) },
     )
 
-    /** Set by the navigation foreground service; shown on the guidance screen when it could not start. */
+    /**
+     * The one location stream of guidance and recording: one upstream from [locationSourceFactory] (read when the
+     * stream (re)starts) while anyone collects.
+     */
+    val rideLocation: LocationSource = SharedLocationSource({ locationSourceFactory() }, rideScope)
+
+    /** Set by the ride foreground service; shown on the guidance screen when it could not start. */
     val guidanceService: GuidanceServiceStatus = GuidanceServiceStatus()
 
     private val navigationCreated = MutableStateFlow<NavigationController?>(null)
 
     /** Created on first use (it binds the TTS engine). */
     val navigation: NavigationController by lazy {
-        NavigationController(this, navigationScope).also { navigationCreated.value = it }
+        NavigationController(this, rideScope).also { navigationCreated.value = it }
     }
 
     /** The guidance state without creating [navigation] (Idle until it exists). */
@@ -148,6 +166,20 @@ class AppContainer(context: Context) {
 
     /** The current guidance state, without creating [navigation]. */
     val navigationState: NavUiState get() = navigationCreated.value?.ui?.value ?: NavUiState.Idle
+
+    private val rideCreated = MutableStateFlow<RideController?>(null)
+
+    /** Created on first use (it creates [navigation] too, which it follows). */
+    val ride: RideController by lazy {
+        RideController(this, rideScope).also { rideCreated.value = it }
+    }
+
+    /** The recording state without creating [ride] (Idle until it exists). */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val rideUi: Flow<RideUiState> = rideCreated.flatMapLatest { it?.ui ?: flowOf(RideUiState.Idle) }
+
+    /** The current recording state, without creating [ride]. */
+    val rideState: RideUiState get() = rideCreated.value?.ui?.value ?: RideUiState.Idle
 
     private companion object {
         const val TAG = "AppContainer"

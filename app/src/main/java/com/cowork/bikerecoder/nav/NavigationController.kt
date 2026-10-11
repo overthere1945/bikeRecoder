@@ -126,7 +126,7 @@ class NavigationController(
         tripStore = container.tripStore,
         offline = container.offline,
         voice = container.voice,
-        locationSource = { container.locationSourceFactory() },
+        locationSource = { container.rideLocation },
         voiceEnabled = container.settings.settings.map { it.voiceEnabled },
         scope = scope,
         dayDistances = container.dayDistances,

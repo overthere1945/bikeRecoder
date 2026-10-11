@@ -14,10 +14,24 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.cowork.bikerecoder.MainActivity
 import com.cowork.bikerecoder.R
+import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.format.SummaryFormatter
+import com.cowork.bikerecoder.core.recording.RecordingState
+import com.cowork.bikerecoder.core.trip.Trip
+import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.voice.KoreanPhrases
+import com.cowork.bikerecoder.ride.RideUiState
 
-/** The guidance notifications: channel `navigation` (importance LOW), progress and "interrupted". */
+/** What the ride service's ongoing notification says. */
+data class RideNotice(val title: String, val text: String)
+
+/** "주행이 중단되었습니다": tapping resumes guidance of [resumeTripId], or (null) opens the map main screen. */
+data class InterruptedNotice(val resumeTripId: Long?)
+
+/**
+ * The ride notifications (guidance and recording share one foreground service): channel `navigation` (importance
+ * LOW), the ongoing progress and "interrupted".
+ */
 object NavNotifications {
     const val CHANNEL_ID = "navigation"
     const val PROGRESS_ID = 1001
@@ -32,7 +46,7 @@ object NavNotifications {
     private val phrases = KoreanPhrases()
 
     fun ensureChannel(context: Context) {
-        val channel = NotificationChannel(CHANNEL_ID, "길 안내", NotificationManager.IMPORTANCE_LOW)
+        val channel = NotificationChannel(CHANNEL_ID, "주행", NotificationManager.IMPORTANCE_LOW)
         context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
@@ -52,29 +66,67 @@ object NavNotifications {
         else -> "경로를 계산하는 중…"
     }
 
-    fun progress(context: Context, state: NavUiState): Notification =
+    /**
+     * The ongoing notification for guidance [nav] and recording [ride]; null when neither is starting or running
+     * (the service then stops).
+     */
+    fun rideNotice(nav: NavUiState, ride: RideUiState): RideNotice? {
+        val guiding = isGuiding(nav)
+        return when {
+            guiding && ride is RideUiState.Active -> RideNotice("길 안내 중 · 기록 중", contentText(nav))
+            guiding -> RideNotice("길 안내 중", contentText(nav))
+            ride is RideUiState.Starting -> RideNotice("주행 기록 중", "기록을 준비하는 중…")
+            ride is RideUiState.Active -> {
+                val text = "${RideFormat.distance(ride.stats.distanceM)} · 이동 ${RideFormat.duration(ride.stats.movingTimeMs)}"
+                RideNotice(if (ride.state is RecordingState.Paused) "일시정지됨" else "주행 기록 중", text)
+            }
+            else -> null
+        }
+    }
+
+    fun isGuiding(nav: NavUiState): Boolean = nav is NavUiState.Starting || nav is NavUiState.Active
+
+    /**
+     * After the system killed the ride (START_STICKY restart): nothing to say without an active trip or an open
+     * segment. An active trip with stops left resumes its guidance (and guidance auto-recording closes the open
+     * segment and starts a new one); otherwise the tap opens the map main screen, which offers the interrupted
+     * recording.
+     */
+    fun interruptedNotice(activeTrip: Trip?, remainingStops: Int, openSegments: Int): InterruptedNotice? {
+        val trip = activeTrip?.takeIf { it.status == TripStatus.ACTIVE }
+        if (trip == null && openSegments == 0) return null
+        return InterruptedNotice(resumeTripId = trip?.id?.takeIf { remainingStops > 0 })
+    }
+
+    /** [guiding]: a tap shows the running guidance; otherwise it opens the app. */
+    fun progress(context: Context, notice: RideNotice, guiding: Boolean): Notification =
         NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_navigation)
-            .setContentTitle("길 안내 중")
-            .setContentText(contentText(state))
+            .setContentTitle(notice.title)
+            .setContentText(notice.text)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_NAVIGATION)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .setContentIntent(activityIntent(context, PROGRESS_ID) { putExtra(EXTRA_SHOW_NAVIGATION, true) })
+            .setContentIntent(activityIntent(context, PROGRESS_ID) { if (guiding) putExtra(EXTRA_SHOW_NAVIGATION, true) })
             .build()
 
-    fun notifyProgress(context: Context, state: NavUiState) = notify(context, PROGRESS_ID, progress(context, state))
+    fun notifyProgress(context: Context, notice: RideNotice, guiding: Boolean) =
+        notify(context, PROGRESS_ID, progress(context, notice, guiding))
 
-    /** After the system killed guidance (START_STICKY restart): tap to resume [tripId] from the app. */
-    fun showInterrupted(context: Context, tripId: Long) {
+    /** "주행이 중단되었습니다. 눌러서 재개" (see [interruptedNotice]). */
+    fun showInterrupted(context: Context, notice: InterruptedNotice) {
         ensureChannel(context)
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_navigation)
-            .setContentTitle("안내가 중단되었습니다. 눌러서 재개")
+            .setContentTitle("주행이 중단되었습니다. 눌러서 재개")
             .setAutoCancel(true)
-            .setContentIntent(activityIntent(context, INTERRUPTED_ID) { putExtra(EXTRA_RESUME_TRIP_ID, tripId) })
+            .setContentIntent(
+                activityIntent(context, INTERRUPTED_ID) {
+                    notice.resumeTripId?.let { putExtra(EXTRA_RESUME_TRIP_ID, it) }
+                },
+            )
             .build()
         notify(context, INTERRUPTED_ID, notification)
     }
