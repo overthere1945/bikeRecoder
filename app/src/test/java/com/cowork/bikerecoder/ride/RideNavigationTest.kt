@@ -3,6 +3,8 @@ package com.cowork.bikerecoder.ride
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.recording.SegmentTotals
+import com.cowork.bikerecoder.core.routing.RouteFailure
+import com.cowork.bikerecoder.core.routing.RouteResult
 import com.cowork.bikerecoder.core.trip.TripManager
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripStop
@@ -60,8 +62,9 @@ class RideNavigationTest {
         val store = FakeRideStore(trips, clock)
         val tripManager = TripManager(trips, offline, clock)
         val settings = MutableStateFlow(AppSettings())
+        val router = AssetRouter(listOf(fixture("route_follow.geojson")))
         val navigation = NavigationController(
-            router = AssetRouter(listOf(fixture("route_follow.geojson"))),
+            router = router,
             tripManager = tripManager,
             tripStore = trips,
             offline = offline,
@@ -259,5 +262,58 @@ class RideNavigationTest {
         assertEquals(listOf(2, 1), combinedKms(), voice.spoken.toString())
         assertTrue(recordingKms().isEmpty(), voice.spoken.toString())
         assertTrue(guidanceKms().isEmpty(), voice.spoken.toString())
+    }
+
+    @Test
+    fun guidanceAutoStartsRecordingAgainAfterASummary() = runTest {
+        val h = Harness(this)
+        val tripId = h.trip()
+        h.navigation.start(tripId)
+        h.guidedPast(300.0)
+        h.ride.stopRecording(RecordingEnd.SEGMENT_ONLY)
+        assertInstanceOf(RideUiState.Finished::class.java, h.ride.ui.value)
+
+        h.navigation.close()
+        h.navigation.start(tripId)
+        play(10_000)
+
+        assertInstanceOf(NavUiState.Active::class.java, h.navigation.ui.value)
+        assertEquals(tripId, h.active.tripId)
+        assertEquals(2, voice.spoken.count { it == "기록을 시작합니다" }, voice.spoken.toString())
+        assertNotNull(h.navigation.kmSource)
+        assertEquals(2, h.store.segments(tripId).size)
+    }
+
+    @Test
+    fun guidanceAutoStartsRecordingAfterAStartError() = runTest {
+        val h = Harness(this)
+        val ended = h.trip()
+        h.tripManager.complete(ended)
+        h.ride.startRecording(ended)!!.join()
+        assertInstanceOf(RideUiState.Failed::class.java, h.ride.ui.value)
+        val tripId = h.trip()
+
+        h.navigation.start(tripId)
+        play(10_000)
+
+        assertEquals(tripId, h.active.tripId)
+        assertEquals(1, voice.spoken.count { it == "기록을 시작합니다" }, voice.spoken.toString())
+        assertEquals(tripId, h.store.openSegments().single().tripId)
+    }
+
+    @Test
+    fun aGuidanceStartWhoseRoutingFailsRecordsNothing() = runTest {
+        val h = Harness(this)
+        h.router.failure = RouteResult.Failure(RouteFailure.NO_ROUTE, "none")
+        val tripId = h.trip()
+
+        h.navigation.start(tripId)
+        play(60_000)
+
+        assertInstanceOf(NavUiState.Failed::class.java, h.navigation.ui.value)
+        assertEquals(RideUiState.Idle, h.ride.ui.value)
+        assertTrue(h.store.openSegments().isEmpty())
+        assertTrue(voice.spoken.none { it == "기록을 시작합니다" }, voice.spoken.toString())
+        assertNull(h.navigation.kmSource)
     }
 }

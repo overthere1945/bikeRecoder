@@ -63,13 +63,16 @@ enum class RecordingEnd { SEGMENT_ONLY, STOP_TODAY, COMPLETE_TRIP }
  * off; a kilometre is announced here only while no guidance runs (guidance announces the combined sentence then).
  *
  * With guidance ([navigation], followed on [scope] for the controller's lifetime): when a guidance becomes active
- * and `autoStartRecordingWithNavigation` is on, an idle controller starts recording its trip (not while it is still
- * starting — a start whose routing fails leaves no recording); when a guidance of the recorded trip finishes
- * (arrival, completed, stopped today) the recording stops as [RecordingEnd.SEGMENT_ONLY] (the guidance already
- * changed the trip); a guidance that is only closed leaves the recording running. While recording, this controller
- * is [NavigationController.kmSource] — one combined kilometre sentence counted on the recording's day distance — set
- * when the session starts, set again when the day distance falls (a new day, to re-base the count) and cleared when
- * the recording ends.
+ * and `autoStartRecordingWithNavigation` is on, a controller that is not recording (idle, or still showing a summary
+ * or a start error) starts recording its trip — not while the guidance is still starting, so a start whose routing
+ * fails leaves no recording; when any guidance of the recorded trip finishes (arrival, completed, stopped today, also
+ * one whose trip write failed, `error != null` — the guidance has ended either way) the recording stops as
+ * [RecordingEnd.SEGMENT_ONLY] (the guidance already changed the trip); a guidance that is only closed leaves the
+ * recording running. While recording, this controller is [NavigationController.kmSource] — one combined kilometre
+ * sentence counted on the recording's day distance — set when the session starts, set again when the day distance
+ * falls (a new day, to re-base the count) and cleared when the recording ends. Accepted narrow loss: a km sentence the
+ * guidance deferred (a turn was imminent) is not spoken if the guidance is closed before it comes due — the recording
+ * already counted that km and does not repeat it.
  *
  * Threading: every public method must be called on [scope]'s single thread (Main in the app); the session and all its
  * inputs run there too, and the per-fix handler never suspends (store writes run in their own coroutines). Store and
@@ -315,7 +318,12 @@ class RideController(
 
     private suspend fun guidanceActive(tripId: Long) {
         if (!settings.first().autoStartRecordingWithNavigation) return
-        if (_ui.value == RideUiState.Idle) startRecording(tripId)
+        // The setting may answer late: the guidance must still run for that trip.
+        val nav = navigation.ui.value
+        if (nav !is NavUiState.Active || nav.tripId != tripId) return
+        // Idle, a summary or a start error: start (startRecording itself refuses while starting or recording).
+        val state = _ui.value
+        if (state !is RideUiState.Starting && state !is RideUiState.Active) startRecording(tripId)
     }
 
     private suspend fun guidanceFinished(tripId: Long) {
