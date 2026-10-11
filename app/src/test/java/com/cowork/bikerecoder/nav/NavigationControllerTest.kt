@@ -3,6 +3,7 @@ package com.cowork.bikerecoder.nav
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.model.RouteProfile
+import com.cowork.bikerecoder.core.navigation.KmAnnouncementSource
 import com.cowork.bikerecoder.core.routing.RouteFailure
 import com.cowork.bikerecoder.core.routing.RouteResult
 import com.cowork.bikerecoder.core.trip.TripManager
@@ -485,6 +486,46 @@ class NavigationControllerTest {
         assertEquals(finished.copy(error = NavigationController.MSG_SAVE_FAILED), h.controller.ui.value)
         assertEquals(TripStatus.COMPLETED, store.trips.getValue(tripId).status)
         assertTrue(log.messages.isNotEmpty(), "the failure is logged")
+    }
+
+    @Test
+    fun kmSourceAppliesToTheRunningAndNextSession() = runTest {
+        val h = harness("scenario_follow.gpx") // 20×: 10 m every 100 ms
+        val tripId = h.trip(TripType.SINGLE_DAY, stop("도착", destination, isDestination = true))
+        var d = 0.0
+        val source = object : KmAnnouncementSource {
+            override fun distanceM() = d
+            override fun phrase(km: Int, remainingM: Double, etaMillis: Long) = "SRC $km"
+        }
+        fun sourced() = voice.spoken.filter { it.startsWith("SRC") }
+        fun guidanceKm() = voice.spoken.filter { "킬로미터 이동. 남은 거리" in it }
+
+        h.controller.kmSource = source
+        h.controller.start(tripId)
+        h.awaitActive()
+        d = 1_000.0
+        advanceTimeBy(200)
+        runCurrent()
+        assertEquals(listOf("SRC 1"), sourced(), voice.spoken.toString())
+
+        h.controller.ui.first { it is NavUiState.Active && it.state.progress.distanceAlongM > 1_500.0 }
+        runCurrent()
+        assertEquals(listOf("SRC 1"), sourced(), voice.spoken.toString())
+        assertTrue(guidanceKm().isEmpty(), "the session's own km report is replaced: ${voice.spoken}")
+
+        h.controller.close()
+        h.controller.start(tripId)
+        h.awaitActive()
+        d = 2_000.0
+        advanceTimeBy(200)
+        runCurrent()
+        assertEquals(listOf("SRC 1", "SRC 2"), sourced(), voice.spoken.toString())
+
+        h.controller.kmSource = null
+        h.awaitFinished()
+        assertEquals(listOf("SRC 1", "SRC 2"), sourced(), voice.spoken.toString())
+        assertTrue(guidanceKm().isNotEmpty(), "back to the session's own km report: ${voice.spoken}")
+        assertNull(h.controller.kmSource)
     }
 }
 

@@ -5,6 +5,7 @@ import com.cowork.bikerecoder.androidWarnLog
 import com.cowork.bikerecoder.core.model.GeoMath
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.LocationFix
+import com.cowork.bikerecoder.core.navigation.KmAnnouncementSource
 import com.cowork.bikerecoder.core.recording.DayTotals
 import com.cowork.bikerecoder.core.recording.RecordingEvent
 import com.cowork.bikerecoder.core.recording.RecordingSession
@@ -61,6 +62,15 @@ enum class RecordingEnd { SEGMENT_ONLY, STOP_TODAY, COMPLETE_TRIP }
  * next one and raises [RideUiState.Active.saveWarning] once. Session events are spoken unless the voice setting is
  * off; a kilometre is announced here only while no guidance runs (guidance announces the combined sentence then).
  *
+ * With guidance ([navigation], followed on [scope] for the controller's lifetime): when a guidance becomes active
+ * and `autoStartRecordingWithNavigation` is on, an idle controller starts recording its trip (not while it is still
+ * starting — a start whose routing fails leaves no recording); when a guidance of the recorded trip finishes
+ * (arrival, completed, stopped today) the recording stops as [RecordingEnd.SEGMENT_ONLY] (the guidance already
+ * changed the trip); a guidance that is only closed leaves the recording running. While recording, this controller
+ * is [NavigationController.kmSource] — one combined kilometre sentence counted on the recording's day distance — set
+ * when the session starts, set again when the day distance falls (a new day, to re-base the count) and cleared when
+ * the recording ends.
+ *
  * Threading: every public method must be called on [scope]'s single thread (Main in the app); the session and all its
  * inputs run there too, and the per-fix handler never suspends (store writes run in their own coroutines). Store and
  * trip writes at the end run [NonCancellable] in [scope], so they finish even if the caller goes away.
@@ -103,6 +113,10 @@ class RideController(
         var gpsWeak = false
         var saveWarning: String? = null
 
+        /** This recording as the guidance's km source (set once the session runs), and the day distance last seen. */
+        var kmSource: KmAnnouncementSource? = null
+        var lastDayM = 0.0
+
         /** Set once [stopRecording] began: the session no longer takes commands. */
         var stopping = false
         val jobs = mutableListOf<Job>()
@@ -114,6 +128,10 @@ class RideController(
     }
 
     private var run: Run? = null
+
+    init {
+        scope.launch { followNavigation() }
+    }
 
     /**
      * Starts recording [tripId] without waiting: the state is [RideUiState.Starting] when this returns. Returns null and
@@ -233,6 +251,7 @@ class RideController(
         r.localDate = date
         r.session = session
         handle(r, session.start())
+        becomeKmSource(r, session)
 
         r.jobs += scope.launch { collectLocation(r, session) }
         pressure?.let { source ->
@@ -272,6 +291,68 @@ class RideController(
         }
     }
 
+    /** Recording and guidance together (see the class comment). Never ends while [scope] lives. */
+    private suspend fun followNavigation() {
+        var previous: NavUiState? = null
+        navigation.ui.collect { nav ->
+            val before = previous
+            previous = nav
+            try {
+                when (nav) {
+                    is NavUiState.Active ->
+                        if (!(before is NavUiState.Active && before.tripId == nav.tripId)) guidanceActive(nav.tripId)
+                    is NavUiState.Finished ->
+                        if (!(before is NavUiState.Finished && before.tripId == nav.tripId)) guidanceFinished(nav.tripId)
+                    else -> Unit
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.warn("Following the guidance state $nav failed", e)
+            }
+        }
+    }
+
+    private suspend fun guidanceActive(tripId: Long) {
+        if (!settings.first().autoStartRecordingWithNavigation) return
+        if (_ui.value == RideUiState.Idle) startRecording(tripId)
+    }
+
+    private suspend fun guidanceFinished(tripId: Long) {
+        if (run?.tripId == tripId) stopRecording(RecordingEnd.SEGMENT_ONLY)
+    }
+
+    /** From now on the guidance announces kilometres of [session]'s day with the combined sentence. */
+    private fun becomeKmSource(r: Run, session: RecordingSession) {
+        if (run !== r) return
+        val source = object : KmAnnouncementSource {
+            override fun distanceM(): Double = session.day.distanceM
+
+            override fun phrase(km: Int, remainingM: Double, etaMillis: Long): String {
+                val day = session.day
+                return phrases.rideKmReportWithNav(km, day.avgSpeedMps, day.movingTimeMs, remainingM, etaMillis)
+            }
+        }
+        r.kmSource = source
+        r.lastDayM = session.day.distanceM
+        navigation.kmSource = source
+    }
+
+    /** A new day restarts the day distance at 0: the guidance's km count is re-based on it (only then). */
+    private fun rebaseKmOnNewDay(r: Run, session: RecordingSession) {
+        val source = r.kmSource ?: return
+        val dayM = session.day.distanceM
+        if (dayM < r.lastDayM && navigation.kmSource === source) navigation.kmSource = source
+        r.lastDayM = dayM
+    }
+
+    /** The guidance goes back to its own km announcements, unless someone else's source replaced [r]'s. */
+    private fun releaseKmSource(r: Run) {
+        val source = r.kmSource ?: return
+        r.kmSource = null
+        if (navigation.kmSource === source) navigation.kmSource = null
+    }
+
     /** Feeds every fix to [session]; a stream that fails or ends is subscribed again after [LOCATION_RETRY_MS]. */
     private suspend fun collectLocation(r: Run, session: RecordingSession) {
         while (true) {
@@ -300,6 +381,7 @@ class RideController(
             if (last == null || GeoMath.distanceM(last, point.point) >= TRACK_SPACING_M) r.track = r.track + point.point
         }
         r.gpsWeak = update.gpsWeak
+        r.session?.let { rebaseKmOnNewDay(r, it) }
         publish(r)
     }
 
@@ -358,6 +440,7 @@ class RideController(
         val now = clock()
         session.stop(now)
         r.stopping = true
+        releaseKmSource(r)
         r.cancelJobs()
         var ok = save(r)
         val totals = session.stats.toTotals()
@@ -405,6 +488,7 @@ class RideController(
     /** The start of [r] failed: nothing records. */
     private fun fail(r: Run) {
         if (run !== r) return
+        releaseKmSource(r)
         r.cancelJobs()
         run = null
         _ui.value = RideUiState.Failed(r.tripId, MSG_START_FAILED)

@@ -5,6 +5,7 @@ import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
 import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.model.Stop
+import com.cowork.bikerecoder.core.navigation.KmAnnouncementSource
 import com.cowork.bikerecoder.core.navigation.NavEvent
 import com.cowork.bikerecoder.core.navigation.NavState
 import com.cowork.bikerecoder.core.navigation.NavUpdate
@@ -95,7 +96,8 @@ enum class FinishReason { ARRIVED, STOPPED_TODAY, COMPLETED }
  * start) seeds the session, so a same-day resume continues the kilometre announcements; it is saved at
  * every new kilometre and when the session ends. Session updates are spoken (unless [voiceEnabled] is off), reached stops are
  * marked visited, and reaching the destination completes the trip. Every way out of a session (arrival,
- * [stopToday], [completeTrip], [close], a new start) stops the location source and the ticks.
+ * [stopToday], [completeTrip], [close], a new start) stops the location source and the ticks. While [kmSource] is
+ * set (a recording runs), the 1 km announcements count its distance and speak its combined sentence instead.
  *
  * Threading: every public method must be called on [scope]'s single thread (Main in the app); the session
  * runs on the same [scope]. Trip writes run in [scope], so they finish even if the caller goes away.
@@ -134,6 +136,18 @@ class NavigationController(
     val ui: StateFlow<NavUiState> = _ui.asStateFlow()
 
     private var muted = false
+
+    /**
+     * Where the 1 km announcements take their distance and sentence from (the recording, while one runs); null: the
+     * session's own odometer and sentence. Applies to the running session and every session started later. Setting
+     * it re-bases the running session's km count (and drops a deferred km report), so set it only when the source
+     * really changes — or, with the same source, when its distance fell (a new day). Main thread only.
+     */
+    var kmSource: KmAnnouncementSource? = null
+        set(value) {
+            field = value
+            run?.session?.setKmSource(value)
+        }
 
     /** Everything belonging to one start of one trip. */
     private class Run(val tripId: Long) {
@@ -327,6 +341,7 @@ class NavigationController(
         r.savedKm = floor(ridden / 1_000.0).toInt()
 
         val session = NavigationSession(route, stops, trip.profile, router, phrases, scope, initialDistanceM = ridden)
+        kmSource?.let(session::setKmSource)
         r.stops = stops
         r.session = session
         // Subscribed before anything can emit (the shared flow has no replay).
