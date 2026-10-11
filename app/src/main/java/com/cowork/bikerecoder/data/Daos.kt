@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
+import com.cowork.bikerecoder.core.recording.SegmentTotals
 
 @Dao
 abstract class TripDao {
@@ -62,4 +63,91 @@ interface OfflineRegionRefDao {
 
     @Query("SELECT * FROM offline_region_ref ORDER BY id ASC")
     suspend fun all(): List<OfflineRegionRefEntity>
+}
+
+data class DayTotalsRow(val distanceM: Double, val movingTimeMs: Long)
+
+data class TripRideRow(
+    val tripId: Long,
+    val firstDate: String,
+    val dayCount: Int,
+    val distanceM: Double,
+    val movingTimeMs: Long,
+    val lastStartedAt: Long,
+)
+
+@Dao
+abstract class RideDao {
+    @Insert
+    abstract suspend fun insertSegment(segment: RideSegmentEntity): Long
+
+    @Insert
+    abstract suspend fun insertPoints(points: List<TrackPointEntity>)
+
+    @Query(
+        "UPDATE ride_segment SET distanceM = :distanceM, movingTimeMs = :movingTimeMs, elapsedMs = :elapsedMs, " +
+            "maxSpeedMps = :maxSpeedMps, ascentM = :ascentM, descentM = :descentM, " +
+            "minAltitudeM = :minAltitudeM, maxAltitudeM = :maxAltitudeM WHERE id = :id",
+    )
+    abstract suspend fun updateTotals(
+        id: Long,
+        distanceM: Double,
+        movingTimeMs: Long,
+        elapsedMs: Long,
+        maxSpeedMps: Double,
+        ascentM: Double,
+        descentM: Double,
+        minAltitudeM: Double?,
+        maxAltitudeM: Double?,
+    )
+
+    @Query("UPDATE ride_segment SET endedAt = :endedAt WHERE id = :id")
+    abstract suspend fun setEndedAt(id: Long, endedAt: Long)
+
+    /** 점 삽입과 합계 갱신을 한 트랜잭션으로 한다. */
+    @Transaction
+    open suspend fun appendPoints(segmentId: Long, points: List<TrackPointEntity>, totals: SegmentTotals) {
+        insertPoints(points)
+        updateTotals(
+            segmentId, totals.distanceM, totals.movingTimeMs, totals.elapsedMs, totals.maxSpeedMps,
+            totals.ascentM, totals.descentM, totals.minAltitudeM, totals.maxAltitudeM,
+        )
+    }
+
+    @Transaction
+    open suspend fun closeSegment(segmentId: Long, endedAt: Long, totals: SegmentTotals) {
+        updateTotals(
+            segmentId, totals.distanceM, totals.movingTimeMs, totals.elapsedMs, totals.maxSpeedMps,
+            totals.ascentM, totals.descentM, totals.minAltitudeM, totals.maxAltitudeM,
+        )
+        setEndedAt(segmentId, endedAt)
+    }
+
+    @Query("SELECT * FROM ride_segment WHERE endedAt IS NULL ORDER BY startedAt DESC")
+    abstract suspend fun openSegments(): List<RideSegmentEntity>
+
+    @Query("SELECT * FROM ride_segment WHERE id = :id")
+    abstract suspend fun segment(id: Long): RideSegmentEntity?
+
+    @Query("SELECT * FROM ride_segment WHERE tripId = :tripId ORDER BY startedAt ASC, id ASC")
+    abstract suspend fun segments(tripId: Long): List<RideSegmentEntity>
+
+    @Query("SELECT * FROM track_point WHERE segmentId = :segmentId ORDER BY timeMillis ASC, id ASC")
+    abstract suspend fun points(segmentId: Long): List<TrackPointEntity>
+
+    @Query(
+        "SELECT COALESCE(SUM(distanceM), 0.0) AS distanceM, COALESCE(SUM(movingTimeMs), 0) AS movingTimeMs " +
+            "FROM ride_segment WHERE tripId = :tripId AND localDate = :localDate",
+    )
+    abstract suspend fun dayTotals(tripId: Long, localDate: String): DayTotalsRow
+
+    @Query(
+        "SELECT tripId, MIN(localDate) AS firstDate, COUNT(DISTINCT localDate) AS dayCount, " +
+            "SUM(distanceM) AS distanceM, SUM(movingTimeMs) AS movingTimeMs, MAX(startedAt) AS lastStartedAt " +
+            "FROM ride_segment GROUP BY tripId ORDER BY lastStartedAt DESC, tripId DESC",
+    )
+    abstract suspend fun tripRideRows(): List<TripRideRow>
+
+    @Query("DELETE FROM ride_segment WHERE id = :id")
+    abstract suspend fun deleteSegment(id: Long)
 }

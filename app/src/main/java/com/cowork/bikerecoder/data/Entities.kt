@@ -51,3 +51,55 @@ data class OfflineRegionRefEntity(
     val kind: String,
     val createdAt: Long,
 )
+
+/** localDate는 ISO(yyyy-MM-dd) 문자열. endedAt이 null이면 열린 구간이다. */
+@Entity(
+    tableName = "ride_segment",
+    foreignKeys = [
+        ForeignKey(
+            entity = TripEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["tripId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("tripId")],
+)
+data class RideSegmentEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long,
+    val tripId: Long,
+    val startedAt: Long,
+    val endedAt: Long?,
+    val localDate: String,
+    val distanceM: Double,
+    val movingTimeMs: Long,
+    val elapsedMs: Long,
+    val maxSpeedMps: Double,
+    val ascentM: Double,
+    val descentM: Double,
+    val minAltitudeM: Double?,
+    val maxAltitudeM: Double?,
+)
+
+@Entity(
+    tableName = "track_point",
+    foreignKeys = [
+        ForeignKey(
+            entity = RideSegmentEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["segmentId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("segmentId")],
+)
+data class TrackPointEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long,
+    val segmentId: Long,
+    val timeMillis: Long,
+    val lat: Double,
+    val lon: Double,
+    val altitudeM: Double?,
+    val speedMps: Float?,
+    val accuracyM: Float,
+)
