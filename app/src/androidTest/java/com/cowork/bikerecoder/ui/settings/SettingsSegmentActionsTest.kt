@@ -28,7 +28,7 @@ class SettingsSegmentActionsTest {
             MaterialTheme {
                 SettingsContent(
                     state = state, versionDisplay = "V1.0.0", onBack = {}, onSetProfile = { _: RouteProfile -> },
-                    onSetVoice = {}, onSetKeepScreenOn = {}, onSetWifiOnly = {}, onCheckUpdate = {}, onDownload = {},
+                    onSetVoice = {}, onSetKeepScreenOn = {}, onSetWifiOnly = {}, onSetAutoStartRecording = {}, onSetAutoPause = {}, onCheckUpdate = {}, onDownload = {},
                     onDeleteSegment = {}, onDeleteAllMaps = {},
                 )
             }

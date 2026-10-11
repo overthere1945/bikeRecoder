@@ -22,6 +22,10 @@ data class AppSettings(
     val skippedOnboardingSteps: Set<OnboardingStep> = emptySet(),
     /** The "Korean TTS missing" hint was shown (it is shown once ever, spec §6.9). */
     val ttsNoticeShown: Boolean = false,
+    /** 안내를 시작하면 기록도 함께 시작한다. */
+    val autoStartRecordingWithNavigation: Boolean = true,
+    /** 멈춰 있으면 기록을 자동으로 일시정지한다(기본값; 기록마다 따로 바꿀 수 있다). */
+    val autoPauseEnabled: Boolean = true,
 )
 
 /** A corrupt settings file is replaced by the defaults instead of crashing every start-up. */
@@ -44,6 +48,8 @@ class SettingsRepository(context: Context) {
             prefs[WIFI_ONLY] = next.wifiOnlyOfflineMaps
             prefs[SKIPPED_ONBOARDING] = next.skippedOnboardingSteps.map { it.name }.toSet()
             prefs[TTS_NOTICE_SHOWN] = next.ttsNoticeShown
+            prefs[AUTO_START_RECORDING] = next.autoStartRecordingWithNavigation
+            prefs[AUTO_PAUSE] = next.autoPauseEnabled
         }
     }
 
@@ -61,6 +67,8 @@ class SettingsRepository(context: Context) {
                 ?.toSet()
                 ?: defaults.skippedOnboardingSteps,
             ttsNoticeShown = this[TTS_NOTICE_SHOWN] ?: defaults.ttsNoticeShown,
+            autoStartRecordingWithNavigation = this[AUTO_START_RECORDING] ?: defaults.autoStartRecordingWithNavigation,
+            autoPauseEnabled = this[AUTO_PAUSE] ?: defaults.autoPauseEnabled,
         )
     }
 
@@ -71,5 +79,7 @@ class SettingsRepository(context: Context) {
         val WIFI_ONLY = booleanPreferencesKey("wifi_only_offline_maps")
         val SKIPPED_ONBOARDING = stringSetPreferencesKey("skipped_onboarding_steps")
         val TTS_NOTICE_SHOWN = booleanPreferencesKey("tts_notice_shown")
+        val AUTO_START_RECORDING = booleanPreferencesKey("auto_start_recording_with_navigation")
+        val AUTO_PAUSE = booleanPreferencesKey("auto_pause_enabled")
     }
 }

@@ -46,6 +46,8 @@ object SettingsTags {
     const val VOICE = "settings_voice"
     const val KEEP_SCREEN_ON = "settings_keep_screen_on"
     const val WIFI_ONLY = "settings_wifi_only"
+    const val AUTO_START_RECORDING = "settings_auto_start_recording"
+    const val AUTO_PAUSE = "settings_auto_pause"
     const val DELETE_ALL_MAPS = "settings_delete_all_maps"
     const val MAP_SIZE = "settings_map_size"
     const val CONFIRM = "settings_confirm"
@@ -74,6 +76,8 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
         onSetVoice = viewModel::setVoiceEnabled,
         onSetKeepScreenOn = viewModel::setKeepScreenOn,
         onSetWifiOnly = viewModel::setWifiOnlyOfflineMaps,
+        onSetAutoStartRecording = viewModel::setAutoStartRecording,
+        onSetAutoPause = viewModel::setAutoPause,
         onCheckUpdate = viewModel::checkUpdate,
         onDownload = viewModel::download,
         onDeleteSegment = viewModel::delete,
@@ -90,6 +94,8 @@ internal fun SettingsContent(
     onSetVoice: (Boolean) -> Unit,
     onSetKeepScreenOn: (Boolean) -> Unit,
     onSetWifiOnly: (Boolean) -> Unit,
+    onSetAutoStartRecording: (Boolean) -> Unit,
+    onSetAutoPause: (Boolean) -> Unit,
     onCheckUpdate: (String) -> Unit,
     onDownload: (String) -> Unit,
     onDeleteSegment: (String) -> Unit,
@@ -137,6 +143,23 @@ internal fun SettingsContent(
                     state.settings.wifiOnlyOfflineMaps,
                     SettingsTags.WIFI_ONLY,
                     onSetWifiOnly,
+                )
+                HorizontalDivider()
+
+                SectionTitle("기록")
+                SwitchRow(
+                    "안내 시작 시 기록 자동 시작",
+                    null,
+                    state.settings.autoStartRecordingWithNavigation,
+                    SettingsTags.AUTO_START_RECORDING,
+                    onSetAutoStartRecording,
+                )
+                SwitchRow(
+                    "자동 일시정지(기본값)",
+                    "멈춰 있으면 기록을 잠시 멈춥니다. 기록 화면에서 기록마다 바꿀 수 있습니다",
+                    state.settings.autoPauseEnabled,
+                    SettingsTags.AUTO_PAUSE,
+                    onSetAutoPause,
                 )
                 HorizontalDivider()
 

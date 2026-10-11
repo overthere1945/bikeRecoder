@@ -80,6 +80,8 @@ class SettingsViewModel(
     fun setVoiceEnabled(enabled: Boolean) = edit { it.copy(voiceEnabled = enabled) }
     fun setKeepScreenOn(enabled: Boolean) = edit { it.copy(keepScreenOn = enabled) }
     fun setWifiOnlyOfflineMaps(enabled: Boolean) = edit { it.copy(wifiOnlyOfflineMaps = enabled) }
+    fun setAutoStartRecording(enabled: Boolean) = edit { it.copy(autoStartRecordingWithNavigation = enabled) }
+    fun setAutoPause(enabled: Boolean) = edit { it.copy(autoPauseEnabled = enabled) }
 
     private fun edit(transform: (AppSettings) -> AppSettings) {
         viewModelScope.launch { updateSettings(transform) }

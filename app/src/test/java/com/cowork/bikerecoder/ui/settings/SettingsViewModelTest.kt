@@ -97,6 +97,26 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `recording settings default on and toggle`() {
+        assertTrue(viewModel.state.value.settings.autoStartRecordingWithNavigation)
+        assertTrue(viewModel.state.value.settings.autoPauseEnabled)
+
+        viewModel.setAutoStartRecording(false)
+        assertFalse(settings.value.autoStartRecordingWithNavigation)
+        assertTrue(settings.value.autoPauseEnabled)
+
+        viewModel.setAutoPause(false)
+        assertFalse(settings.value.autoPauseEnabled)
+        assertFalse(viewModel.state.value.settings.autoStartRecordingWithNavigation)
+        assertFalse(viewModel.state.value.settings.autoPauseEnabled)
+
+        viewModel.setAutoStartRecording(true)
+        viewModel.setAutoPause(true)
+        assertTrue(settings.value.autoStartRecordingWithNavigation)
+        assertTrue(settings.value.autoPauseEnabled)
+    }
+
+    @Test
     fun `lists the four segments with required first and none installed`() {
         val segments = viewModel.state.value.segments
         assertEquals(listOf("E125_N35", "E125_N30", "E130_N35", "E120_N35"), segments.map { it.name })

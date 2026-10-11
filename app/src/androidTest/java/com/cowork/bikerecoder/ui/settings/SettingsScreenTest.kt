@@ -89,6 +89,18 @@ class SettingsScreenTest {
     }
 
     @Test
+    fun recordingSwitchesToggle() {
+        composeRule.onNodeWithTag(SettingsTags.AUTO_START_RECORDING).performScrollTo().assertIsOn()
+        composeRule.onNodeWithTag(SettingsTags.AUTO_PAUSE).performScrollTo().assertIsOn()
+
+        composeRule.onNodeWithTag(SettingsTags.AUTO_START_RECORDING).performClick()
+        composeRule.waitUntil(5_000) { !settings.value.autoStartRecordingWithNavigation }
+        composeRule.onNodeWithTag(SettingsTags.AUTO_PAUSE).performClick()
+        composeRule.waitUntil(5_000) { !settings.value.autoPauseEnabled }
+        assertEquals(false, settings.value.autoStartRecordingWithNavigation)
+    }
+
+    @Test
     fun showsSegmentsMapSizeAndAttribution() {
         composeRule.onNodeWithText("E125_N35  ·  필수").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("설치됨 · 2 KB").assertIsDisplayed()
