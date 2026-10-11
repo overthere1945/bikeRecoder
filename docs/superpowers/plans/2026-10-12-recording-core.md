@@ -22,14 +22,15 @@
 - MapLibre 호출은 메인 스레드에서만
 - 테스트: JUnit5 모듈은 `testRuntimeOnly(junit-platform-launcher)`(이미 있음). core는 `./gradlew :core:test --tests '<FQCN>'`, app JVM은 `./gradlew :app:testDebugUnitTest --tests '<FQCN>'`
 - 기기 테스트: USB 휴대폰 SM-S938N(Android 16, serial R3CY903ZYQV)에서 `ANDROID_SERIAL=R3CY903ZYQV ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=<FQCN>` (`--tests` 없음). AVD를 만들지 않는다. 휴대폰이 빠져 있으면 그 Task는 JVM 테스트 + `./gradlew :app:assembleDebug :app:assembleDebugAndroidTest`로 끝내고 기기 실행을 "기기 검증 대기"로 남긴다(모든 Task는 JVM으로 확인 가능한 부분을 가진다). 기기 테스트는 in-memory DB를 쓰고 만든 파일·DB를 지운다
-- 테스트 좌표는 `GeoMath`(R = 6_371_008.8)와 같은 반경으로 만든다: 북쪽 직진 `lat = 37.5 + Math.toDegrees(m / 6_371_008.8)`(경선 위라 haversine 거리 = m, V1.0.0 R9). `TestRoutes.pointAt`은 쓰지 않는다. 경계값 시험은 부동소수 오차를 피해 경계 ±0.1m로 한다
+- 테스트 좌표는 `GeoMath`(R = 6_371_008.8)와 같은 반경으로 만든다: 북쪽 직진 `lat = 37.5 + Math.toDegrees(m / 6_371_008.8)`(경선 위라 haversine 거리 = m, V1.0.0 R9). 기록 테스트는 `TestRoutes.pointAt`을 쓰지 않는다(Task 7은 안내 테스트라 기존 `TestRoutes.straightRoute`를 그대로 쓰며, 거리는 가짜 소스가 정하므로 영향이 없다). 경계값 시험은 부동소수 오차를 피해 경계 ±0.1m로 한다
 - Room: DB 버전 2, `exportSchema = true`, `app/schemas/.../2.json`을 커밋한다. 1→2는 테이블 추가만(`AutoMigration(from = 1, to = 2)`)
 - 설정 기본값: `autoStartRecordingWithNavigation = true`, `autoPauseEnabled = true`
+- 컨트롤러 판정(사전 점검 후 확정): **P1** 스펙 밖 확장을 받아들인다 — 연속 5번 속도로 버려지면 재기준, 10초 넘는 공백은 3km/h 이상이면 이어 붙이고(터널) 아니면 빼기, 안내만 할 때 배너 "● 주행 중 · 안내 중". **P2** `closeInterrupted`는 구간을 마지막 저장 시각으로 닫고 여행도 끝낸다(당일 → 완료, 여러 날 → 오늘은 여기까지). **P3** 자정을 넘긴 구간은 시작한 날의 `localDate`에 남는다(다음 날 첫 기록의 그날 합계가 자정 이후 거리만큼 적게 잡히는 것을 받아들인다). **P4** 공유 위치 스트림은 마지막 위치 1개를 다시 준다(`replay = 1`) — 늦게 구독한 기록도 안내가 출발점으로 쓴 위치부터 받는다
 
 ## Review Focus
 
 1. **움직이는 중 GPS 끊김(터널)과 서 있는 중 GPS 끊김** — 10초 넘게 위치가 없다가 돌아오면, 그 사이 평균 속도가 3km/h 이상이었으면(터널) 거리·시간을 이어 붙이고, 아니면(실내 정차) 거리도 이동 시간도 더하지 않아야 한다. → Task 2 `gap over 10 s while stationary adds nothing` / `moving gap over 10 s is bridged`.
-2. **첫 위치가 엉뚱한 곳일 때 거르기가 영원히 막힘** — 기준점이 튄 위치면 이후 정상 위치가 모두 80km/h 초과로 버려진다. 연속 5번 버려지면 그 위치를 새 기준점으로 삼고(거리는 더하지 않음) 다시 기록돼야 한다. → Task 2 `five consecutive jumps re-anchor without adding distance`.
+2. **첫 위치가 엉뚱한 곳일 때 거르기가 영원히 막힘** — 기준점이 튄 위치면 이후 정상 위치가 모두 80km/h 초과로 버려진다. 연속 5번 버려지면 그 위치를 새 기준점으로 삼고(거리는 더하지 않음) 다시 기록돼야 한다. → Task 2 `five consecutive jumps re-anchor without adding distance` + Task 6 `reanchored fix adds no distance`.
 3. **자동 일시정지 중에 칩으로 자동을 끔** — 수동 모드에는 자동 재개가 없으므로 그대로 두면 영원히 일시정지된다. 끄는 순간 재개(음성 포함)해야 한다. → Task 6 `turning auto pause off while auto paused resumes`.
 4. **남아 있던 열린 구간 위에 새 기록 시작** — 강제 종료로 `endedAt == null` 구간이 남은 채 안내 자동 시작 등으로 새 기록이 시작되면 열린 구간이 둘이 된다. 새 기록은 남은 구간을 마지막 저장 시각으로 먼저 닫아야 한다. → Task 10 `starting closes a leftover open segment at its last save time`.
 5. **저장이 계속 실패** — 저장 실패 시 위치를 버리면 기록이 사라진다. 경고는 한 번만 띄우고, 버퍼를 유지해 다음 주기에 다시 저장해야 한다. → Task 10 `save failure warns once and retries the buffered points`.
@@ -80,7 +81,7 @@ docs/verification/recording-field-test.md (신규), CHANGELOG.md, README.md (수
 ### Task 1: 버전 1.1.0과 위치 고도 필드
 
 **Files:**
-- Modify: `app/build.gradle.kts`(`verMinor = 1`), `app/src/test/java/com/cowork/bikerecoder/AppVersionTest.kt`, `core/src/main/kotlin/com/cowork/bikerecoder/core/model/Geo.kt`, `core/src/main/kotlin/com/cowork/bikerecoder/core/gpx/GpxParser.kt`
+- Modify: `app/build.gradle.kts`(`verMinor = 1`), `app/src/test/java/com/cowork/bikerecoder/AppVersionTest.kt`, `app/src/androidTest/java/com/cowork/bikerecoder/ui/settings/SettingsScreenTest.kt`(69행 `onNodeWithText("V1.0.0")` → `"V1.1.0"`; 화면이 `AppVersion.display(BuildConfig.VERSION_NAME)`를 보이므로), `core/src/main/kotlin/com/cowork/bikerecoder/core/model/Geo.kt`, `core/src/main/kotlin/com/cowork/bikerecoder/core/gpx/GpxParser.kt`
 - Test: `core/src/test/kotlin/com/cowork/bikerecoder/core/gpx/GpxParserTest.kt`
 
 **Interfaces:**
@@ -109,7 +110,7 @@ data class LocationFix(
 
 - [ ] **Step 2: 실패 확인** — `./gradlew :core:test --tests 'com.cowork.bikerecoder.core.gpx.GpxParserTest' :app:testDebugUnitTest --tests 'com.cowork.bikerecoder.AppVersionTest'` → FAIL
 - [ ] **Step 3: 구현** — `verMinor = 1`, `LocationFix` 필드 2개(기본값 null), `GpxParser`에 `<ele>` 읽기.
-- [ ] **Step 4: 통과 확인** — `./gradlew :core:test :app:testDebugUnitTest :app:assembleDebug` → BUILD SUCCESSFUL(V1.0.0 테스트 전부 그대로 통과)
+- [ ] **Step 4: 통과 확인** — `./gradlew :core:test :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest` → BUILD SUCCESSFUL(V1.0.0 테스트 전부 그대로 통과); 기기 `…class=com.cowork.bikerecoder.ui.settings.SettingsScreenTest` → PASS(또는 기기 검증 대기)
 - [ ] **Step 5: Commit** — `git commit -m "build: version 1.1.0; location fixes carry altitude"`
 
 ---
@@ -131,7 +132,7 @@ data class RideStats(
 ) { companion object { val ZERO: RideStats } }
 data class TrackPoint(val timeMillis: Long, val point: GeoPoint, val altitudeM: Double?, val speedMps: Float?, val accuracyM: Float)
 
-/** 정확도 > [maxAccuracyM] 제외, 직전 채택 위치 대비 구간 속도 > [maxSpeedMps] 제외. 연속 [reanchorAfter]번 속도로 버려지면 그 위치를 새 기준점으로 받는다. */
+/** 정확도 > [maxAccuracyM] 제외, 직전 채택 위치 대비 구간 속도 > [maxSpeedMps] 제외. 속도 때문에 연달아 버려지는 위치가 [reanchorAfter]번째가 되면 그 위치(5번째)를 버리지 않고 새 기준점으로 받는다(`reanchored = true`). */
 class TrackFilter(maxAccuracyM: Float = 30f, maxSpeedMps: Double = 80.0 / 3.6, reanchorAfter: Int = 5) {
     fun accept(fix: LocationFix): AcceptedFix?          // null = 버림
 }
@@ -198,8 +199,9 @@ class AutoPauseDetector(
 }
 ```
 - 입력 속도는 위치 한 건의 속도(`AcceptedFix.speedMps`)다. 3초 이동 평균이 아니다(결정: 스펙의 "5초 연속"을 그대로 시험할 수 있게). 경계: 3km/h 정확히는 느림이 아님, 5km/h 정확히는 빠름, 15m 정확히는 재개.
+- 경계 정밀도(결정): 감지기는 Double로 비교하고 허용 오차를 두지 않는다. 그래서 Task 3 테스트는 `RecordingFixtures.fix()`(Float 속도)를 거치지 않고 감지기에 `kmh / 3.6`(Double)을 직접 넘긴다 — `3.0f/3.6f` 같은 Float 변환은 3km/h를 0.83333331 < 0.83333333으로 만들어 경계가 뒤집힌다. 위치는 `RecordingFixtures.north(m)`.
 
-- [ ] **Step 1: 실패하는 테스트** (1Hz, `RecordingFixtures`)
+- [ ] **Step 1: 실패하는 테스트** (1Hz, 속도는 `kmh / 3.6` Double 그대로, 위치 `RecordingFixtures.north`)
 
 ```kotlin
 @Test fun `under 3 km per h for 5 s pauses`()        // 2km/h로 t=0..5초 → t=4초까지 false, t=5초 true
@@ -208,6 +210,7 @@ class AutoPauseDetector(
 @Test fun `5 km per h for 2 s resumes`()             // 일시정지 후 5.0km/h t=0,1,2초 → t=2초 true
 @Test fun `rolling at 4 km per h does not resume`()  // 4km/h로 10초(11.1m 이동) → 모두 false
 @Test fun `moving 15 m from the stop resumes`()      // 속도 0으로 보고되지만 위치가 정지 지점에서 14.9m → false, 15.1m → true
+@Test fun `reset forgets slow and fast start times`()  // 2km/h t=0..4초 후 reset(), t=5..10초 2km/h → t=9초까지 false(느림 시작이 t=5초로 다시 잡힘), t=10초 true
 ```
 
 - [ ] **Step 2: 실패 확인** — `./gradlew :core:test --tests 'com.cowork.bikerecoder.core.recording.AutoPauseDetectorTest'` → FAIL
@@ -253,16 +256,19 @@ class AscentCounter {
 ```
 - 기압 모드: 기압 고도 = 최근 5초 표본 평균. 보정 차이 = (수직 정확도 ≤ 10m인 GPS 고도) − (그때 기압 고도). 첫 차이가 들어온 뒤 60초 동안은 오프셋 = 지금까지 차이의 중간값(실시간), 60초가 되면 그 중간값으로 고정. 이후 5분마다 `offset += 0.1 × (지난 5분 차이 중간값 − offset)`(그 5분에 차이가 없으면 그대로). 오프셋이 아직 없으면 `altitudeM = null`.
 - GPS 모드(결정 — 스펙의 "평활"): 최근 5개 GPS 고도의 중간값에 EMA α = 0.25.
+- 테스트를 결정적으로 만드는 정의: 5초 평균 = `(now − 5_000, now]` 안 표본(1Hz면 5개)의 산술 평균. `AscentCounter`의 첫 기준점 = 처음 받은 고도. 테스트는 매초 `onPressure` 다음에 같은 `now`로 `climbAltitudeM`을 `AscentCounter`에 넣는다. 기울기 0.7m/s·0.1667m/s처럼 3m 경계에 정확히 걸리지 않는 값을 써서 반올림 오차로 결과가 바뀌지 않게 한다(아래 기대값은 python3로 계산, 1e-7m 흔들림을 넣어도 같음).
 
 - [ ] **Step 1: 실패하는 테스트** (테스트 안에 역함수 `pressureFor(altM) = 1013.25 * (1 - altM / 44330).pow(5.255)`)
 
 ```kotlin
 @Test fun `formula matches SensorManager`()          // altitudeM(1013.25) == 0.0 ±1e-9, altitudeM(900.0) == 988.65 ±0.01
-@Test fun `barometer rise and fall accumulate`()      // 기압 고도 0→30m 오르막 후 30→10m 내리막(1Hz, 1m/s), 끝에 10초 평지 → ascentM == 30 ±3, descentM == 20 ±3
+@Test fun `barometer rise and fall accumulate`()      // 기압 고도 t=0..43 0.7t(0→30.1m), 10초 30.1m, 0.7m/s로 29초 내려 9.8m, 10초 9.8m
+                                                      //   → ascentM == 28.0 ±0.01, descentM == 17.36 ±0.01 (참값 30.1/20.3에서 기준점 이력 3m만큼 덜 잡힘)
 @Test fun `calibration uses the median gps difference over the first 60 s`()  // 기압 고도 100 고정, GPS 150,152,148…(vAcc 5f) + GPS 200(vAcc 15f) → 60초 후 altitudeM == 150.0 ±1.0
 @Test fun `recalibrates every 5 min with ema 0_1`()   // 초기 오프셋 50 이후 5분 동안 GPS 160(vAcc 5f) → 그 5분 끝 altitudeM == 151.0 ±0.1
 @Test fun `2 m wobble is not accumulated`()           // 기압 모드 100,102,98,100…(1Hz, 2분) → ascentM == 0.0, descentM == 0.0; GPS 모드 같은 값 → 0.0
-@Test fun `50 m climb gives 50 plus minus 3 m`()      // 기압 모드, 300초에 0→50m 선형 + ±1m 노이즈, 끝에 30초 평지 → ascentM in 47.0..53.0
+@Test fun `50 m climb gives 50 plus minus 3 m`()      // 기압 모드, 고도 100 + 0.1667t (t=0..300, 50.01m 오름) + 결정적 노이즈(짝수 초 +0.83, 홀수 초 −0.83), 끝에 30초 평지(노이즈 계속)
+                                                      //   → ascentM in 47.0..53.0 (계산값 48.01), descentM == 0.0
 @Test fun `no barometer uses gps`()                   // onPressure 없이 GPS만 → mode == GPS, altitudeM != null, climbThresholdM == 5.0
 @Test fun `stale barometer switches to gps`()         // 마지막 기압 t, onGps(t + 10_001) → mode == GPS
 @Test fun `gps median rejects a single spike`()       // GPS 100,100,100,160,100 → altitudeM == 100.0 ±1.0
@@ -359,7 +365,11 @@ sealed interface RecordingEvent {
     /** 그날 기록 거리가 [km]번째 킬로미터를 넘었다. day*는 그날(이 여행, Asia/Seoul) 합계. */
     data class KmReached(val km: Int, val dayDistanceM: Double, val dayMovingTimeMs: Long) : RecordingEvent
 }
-data class DayTotals(val distanceM: Double, val movingTimeMs: Long) { companion object { val ZERO: DayTotals } }
+data class DayTotals(val distanceM: Double, val movingTimeMs: Long) {
+    /** 그날 평균 속도 = distanceM / (movingTimeMs / 1000.0), 이동 시간 0이면 0. 1km 안내 문장의 {x.x}는 이것 하나만 쓴다(Task 10·11). */
+    val avgSpeedMps: Double
+    companion object { val ZERO: DayTotals }
+}
 /** [point]: 이번 위치가 기록 중 상태에서 채택됐으면 저장할 점. */
 data class RecordingUpdate(val state: RecordingState, val stats: RideStats, val events: List<RecordingEvent>,
                            val point: TrackPoint?, val gpsWeak: Boolean)
@@ -381,7 +391,8 @@ class RecordingSession(
 ```
 - `onFix` 순서: `TrackFilter.accept` → 고도(`fix.altitudeM`이 있으면 `onGps(…, nowMillis)`) → 상태별 처리:
   - Recording: `RideStatsCalculator.add`(재기준이면 먼저 `breakChain`), 상승은 `AscentCounter.onAltitude(climbAltitudeM, climbThresholdM)`(모드가 바뀌면 `rebase`), 최저·최고 고도 갱신, `TrackPoint` 생성, 자동 모드면 `shouldPause` → `Paused(AUTO)` 이벤트 + `breakChain`.
-  - Paused(AUTO): `shouldResume`이면 `Resumed` + `breakChain` + `rebase`(정지 지점→재개 위치 거리는 더하지 않음). Paused(MANUAL): 자동 재개 없음.
+  - Paused(AUTO): `shouldResume`이면 `Resumed` + `breakChain` + `rebase`(정지 지점→재개 위치 거리는 더하지 않음). 그다음 **같은 위치를 Recording 처리에 넘긴다**: 계산기에 새 사슬의 첫 점으로 `add`, 상승 기준점이 되고, `point`로도 내보낸다. Paused(MANUAL): 자동 재개 없음.
+- 상태가 바뀔 때마다(자동/수동 일시정지, `resume`, 자동 재개, `setAutoPause`) `AutoPauseDetector.reset()`을 부른다 — 이전 느림/빠름 시작 시각이 남아 수동 재개 직후 바로 다시 일시정지되는 일을 막는다.
 - 그날 합계: `day = initialDay + 이 세션의 거리·이동 시간`. `nowMillis`의 `zone` 날짜가 바뀌면 `day`를 0에서 다시 시작하고 km도 1부터(결정: 날짜는 tick 시각 기준). km 이벤트는 `floor(day.distanceM / 1000)`이 커질 때 한 번.
 - 일시정지 중 `stats.currentSpeedMps == 0.0`. 경과 시간 = 지금까지 본 가장 큰 `nowMillis − startMillis`.
 - GPS 감시: R11과 같다 — `onFix`는 "봤음"만 표시, `onTick(now)`은 마지막 활동 tick 이후 `gpsTimeoutMs`가 지나면 `gpsWeak = true`, 새 위치가 오면 false.
@@ -395,16 +406,21 @@ class RecordingSession(
 @Test fun `buttons pause and resume in manual mode`()              // pause → [Paused(MANUAL)], resume → [Resumed]
 @Test fun `manual pause is not auto resumed`()                     // autoPause=true, pause() 후 18km/h 10초 → 계속 Paused(MANUAL)
 @Test fun `turning auto pause off while auto paused resumes`()     // Paused(AUTO) 중 setAutoPause(false) → [Resumed], state == Recording
+@Test fun `manual resume does not pause at once on a slow fix`()  // autoPause=true, 2km/h로 4초 → pause() → resume() → 2km/h 위치 4개 더(4초) → state == Recording (reset으로 느림 시작이 재개 뒤로)
+@Test fun `reanchored fix adds no distance`()                     // autoPause=false, m=0(t=0) 채택, t=1..5 m=505,510,515,520,525(속도 18km/h) → 5번째 재기준,
+                                                                   //   이어서 t=6..25 m=530..625 → distanceM == 100.0 ±0.5 (525m 기준점부터만)
 @Test fun `paused distance and time are not recorded`()            // 0→100m(18km/h), 100m에서 속도 0으로 20초(5초째 일시정지), 다시 18km/h로 215m까지
-                                                                   //   (105·110·115m에서 115m 때 재개) → distanceM == 200 ±1(정지 지점→재개 위치 15m 제외), movingTimeMs < elapsedMs
+                                                                   //   (105·110·115m에서 115m 때 재개, 115m 위치가 새 사슬의 첫 점이며 point로 나옴) → distanceM == 200.0 ±1.0 (= 100 + (215−115)), movingTimeMs < elapsedMs
 @Test fun `elapsed includes pauses`()                              // start 0, onTick(90_000) → elapsedMs == 90_000
 @Test fun `speed is 0 while paused`()                              // Paused 상태 update.stats.currentSpeedMps == 0.0
-@Test fun `track points only while recording`()                    // Paused 중 onFix → point == null
+@Test fun `track points only while recording`()                    // Paused 중 onFix → point == null; 재개시키는 위치 → point != null(그 위치)
 @Test fun `km continues the day's distance`()                      // initialDay = DayTotals(2_500.0, 500_000), 600m 주행 → KmReached(3, …) 한 번만
 @Test fun `km restarts at 1 the next day`()                        // 시작 23:58 KST, initialDay 2_900m, 200m(23:59) → KmReached(3); 0시 이후 1_050m → KmReached(1), 4는 없음
 @Test fun `gps weak after 10 s on tick time`()                     // fix 뒤 onTick(t0), onTick(t0+10_001) → gpsWeak; 새 fix → false
-@Test fun `ascent only while recording`()                          // 기압 모드(onPressure). 일시정지 중 +20m → ascentM == 0.0; 재개 뒤 +20m 오르막 + 10초 평지 → ascentM in 17.0..20.0
+@Test fun `ascent only while recording`()                          // 기압 모드, 매초 onPressure 후 onFix. pause() 후 t=0..39 기압 고도 min(0.7t, 20.3) → ascentM == 0.0;
+                                                                   //   resume(40_000), t=40..68 20.3+0.7(t−39)(→40.6), 10초 평지 → ascentM == 17.36 ±0.01 (python3 계산)
 @Test fun `stop freezes`()                                         // stop 후 state == Stopped, onFix → events 빈 목록, stats 그대로
+@Test fun `day average speed`()                                    // DayTotals(1_000.0, 200_000).avgSpeedMps == 5.0, DayTotals(1_000.0, 0).avgSpeedMps == 0.0
 ```
 
 - [ ] **Step 2: 실패 확인** — `./gradlew :core:test --tests 'com.cowork.bikerecoder.core.recording.RecordingSessionTest'` → FAIL
@@ -447,7 +463,8 @@ fun resetKmBase(distanceM: Double)               // lastKmFloor = floor(distance
 @Test fun `clearing the source resumes odometer km without repeats`()  // 소스 해제 시점 주행 2.5km → 3km 지점에서만 기본 kmReport(3, …)
 @Test fun `source km waits for an imminent turn`()          // 회전 임박 상태에서 d가 1km 통과 → 그 업데이트엔 없음, near 안내 다음 업데이트에 "SRC 1"
 // VoiceSchedulerTest
-@Test fun `reset km base drops a pending report`()
+@Test fun `reset km base drops a pending report`()   // 회전 임박으로 km 1 안내가 보류된 상태에서 resetKmBase(1_500.0) → near 안내 뒤 업데이트에도 km 안내 없음;
+                                                     //   sessionDistanceM 2_000 → kmReport(2, …) 한 번
 ```
 
 - [ ] **Step 2: 실패 확인** — `./gradlew :core:test --tests 'com.cowork.bikerecoder.core.navigation.NavigationSessionTest' --tests 'com.cowork.bikerecoder.core.voice.VoiceSchedulerTest'` → FAIL
@@ -461,7 +478,7 @@ fun resetKmBase(distanceM: Double)               // lastKmFloor = floor(distance
 
 **Files:**
 - Create: `core/.../recording/RideStore.kt`, `app/src/main/java/com/cowork/bikerecoder/data/RoomRideStore.kt`
-- Modify: `app/.../data/Entities.kt`, `app/.../data/Daos.kt`(`RideDao` 추가), `app/.../data/AppDatabase.kt`, `gradle/libs.versions.toml`(`androidx-room-testing`), `app/build.gradle.kts`(`androidTestImplementation(libs.androidx.room.testing)`)
+- Modify: `app/.../data/Entities.kt`, `app/.../data/Daos.kt`(`RideDao` 추가), `app/.../data/AppDatabase.kt`, `app/.../data/RoomTripStore.kt`(`private fun TripEntity.toTrip()` → `internal`; `RoomRideStore.tripSummaries()`가 그대로 쓴다 — 복사 금지), `gradle/libs.versions.toml`(`androidx-room-testing`), `app/build.gradle.kts`(`androidTestImplementation(libs.androidx.room.testing)`)
 - Create (생성물): `app/schemas/com.cowork.bikerecoder.data.AppDatabase/2.json`
 - Test: `app/src/test/java/com/cowork/bikerecoder/data/RideMappingsTest.kt`, `app/src/androidTest/java/com/cowork/bikerecoder/data/RoomRideStoreTest.kt`, `app/src/androidTest/java/com/cowork/bikerecoder/data/RideDatabaseMigrationTest.kt`
 
@@ -503,7 +520,8 @@ interface RideStore {
 ```kotlin
 // RideMappingsTest (JVM)
 @Test fun `segment round trip keeps nulls and date`()     // endedAt=null, min/maxAltitude=null, localDate 2026-10-12 → 엔티티 "2026-10-12" → 같은 모델
-@Test fun `track point round trip`()
+@Test fun `track point round trip`()                // TrackPoint(1_000L, GeoPoint(37.5, 127.0), altitudeM = null, speedMps = null, accuracyM = 5f).toEntity(segmentId = 7)
+                                                    //   → entity.segmentId == 7, altitudeM == null, speedMps == null; toModel() == 원래 TrackPoint
 // RoomRideStoreTest (기기, in-memory, allowMainThreadQueries)
 @Test fun appendUpdatesPointsAndTotalsTogether()        // appendPoints 2회 → points 순서, segment.totals == 마지막 totals
 @Test fun closeAndOpenSegments()                        // 열린 2개 중 1개 close → openSegments == 나머지 1개
@@ -534,7 +552,8 @@ interface RideStore {
 **Interfaces:**
 - Produces:
 ```kotlin
-/** 위로는 [upstream]을 한 번만 수집하고 여러 구독자에게 나눠 준다. 구독자가 0이 되면 바로 멈추고(replay 없음), 다시 구독하면 새로 시작한다.
+/** 위로는 [upstream]을 한 번만 수집하고 여러 구독자에게 나눠 준다. 늦게 온 구독자는 마지막 위치 1개부터 받는다(P4, replay = 1).
+ *  구독자가 0이 되면 바로 멈추고 그 마지막 위치도 버리며(오래된 위치를 주지 않음), 다시 구독하면 새로 시작한다.
  *  위쪽이 끝나면 모든 구독자 flow가 정상 종료하고, 실패하면 모든 구독자 flow가 같은 예외로 끝난다. */
 class SharedLocationSource(upstream: () -> LocationSource, scope: CoroutineScope) : LocationSource
 interface PressureSource { fun pressures(): Flow<Float> }   // hPa
@@ -545,18 +564,20 @@ fun setAutoStartRecording(enabled: Boolean); fun setAutoPause(enabled: Boolean)
 // SettingsTags
 const val AUTO_START_RECORDING = "settings_auto_start_recording"; const val AUTO_PAUSE = "settings_auto_pause"
 ```
-- `SharedLocationSource`: 위쪽을 `Fix | End | Failed(e)` 항목으로 감싸 `shareIn(scope, SharingStarted.WhileSubscribed(0), replay = 0)`하고, 구독자 쪽에서 `End`면 종료, `Failed`면 예외를 던진다(실패를 scope로 흘려 보내지 않는다).
+- `SharedLocationSource`: 위쪽을 `Fix | End | Failed(e)` 항목으로 감싸 `shareIn(scope, SharingStarted.WhileSubscribed(stopTimeoutMillis = 0, replayExpirationMillis = 0), replay = 1)`하고, 구독자 쪽에서 `End`면 종료, `Failed`면 예외를 던진다(실패를 scope로 흘려 보내지 않는다).
 - `FusedLocationSource`: `altitudeM` = API 34+에서 `AltitudeConverter().addMslAltitudeToLocation(context, location)` 후 `mslAltitudeMeters`, 실패(예외)·API 33 이하면 `altitude`(`hasAltitude()`일 때), `verticalAccuracyM` = `hasVerticalAccuracy()`면 `verticalAccuracyMeters`. 변환은 디스크를 읽어 막힐 수 있으므로 `callbackFlow { … }.map { it.toFix() }.flowOn(Dispatchers.IO)`로 메인 스레드 밖에서 한다.
 - 설정 화면: "기록" 구역에 스위치 2개 — "안내 시작 시 기록 자동 시작", "자동 일시정지(기본값)".
 
 - [ ] **Step 1: 실패하는 테스트**
 
 ```kotlin
-// SharedLocationSourceTest (JVM, runTest, 위쪽은 NavTestDoubles의 ScriptedLocationSource)
+// SharedLocationSourceTest (JVM, runTest). 앞 세 테스트의 위쪽은 NavTestDoubles의 ScriptedLocationSource(collections/collecting 확인용, 끝나지도 실패하지도 않음).
+// 끝·실패 테스트는 테스트 안의 작은 LocationSource를 쓴다: object : LocationSource { override fun fixes() = flowOf(f1, f2) } / flow { emit(f1); throw IOException("gps") }
 @Test fun `two subscribers share one upstream collection`()    // 두 구독자 모두 같은 fix 목록, source.collections == 1
-@Test fun `upstream stops when the last subscriber leaves`()   // 둘 다 취소 → source.collecting == false; 다시 구독 → collections == 2
-@Test fun `upstream failure reaches every subscriber`()        // 위쪽 IOException → 두 구독자 모두 IOException으로 종료, scope는 살아 있음
-@Test fun `upstream end completes subscribers`()
+@Test fun `upstream stops when the last subscriber leaves`()   // 둘 다 취소 → source.collecting == false; 다시 구독 → collections == 2, 첫 위치 == fixes[0](앞서 본 마지막 위치가 아님)
+@Test fun `late subscriber gets the latest fix first`()        // A가 f0,f1,f2를 받은 뒤 B 구독 → B의 첫 위치 == f2, 다음 f3
+@Test fun `upstream failure reaches every subscriber`()        // flow { emit(f1); throw IOException("gps") } → 두 구독자 모두 f1을 받은 뒤 IOException("gps")로 종료, scope.isActive == true
+@Test fun `upstream end completes subscribers`()               // flowOf(f1, f2) → 두 구독자 모두 toList() == [f1, f2]로 정상 종료
 // SettingsViewModelTest
 @Test fun `recording settings default on and toggle`()         // 기본 true/true, setAutoStartRecording(false)·setAutoPause(false) 반영
 // SettingsScreenTest (기기)
@@ -621,21 +642,23 @@ object RideFixtures {
 }
 ```
 - 시작(`startRecording`): ① `rideStore.openSegments()`를 모두 닫는다(`endedAt = startedAt + totals.elapsedMs`, 합계는 마지막 저장값 — Review Focus 4) ② 여행이 ACTIVE가 아니면 `Failed` ③ `dayTotals(tripId, 오늘)`로 `RecordingSession(clock(), settings.autoPauseEnabled, initialDay)` ④ `openSegment` ⑤ `start()` → "기록을 시작합니다" ⑥ 위치·기압·tick(1초)·저장(5초) 수집을 이 scope에서 시작.
-- 음성(설정 `voiceEnabled`가 false면 생략): `Started`/`Paused`/`Resumed` → 해당 문구. `KmReached` → `navigation.ui.value`가 `NavUiState.Active`가 아닐 때만 `rideKmReport(km, dayDistanceM / (dayMovingTimeMs / 1000.0), dayMovingTimeMs)`(이동 시간 0이면 평균 0)(결정: 평균·이동 시간도 km와 같은 "그날" 기준; 안내 중에는 Task 11의 합친 문장이 대신한다).
+- 음성(설정 `voiceEnabled`가 false면 생략): `Started`/`Paused`/`Resumed` → 해당 문구. `KmReached` → `navigation.ui.value`가 `NavUiState.Active`가 아닐 때만 `rideKmReport(km, DayTotals(dayDistanceM, dayMovingTimeMs).avgSpeedMps, dayMovingTimeMs)`(결정: 평균·이동 시간도 km와 같은 "그날" 기준, 평균 계산은 Task 6의 `DayTotals.avgSpeedMps` 하나만 쓴다; 안내 중에는 Task 11의 합친 문장이 대신한다).
+- 위치 흐름이 예외로 끝나거나 그냥 끝나면(권한 회수, Play 서비스 오류 — 스펙 §4.7): 로그를 남기고 세션은 그대로 둔 채 5초 뒤 다시 구독한다(기록 중인 동안 반복). 그 사이 GPS 감시가 10초 뒤 `gpsWeak = true`로 "GPS 신호 약함"을 띄우고 거리는 늘지 않는다.
 - 저장: `saveIntervalMs`마다 `appendPoints(segmentId, 버퍼, stats.toTotals())`(일시정지 중에도 합계는 저장). 성공한 점만 버퍼에서 뺀다. 실패: 로그 + 처음 한 번 `saveWarning`, 버퍼 유지 후 다음 주기 재시도(Review Focus 5).
 - 정지(`stopRecording`): `session.stop(clock())` → 마지막 저장 → `closeSegment(endedAt = clock())` → `end`에 따라 `SEGMENT_ONLY` 없음 / `STOP_TODAY` `tripManager.endToday`(MULTI_DAY만) / `COMPLETE_TRIP` `tripManager.complete` → 수집 중지 → `Finished(메모리의 구간 요약, track, error)`.
-- `closeInterrupted`(결정 — 스펙 §4.6 [종료]): 열린 구간을 마지막 저장 시각으로 닫고, 그 여행이 ACTIVE이고 안내 중이 아니면 SINGLE_DAY → `complete`, MULTI_DAY → `endToday`.
+- `closeInterrupted`(컨트롤러 판정 P2 — 스펙 §4.6 [종료]): 열린 구간을 마지막 저장 시각으로 닫고, 그 여행이 ACTIVE이고 안내 중이 아니면 SINGLE_DAY → `complete`, MULTI_DAY → `endToday`.
 
-- [ ] **Step 1: 실패하는 테스트** (`RideTestDoubles.kt`: `FakeRideStore`(메모리, `failAppend: Boolean`, 호출 기록), `FakePressureSource`; 하네스는 `NavigationControllerTest`처럼 가상 시간·`backgroundScope`·`FakeTripStore`·`RecordingVoiceOutput`·idle `NavigationController`, `clock = { testScheduler.currentTime }`, 위치는 `ScriptedLocationSource(fixes, speedup = 1.0)`이라 fix 시각 = 가상 시각)
+- [ ] **Step 1: 실패하는 테스트** (`RideTestDoubles.kt`: `FakeRideStore(trips: FakeTripStore)` — 메모리 구현, `var failAppend: Boolean`, 호출 기록 `appendCalls: List<Pair<Long /*가상 시각*/, SegmentTotals>>`·`deletedTrips`·`deletedSegments`, `tripSummaries()`는 받은 `FakeTripStore`의 여행과 이어 붙여 계산(Task 15도 이 가짜를 쓴다), `deleteTrip`은 그 여행의 구간·점도 지움; `FakePressureSource`; 하네스는 `NavigationControllerTest`처럼 가상 시간·`backgroundScope`·`FakeTripStore`·`RecordingVoiceOutput`·idle `NavigationController`, `clock = { testScheduler.currentTime }`, 위치는 `ScriptedLocationSource(fixes, speedup = 1.0)`이라 fix 시각 = 가상 시각)
 
 ```kotlin
 @Test fun recordOnlyThreeKmAnnouncesStartAndEachKm()     // ① straight(3_010.0), SINGLE_DAY, 끝까지 재생 후 stopRecording(COMPLETE_TRIP)
                                                          //   "기록을 시작합니다" 1회, "킬로미터 이동. 평균 속도" 문장의 km == [1, 2, 3],
-                                                         //   저장 구간 distanceM == 3_000.0 ±30.0(±1%), endedAt != null, trip COMPLETED
+                                                         //   저장 구간 distanceM == 3_010.0 ±1.0 (스펙 "3km ±1%" 안), endedAt != null, trip COMPLETED
 @Test fun twoSignalStopsPauseAndResumeTwice()            // ② straight(1_500.0, stops = [StopAt(500.0, 30), StopAt(1_000.0, 30)])
                                                          //   "일시정지되었습니다" 2회, "기록을 다시 시작합니다" 2회, movingTimeMs < elapsedMs,
-                                                         //   distanceM == 1_470.0 ±10.0(정지마다 정지 지점→재개 위치 15m 제외)
-@Test fun pointsAreSavedEvery5sWithTotals()              // appendPoints 호출 시각이 5_000의 배수, 각 호출의 totals.distanceM 단조 증가
+                                                         //   distanceM == 1_470.0 ±1.0 (= 500 + (1_000−515) + (1_500−1_015): 정지마다 정지 지점→재개 위치 15m 제외, 재개 위치부터 새로 셈)
+@Test fun pointsAreSavedEvery5sWithTotals()              // 정지하지 않고 23초 진행 → appendCalls 시각 == [5_000, 10_000, 15_000, 20_000], totals.distanceM 단조 증가
+                                                         //   (stopRecording의 마지막 저장은 5초 배수가 아니므로 이 테스트에서는 정지하지 않는다)
 @Test fun saveFailureWarnsOnceAndRetriesTheBufferedPoints()   // failAppend=true 15초 → saveWarning == MSG_SAVE_PROBLEM(경고 상태 변화 1번), false로 바꾼 뒤 다음 저장에 앞서 못 넣은 점 모두 포함
 @Test fun startingClosesALeftoverOpenSegmentAtItsLastSaveTime() // 열린 구간(startedAt 1_000, elapsed 60_000) 있음 → startRecording 후 그 구간 endedAt == 61_000, 열린 구간은 새 것 1개
 @Test fun interruptedSegmentResumesAsANewSegmentOfTheSameTrip() // ④ 컨트롤러 A(자식 Job)로 1km 기록·저장 후 Job 취소(정지 없이) → 같은 store의 컨트롤러 B: interrupted() == A의 구간;
@@ -644,9 +667,11 @@ object RideFixtures {
 @Test fun stopTodayKeepsMultiDayTripActive()             // STOP_TODAY → trip ACTIVE, Finished
 @Test fun dayKmContinuesAcrossSegments()                 // 같은 날 1.5km 구간 닫고 새 구간 1km → 새 구간에서 "2킬로미터 이동…" 1회만
 @Test fun autoPauseSettingIsTheDefaultAndTheChipTogglesIt()   // autoPauseEnabled=false → Active.autoPause false; setAutoPause(true) → true
-@Test fun voiceOffSpeaksNothing()
+@Test fun voiceOffSpeaksNothing()                        // voiceEnabled=false, straight(1_100.0) 재생 → voice.spoken.isEmpty(), ui는 Active(distanceM == 1_100 ±1)
 @Test fun trackKeepsPointsAtLeast10mApart()              // 1초 5m 주행 → track 인접 점 거리 ≥ 10.0
-@Test fun gpsWeakAfter10sWithoutFixes()                  // 위치 멈춤 후 11초 → Active.gpsWeak, distanceM 증가 없음
+@Test fun gpsWeakAfter10sWithoutFixes()                  // 위치 멈춤 후 12초(tick 1초라 10~11초 사이에 켜지므로 여유) → Active.gpsWeak, distanceM 증가 없음
+@Test fun locationFailureKeepsRecordingAndRetries()      // 테스트 안 LocationSource: 1번째 구독 21개(100m) 뒤 IOException, 2번째 구독은 이어서 105m부터
+                                                         //   → 실패 후 ui Active 유지, 12초 뒤 gpsWeak, 그때 distanceM == 100 ±1; 재구독(구독 수 2) 뒤 gpsWeak false·거리 다시 증가
 ```
 
 - [ ] **Step 2: 실패 확인** — `./gradlew :app:testDebugUnitTest --tests 'com.cowork.bikerecoder.ride.RideControllerTest'` → FAIL
@@ -673,7 +698,8 @@ var kmSource: KmAnnouncementSource?    // 지금 세션과 이후 만들어질 �
   - `Active(tripId)`를 처음 보고 `autoStartRecordingWithNavigation`이 켜져 있고 기록이 Idle이면 `startRecording(tripId)`(`Starting`이 아니라 `Active`에서 — 경로 계산이 실패한 시작에는 기록을 남기지 않는다).
   - `Finished(tripId, ARRIVED|COMPLETED|STOPPED_TODAY)`이고 그 여행을 기록 중이면 `stopRecording(SEGMENT_ONLY)`(여행 상태는 안내 쪽이 이미 바꿨다) → `Finished` 요약.
   - `Idle`(안내만 끝내기 = `navigation.close()`)이면 기록은 계속된다.
-- 기록이 Active가 되면 `navigation.kmSource = object : KmAnnouncementSource { distanceM() = session.day.distanceM; phrase(km, remainingM, eta) = phrases.rideKmReportWithNav(km, 그날 평균, 그날 이동 시간, remainingM, eta) }`, 기록이 끝나면 `null`.
+- 기록이 Active가 되면 `navigation.kmSource = object : KmAnnouncementSource { distanceM() = session.day.distanceM; phrase(km, remainingM, eta) = phrases.rideKmReportWithNav(km, session.day.avgSpeedMps, session.day.movingTimeMs, remainingM, eta) }`, 기록이 끝나면 `null`.
+- 공유 위치 스트림이 마지막 위치를 다시 주므로(P4) 안내가 Active가 된 뒤 구독한 기록도 안내가 출발점으로 쓴 위치부터 받는다. 기록 중에 안내가 시작되면 안내 쪽도 직전 위치(1초 이내)를 출발 후보로 받는데, V1.0.0 출발점 규칙(정확도 30m 이내 첫 위치)에 그대로 맞는다.
 - 안내 중 [기록 시작](수동)은 그 안내의 여행에 붙는다(Task 13 화면이 tripId를 넘긴다).
 - 하네스: `ScriptedLocationSource(gpxFixture("scenario_follow.gpx"), speedup = 1.0)`를 `SharedLocationSource`로 감싸 `NavigationController(locationSource = { shared })`와 `RideController(location = shared)`에 같이 준다. 라우터 `AssetRouter(listOf(fixture("route_follow.geojson")))`.
 
@@ -685,13 +711,15 @@ var kmSource: KmAnnouncementSource?    // 지금 세션과 이후 만들어질 �
 @Test fun guidanceDoesNotStartRecordingWhenDisabled()
 @Test fun combinedKmSentenceOncePerKmAndNoGuidanceKmReport()   // ③ 발화 중 "킬로미터 이동. 평균 속도"를 포함하고 "남은 거리"·"도착 예정"도 포함한 문장의 km == [1, 2];
                                                           //   기본 안내 문장("킬로미터 이동. 남은 거리")은 0개
-@Test fun arrivalEndsGuidanceAndRecordingWithSummary()    // ⑤ nav Finished(ARRIVED), ride.ui Finished(segment.endedAt != null, distanceM == 2_390.0 ±60.0), trip COMPLETED,
+@Test fun arrivalEndsGuidanceAndRecordingWithSummary()    // ⑤ nav Finished(ARRIVED), ride.ui Finished(segment.endedAt != null, distanceM == 2_370.0 ±15.0), trip COMPLETED,
+                                                          //   (python3: 도착은 위치 #237(목적지 30.0m, 누적 2_369.9m) 또는 #238(2_379.9m); replay로 기록은 #0 또는 #1부터 → 2_359.9..2_379.9)
                                                           //   "목적지에 도착했습니다" 발화
 @Test fun endingGuidanceOnlyKeepsRecording()              // 1.2km에서 navigation.close() → ride.ui Active 유지, 이후 km 안내는 "…이동 시간 {시간}입니다." 기록 문장
 @Test fun stopTodayEndsRecordingAndKeepsTheTrip()         // MULTI_DAY, navigation.stopToday() → ride Finished, trip ACTIVE
 @Test fun kmSourceIsClearedWhenRecordingStops()           // 기록만 SEGMENT_ONLY로 정지 → navigation.kmSource == null, 이후 기본 안내 km 문장
 // NavigationControllerTest
-@Test fun kmSourceAppliesToTheRunningAndNextSession()
+@Test fun kmSourceAppliesToTheRunningAndNextSession()   // 가짜 소스(var d, 문장 "SRC $km")를 start 전에 설정 → d = 1_000.0 뒤 다음 위치에서 "SRC 1" 1회, 기본 kmReport 0개;
+                                                       //   close() 후 다시 start → d = 2_000.0 → "SRC 2"; kmSource = null 후에는 기본 kmReport만
 ```
 
 - [ ] **Step 2: 실패 확인** — `./gradlew :app:testDebugUnitTest --tests 'com.cowork.bikerecoder.ride.RideNavigationTest'` → FAIL
@@ -737,7 +765,7 @@ fun showInterrupted(context: Context, notice: InterruptedNotice)     // 제목 "
 @Test fun `paused notice`()               // → 제목 "일시정지됨"
 @Test fun `guidance and recording notice`()   // 제목 "길 안내 중 · 기록 중", text == contentText(nav)
 @Test fun `nothing running gives null`()  // Idle/Idle, Finished/Finished → null
-@Test fun `interrupted notice resumes guidance only with stops left`()  // (ACTIVE, 2, 1) → resumeTripId == id; (ACTIVE, 0, 1) → null id; (null, 0, 0) → null
+@Test fun `interrupted notice resumes guidance only with stops left`()  // (ACTIVE, 2, 1) → resumeTripId == id; (ACTIVE, 0, 1) → InterruptedNotice(null); (null, 0, 1) → InterruptedNotice(null); (null, 0, 0) → null
 ```
 
 - [ ] **Step 2: 실패 확인** — `./gradlew :app:testDebugUnitTest --tests 'com.cowork.bikerecoder.nav.NavNotificationsTest'` → FAIL
@@ -752,7 +780,7 @@ fun showInterrupted(context: Context, notice: InterruptedNotice)     // 제목 "
 **Files:**
 - Create: `app/.../ui/record/RecordViewModel.kt`, `RecordScreen.kt`, `RecordChoices.kt`, `RideNumbers.kt`, `SegmentSummary.kt`
 - Modify: `app/.../ui/main/MainViewModel.kt`, `app/.../ui/main/MainScreen.kt`, `app/.../ui/trip/TripStartViewModel.kt`, `app/.../map/BikeMap.kt`, `app/.../ui/BikeNavHost.kt`
-- Test: `app/src/test/java/com/cowork/bikerecoder/ui/main/MainViewModelTest.kt`, `app/src/test/java/com/cowork/bikerecoder/ui/trip/TripStartViewModelTest.kt`, `app/src/test/java/com/cowork/bikerecoder/ui/record/RecordViewModelTest.kt`, `app/src/test/java/com/cowork/bikerecoder/ui/record/RecordChoicesTest.kt`, `app/src/test/java/com/cowork/bikerecoder/ui/InitialRoutesTest.kt`, `app/src/test/java/com/cowork/bikerecoder/map/BikeMapGeoJsonTest.kt`, `app/src/androidTest/java/com/cowork/bikerecoder/ui/record/RecordScreenTest.kt`
+- Test: `app/src/test/java/com/cowork/bikerecoder/ui/main/MainViewModelTest.kt`, `app/src/test/java/com/cowork/bikerecoder/ui/trip/TripStartViewModelTest.kt`, `app/src/test/java/com/cowork/bikerecoder/ui/record/RecordViewModelTest.kt`, `app/src/test/java/com/cowork/bikerecoder/ui/record/RecordChoicesTest.kt`, `app/src/test/java/com/cowork/bikerecoder/ui/record/RideLinesTest.kt`, `app/src/test/java/com/cowork/bikerecoder/ui/InitialRoutesTest.kt`, `app/src/test/java/com/cowork/bikerecoder/map/BikeMapGeoJsonTest.kt`, `app/src/androidTest/java/com/cowork/bikerecoder/ui/record/RecordScreenTest.kt`
 
 **Interfaces:**
 - Consumes: Task 5 `RideFormat`, Task 10/11 `RideController`·`RideUiState`·`RecordingEnd`, Task 12 `AppContainer.ride/rideUi/rideState`
@@ -768,11 +796,13 @@ fun pauseBandText(kind: PauseKind): String      // "일시정지됨 (자동)" / 
 fun autoPauseChipText(enabled: Boolean): String // "자동 일시정지 ON" / "자동 일시정지 OFF"
 // RideNumbers.kt
 @Composable fun RideNumbersPage(stats: RideStats, dimmed: Boolean, modifier: Modifier = Modifier)  // 현재 속도(크게)·거리·이동 시간·평균·최고·고도·누적 ↑/↓
-fun rideSummaryLine(stats: RideStats): String   // "{RideFormat.distance} · {RideFormat.clock(이동)} · 평균 {speedKmh}"
+fun rideSummaryLine(stats: RideStats): String     // 안내 화면용(스펙 §3.3): "{RideFormat.distance} · {RideFormat.clock(이동)} · 평균 {speedKmh}"
+fun rideMapSummaryLine(stats: RideStats): String  // 기록 화면 지도 쪽 하단(스펙 §3.2, 현재 속도 포함): "{speedKmh(current)}km/h · {distance} · {clock(이동)} · 평균 {speedKmh(avg)}"
 // SegmentSummary.kt
 @Composable fun SegmentSummaryContent(segment: RideSegment, map: @Composable (Modifier) -> Unit, onConfirm: () -> Unit)  // 거리·이동 시간·평균/최고·누적 상승·지도
 // RecordScreen.kt
-object RecordTags { PAGER, CHIP, PAUSE, RESUME, STOP, BAND, NUMBERS_PAGE }
+object RecordTags { PAGER, CHIP, PAUSE, RESUME, STOP, BAND, NUMBERS_PAGE, SUMMARY /* 지도 쪽 하단 요약 줄 */ }
+@Composable fun RecordStatusContent(state: RideUiState, onClose: () -> Unit)   // Starting/Failed 화면(아래 규칙)
 @Composable fun RecordContent(state: RideUiState.Active, navigating: Boolean, onPause, onResume, onToggleAutoPause: (Boolean) -> Unit,
                               onEnd: (RecordingEnd) -> Unit, map: @Composable (Modifier) -> Unit)
 // RecordViewModel
@@ -790,19 +820,24 @@ data class InterruptedRide(val segmentId: Long, val tripId: Long)
 // MainUiState: 기존 guiding 유지 + riding: RidingBanner?, interrupted: InterruptedRide? (visibleBanner는 riding != null일 때도 숨김)
 // MainViewModel: fun closeInterruptedRide(); fun dismissInterrupted()
 // TripStartViewModel
-fun onRecordPressed()      // StartPlan(defaultProfile(), emptyList()); 생성자에 defaultProfile: suspend () -> RouteProfile = { RouteProfile.CYCLEWAY_FIRST }
+fun onRecordPressed()      // 기록 전용 진입: StartPlan(defaultProfile(), emptyList())와 recordOnly = true를 기억. 생성자에 defaultProfile: suspend () -> RouteProfile = { RouteProfile.CYCLEWAY_FIRST }
+// 기존 onStartPressed의 `plan.stops.isEmpty()` 조기 반환을 거치지 않는 별도 진입이다(onStartPressed를 빈 목록으로 부르면 아무 일도 안 한다).
+// continueTrip(): recordOnly면 changeProfile·changeStops(replaceStops)를 부르지 않고 바로 Ready(trip.id) — 여행의 경유지·성향을 지우지 않는다.
+// chooseType(): recordOnly면 startTrip(type, defaultProfile(), emptyList()). consumeReady()/dismiss()에서 recordOnly를 지운다.
 // BikeMap
 data class MapOverlay(val route: Route?, val stops: List<Stop>, val user: LocationFix?, val track: List<GeoPoint> = emptyList())
 internal fun trackGeoJson(points: List<GeoPoint>): String   // 2점 미만이면 빈 FeatureCollection
 // BikeNavHost
-Routes.RECORD = "record"; fun Routes.record(tripId: Long? = null): String
+Routes.RECORD = "record"; Routes.RECORD_PATTERN = "record?trip={trip}"(navArgument `trip` LongType, 기본 -1)
+fun Routes.record(tripId: Long? = null): String   // "record?trip=${tripId ?: -1}"
 fun initialRoutes(onboardingDone: Boolean, guidance: NavUiState, ride: RideUiState = RideUiState.Idle): List<String>
 ```
 - 주행 배너(스펙 §3.1, V1.0.0 "안내 중 [보기]" 대체): 기록 Active면 "● 주행 중 · {RideFormat.distance} · {RideFormat.clock(이동)}", 안내만이면 "● 주행 중 · 안내 중"; [보기] 대상은 안내 중이면 NAVIGATE, 아니면 RECORD.
 - [● 기록 시작](오른쪽 아래, 기존 [내 위치]는 그 위로): 위치 권한(`ACCESS_FINE_LOCATION`) 없으면 `RequestPermission` 런처, 거부되면 "위치 권한이 있어야 기록할 수 있습니다" [설정 열기]/[취소]. 안내 중이면 프롬프트 없이 `record(안내 tripId)`, 아니면 `tripStart.onRecordPressed()` → 기존 `TripStartDialogs` → `Ready(tripId)` → `record(tripId)`. 기록 중에는 버튼을 숨긴다.
 - 기록용 여행(결정): 새 여행은 경유지 없이 `startTrip(type, 기본 성향, emptyList())`; [이어서]는 여행의 경유지·성향을 바꾸지 않는다. 경유지 없는 여러 날 여행 배너의 이름은 "주행 기록".
 - 복구(스펙 §4.6): 지도 메인이 열릴 때 기록이 Idle이고 `interrupted()`가 있으면 "기록이 중단되었습니다" [이어서 기록] → `record(tripId)`(서비스 시작 + `startRecording`이 남은 구간을 닫고 같은 여행에 새 구간) / [종료] → `closeInterrupted()`.
-- 기록 화면(스펙 §3.2): `HorizontalPager` 2쪽 — 지도(지나온 경로 `track` + 현재 위치, 하단 `rideSummaryLine`) / `RideNumbersPage`. 지도 위 끌기는 지도가 받으므로 페이지 넘기기는 하단 요약·상단 띠에서 되고, 페이지 점을 눌러도 넘어간다. 상단 칩 `autoPauseChipText`, 일시정지 중 띠 `pauseBandText` + 숫자 흐리게, GPS 약함 띠 "GPS 신호 약함", `saveWarning` 스낵바 1회. 하단 [일시정지]/[재개], [정지] → `RECORD_END_QUESTION` + `recordEndChoices` + [취소]. `Finished`면 `SegmentSummaryContent` → [확인] → `dismissSummary()` 후 안내 중이면 안내 화면, 아니면 지도 메인. `keepScreenOn` 설정을 기록 중에도 적용. 시작은 V1.0.0 안내 화면처럼 `LifecycleResumeEffect`에서 `takePendingStart()` → `NavigationService.start(context)` → `start(tripId)`.
+- 기록 화면이 `Active`가 아닐 때: `Starting` → 가운데 진행 표시 + "기록을 준비하는 중…"; `Failed` → `message`("기록을 시작하지 못했습니다") + [닫기] → `dismissSummary()` 후 지도 메인; `Idle`이고 시작 대기도 없으면 지도 메인으로 닫는다(V1.0.0 안내 화면과 같은 방식).
+- 기록 화면(스펙 §3.2): `HorizontalPager` 2쪽 — 지도(지나온 경로 `track` + 현재 위치, 하단 `rideMapSummaryLine`, 태그 SUMMARY) / `RideNumbersPage`. 지도 위 끌기는 지도가 받으므로 페이지 넘기기는 하단 요약·상단 띠에서 되고, 페이지 점을 눌러도 넘어간다. 상단 칩 `autoPauseChipText`, 일시정지 중 띠 `pauseBandText` + 숫자 흐리게, GPS 약함 띠 "GPS 신호 약함", `saveWarning` 스낵바 1회. 하단 [일시정지]/[재개], [정지] → `RECORD_END_QUESTION` + `recordEndChoices` + [취소]. `Finished`면 `SegmentSummaryContent` → [확인] → `dismissSummary()` 후 안내 중이면 안내 화면, 아니면 지도 메인. `keepScreenOn` 설정을 기록 중에도 적용. 시작은 V1.0.0 안내 화면처럼 `LifecycleResumeEffect`에서 `takePendingStart()` → `NavigationService.start(context)` → `start(tripId)`.
 - `initialRoutes`: 안내 Starting/Active → [MAIN, navigate()] (기존), 아니면 기록 Starting/Active → [MAIN, record()], 아니면 [MAIN]. 알림 탭(`ShowNavigation`)도 같은 규칙으로 안내/기록 화면을 고른다.
 - BikeMap: 소스 `bike-track` + 선 레이어(색 `#E53935`, 두께 5) — 사용자 점 레이어 아래.
 
@@ -818,16 +853,23 @@ fun initialRoutes(onboardingDone: Boolean, guidance: NavUiState, ride: RideUiSta
 @Test fun interruptedRideIsOfferedOnlyWhenIdle()     // interrupted() 결과 → state.interrupted; closeInterruptedRide → closeInterrupted 호출, null로
 // TripStartViewModelTest
 @Test fun recordNewTripHasNoStops()                  // onRecordPressed → AskType → chooseType(SINGLE_DAY) → Ready, stops 비어 있음
-@Test fun recordContinueKeepsTheTripsStopsAndProfile()
+@Test fun recordContinueKeepsTheTripsStopsAndProfile()   // MULTI_DAY 여행(경유지 [남산, 여의도], BALANCED), 기본 성향 CYCLEWAY_FIRST → onRecordPressed → AskContinue → continueTrip
+                                                       //   → Ready(같은 id), stops 이름 == [남산, 여의도], profile == BALANCED, offline.deleted 비어 있음
+@Test fun planStartWithEmptyStopsStillDoesNothing()     // onStartPressed(StartPlan(…, emptyList())) → state == Idle (V1.0.0 동작 유지)
 // RecordViewModelTest (Task 10 하네스 재사용)
-@Test fun pendingStartIsTakenOnce()
+@Test fun pendingStartIsTakenOnce()                     // SavedStateHandle(mapOf("trip" to 5L)) → takePendingStart() == 5L, 다시 → null, hasPendingStart == false
 @Test fun endChoiceStopsTheRecording()               // onEndChoice(COMPLETE_TRIP) → ui Finished, trip COMPLETED
 // InitialRoutesTest
 @Test fun runningRecordingOpensTheRecordScreen()     // (true, Idle, Active…) → [MAIN, Routes.record()]
 // BikeMapGeoJsonTest
 @Test fun `track geojson`()                          // 0·1점 → 빈 FeatureCollection, 2점 → LineString 좌표 [lon,lat] 순서
-// RecordScreenTest (기기, RecordContent + 빈 Box 지도 슬롯)
-@Test fun swipingShowsTheNumbersPage()               // PAGER swipeLeft → "최고" 표시
+// RideLinesTest (JVM)
+@Test fun `summary lines`()   // stats(current 5.0, distance 3_010, moving 600_000, avg 5.0) → rideMapSummaryLine == "18.0km/h · 3.01km · 0:10:00 · 평균 18.0",
+                              //   rideSummaryLine == "3.01km · 0:10:00 · 평균 18.0"
+// RecordScreenTest (기기, RecordContent + 지도 슬롯은 끌기를 먹는 Box(`Modifier.pointerInput { detectDragGestures { _, _ -> } }`) — 실제 지도처럼)
+@Test fun swipingTheSummaryShowsTheNumbersPage()      // SUMMARY 노드 swipeLeft → "최고" 표시
+@Test fun draggingTheMapKeepsTheMapPage()             // 지도 슬롯 위 swipeLeft → "최고" 없음, SUMMARY 그대로
+@Test fun startingAndFailedStates()                   // Starting → "기록을 준비하는 중…"; Failed → "기록을 시작하지 못했습니다" + [닫기] 클릭 → onClose
 @Test fun autoPauseChipToggles()                     // CHIP 클릭 → onToggleAutoPause(false)
 @Test fun stopAsksForConfirmation()                  // STOP 클릭 → "기록을 끝낼까요?" + "끝내기"; "끝내기" → onEnd(COMPLETE_TRIP)
 @Test fun pausedShowsTheBand()                       // Paused(AUTO) → BAND "일시정지됨 (자동)", RESUME 표시
@@ -864,6 +906,7 @@ fun NavigateScreen(viewModel, tileSource, onClose: () -> Unit, onGuidanceEndedWh
 ```
 - 안내 중 기록 Active면: 회전 카드 아래 한 줄 `rideSummaryLine(stats)`, 화면을 `HorizontalPager`로 감싸 2쪽 = 기존 안내 지도 / `RideNumbersPage`(넘기기는 기록 줄·하단 패널에서, 점 표시 탭으로도). 기록이 꺼져 있으면 V1.0.0 화면 그대로(페이저 없음).
 - 끝난 화면: 안내 `Finished`일 때 `rideUi`가 `Finished`면 `SegmentSummaryContent`를 "여행을 완료했습니다"와 [여러 날로 바꾸기] 위에 보인다. `STOPPED_TODAY`는 요약이 있으면 자동으로 닫지 않고 요약 + [확인]. [확인] → `dismissRideSummary()` + `close()`.
+- `EndAction`에 값이 늘었으므로 `when (action)`이 있는 곳(`NavigateViewModel.onEndChoice` 등)에 새 가지를 넣는다.
 - `END_GUIDANCE_ONLY` 뒤 안내가 Idle이 되면 `onGuidanceEndedWhileRecording()` → BikeNavHost가 `record()`로 이동(`popUpTo(MAIN)`); 기록이 없으면 기존 `onClose`.
 
 - [ ] **Step 1: 실패하는 테스트**
@@ -873,7 +916,7 @@ fun NavigateScreen(viewModel, tileSource, onClose: () -> Unit, onGuidanceEndedWh
 @Test fun `end choices while recording`()     // 위 두 목록 그대로(라벨·순서), recording=false는 V1.0.0 목록 그대로
 // NavigateViewModelTest
 @Test fun endGuidanceOnlyKeepsTheTripAndGoesIdle()    // 안내 Active에서 onEndChoice(END_GUIDANCE_ONLY) → ui Idle, trip ACTIVE, COMPLETED 아님
-@Test fun recordingFlagFollowsRideUi()
+@Test fun recordingFlagFollowsRideUi()              // rideUi Idle → recording == false; Active(…) → true; Finished(…) → false
 // EndNavigationDialogTest (기기)
 @Test fun recordingChoicesAreShown()          // SINGLE_DAY·recording=true → "안내만 끝내기 (기록 계속)", "모두 끝내기", "취소"
 ```
@@ -898,11 +941,13 @@ fun NavigateScreen(viewModel, tileSource, onClose: () -> Unit, onGuidanceEndedWh
 ```kotlin
 data class ChartPoint(val distanceKm: Double, val value: Double)
 object RideCharts {
-    /** 가로축 = 앞 점부터의 누적 거리(km). 시간 간격 > 10초인 쌍(일시정지·GPS 끊김)은 거리를 더하지 않는다. 최대 maxPoints개로 구간 평균. */
-    fun altitude(points: List<TrackPoint>, maxPoints: Int = 300): List<ChartPoint>    // altitudeM null인 점 제외
-    fun speedKmh(points: List<TrackPoint>, maxPoints: Int = 300): List<ChartPoint>    // speedMps ?: 앞 점과의 구간 속도
+    /** 가로축 = 첫 점부터의 누적 거리(km). 시간 간격 > 10초인 쌍(일시정지·GPS 끊김)은 거리를 더하지 않는다.
+     *  점이 maxPoints보다 많으면 첫 점과 마지막 점은 그대로 두고, 그 사이 점들을 순서대로 maxPoints − 2개 묶음으로 나눠 묶음마다 x·값을 평균한다(결과 정확히 maxPoints개). */
+    fun altitude(points: List<TrackPoint>, maxPoints: Int = 300): List<ChartPoint>    // altitudeM null인 점은 값 목록에서 빠지되 x 누적에는 쓰인다
+    fun speedKmh(points: List<TrackPoint>, maxPoints: Int = 300): List<ChartPoint>    // speedMps ?: 바로 앞 점과의 구간 속도; 둘 다 없는 첫 점은 빠진다
 }
-fun tripCardText(s: TripRideSummary): String   // "{RideFormat.date(firstDate)} · {당일|여러 날(N일)} · {RideFormat.distance} · {RideFormat.duration}"
+fun tripCardText(s: TripRideSummary): String   // "{RideFormat.date(firstDate)} · {유형} · {RideFormat.distance} · {RideFormat.duration}"
+                                               //   유형은 trip.type으로 정한다: SINGLE_DAY → "당일", MULTI_DAY → "여러 날({dayCount}일)" (하루만 기록한 여러 날 여행은 "여러 날(1일)")
 const val MSG_ACTIVE_TRIP_NOT_DELETABLE = "진행 중인 여행은 삭제할 수 없습니다"
 const val MSG_OPEN_SEGMENT_NOT_DELETABLE = "진행 중인 구간은 삭제할 수 없습니다"
 sealed interface HistoryDialog {
@@ -916,6 +961,12 @@ class TripDetailViewModel(rideStore: RideStore, tripId: Long) {  // 날짜별 �
     fun requestDeleteSegment(segmentId: Long); fun confirmDelete(); fun dismiss() }
 class SegmentDetailViewModel(rideStore: RideStore, segmentId: Long)  // 구간, track, altitude/speed ChartPoint
 @Composable fun LineChart(points: List<ChartPoint>, unit: String, modifier: Modifier)   // Canvas, 가로축 거리(km), 세로축 최소/최대 표기
+// 상태 없는 화면 본문(기기 테스트가 가짜 데이터로 그린다; *Screen은 ViewModel을 이것들에 잇기만 한다)
+@Composable fun HistoryContent(trips: List<TripRideSummary>, dialog: HistoryDialog?, onOpenTrip: (Long) -> Unit,
+                               onRequestDelete: (Long) -> Unit, onConfirmDelete: () -> Unit, onDismiss: () -> Unit, onBack: () -> Unit)
+@Composable fun TripDetailContent(segmentsByDate: Map<LocalDate, List<RideSegment>>, total: SegmentTotals, dialog: HistoryDialog?,
+                                  onOpenSegment: (Long) -> Unit, onRequestDelete: (Long) -> Unit, onConfirmDelete: () -> Unit, onDismiss: () -> Unit, onBack: () -> Unit)
+@Composable fun SegmentDetailContent(segment: RideSegment, altitude: List<ChartPoint>, speed: List<ChartPoint>, map: @Composable (Modifier) -> Unit, onBack: () -> Unit)
 Routes.HISTORY = "history"; Routes.TRIP_DETAIL = "history/trip/{tripId}"; Routes.SEGMENT_DETAIL = "history/segment/{segmentId}"
 ```
 - 삭제 규칙(결정 — 스펙 "진행 중인 구간·여행"): 여행은 `status == ACTIVE`면 삭제 불가, 구간은 `endedAt == null`이면 삭제 불가(메시지 위 상수). 가능하면 확인 대화상자 "이 여행의 기록을 모두 삭제할까요?" / "이 구간을 삭제할까요?" [삭제]/[취소] → `deleteTrip`/`deleteSegment` 후 목록 새로 읽기.
@@ -927,15 +978,16 @@ Routes.HISTORY = "history"; Routes.TRIP_DETAIL = "history/trip/{tripId}"; Routes
 ```kotlin
 // RideChartsTest (RecordingFixtures)
 @Test fun `x skips gaps over 10 s`()            // 0..100m(1Hz), 60초 뒤 200m부터 100m → 마지막 distanceKm == 0.2 ±0.001
-@Test fun `downsampled to at most maxPoints`()   // 1_000점 → ≤ 300점, 첫 x == 0.0
-@Test fun `altitude skips nulls`()
-@Test fun `speed falls back to pair speed`()     // speedMps null, 1초 5m → 18.0 km/h
+@Test fun `downsampled to at most maxPoints`()   // 1Hz 5m 간격 1_000점 → size == 300, 첫 점 == (0.0, 원래 값), 마지막 x == 4.995 ±1e-6
+@Test fun `altitude skips nulls`()              // 0m 고도 100, 5m null, 10m 고도 110 → [(0.0, 100.0), (0.010, 110.0)] (±1e-9)
+@Test fun `speed falls back to pair speed`()     // 0m·5m(1초 뒤) 모두 speedMps null → [(0.005, 18.0)] (첫 점은 앞 점이 없어 빠짐)
 // HistoryFormatTest
-@Test fun `card text`()   // 당일: "2026년 10월 12일 · 당일 · 32.10km · 1시간 45분"; 여러 날 3일 → "… · 여러 날(3일) · …"
+@Test fun `card text`()   // SINGLE_DAY, 2026-10-12, 32_100m, 6_300_000ms → "2026년 10월 12일 · 당일 · 32.10km · 1시간 45분";
+                          //   같은 값의 MULTI_DAY dayCount 3 → "2026년 10월 12일 · 여러 날(3일) · 32.10km · 1시간 45분"; MULTI_DAY dayCount 1 → "… · 여러 날(1일) · …"
 // HistoryViewModelTest (FakeRideStore)
 @Test fun activeTripCannotBeDeleted()            // dialog == Message(MSG_ACTIVE_TRIP_NOT_DELETABLE), deleteTrip 호출 없음
-@Test fun completedTripIsDeletedAfterConfirm()
-@Test fun openSegmentCannotBeDeleted()           // TripDetailViewModel
+@Test fun completedTripIsDeletedAfterConfirm()   // COMPLETED 여행 requestDelete(id) → dialog == ConfirmDelete(id); confirmDelete() → FakeRideStore.deletedTrips == [id], trips에 id 없음, dialog == null
+@Test fun openSegmentCannotBeDeleted()           // TripDetailViewModel.requestDeleteSegment(열린 구간) → dialog == Message(MSG_OPEN_SEGMENT_NOT_DELETABLE), deletedSegments 비어 있음
 // HistoryScreenTest (기기, 상태 없는 HistoryContent/TripDetailContent에 가짜 데이터)
 @Test fun listOpensTripThenSegment()             // 카드 클릭 → onOpenTrip(id); 구간 행 클릭 → onOpenSegment(id)
 @Test fun longPressAsksBeforeDeleting()          // 카드 길게 누르기 → onRequestDelete(id); 확인 대화상자 [삭제] → onConfirmDelete
@@ -952,20 +1004,20 @@ Routes.HISTORY = "history"; Routes.TRIP_DETAIL = "history/trip/{tripId}"; Routes
 
 **Files:**
 - Create: `app/src/androidTest/java/com/cowork/bikerecoder/ride/RideScenarioTest.kt`, `docs/verification/recording-field-test.md`
-- Modify: `CHANGELOG.md`, `README.md`
+- Modify: `app/src/sharedTest/java/com/cowork/bikerecoder/nav/ScenarioDoubles.kt`(`NavigationScenarioTest`의 private `Replay`·`NoOffline`과 asset/GPX 읽기 도우미를 여기로 옮겨 공개 — 두 기기 테스트가 함께 쓰고 복사하지 않는다), `app/src/androidTest/java/com/cowork/bikerecoder/nav/NavigationScenarioTest.kt`(옮긴 것을 쓰도록), `CHANGELOG.md`, `README.md`
 
 **Interfaces:**
-- Consumes: Task 10 `RideFixtures`, `RideController`; Task 8 `RoomRideStore`; V1.0.0 `NavigationScenarioTest` 패턴(`Replay`, `NoOffline`, `AssetRouter`, `RecordingVoiceOutput`)
-- 기기 시나리오 구성: in-memory Room, 컨트롤러 둘 다 메인 스레드 scope, `GpxLocationSource(fixes, speedup = 20.0)`를 `SharedLocationSource`로 감쌈, `pressure = null`, 설정 `flowOf(AppSettings())`(자동 기록·자동 일시정지 켜짐), `saveIntervalMs = 250`. 경과 시간이 재생 속도와 맞도록 `clock`은 테스트 안의 `ReplayClock(speedup = 20.0)`(시작 시각 + `SystemClock.elapsedRealtime()` 경과 × 20).
+- Consumes: Task 10 `RideFixtures`, `RideController`; Task 8 `RoomRideStore`; sharedTest `ScenarioDoubles.kt`의 `AssetRouter`·`RecordingVoiceOutput`·`Replay`·`NoOffline`(아래에서 옮김)
+- 기기 시나리오 구성: in-memory Room, 컨트롤러 둘 다 메인 스레드 scope, `GpxLocationSource(fixes, speedup = 20.0)`를 `SharedLocationSource`로 감쌈, `pressure = null`, 설정 `flowOf(AppSettings())`(자동 기록·자동 일시정지 켜짐), `saveIntervalMs = 250`. 경과 시간이 재생 속도와 맞도록 `clock`은 테스트 안의 `ReplayClock(speedup = 20.0)`(시작 시각 `t0 = System.currentTimeMillis()` + `SystemClock.elapsedRealtime()` 경과 × 20). `RideFixtures.straight(…, startMillis = t0)`로 위치 시각도 같은 `t0`에서 시작한다(GPX 파일 시나리오 ③⑤는 파일 시각 그대로 — 이동 시간은 위치 시각 차이만 쓰므로 무관).
 
 - [ ] **Step 1: 시나리오 테스트 작성** (동작은 Task 10–12에서 이미 구현됨 — 이 Task는 실기기 재생으로 확인한다)
 
 ```kotlin
-@Test fun recordOnlyThreeKm()                       // ① straight(3_010.0): "기록을 시작합니다" 1회, 기록 km 문장 3회, 저장 distanceM == 3_000 ±30
-@Test fun twoSignalStops()                          // ② straight(1_500.0, stops 2개): 일시정지·재개 문구 각 2회, 저장 movingTimeMs < elapsedMs
+@Test fun recordOnlyThreeKm()                       // ① straight(3_010.0): "기록을 시작합니다" 1회, 기록 km 문장 3회, 저장 distanceM == 3_010.0 ±1.0 (스펙 3km ±1% 안)
+@Test fun twoSignalStops()                          // ② straight(1_500.0, stops = [StopAt(500.0, 30), StopAt(1_000.0, 30)]): 일시정지·재개 문구 각 2회, 저장 movingTimeMs < elapsedMs, distanceM == 1_470.0 ±1.0
 @Test fun guidanceWithRecordingSpeaksOneSentencePerKm()   // ③ scenario_follow.gpx + route_follow.geojson: 합친 문장 km == [1, 2], 기본 안내 km 문장 0개
 @Test fun killedRecordingResumesInANewSegment()     // ④ scope A 취소(정지 없이) → 같은 DB의 컨트롤러 B: interrupted() != null → startRecording(같은 여행) → 구간 2개, 앞 구간 endedAt != null
-@Test fun arrivalEndsBothWithSummary()              // ⑤ 안내 Finished(ARRIVED), ride Finished, 저장 구간 endedAt != null, trip COMPLETED
+@Test fun arrivalEndsBothWithSummary()              // ⑤ 안내 Finished(ARRIVED), ride Finished, 저장 구간 endedAt != null·distanceM == 2_370.0 ±15.0(Task 11과 같은 근거), trip COMPLETED
 ```
 (⑥ 마이그레이션은 Task 8 `RideDatabaseMigrationTest`.)
 
