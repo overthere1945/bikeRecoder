@@ -19,6 +19,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -33,6 +34,8 @@ import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.model.Route
 import com.cowork.bikerecoder.core.model.Stop
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
@@ -84,6 +87,7 @@ private const val FOLLOW_TILT = 50.0
 private const val FOLLOW_ANIMATION_MS = 800
 private const val FIT_ANIMATION_MS = 600
 private const val FIT_PADDING_PX = 120
+private const val TRACK_UPDATE_MS = 5_000L
 private const val EMPTY_COLLECTION = """{"type":"FeatureCollection","features":[]}"""
 
 @Composable
@@ -222,8 +226,14 @@ fun BikeMap(
     LaunchedEffect(style, overlay.stops) {
         style?.getSourceAs<GeoJsonSource>(STOPS_SOURCE)?.setGeoJson(stopsGeoJson(overlay.stops))
     }
-    LaunchedEffect(style, overlay.track) {
-        style?.getSourceAs<GeoJsonSource>(TRACK_SOURCE)?.setGeoJson(trackGeoJson(overlay.track))
+    // The recorded track grows with every ride point: it is redrawn at most every TRACK_UPDATE_MS (always ending with
+    // the latest track), its GeoJSON built off the main thread (the track lists are immutable snapshots).
+    val currentTrack by rememberUpdatedState(overlay.track)
+    LaunchedEffect(style) {
+        val source = style?.getSourceAs<GeoJsonSource>(TRACK_SOURCE) ?: return@LaunchedEffect
+        snapshotFlow { currentTrack }
+            .atMostEvery(TRACK_UPDATE_MS)
+            .collect { track -> source.setGeoJson(withContext(Dispatchers.Default) { trackGeoJson(track) }) }
     }
     LaunchedEffect(style, overlay.user) {
         style?.getSourceAs<GeoJsonSource>(USER_SOURCE)?.setGeoJson(userGeoJson(overlay.user))

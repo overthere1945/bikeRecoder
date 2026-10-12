@@ -4,7 +4,6 @@ import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
 import com.cowork.bikerecoder.core.model.GeoMath
-import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.navigation.KmAnnouncementSource
 import com.cowork.bikerecoder.core.recording.DayTotals
@@ -125,7 +124,7 @@ class RideController(
         /** Accepted points not saved yet. */
         val buffer = mutableListOf<TrackPoint>()
         val saveLock = Mutex()
-        var track: List<GeoPoint> = emptyList()
+        val track = TrackLine()
         var lastFix: LocationFix? = null
         var gpsWeak = false
         var saveWarning: String? = null
@@ -429,8 +428,8 @@ class RideController(
         if (r.voiceOn) update.events.forEach { event -> speech(event)?.let(voice::speak) }
         update.point?.let { point ->
             r.buffer += point
-            val last = r.track.lastOrNull()
-            if (last == null || GeoMath.distanceM(last, point.point) >= TRACK_SPACING_M) r.track = r.track + point.point
+            val last = r.track.last
+            if (last == null || GeoMath.distanceM(last, point.point) >= TRACK_SPACING_M) r.track.append(point.point)
         }
         r.gpsWeak = update.gpsWeak
         r.session?.let { rebaseKmOnNewDay(r, it) }
@@ -460,7 +459,7 @@ class RideController(
             state = session.state,
             stats = session.stats,
             autoPause = session.autoPause,
-            track = r.track,
+            track = r.track.snapshot(),
             fix = r.lastFix,
             gpsWeak = r.gpsWeak,
             saveWarning = r.saveWarning,
@@ -522,7 +521,7 @@ class RideController(
         run = null
         _ui.value = RideUiState.Finished(
             segment = RideSegment(r.segmentId, tripId, r.startedAt, now, r.localDate, totals),
-            track = r.track,
+            track = r.track.snapshot(),
             error = if (ok) null else MSG_SAVE_PROBLEM,
         )
     }
