@@ -460,4 +460,27 @@ class NavigateViewModelTest {
         assertInstanceOf(NavUiState.Active::class.java, s.vm.ui.value, "the guidance goes on")
         assertEquals(TripStatus.ACTIVE, store.trips.getValue(id).status)
     }
+
+    @Test
+    fun aRecordingThatCouldNotStartForTheGuidedTripIsShown() {
+        val failed = RideUiState.Failed(1, "기록을 시작하지 못했습니다")
+
+        assertEquals("기록을 시작하지 못했습니다", guidedRideFailure(1, failed))
+        assertNull(guidedRideFailure(2, failed), "another trip's failure is not this guidance's")
+        assertNull(guidedRideFailure(1, recordingOf(1)))
+        assertNull(guidedRideFailure(1, RideUiState.Idle))
+    }
+
+    @Test
+    fun theRideFailureBannerIsClosedWithoutTouchingAnythingElse() = runTest(dispatcher) {
+        val s = setup()
+        rideUi.value = RideUiState.Failed(1, "기록을 시작하지 못했습니다")
+
+        s.vm.dismissRideFailure()
+        assertEquals(1, summaryDismissals)
+
+        rideUi.value = summaryOf(1)
+        s.vm.dismissRideFailure()
+        assertEquals(1, summaryDismissals, "a summary is not a failure")
+    }
 }

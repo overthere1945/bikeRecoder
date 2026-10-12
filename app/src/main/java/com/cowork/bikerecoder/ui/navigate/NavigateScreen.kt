@@ -2,6 +2,7 @@ package com.cowork.bikerecoder.ui.navigate
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -107,6 +108,7 @@ object NavigateTags {
     const val PAUSE = "navigate-record-pause"
     const val RESUME = "navigate-record-resume"
     const val END_RECORDING = "navigate-record-end"
+    const val RIDE_FAILURE = "navigate-ride-failure"
 }
 
 private const val PAUSED_ALPHA = 0.4f
@@ -196,11 +198,13 @@ fun NavigateScreen(
             is NavUiState.Active -> ActiveContent(
                 state = state,
                 ride = ride as? RideUiState.Active,
+                rideFailure = guidedRideFailure(state.tripId, ride),
                 tileSource = tileSource,
                 mapDownloadText = offlineProgress?.takeIf { it.tripId == state.tripId }?.chipText,
                 serviceWarning = serviceWarning,
                 onMute = viewModel::setMuted,
                 onEnd = { askEnd = true },
+                onDismissRideFailure = viewModel::dismissRideFailure,
                 recordControls = RecordControls(
                     onPause = viewModel::pauseRecording,
                     onResume = viewModel::resumeRecording,
@@ -255,120 +259,35 @@ fun NavigateScreen(
     }
 }
 
+/**
+ * Guidance (spec §4.5) in one layout whether or not a recording runs, so the map keeps its place in the composition
+ * (its MapView is not recreated when the auto-started recording turns active): a pager over the bottom panel whose
+ * first page is the guidance map. While recording (spec §3.3) the record line sits under the turn card and a second
+ * page shows the recording's numbers with its controls (ruling F2: the auto-pause chip, [일시정지]/[재개] and
+ * [기록 끝내기], which ends only the recording). As on the record screen the pager takes no drags (the map keeps its
+ * own): pages turn by swiping the record line, the numbers page or the bottom panel, or by the page dots.
+ * [rideFailure]: the guided trip's recording could not start (a banner; a tap closes it with [onDismissRideFailure]).
+ */
 @Composable
 private fun ActiveContent(
     state: NavUiState.Active,
     ride: RideUiState.Active?,
+    rideFailure: String?,
     tileSource: TileSource,
     mapDownloadText: String?,
     serviceWarning: String?,
     onMute: (Boolean) -> Unit,
     onEnd: () -> Unit,
+    onDismissRideFailure: () -> Unit,
     recordControls: RecordControls,
 ) {
     var cameraMode by rememberSaveable { mutableStateOf(CameraMode.FOLLOW) }
     var fit by remember { mutableStateOf<CameraFit?>(null) }
     val nav = state.state
-
-    /** The guidance map with the turn card on top; [recordLine] (if any) right under the turn card. */
-    @Composable
-    fun MapPage(recordLine: (@Composable () -> Unit)?) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            BikeMap(
-                tileSource = tileSource,
-                overlay = MapOverlay(route = nav.route, stops = state.stops, user = state.fix),
-                cameraMode = cameraMode,
-                onLongPress = {},
-                onUserGesture = { cameraMode = CameraMode.FREE },
-                modifier = Modifier.fillMaxSize(),
-                initialCenter = state.fix?.point ?: nav.route.points.first(),
-                initialZoom = 17.0,
-                fit = fit,
-            )
-
-            Column(
-                modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                TurnCard(nav)
-                recordLine?.invoke()
-                if (mapDownloadText != null) MapDownloadIndicator(mapDownloadText)
-                if (serviceWarning != null) Banner(serviceWarning)
-                if (nav.gpsWeak) Banner("GPS 신호 약함")
-                if (nav.rerouting) Banner("경로를 다시 탐색하는 중…")
-            }
-        }
-    }
-
-    @Composable
-    fun Panel(modifier: Modifier) {
-        BottomPanel(
-            nav = nav,
-            muted = state.muted,
-            onMute = onMute,
-            onOverview = {
-                cameraMode = CameraMode.FREE
-                fit = CameraFit(nav.route.points)
-            },
-            onEnd = onEnd,
-            modifier = modifier,
-        )
-    }
-
-    @Composable
-    fun FollowButton() {
-        Button(onClick = { cameraMode = CameraMode.FOLLOW }) { Text("현재 위치로") }
-    }
-
-    if (ride == null) {
-        // Not recording: the V1.0.0 screen.
-        Box(modifier = Modifier.fillMaxSize()) {
-            MapPage(recordLine = null)
-            Column(
-                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(12.dp),
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (cameraMode == CameraMode.FREE) FollowButton()
-                Panel(Modifier)
-            }
-        }
-    } else {
-        RecordingPages(
-            ride = ride,
-            mapPage = { recordLine -> MapPage(recordLine) },
-            followButton = { if (cameraMode == CameraMode.FREE) FollowButton() },
-            panel = { modifier -> Panel(modifier) },
-            controls = recordControls,
-        )
-    }
-}
-
-/** The recording's controls on the guidance numbers page (ruling F2). [onEnd]: [기록 끝내기] after its confirmation. */
-private class RecordControls(
-    val onPause: () -> Unit,
-    val onResume: () -> Unit,
-    val onToggleAutoPause: (Boolean) -> Unit,
-    val onEnd: () -> Unit,
-)
-
-/**
- * Guidance while recording (spec §3.3): two pages, the guidance map with the record line under the turn card, and the
- * recording's numbers with its controls (ruling F2: the auto-pause chip, [일시정지]/[재개] and [기록 끝내기], which ends
- * only the recording); the bottom panel stays below both. As on the record screen the pager takes no drags (the map
- * keeps its own): pages turn by swiping the record line, the numbers page or the bottom panel, or by the page dots.
- */
-@Composable
-private fun RecordingPages(
-    ride: RideUiState.Active,
-    mapPage: @Composable (recordLine: @Composable () -> Unit) -> Unit,
-    followButton: @Composable () -> Unit,
-    panel: @Composable (Modifier) -> Unit,
-    controls: RecordControls,
-) {
-    val pager = rememberPagerState { RIDE_PAGE_COUNT }
+    val recording = ride != null
+    val pager = rememberPagerState { if (recording) RIDE_PAGE_COUNT else 1 }
     val scope = rememberCoroutineScope()
-    val pausedState = ride.state as? RecordingState.Paused
+    val pausedState = ride?.state as? RecordingState.Paused
     val paused = pausedState != null
     var askEndRecording by rememberSaveable { mutableStateOf(false) }
 
@@ -382,21 +301,51 @@ private fun RecordingPages(
                 modifier = Modifier.weight(1f).fillMaxWidth().testTag(NavigateTags.PAGER),
             ) { page ->
                 if (page == RIDE_MAP_PAGE) {
-                    mapPage {
-                        Text(
-                            rideSummaryLine(ride.stats),
-                            style = MaterialTheme.typography.titleMedium,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
-                                .padding(vertical = 10.dp, horizontal = 12.dp)
-                                .alpha(if (paused) PAUSED_ALPHA else 1f)
-                                .swipeTurnsPages(pager, scope)
-                                .testTag(NavigateTags.RECORD_LINE),
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        BikeMap(
+                            tileSource = tileSource,
+                            overlay = MapOverlay(route = nav.route, stops = state.stops, user = state.fix),
+                            cameraMode = cameraMode,
+                            onLongPress = {},
+                            onUserGesture = { cameraMode = CameraMode.FREE },
+                            modifier = Modifier.fillMaxSize(),
+                            initialCenter = state.fix?.point ?: nav.route.points.first(),
+                            initialZoom = 17.0,
+                            fit = fit,
                         )
+                        Column(
+                            modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            TurnCard(nav)
+                            if (ride != null) {
+                                Text(
+                                    rideSummaryLine(ride.stats),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                                        .padding(vertical = 10.dp, horizontal = 12.dp)
+                                        .alpha(if (paused) PAUSED_ALPHA else 1f)
+                                        .swipeTurnsPages(pager, scope)
+                                        .testTag(NavigateTags.RECORD_LINE),
+                                )
+                            }
+                            if (mapDownloadText != null) MapDownloadIndicator(mapDownloadText)
+                            if (serviceWarning != null) Banner(serviceWarning)
+                            if (rideFailure != null) {
+                                Banner(
+                                    rideFailure,
+                                    Modifier.clickable(onClickLabel = "닫기", onClick = onDismissRideFailure)
+                                        .testTag(NavigateTags.RIDE_FAILURE),
+                                )
+                            }
+                            if (nav.gpsWeak) Banner("GPS 신호 약함")
+                            if (nav.rerouting) Banner("경로를 다시 탐색하는 중…")
+                        }
                     }
-                } else {
+                } else if (ride != null) {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -406,14 +355,14 @@ private fun RecordingPages(
                             .testTag(NavigateTags.NUMBERS_PAGE),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        AutoPauseChip(ride.autoPause, controls.onToggleAutoPause, Modifier.testTag(NavigateTags.CHIP))
+                        AutoPauseChip(ride.autoPause, recordControls.onToggleAutoPause, Modifier.testTag(NavigateTags.CHIP))
                         if (pausedState != null) PauseBand(pausedState.kind)
                         RideNumbersPage(stats = ride.stats, dimmed = paused, modifier = Modifier.weight(1f).fillMaxWidth())
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                             PauseResumeButton(
                                 paused = paused,
-                                onPause = controls.onPause,
-                                onResume = controls.onResume,
+                                onPause = recordControls.onPause,
+                                onResume = recordControls.onResume,
                                 pauseTag = NavigateTags.PAUSE,
                                 resumeTag = NavigateTags.RESUME,
                                 modifier = Modifier.weight(1f),
@@ -432,28 +381,50 @@ private fun RecordingPages(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (pager.currentPage == RIDE_MAP_PAGE) followButton()
-                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    PageDots(current = pager.currentPage, onSelect = { scope.launch { pager.animateScrollToPage(it) } })
+                if (pager.currentPage == RIDE_MAP_PAGE && cameraMode == CameraMode.FREE) {
+                    Button(onClick = { cameraMode = CameraMode.FOLLOW }) { Text("현재 위치로") }
                 }
-                panel(Modifier.swipeTurnsPages(pager, scope).testTag(NavigateTags.PANEL))
+                if (recording) {
+                    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        PageDots(current = pager.currentPage, onSelect = { scope.launch { pager.animateScrollToPage(it) } })
+                    }
+                }
+                BottomPanel(
+                    nav = nav,
+                    muted = state.muted,
+                    onMute = onMute,
+                    onOverview = {
+                        cameraMode = CameraMode.FREE
+                        fit = CameraFit(nav.route.points)
+                    },
+                    onEnd = onEnd,
+                    modifier = Modifier.swipeTurnsPages(pager, scope).testTag(NavigateTags.PANEL),
+                )
             }
         }
     }
 
-    if (askEndRecording) {
+    if (askEndRecording && ride != null) {
         // While guiding, only the recording ends (the guidance owns the trip).
         RecordEndDialog(
             type = ride.tripType,
             navigating = true,
             onChoose = {
                 askEndRecording = false
-                controls.onEnd()
+                recordControls.onEnd()
             },
             onDismiss = { askEndRecording = false },
         )
     }
 }
+
+/** The recording's controls on the guidance numbers page (ruling F2). [onEnd]: [기록 끝내기] after its confirmation. */
+private class RecordControls(
+    val onPause: () -> Unit,
+    val onResume: () -> Unit,
+    val onToggleAutoPause: (Boolean) -> Unit,
+    val onEnd: () -> Unit,
+)
 
 @Composable
 private fun TurnCard(nav: NavState) {
@@ -520,13 +491,13 @@ private fun MapDownloadIndicator(text: String) {
 }
 
 @Composable
-private fun Banner(text: String) {
+private fun Banner(text: String, modifier: Modifier = Modifier) {
     Text(
         text,
         color = Color.White,
         style = MaterialTheme.typography.titleSmall,
         textAlign = TextAlign.Center,
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.error, RoundedCornerShape(8.dp))
             .padding(8.dp),

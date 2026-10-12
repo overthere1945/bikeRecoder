@@ -139,6 +139,11 @@ class NavigateViewModel(
         viewModelScope.launch { rideControls.stopRecording(RecordingEnd.SEGMENT_ONLY) }
     }
 
+    /** Closes the "기록을 시작하지 못했습니다" banner ([guidedRideFailure]); anything else the recording shows stays. */
+    fun dismissRideFailure() {
+        if (rideUi.value is RideUiState.Failed) dismissRideSummary()
+    }
+
     /** [여러 날로 바꾸기] on the finished screen; the summary shown with it is closed once the trip is converted. */
     fun convertToMultiDay() {
         val shown = shownSummary()
@@ -208,6 +213,10 @@ class NavigateViewModel(
 }
 
 private fun isRecording(ride: RideUiState): Boolean = ride.recordingTripId != null
+
+/** The message of a recording of the guided trip [tripId] that could not start (shown as a banner); else null. */
+fun guidedRideFailure(tripId: Long, ride: RideUiState): String? =
+    (ride as? RideUiState.Failed)?.takeIf { it.tripId == tripId }?.message
 
 /** What the guidance screen shows once guidance finished (spec §3.3, §3.4). */
 sealed interface FinishedView {

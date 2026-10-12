@@ -40,7 +40,7 @@ internal fun Modifier.swipeTurnsPages(pager: PagerState, scope: CoroutineScope):
                 total < -SWIPE_THRESHOLD_PX -> pager.currentPage + 1
                 total > SWIPE_THRESHOLD_PX -> pager.currentPage - 1
                 else -> pager.currentPage
-            }.coerceIn(0, RIDE_PAGE_COUNT - 1)
+            }.coerceIn(0, pager.pageCount - 1)
             if (target != pager.currentPage) scope.launch { pager.animateScrollToPage(target) }
         },
     ) { change, dx ->
