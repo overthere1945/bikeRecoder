@@ -233,6 +233,7 @@ class NavigationController(
         }.join()
     }
 
+    /** Mutes this guidance run's speech (and, while it runs, the recording's — they share [voice]); see [unmute]. */
     fun setMuted(m: Boolean) {
         muted = m
         voice.muted = m
@@ -243,14 +244,25 @@ class NavigationController(
     /** Stops whatever runs without changing the trip (cancel a start, close an error or a finished trip). */
     fun close() {
         endRun()
+        unmute()
         _ui.value = NavUiState.Idle
     }
 
     private fun endRun() {
+        unmute()
         val r = run ?: return
         r.cancelJobs()
         run = null
         scope.launch { saveDayDistance(r) }
+    }
+
+    /**
+     * Ruling F1: mute is a control of one guidance run. Whenever a run ends the shared [voice] speaks again, so a
+     * recording that goes on (or starts later) without guidance is never silent.
+     */
+    private fun unmute() {
+        muted = false
+        voice.muted = false
     }
 
     private suspend fun prepare(r: Run) {
@@ -402,6 +414,7 @@ class NavigationController(
         val trip = r.trip ?: return@withContext
         run = null
         r.cancelJobs()
+        unmute()
         saveDayDistance(r)
         val saved = when (reason) {
             FinishReason.ARRIVED, FinishReason.COMPLETED -> saving("complete trip ${trip.id}") {

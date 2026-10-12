@@ -316,4 +316,41 @@ class RideNavigationTest {
         assertTrue(voice.spoken.none { it == "기록을 시작합니다" }, voice.spoken.toString())
         assertNull(h.navigation.kmSource)
     }
+
+    @Test
+    fun muteDuringGuidanceEndsWithTheGuidanceOnly() = runTest {
+        // Ruling F1: mute belongs to the guidance run; the recording that goes on after it is never muted.
+        val h = Harness(this)
+        val tripId = h.trip()
+        h.navigation.start(tripId)
+        h.guidedPast(1_200.0)
+        h.navigation.setMuted(true)
+
+        h.navigation.close()
+        play(300_000)
+        h.ride.pause()
+
+        assertTrue(!voice.muted, "the shared voice is unmuted when the guidance ends")
+        assertEquals(tripId, h.active.tripId)
+        assertEquals(listOf(2), recordingKms(), voice.spoken.toString())
+        assertTrue("일시정지되었습니다" in voice.spoken, voice.spoken.toString())
+    }
+
+    @Test
+    fun muteDuringAFinishedGuidanceDoesNotSilenceTheNextRide() = runTest {
+        val h = Harness(this)
+        val tripId = h.trip(TripType.MULTI_DAY)
+        h.navigation.start(tripId)
+        h.guidedPast(500.0)
+        h.navigation.setMuted(true)
+
+        h.navigation.stopToday()
+        h.rideFinished()
+        h.ride.dismissSummary()
+        voice.spoken.clear()
+        h.ride.startRecording(tripId)!!.join()
+
+        assertTrue(!voice.muted, "the shared voice is unmuted when the guidance finished")
+        assertEquals(listOf("기록을 시작합니다"), voice.spoken.toList())
+    }
 }
