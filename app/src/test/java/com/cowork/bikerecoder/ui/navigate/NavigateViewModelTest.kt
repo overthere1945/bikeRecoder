@@ -39,6 +39,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -359,5 +360,63 @@ class NavigateViewModelTest {
         assertEquals(NavUiState.Idle, s.vm.ui.value)
         assertEquals(TripType.MULTI_DAY, store.trips.getValue(id).type)
         assertEquals(1, summaryDismissals)
+    }
+
+    @Test
+    fun backOnTheErrorViewLeavesTheSummaryForTheMainScreen() = runTest(dispatcher) {
+        val s = setup()
+        val id = s.runningTrip(TripType.SINGLE_DAY)
+        store.failUpdate = { it.status == TripStatus.COMPLETED }
+        s.vm.onEndChoice(EndAction.COMPLETE_TRIP)
+        runCurrent()
+        rideUi.value = summaryOf(id)
+        runCurrent()
+        assertInstanceOf(FinishedView.Error::class.java, finishedView(s.vm.ui.value as NavUiState.Finished, rideUi.value))
+
+        s.vm.confirmFinished() // back on the error view = its [닫기]
+
+        assertEquals(0, summaryDismissals, "the summary was never on screen")
+        assertEquals(summaryOf(id), rideUi.value)
+        assertEquals(NavUiState.Idle, s.vm.ui.value)
+    }
+
+    @Test
+    fun anotherTripsSummaryIsNotDismissedByConfirming() = runTest(dispatcher) {
+        val s = setup()
+        val id = s.runningTrip(TripType.SINGLE_DAY)
+        s.vm.onEndChoice(EndAction.COMPLETE_TRIP)
+        runCurrent()
+        rideUi.value = summaryOf(id + 100)
+        runCurrent()
+
+        s.vm.confirmFinished()
+
+        assertEquals(0, summaryDismissals)
+        assertEquals(NavUiState.Idle, s.vm.ui.value)
+    }
+
+    @Test
+    fun anotherTripsSummaryIsNotDismissedByConverting() = runTest(dispatcher) {
+        val s = setup()
+        val id = s.runningTrip(TripType.SINGLE_DAY)
+        s.vm.onEndChoice(EndAction.COMPLETE_TRIP)
+        runCurrent()
+        rideUi.value = summaryOf(id + 100)
+        runCurrent()
+
+        s.vm.convertToMultiDay()
+        runCurrent()
+
+        assertEquals(NavUiState.Idle, s.vm.ui.value)
+        assertEquals(0, summaryDismissals)
+    }
+
+    @Test
+    fun aRecordSaveProblemOfThePreviousTripIsNoticedOnce() = runTest(dispatcher) {
+        val s = setup(args = mapOf(NavigateViewModel.ARG_TRIP to 7L, NavigateViewModel.ARG_RECORD_NOTICE to true))
+
+        assertEquals("이전 기록 저장에 문제가 있습니다", s.vm.takeRecordNotice())
+        assertNull(s.vm.takeRecordNotice())
+        assertNull(setup(args = mapOf(NavigateViewModel.ARG_TRIP to 7L)).vm.takeRecordNotice())
     }
 }

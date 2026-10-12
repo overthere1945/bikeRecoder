@@ -95,6 +95,16 @@ class NavigateViewModel(
         return savedState.get<Long>(ARG_TRIP)
     }
 
+    /**
+     * "이전 기록 저장에 문제가 있습니다" when the start ended a recording that was not fully saved ([ARG_RECORD_NOTICE]);
+     * exactly once per navigation entry (survives recreation).
+     */
+    fun takeRecordNotice(): String? {
+        if (savedState.get<Boolean>(ARG_RECORD_NOTICE) != true || savedState.get<Boolean>(KEY_NOTICED) == true) return null
+        savedState[KEY_NOTICED] = true
+        return MSG_PREVIOUS_RECORD_NOT_SAVED
+    }
+
     /** Call right after starting the foreground service (from the visible screen). */
     fun begin(tripId: Long) {
         controller.begin(tripId)
@@ -113,21 +123,31 @@ class NavigateViewModel(
 
     /** [여러 날로 바꾸기] on the finished screen; the summary shown with it is closed once the trip is converted. */
     fun convertToMultiDay() {
+        val shown = shownSummary()
         viewModelScope.launch {
             controller.convertToMultiDay()
-            if (controller.ui.value == NavUiState.Idle) dismissSummary()
+            if (shown != null && controller.ui.value == NavUiState.Idle) dismissSummary(shown)
         }
     }
 
-    /** [확인] (or back) on the finished screen: closes the recording's summary shown there, then the guidance. */
+    /**
+     * [확인] or [닫기] (or back) on the finished screen: closes the recording's summary if it was on screen, then the
+     * guidance. A summary not shown here (the error view, another trip's) stays for the main screen.
+     */
     fun confirmFinished() {
-        dismissSummary()
+        shownSummary()?.let(::dismissSummary)
         close()
     }
 
-    /** Only a summary: a start error of the recording is not shown here. */
-    private fun dismissSummary() {
-        if (rideUi.value is RideUiState.Finished) dismissRideSummary()
+    /** The summary the finished screen shows right now ([finishedView]), if any. */
+    private fun shownSummary(): RideUiState.Finished? {
+        val nav = ui.value as? NavUiState.Finished ?: return null
+        return (finishedView(nav, rideUi.value) as? FinishedView.Done)?.summary
+    }
+
+    /** Only [summary] itself: a newer recording state is left alone. */
+    private fun dismissSummary(summary: RideUiState.Finished) {
+        if (rideUi.value === summary) dismissRideSummary()
     }
 
     /** Leave guidance without changing the trip (cancel a start, close an error or a finished trip). */
@@ -139,6 +159,11 @@ class NavigateViewModel(
 
     companion object {
         const val ARG_TRIP = "trip"
+
+        /** True: the start ended a recording of another trip that could not be fully saved ([takeRecordNotice]). */
+        const val ARG_RECORD_NOTICE = "recordNotice"
+        const val MSG_PREVIOUS_RECORD_NOT_SAVED = "이전 기록 저장에 문제가 있습니다"
+        private const val KEY_NOTICED = "recordNoticed"
         private const val KEY_STARTED = "started"
         const val TTS_GRACE_MS = 5_000L
         private const val TAG = "NavigateViewModel"

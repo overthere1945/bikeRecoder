@@ -135,6 +135,9 @@ class RideController(
 
         /** Set once [stopRecording] began: the session no longer takes commands. */
         var stopping = false
+
+        /** The one stop of this recording; later [stopRecording] calls wait for it. */
+        var finishJob: Job? = null
         val jobs = mutableListOf<Job>()
 
         fun cancelJobs() {
@@ -197,24 +200,33 @@ class RideController(
 
     /**
      * Stops the session, saves the last points, closes the segment, ends the trip as [end] says and shows
-     * [RideUiState.Finished]. A stop while starting waits for the start.
+     * [RideUiState.Finished]. A stop while starting waits for the start; a stop while stopping waits for that stop
+     * (whose [end] wins).
      */
     suspend fun stopRecording(end: RecordingEnd) {
         val r = run ?: return
         r.startJob?.join()
-        if (run !== r || r.session == null || r.stopping) return
-        scope.launch { finish(r, end) }.join()
+        if (run !== r || r.session == null) return
+        val job = r.finishJob ?: scope.launch { finish(r, end) }.also { r.finishJob = it }
+        job.join()
     }
 
     /**
      * Another trip is about to start (and the recorded trip to end): stops the running recording as
-     * [RecordingEnd.SEGMENT_ONLY] — its segment is closed while its trip is still active — and leaves no summary
-     * behind. Does nothing unless a recording is starting or running.
+     * [RecordingEnd.SEGMENT_ONLY] — its segment is closed while its trip is still active; a stop already in flight is
+     * waited for instead — and returns the summary's error ([MSG_SAVE_PROBLEM]) for the caller to tell the user. The
+     * summary is dismissed when `autoStartRecordingWithNavigation` is on (the new guidance's recording would replace
+     * it); otherwise it stays for the main screen. Does nothing (null) unless a recording is starting, running or
+     * stopping.
      */
-    suspend fun endForAnotherTrip() {
-        if (run == null) return
+    suspend fun endForAnotherTrip(): String? {
+        if (run == null) return null
+        // Joins a stop already in flight, so the segment is closed when this returns.
         stopRecording(RecordingEnd.SEGMENT_ONLY)
-        dismissSummary()
+        val finished = _ui.value as? RideUiState.Finished ?: return null
+        // Only a recording of the new trip replaces the summary; without one it waits for the main screen.
+        if (settings.first().autoStartRecordingWithNavigation && _ui.value === finished) dismissSummary()
+        return finished.error
     }
 
     /** Closes the summary or the start error. */

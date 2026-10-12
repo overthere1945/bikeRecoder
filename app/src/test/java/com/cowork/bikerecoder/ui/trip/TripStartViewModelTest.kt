@@ -33,6 +33,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -309,7 +310,7 @@ class TripStartViewModelTest {
     }
 
     /** A real recording controller on the same fakes (no fixes needed: only starting and stopping matter here). */
-    private inner class Recording(scope: TestScope) {
+    private inner class Recording(scope: TestScope, settings: AppSettings = AppSettings()) {
         val clock = { scope.testScheduler.currentTime }
         val rideStore = FakeRideStore(store, clock)
         private val log = RecordingLog()
@@ -324,7 +325,7 @@ class TripStartViewModelTest {
             voice = RecordingVoiceOutput(),
             location = ScriptedLocationSource(emptyList()),
             pressure = null,
-            settings = MutableStateFlow(AppSettings()),
+            settings = MutableStateFlow(settings),
             scope = scope.backgroundScope,
             clock = clock,
             log = log,
@@ -338,8 +339,7 @@ class TripStartViewModelTest {
             store,
             recordingTrip = { controller.ui.value.recordingTripId },
             endRecording = {
-                controller.endForAnotherTrip()
-                statusWhenEnded = store.trips.getValue(recordedTrip).status
+                controller.endForAnotherTrip().also { statusWhenEnded = store.trips.getValue(recordedTrip).status }
             },
         )
 
@@ -411,5 +411,76 @@ class TripStartViewModelTest {
         assertEquals(null, r.statusWhenEnded)
         assertInstanceOf(RideUiState.Active::class.java, r.controller.ui.value)
         assertEquals(null, r.rideStore.segments(old).single().endedAt)
+    }
+
+    @Test
+    fun aRecordingThatCouldNotBeSavedIsNoticedWithTheStart() = runTest(dispatcher) {
+        val r = Recording(this)
+        val old = existingTrip(TripType.SINGLE_DAY)
+        r.record(old)
+        r.rideStore.failAppend = true
+        val vm = r.viewModel(old).also { runCurrent() }
+
+        vm.onStartPressed(plan)
+        runCurrent()
+        vm.chooseType(TripType.SINGLE_DAY)
+        runCurrent()
+
+        val ready = vm.state.value as TripStartState.Ready
+        assertEquals(RideController.MSG_SAVE_PROBLEM, ready.recordNotice)
+        assertEquals(TripStatus.COMPLETED, store.trips.getValue(old).status)
+    }
+
+    @Test
+    fun aCleanStopHasNoNotice() = runTest(dispatcher) {
+        val r = Recording(this)
+        val old = existingTrip(TripType.SINGLE_DAY)
+        r.record(old)
+        val vm = r.viewModel(old).also { runCurrent() }
+
+        vm.onStartPressed(plan)
+        runCurrent()
+        vm.chooseType(TripType.SINGLE_DAY)
+        runCurrent()
+
+        assertNull((vm.state.value as TripStartState.Ready).recordNotice)
+    }
+
+    @Test
+    fun withoutAutoStartTheEndedRecordingsSummaryStays() = runTest(dispatcher) {
+        val r = Recording(this, AppSettings(autoStartRecordingWithNavigation = false))
+        val old = existingTrip(TripType.SINGLE_DAY)
+        r.record(old)
+        val vm = r.viewModel(old).also { runCurrent() }
+
+        vm.onStartPressed(plan)
+        runCurrent()
+        vm.chooseType(TripType.SINGLE_DAY)
+        runCurrent()
+
+        assertInstanceOf(TripStartState.Ready::class.java, vm.state.value)
+        assertEquals(TripStatus.ACTIVE, r.statusWhenEnded)
+        // Nothing will record the new trip, so the summary is left for the main screen.
+        val finished = r.controller.ui.value as RideUiState.Finished
+        assertEquals(old, finished.segment.tripId)
+    }
+
+    @Test
+    fun aPendingSummaryIsShownBeforeAPlanStart() = runTest(dispatcher) {
+        var pending = true
+        val vm = TripStartViewModel(tripManager, store, pendingSummary = { pending }).also { runCurrent() }
+
+        vm.onStartPressed(plan)
+        runCurrent()
+        assertEquals(TripStartState.ShowSummary, vm.state.value)
+        assertTrue(store.trips.isEmpty(), "nothing started")
+
+        vm.summaryShown()
+        assertEquals(TripStartState.Idle, vm.state.value)
+
+        pending = false
+        vm.onStartPressed(plan)
+        runCurrent()
+        assertEquals(TripStartState.AskType, vm.state.value)
     }
 }

@@ -59,14 +59,19 @@ object Routes {
     const val PLAN = "plan"
     const val NAVIGATE = "navigate"
     const val ARG_FROM_PLAN = "fromPlan"
-    const val NAVIGATE_PATTERN = "$NAVIGATE?${NavigateViewModel.ARG_TRIP}={${NavigateViewModel.ARG_TRIP}}&$ARG_FROM_PLAN={$ARG_FROM_PLAN}"
+    const val NAVIGATE_PATTERN = "$NAVIGATE?${NavigateViewModel.ARG_TRIP}={${NavigateViewModel.ARG_TRIP}}" +
+        "&$ARG_FROM_PLAN={$ARG_FROM_PLAN}&${NavigateViewModel.ARG_RECORD_NOTICE}={${NavigateViewModel.ARG_RECORD_NOTICE}}"
     const val SETTINGS = "settings"
     const val RECORD = "record"
     const val RECORD_PATTERN = "$RECORD?${RecordViewModel.ARG_TRIP}={${RecordViewModel.ARG_TRIP}}"
 
-    /** The guidance screen; with [tripId] it starts guiding that trip once visible. */
-    fun navigate(tripId: Long? = null, fromPlan: Boolean = false) =
-        "$NAVIGATE?${NavigateViewModel.ARG_TRIP}=${tripId ?: -1}&$ARG_FROM_PLAN=$fromPlan"
+    /**
+     * The guidance screen; with [tripId] it starts guiding that trip once visible. [recordNotice]: tell once that the
+     * recording ended for this start was not fully saved.
+     */
+    fun navigate(tripId: Long? = null, fromPlan: Boolean = false, recordNotice: Boolean = false) =
+        "$NAVIGATE?${NavigateViewModel.ARG_TRIP}=${tripId ?: -1}&$ARG_FROM_PLAN=$fromPlan" +
+            "&${NavigateViewModel.ARG_RECORD_NOTICE}=$recordNotice"
 
     /** The record screen; with [tripId] it starts recording that trip once visible. */
     fun record(tripId: Long? = null) = "$RECORD?${RecordViewModel.ARG_TRIP}=${tripId ?: -1}"
@@ -258,9 +263,20 @@ fun BikeNavHost(
                 onDismiss = tripStart::dismiss,
             )
             LaunchedEffect(startState) {
-                val ready = startState as? TripStartState.Ready ?: return@LaunchedEffect
-                tripStart.consumeReady()
-                navController.openOnMain(Routes.navigate(ready.tripId, fromPlan = true))
+                when (val state = startState) {
+                    // A summary not seen yet is shown first (the plan stays for the next [안내 시작]).
+                    TripStartState.ShowSummary -> {
+                        tripStart.summaryShown()
+                        navController.openOnMain(Routes.record())
+                    }
+                    is TripStartState.Ready -> {
+                        tripStart.consumeReady()
+                        navController.openOnMain(
+                            Routes.navigate(state.tripId, fromPlan = true, recordNotice = state.recordNotice != null),
+                        )
+                    }
+                    else -> Unit
+                }
             }
         }
         composable(
@@ -271,6 +287,10 @@ fun BikeNavHost(
                     defaultValue = -1L
                 },
                 navArgument(Routes.ARG_FROM_PLAN) {
+                    type = NavType.BoolType
+                    defaultValue = false
+                },
+                navArgument(NavigateViewModel.ARG_RECORD_NOTICE) {
                     type = NavType.BoolType
                     defaultValue = false
                 },

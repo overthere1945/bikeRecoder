@@ -3,6 +3,7 @@ package com.cowork.bikerecoder.ride
 import com.cowork.bikerecoder.core.model.GeoMath
 import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.model.RouteProfile
+import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.trip.TripManager
 import com.cowork.bikerecoder.core.trip.TripStatus
@@ -83,8 +84,8 @@ class RideControllerTest {
             log = log,
         )
 
-        fun newController(scope: CoroutineScope = this.scope.backgroundScope) = RideController(
-            rideStore = store,
+        fun newController(scope: CoroutineScope = this.scope.backgroundScope, rideStore: RideStore = store) = RideController(
+            rideStore = rideStore,
             tripStore = trips,
             tripManager = tripManager,
             navigation = navigation,
@@ -398,5 +399,35 @@ class RideControllerTest {
         play(8_000) // t = 40 s
         assertFalse(h.active.gpsWeak)
         assertTrue(h.active.stats.distanceM > 101.0, "${h.active.stats.distanceM}")
+    }
+
+    @Test
+    fun endForAnotherTripWaitsForAStopAlreadyInFlight() = runTest {
+        val h = harness(emptyList())
+        val slow = object : RideStore by h.store {
+            override suspend fun closeSegment(segmentId: Long, endedAt: Long, totals: SegmentTotals) {
+                delay(1_000)
+                h.store.closeSegment(segmentId, endedAt, totals)
+            }
+        }
+        val c = h.newController(rideStore = slow)
+        val tripId = h.trip()
+        h.start(tripId, c)
+        launch { c.stopRecording(RecordingEnd.SEGMENT_ONLY) }
+        runCurrent() // that stop is now closing the segment
+
+        var ended = false
+        launch {
+            c.endForAnotherTrip()
+            ended = true
+        }
+        runCurrent()
+        assertFalse(ended, "waits for the stop in flight")
+        assertNull(h.store.segments(tripId).single().endedAt)
+
+        play(1_001)
+        assertTrue(ended)
+        assertNotNull(h.store.segments(tripId).single().endedAt, "closed before the other trip starts")
+        assertEquals(RideUiState.Idle, c.ui.value)
     }
 }

@@ -41,7 +41,7 @@ fun TripStartDialogs(
             text = { Text(state.message) },
             confirmButton = { TextButton(onClick = onDismiss) { Text("확인") } },
         )
-        TripStartState.Idle, TripStartState.Working, is TripStartState.Ready -> Unit
+        TripStartState.Idle, TripStartState.Working, is TripStartState.Ready, TripStartState.ShowSummary -> Unit
     }
 }
 

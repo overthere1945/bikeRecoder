@@ -142,6 +142,11 @@ fun NavigateScreen(
     }
 
     LaunchedEffect(viewModel) {
+        val notice = viewModel.takeRecordNotice() ?: return@LaunchedEffect
+        snackbar.showSnackbar(notice, duration = SnackbarDuration.Long)
+    }
+
+    LaunchedEffect(viewModel) {
         viewModel.ttsNotice.first { it }
         viewModel.ttsNoticeShown()
         snackbar.showSnackbar(TTS_MISSING, duration = SnackbarDuration.Long)
@@ -192,8 +197,10 @@ fun NavigateScreen(
                 FinishedView.Waiting -> SavingContent()
                 // Nothing to confirm: the main screen's banner offers [이어서 안내].
                 FinishedView.Close -> LaunchedEffect(state) { viewModel.close() }
-                // The trip's new state was not saved: say so instead of reporting success.
-                is FinishedView.Error -> FailedContent(message = view.message, onRetry = null, onClose = viewModel::close)
+                // The trip's new state was not saved: say so instead of reporting success. A summary is not shown here
+                // ([닫기] = back = confirmFinished leaves it for the main screen).
+                is FinishedView.Error ->
+                    FailedContent(message = view.message, onRetry = null, onClose = viewModel::confirmFinished)
                 is FinishedView.Done -> {
                     val summary = view.summary
                     if (summary == null) {
