@@ -15,6 +15,7 @@ import com.cowork.bikerecoder.location.GpxLocationSource
 import com.cowork.bikerecoder.location.LocationSource
 import com.cowork.bikerecoder.ui.common.routeFailureText
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -526,6 +527,42 @@ class NavigationControllerTest {
         assertEquals(listOf("SRC 1", "SRC 2"), sourced(), voice.spoken.toString())
         assertTrue(guidanceKm().isNotEmpty(), "back to the session's own km report: ${voice.spoken}")
         assertNull(h.controller.kmSource)
+    }
+
+    @Test
+    fun guidanceSubscribesAgainAfterTheLocationStreamFailed() = runTest {
+        // The stream fails 20 fixes in (e.g. the shared GPS stream broke) and works again when subscribed anew.
+        val track = gpxFixture("scenario_follow.gpx")
+        var subscriptions = 0
+        val flaky = object : LocationSource {
+            override fun fixes(): Flow<LocationFix> = flow {
+                subscriptions++
+                val first = subscriptions == 1
+                var previous: LocationFix? = null
+                for (fix in if (first) track.take(20) else track.drop(20)) {
+                    previous?.let { delay((fix.timeMillis - it.timeMillis) / 20) }
+                    emit(fix)
+                    previous = fix
+                }
+                if (first) throw java.io.IOException("GPS lost")
+                awaitCancellation()
+            }
+        }
+        val tripManager = TripManager(store, offline, clock = { testScheduler.currentTime })
+        val tripId = tripManager.startTrip(
+            TripType.SINGLE_DAY, RouteProfile.CYCLEWAY_FIRST, listOf(stop("도착", destination, isDestination = true)),
+        ).id
+        val controller = NavigationController(
+            AssetRouter(listOf(follow)), tripManager, store, offline, voice, { flaky }, flowOf(true), backgroundScope,
+            clock = { testScheduler.currentTime }, log = log,
+        )
+
+        controller.start(tripId)
+        val finished = controller.ui.first { it is NavUiState.Finished }
+
+        assertEquals(NavUiState.Finished(tripId, TripType.SINGLE_DAY, FinishReason.ARRIVED), finished)
+        assertEquals(2, subscriptions)
+        assertTrue(log.messages.any { it.startsWith("Location source failed") }, log.messages.toString())
     }
 }
 

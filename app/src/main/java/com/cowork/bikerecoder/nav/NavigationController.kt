@@ -96,8 +96,10 @@ enum class FinishReason { ARRIVED, STOPPED_TODAY, COMPLETED }
  * start) seeds the session, so a same-day resume continues the kilometre announcements; it is saved at
  * every new kilometre and when the session ends. Session updates are spoken (unless [voiceEnabled] is off), reached stops are
  * marked visited, and reaching the destination completes the trip. Every way out of a session (arrival,
- * [stopToday], [completeTrip], [close], a new start) stops the location source and the ticks. While [kmSource] is
- * set (a recording runs), the 1 km announcements count its distance and speak its combined sentence instead.
+ * [stopToday], [completeTrip], [close], a new start) stops the location source and the ticks. A location stream
+ * that fails after the start point was taken is subscribed again every [LOCATION_RETRY_MS] until it works.
+ * While [kmSource] is set (a recording runs), the 1 km announcements count its distance and speak its combined
+ * sentence instead.
  *
  * Threading: every public method must be called on [scope]'s single thread (Main in the app); the session
  * runs on the same [scope]. Trip writes run in [scope], so they finish even if the caller goes away.
@@ -277,26 +279,34 @@ class NavigationController(
         val firstFix = CompletableDeferred<LocationFix>()
         var bestFix: LocationFix? = null
         r.jobs += scope.launch {
-            try {
-                locationSource().fixes().collect { fix ->
-                    r.lastFix = fix
-                    val session = r.session
-                    if (session != null) {
-                        session.onFix(fix)
-                    } else {
-                        if (bestFix.let { it == null || fix.accuracyM < it.accuracyM }) bestFix = fix
-                        if (fix.accuracyM <= START_ACCURACY_M) firstFix.complete(fix)
+            while (true) {
+                try {
+                    locationSource().fixes().collect { fix ->
+                        r.lastFix = fix
+                        val session = r.session
+                        if (session != null) {
+                            session.onFix(fix)
+                        } else {
+                            if (bestFix.let { it == null || fix.accuracyM < it.accuracyM }) bestFix = fix
+                            if (fix.accuracyM <= START_ACCURACY_M) firstFix.complete(fix)
+                        }
+                    }
+                    bestFix?.let { firstFix.complete(it) }
+                    if (!firstFix.isCompleted) log.warn("Location source ended without a fix", null)
+                    firstFix.completeExceptionally(IllegalStateException("location source ended without a fix"))
+                    return@launch
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // Before a start point this fails the start. Once there is one, the session's GPS watchdog
+                    // reports the gap and the stream is subscribed again (it recovers when the shared stream does).
+                    log.warn("Location source failed", e)
+                    if (!firstFix.isCompleted) {
+                        firstFix.completeExceptionally(e)
+                        return@launch
                     }
                 }
-                bestFix?.let { firstFix.complete(it) }
-                if (!firstFix.isCompleted) log.warn("Location source ended without a fix", null)
-                firstFix.completeExceptionally(IllegalStateException("location source ended without a fix"))
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                // Before the start this fails the start; later the session's GPS watchdog reports it.
-                log.warn("Location source failed", e)
-                firstFix.completeExceptionally(e)
+                delay(LOCATION_RETRY_MS)
             }
         }
         val start = try {
@@ -482,6 +492,9 @@ class NavigationController(
          * seen, and without any fix it fails (and can be retried).
          */
         const val FIRST_FIX_TIMEOUT_MS = 30_000L
+
+        /** After the start, a failed location stream is subscribed again after this long. */
+        const val LOCATION_RETRY_MS = 5_000L
 
         /** A start point this accurate is taken at once (the session's accuracy limit, spec §6). */
         const val START_ACCURACY_M = 30f
