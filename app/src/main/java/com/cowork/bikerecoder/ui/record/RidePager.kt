@@ -3,7 +3,6 @@ package com.cowork.bikerecoder.ui.record
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
@@ -49,16 +48,16 @@ internal fun Modifier.swipeTurnsPages(pager: PagerState, scope: CoroutineScope):
     }
 }
 
-/** One tappable dot per page ("지도", "숫자"), the current one highlighted. */
+/** One tappable dot per page ("지도", "숫자"), the current one highlighted; each takes a 48 dp touch target. */
 @Composable
 internal fun PageDots(current: Int, onSelect: (Int) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    Row {
         repeat(RIDE_PAGE_COUNT) { page ->
             val name = if (page == RIDE_MAP_PAGE) "지도" else "숫자"
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
-                    .size(24.dp)
+                    .size(PAGE_DOT_TARGET)
                     .clickable { onSelect(page) }
                     .semantics { contentDescription = name },
             ) {
@@ -76,3 +75,6 @@ internal fun PageDots(current: Int, onSelect: (Int) -> Unit) {
 }
 
 private const val SWIPE_THRESHOLD_PX = 48f
+
+/** The minimum touch target (Material accessibility guideline). */
+internal val PAGE_DOT_TARGET = 48.dp

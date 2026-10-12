@@ -10,6 +10,7 @@ import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.data.AppSettings
 import com.cowork.bikerecoder.nav.AssetRouter
 import com.cowork.bikerecoder.nav.FakeTripStore
+import com.cowork.bikerecoder.nav.GuidanceServiceStatus
 import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.nav.NavigationController
 import com.cowork.bikerecoder.nav.RecordingLog
@@ -58,7 +59,10 @@ class RecordViewModelTest {
 
     private class Setup(val vm: RecordViewModel, val tripManager: TripManager, val navigation: MutableStateFlow<NavUiState>)
 
-    private fun TestScope.setup(args: Map<String, Any?> = emptyMap()): Setup {
+    private fun TestScope.setup(
+        args: Map<String, Any?> = emptyMap(),
+        serviceStatus: GuidanceServiceStatus = GuidanceServiceStatus(),
+    ): Setup {
         val clock = { testScheduler.currentTime }
         val tripManager = TripManager(trips, offline, clock)
         val navigation = NavigationController(
@@ -87,7 +91,7 @@ class RecordViewModelTest {
             log = log,
         )
         val navState = MutableStateFlow<NavUiState>(NavUiState.Idle)
-        val vm = RecordViewModel(ride, navState, flowOf(true), SavedStateHandle(args))
+        val vm = RecordViewModel(ride, navState, flowOf(true), SavedStateHandle(args), serviceStatus.warning)
         runCurrent()
         return Setup(vm, tripManager, navState)
     }
@@ -155,5 +159,16 @@ class RecordViewModelTest {
         s.navigation.value = NavUiState.Idle
         runCurrent()
         assertFalse(s.vm.navigating.value)
+    }
+
+    @Test
+    fun aFailedForegroundServiceIsShownOnTheRecordScreenToo() = runTest(dispatcher) {
+        val status = GuidanceServiceStatus()
+        val vm = setup(serviceStatus = status).vm
+        assertNull(vm.serviceWarning.value)
+
+        status.foregroundFailed()
+
+        assertEquals(GuidanceServiceStatus.MSG_SCREEN_OFF_RISK, vm.serviceWarning.value)
     }
 }

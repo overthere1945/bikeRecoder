@@ -14,6 +14,7 @@ import com.cowork.bikerecoder.ride.RecordingEnd
 import com.cowork.bikerecoder.ride.RideController
 import com.cowork.bikerecoder.ride.RideUiState
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
@@ -31,6 +32,8 @@ class RecordViewModel(
     navigation: StateFlow<NavUiState>,
     keepScreenOn: Flow<Boolean>,
     private val savedState: SavedStateHandle,
+    /** "화면이 꺼지면 안내가 멈출 수 있습니다" when the location foreground service could not start. */
+    val serviceWarning: StateFlow<String?> = MutableStateFlow(null),
 ) : ViewModel() {
 
     val ui: StateFlow<RideUiState> = ride.ui
@@ -81,6 +84,7 @@ class RecordViewModel(
                     navigation = container.navigation.ui,
                     keepScreenOn = container.settings.settings.map { it.keepScreenOn },
                     savedState = createSavedStateHandle(),
+                    serviceWarning = container.guidanceService.warning,
                 )
             }
         }

@@ -88,6 +88,7 @@ fun RecordScreen(viewModel: RecordViewModel, tileSource: TileSource, onClose: ()
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val navigating by viewModel.navigating.collectAsStateWithLifecycle()
     val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
+    val serviceWarning by viewModel.serviceWarning.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
 
@@ -139,6 +140,7 @@ fun RecordScreen(viewModel: RecordViewModel, tileSource: TileSource, onClose: ()
                 onToggleAutoPause = viewModel::setAutoPause,
                 onEnd = viewModel::onEndChoice,
                 map = { modifier -> RecordMap(state, tileSource, modifier) },
+                serviceWarning = serviceWarning,
             )
             state is RideUiState.Finished -> SegmentSummaryContent(
                 segment = state.segment,
@@ -174,7 +176,7 @@ fun RecordStatusContent(state: RideUiState, onClose: () -> Unit) {
 }
 
 /**
- * The running recording (spec §3.2): the auto-pause chip and the pause / weak-GPS bands on top, two pages (the map with
+ * The running recording (spec §3.2): the auto-pause chip and the pause / service / weak-GPS bands on top, two pages (the map with
  * the summary line, the numbers) and [일시정지]/[재개] [정지] below. The pager itself takes no drags: MapLibre's view never
  * asks its parents not to intercept, so a scrolling pager would claim every horizontal drag on the map and cancel it.
  * Pages turn by swiping the summary line, the numbers page or the top strip, or by tapping the page dots.
@@ -188,6 +190,8 @@ fun RecordContent(
     onToggleAutoPause: (Boolean) -> Unit,
     onEnd: (RecordingEnd) -> Unit,
     map: @Composable (Modifier) -> Unit,
+    /** The foreground service could not start ("화면이 꺼지면 안내가 멈출 수 있습니다"). */
+    serviceWarning: String? = null,
 ) {
     val pager = rememberPagerState { RIDE_PAGE_COUNT }
     val scope = rememberCoroutineScope()
@@ -208,6 +212,7 @@ fun RecordContent(
             ) {
                 AutoPauseChip(state.autoPause, onToggleAutoPause, Modifier.testTag(RecordTags.CHIP))
                 if (paused != null) PauseBand(paused.kind, Modifier.testTag(RecordTags.BAND))
+                if (serviceWarning != null) Band(serviceWarning, MaterialTheme.colorScheme.error)
                 if (state.gpsWeak) Band("GPS 신호 약함", MaterialTheme.colorScheme.error)
             }
 

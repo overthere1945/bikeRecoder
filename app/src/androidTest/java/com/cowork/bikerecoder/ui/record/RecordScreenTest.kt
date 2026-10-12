@@ -6,10 +6,13 @@ import android.view.View
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -54,7 +57,7 @@ class RecordScreenTest {
         saveWarning = null,
     )
 
-    private fun show(state: RideUiState.Active) {
+    private fun show(state: RideUiState.Active, serviceWarning: String? = null) {
         composeRule.setContent {
             MaterialTheme {
                 RecordContent(
@@ -80,6 +83,7 @@ class RecordScreenTest {
                             modifier = modifier.testTag(MAP),
                         )
                     },
+                    serviceWarning = serviceWarning,
                 )
             }
         }
@@ -134,6 +138,21 @@ class RecordScreenTest {
         composeRule.onNodeWithContentDescription("지도").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag(RecordTags.SUMMARY).assertIsDisplayed()
+    }
+
+    @Test
+    fun pageDotsHaveA48dpTouchTarget() {
+        show(active())
+
+        composeRule.onNodeWithContentDescription("지도").assertWidthIsAtLeast(48.dp).assertHeightIsAtLeast(48.dp)
+        composeRule.onNodeWithContentDescription("숫자").assertWidthIsAtLeast(48.dp).assertHeightIsAtLeast(48.dp)
+    }
+
+    @Test
+    fun theServiceWarningIsShown() {
+        show(active(), serviceWarning = "화면이 꺼지면 안내가 멈출 수 있습니다")
+
+        composeRule.onNodeWithText("화면이 꺼지면 안내가 멈출 수 있습니다").assertIsDisplayed()
     }
 
     @Test
