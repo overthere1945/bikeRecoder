@@ -40,7 +40,10 @@ object NavNotifications {
     /** MainActivity extra: resume guidance of this trip (from the "interrupted" notification). */
     const val EXTRA_RESUME_TRIP_ID = "resume_trip_id"
 
-    /** MainActivity extra: show the running guidance (from the progress notification). */
+    /**
+     * MainActivity extra: show the running ride (from the progress notification) — the guidance screen while guiding,
+     * else the record screen, decided when tapped ([com.cowork.bikerecoder.ui.rideRoute]).
+     */
     const val EXTRA_SHOW_NAVIGATION = "show_navigation"
 
     private val phrases = KoreanPhrases()
@@ -98,8 +101,8 @@ object NavNotifications {
         return InterruptedNotice(resumeTripId = trip?.id?.takeIf { remainingStops > 0 })
     }
 
-    /** [guiding]: a tap shows the running guidance; otherwise it opens the app. */
-    fun progress(context: Context, notice: RideNotice, guiding: Boolean): Notification =
+    /** A tap shows the running guidance or recording ([EXTRA_SHOW_NAVIGATION]). */
+    fun progress(context: Context, notice: RideNotice): Notification =
         NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_navigation)
             .setContentTitle(notice.title)
@@ -109,11 +112,10 @@ object NavNotifications {
             .setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_NAVIGATION)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .setContentIntent(activityIntent(context, PROGRESS_ID) { if (guiding) putExtra(EXTRA_SHOW_NAVIGATION, true) })
+            .setContentIntent(activityIntent(context, PROGRESS_ID) { putExtra(EXTRA_SHOW_NAVIGATION, true) })
             .build()
 
-    fun notifyProgress(context: Context, notice: RideNotice, guiding: Boolean) =
-        notify(context, PROGRESS_ID, progress(context, notice, guiding))
+    fun notifyProgress(context: Context, notice: RideNotice) = notify(context, PROGRESS_ID, progress(context, notice))
 
     /** "주행이 중단되었습니다. 눌러서 재개" (see [interruptedNotice]). */
     fun showInterrupted(context: Context, notice: InterruptedNotice) {

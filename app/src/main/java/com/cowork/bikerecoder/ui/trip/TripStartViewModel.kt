@@ -20,6 +20,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /** The plan being started: its profile and stops (last = destination). */
@@ -58,11 +59,16 @@ fun List<PlannedStop>.toTripStops(): List<TripStop> = mapIndexed { index, stop -
  * no active multi-day trip → ask the type ([당일] default / [여러 날]) and start a new trip (completing any
  * active one); an active multi-day trip → ask to continue it ([이어서]: its stops are replaced only if the
  * plan differs from its unvisited stops, and it takes the plan's profile) or [새로 시작] (→ ask the type).
+ *
+ * [● 기록 시작] on the map main screen ([onRecordPressed]) asks the same questions for a recording without a plan:
+ * a new trip has no stops and [defaultProfile]; [이어서] keeps the trip's stops and profile as they are.
  */
 class TripStartViewModel(
     private val tripManager: TripManager,
     private val tripStore: TripStore,
     private val log: WarnLog = androidWarnLog(TAG),
+    /** The settings' route profile, for trips started by [onRecordPressed]. */
+    private val defaultProfile: suspend () -> RouteProfile = { RouteProfile.CYCLEWAY_FIRST },
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<TripStartState>(TripStartState.Idle)
@@ -70,15 +76,29 @@ class TripStartViewModel(
 
     private var plan: StartPlan? = null
 
+    /** The flow was started by [onRecordPressed]: the trip's stops and profile are left alone. */
+    private var recordOnly = false
+
     fun onStartPressed(plan: StartPlan) {
         if (_state.value != TripStartState.Idle || plan.stops.isEmpty()) return
         this.plan = plan
+        recordOnly = false
+        work { prompt() }
+    }
+
+    /** [● 기록 시작]: which trip to record (no plan, so the plan-start's empty-stops guard does not apply). */
+    fun onRecordPressed() {
+        if (_state.value != TripStartState.Idle) return
+        recordOnly = true
         work {
-            when (val prompt = tripManager.startPrompt()) {
-                StartPrompt.AskType -> TripStartState.AskType
-                is StartPrompt.AskContinue -> TripStartState.AskContinue(prompt.trip, destinationName(prompt.trip.id))
-            }
+            plan = StartPlan(defaultProfile(), emptyList())
+            prompt()
         }
+    }
+
+    private suspend fun prompt(): TripStartState = when (val prompt = tripManager.startPrompt()) {
+        StartPrompt.AskType -> TripStartState.AskType
+        is StartPrompt.AskContinue -> TripStartState.AskContinue(prompt.trip, destinationName(prompt.trip.id))
     }
 
     fun chooseType(type: TripType) {
@@ -92,6 +112,8 @@ class TripStartViewModel(
         val ask = _state.value as? TripStartState.AskContinue ?: return
         work {
             val tripId = ask.trip.id
+            // Recording only: the trip keeps its stops and profile.
+            if (recordOnly) return@work TripStartState.Ready(tripId)
             // The route is computed from the trip's profile: the one chosen on the plan screen wins.
             tripManager.changeProfile(tripId, p.profile)
             val remaining = tripManager.remainingStops(tripId).map { it.name to it.point }
@@ -107,8 +129,10 @@ class TripStartViewModel(
 
     fun dismiss() {
         when (_state.value) {
-            TripStartState.AskType, is TripStartState.AskContinue, is TripStartState.Error ->
+            TripStartState.AskType, is TripStartState.AskContinue, is TripStartState.Error -> {
+                recordOnly = false
                 _state.value = TripStartState.Idle
+            }
             else -> Unit
         }
     }
@@ -116,6 +140,7 @@ class TripStartViewModel(
     fun consumeReady() {
         if (_state.value is TripStartState.Ready) {
             plan = null
+            recordOnly = false
             _state.value = TripStartState.Idle
         }
     }
@@ -136,7 +161,9 @@ class TripStartViewModel(
 
     private suspend fun destinationName(tripId: Long): String {
         val stops = tripStore.stops(tripId)
-        return (stops.firstOrNull { it.isDestination } ?: stops.lastOrNull())?.name ?: "목적지"
+        // A trip started for recording only has no stops.
+        if (stops.isEmpty()) return RIDE_RECORD_NAME
+        return (stops.firstOrNull { it.isDestination } ?: stops.last()).name
     }
 
     companion object {
@@ -144,7 +171,13 @@ class TripStartViewModel(
         private const val TAG = "TripStartViewModel"
 
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
-            initializer { TripStartViewModel(container.tripManager, container.tripStore) }
+            initializer {
+                TripStartViewModel(
+                    container.tripManager,
+                    container.tripStore,
+                    defaultProfile = { container.settings.settings.first().defaultProfile },
+                )
+            }
         }
     }
 }

@@ -43,6 +43,10 @@ import com.cowork.bikerecoder.ui.search.SearchViewModel
 import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.ui.navigate.NavigateScreen
 import com.cowork.bikerecoder.ui.navigate.NavigateViewModel
+import com.cowork.bikerecoder.ride.RideUiState
+import com.cowork.bikerecoder.ui.main.RideTarget
+import com.cowork.bikerecoder.ui.record.RecordScreen
+import com.cowork.bikerecoder.ui.record.RecordViewModel
 import com.cowork.bikerecoder.ui.trip.StartPlan
 import com.cowork.bikerecoder.ui.trip.TripStartDialogs
 import com.cowork.bikerecoder.ui.trip.TripStartState
@@ -57,10 +61,15 @@ object Routes {
     const val ARG_FROM_PLAN = "fromPlan"
     const val NAVIGATE_PATTERN = "$NAVIGATE?${NavigateViewModel.ARG_TRIP}={${NavigateViewModel.ARG_TRIP}}&$ARG_FROM_PLAN={$ARG_FROM_PLAN}"
     const val SETTINGS = "settings"
+    const val RECORD = "record"
+    const val RECORD_PATTERN = "$RECORD?${RecordViewModel.ARG_TRIP}={${RecordViewModel.ARG_TRIP}}"
 
     /** The guidance screen; with [tripId] it starts guiding that trip once visible. */
     fun navigate(tripId: Long? = null, fromPlan: Boolean = false) =
         "$NAVIGATE?${NavigateViewModel.ARG_TRIP}=${tripId ?: -1}&$ARG_FROM_PLAN=$fromPlan"
+
+    /** The record screen; with [tripId] it starts recording that trip once visible. */
+    fun record(tripId: Long? = null) = "$RECORD?${RecordViewModel.ARG_TRIP}=${tripId ?: -1}"
 }
 
 /** What the activity was launched for, from a notification. */
@@ -68,20 +77,27 @@ sealed interface LaunchRequest {
     /** "안내가 중단되었습니다. 눌러서 재개": start guiding [tripId] again. */
     data class ResumeTrip(val tripId: Long) : LaunchRequest
 
-    /** The progress notification: show the running guidance. */
+    /** The progress notification: show the running guidance or recording ([rideRoute]). */
     data object ShowNavigation : LaunchRequest
 }
 
 /**
- * The routes the app opens with on a fresh start: onboarding until it is done; otherwise main, with the
- * guidance screen on top while guidance is starting or running (e.g. the activity was closed during a
- * single-day trip, which has no main-screen banner leading back).
+ * The screen of the running ride: guidance while it is starting or running (its screen also shows the recording),
+ * else the record screen while a recording is starting or running; null when nothing runs.
  */
-fun initialRoutes(onboardingDone: Boolean, guidance: NavUiState): List<String> = when {
-    !onboardingDone -> listOf(Routes.ONBOARDING)
-    guidance is NavUiState.Starting || guidance is NavUiState.Active -> listOf(Routes.MAIN, Routes.navigate())
-    else -> listOf(Routes.MAIN)
+fun rideRoute(guidance: NavUiState, ride: RideUiState): String? = when {
+    guidance is NavUiState.Starting || guidance is NavUiState.Active -> Routes.navigate()
+    ride is RideUiState.Starting || ride is RideUiState.Active -> Routes.record()
+    else -> null
 }
+
+/**
+ * The routes the app opens with on a fresh start: onboarding until it is done; otherwise main, with the
+ * running ride's screen ([rideRoute]) on top (e.g. the activity was closed during a single-day trip, which has no
+ * main-screen banner leading back).
+ */
+fun initialRoutes(onboardingDone: Boolean, guidance: NavUiState, ride: RideUiState = RideUiState.Idle): List<String> =
+    if (!onboardingDone) listOf(Routes.ONBOARDING) else listOfNotNull(Routes.MAIN, rideRoute(guidance, ride))
 
 @Composable
 fun BikeNavHost(
@@ -106,7 +122,11 @@ fun BikeNavHost(
     }
     val initial = remember {
         val state = readPermissionState(context, container.segments)
-        initialRoutes(effectiveOnboardingStep(state, skippedSteps) == OnboardingStep.DONE, container.navigationState)
+        initialRoutes(
+            effectiveOnboardingStep(state, skippedSteps) == OnboardingStep.DONE,
+            container.navigationState,
+            container.rideState,
+        )
     }
     val startDestination = initial.first()
     // Once per fresh start (a recreated activity restores its own back stack).
@@ -114,7 +134,7 @@ fun BikeNavHost(
     LaunchedEffect(Unit) {
         if (initialOpened) return@LaunchedEffect
         initialOpened = true
-        initial.drop(1).forEach { navController.openNavigate(it) }
+        initial.drop(1).forEach { navController.openOnMain(it) }
     }
 
     val setDestinationAndOpenPlan: (String, GeoPoint) -> Unit = { name, point ->
@@ -130,10 +150,10 @@ fun BikeNavHost(
         val request = launchRequest ?: return@LaunchedEffect
         val route = when (request) {
             is LaunchRequest.ResumeTrip -> Routes.navigate(request.tripId)
-            LaunchRequest.ShowNavigation -> Routes.navigate()
+            LaunchRequest.ShowNavigation -> rideRoute(container.navigationState, container.rideState)
         }
         // Ignored while onboarding is still showing (there is no main screen to return to yet).
-        if (navController.currentDestination?.route != Routes.ONBOARDING) navController.openNavigate(route)
+        if (route != null && navController.currentDestination?.route != Routes.ONBOARDING) navController.openOnMain(route)
         onLaunchRequestHandled()
     }
 
@@ -151,17 +171,47 @@ fun BikeNavHost(
         }
         composable(Routes.MAIN) {
             val viewModel: MainViewModel = viewModel(factory = MainViewModel.factory(container))
+            // The record-only start asks which trip, like [안내 시작] on the plan screen.
+            val tripStart: TripStartViewModel = viewModel(factory = TripStartViewModel.factory(container))
+            val startState by tripStart.state.collectAsStateWithLifecycle()
             MainScreen(
                 viewModel = viewModel,
                 tileSource = container.tileSource,
                 currentLocation = container.currentLocation,
                 onOpenSearch = { navController.navigate(Routes.SEARCH) },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
-                onResumeTrip = { tripId -> navController.openNavigate(Routes.navigate(tripId)) },
-                onShowGuidance = { navController.openNavigate(Routes.navigate()) },
+                onResumeTrip = { tripId -> navController.openOnMain(Routes.navigate(tripId)) },
+                onShowRide = { target ->
+                    val route = when (target) {
+                        RideTarget.NAVIGATE -> Routes.navigate()
+                        RideTarget.RECORD -> Routes.record()
+                    }
+                    navController.openOnMain(route)
+                },
+                onStartRecording = {
+                    // While guiding, the recording belongs to the guided trip: no questions.
+                    when (val nav = container.navigationState) {
+                        is NavUiState.Starting -> navController.openOnMain(Routes.record(nav.tripId))
+                        is NavUiState.Active -> navController.openOnMain(Routes.record(nav.tripId))
+                        else -> tripStart.onRecordPressed()
+                    }
+                },
+                onContinueRecording = { tripId -> navController.openOnMain(Routes.record(tripId)) },
                 onSetDestination = setDestinationAndOpenPlan,
                 onAddWaypoint = addWaypointAndOpenPlan,
             )
+            TripStartDialogs(
+                state = startState,
+                onChooseType = tripStart::chooseType,
+                onContinue = tripStart::continueTrip,
+                onStartNew = tripStart::startNew,
+                onDismiss = tripStart::dismiss,
+            )
+            LaunchedEffect(startState) {
+                val ready = startState as? TripStartState.Ready ?: return@LaunchedEffect
+                tripStart.consumeReady()
+                navController.openOnMain(Routes.record(ready.tripId))
+            }
         }
         composable(Routes.SEARCH) {
             val viewModel: SearchViewModel = viewModel(factory = SearchViewModel.factory(container))
@@ -198,7 +248,7 @@ fun BikeNavHost(
             LaunchedEffect(startState) {
                 val ready = startState as? TripStartState.Ready ?: return@LaunchedEffect
                 tripStart.consumeReady()
-                navController.openNavigate(Routes.navigate(ready.tripId, fromPlan = true))
+                navController.openOnMain(Routes.navigate(ready.tripId, fromPlan = true))
             }
         }
         composable(
@@ -231,6 +281,29 @@ fun BikeNavHost(
                 },
             )
         }
+        composable(
+            Routes.RECORD_PATTERN,
+            arguments = listOf(
+                navArgument(RecordViewModel.ARG_TRIP) {
+                    type = NavType.LongType
+                    defaultValue = -1L
+                },
+            ),
+        ) { entry ->
+            val viewModel: RecordViewModel = viewModel(factory = RecordViewModel.factory(container))
+            // Only while this screen is on top: after [확인] it has already navigated away when the state turns idle.
+            val isCurrent = { navController.currentBackStackEntry?.id == entry.id }
+            RecordScreen(
+                viewModel = viewModel,
+                tileSource = container.tileSource,
+                onClose = {
+                    if (isCurrent() && !navController.popBackStack(Routes.MAIN, inclusive = false)) {
+                        navController.navigate(Routes.MAIN)
+                    }
+                },
+                onShowGuidance = { if (isCurrent()) navController.openOnMain(Routes.navigate()) },
+            )
+        }
         composable(Routes.SETTINGS) {
             val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(container))
             SettingsScreen(viewModel = viewModel, onBack = { navController.popBackStack() })
@@ -238,8 +311,8 @@ fun BikeNavHost(
     }
 }
 
-/** The guidance screen on top of main (plan/search entries are dropped). */
-private fun NavController.openNavigate(route: String) {
+/** The guidance or record screen on top of main (plan/search/ride entries are dropped). */
+private fun NavController.openOnMain(route: String) {
     navigate(route) { popUpTo(Routes.MAIN) }
 }
 

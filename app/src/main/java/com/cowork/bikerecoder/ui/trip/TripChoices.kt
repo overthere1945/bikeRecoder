@@ -13,6 +13,9 @@ const val TRIP_TYPE_QUESTION = "오늘 하루 일정인가요, 여러 날 일정
 const val END_QUESTION = "안내를 끝낼까요?"
 const val TRIP_COMPLETED = "여행을 완료했습니다"
 
+/** The name of a trip without stops (started from [● 기록 시작]) where a destination name would be shown. */
+const val RIDE_RECORD_NAME = "주행 기록"
+
 fun continueQuestion(destinationName: String) = "$destinationName 여행을 이어서 진행할까요?"
 
 /** [종료] on the guidance screen: a single-day trip just ends; a multi-day trip can pause for today. */

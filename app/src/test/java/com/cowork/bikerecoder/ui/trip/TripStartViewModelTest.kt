@@ -18,6 +18,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -217,6 +218,79 @@ class TripStartViewModelTest {
         assertEquals(TripStartState.Error(TripStartViewModel.MSG_FAILED), vm.state.value)
         assertEquals(1, log.messages.size, "the failure is logged")
         vm.dismiss()
+        assertEquals(TripStartState.Idle, vm.state.value)
+    }
+
+    @Test
+    fun recordNewTripHasNoStops() = runTest(dispatcher) {
+        val vm = viewModel()
+
+        vm.onRecordPressed()
+        runCurrent()
+        assertEquals(TripStartState.AskType, vm.state.value)
+        vm.chooseType(TripType.SINGLE_DAY)
+        runCurrent()
+
+        val ready = vm.state.value as TripStartState.Ready
+        val trip = store.trips.getValue(ready.tripId)
+        assertEquals(TripType.SINGLE_DAY, trip.type)
+        assertEquals(RouteProfile.CYCLEWAY_FIRST, trip.profile)
+        assertTrue(store.stops(ready.tripId).isEmpty())
+    }
+
+    @Test
+    fun recordNewTripTakesTheDefaultProfile() = runTest(dispatcher) {
+        val vm = TripStartViewModel(tripManager, store, defaultProfile = { RouteProfile.SHORTEST })
+
+        vm.onRecordPressed()
+        runCurrent()
+        vm.chooseType(TripType.MULTI_DAY)
+        runCurrent()
+
+        val ready = vm.state.value as TripStartState.Ready
+        assertEquals(RouteProfile.SHORTEST, store.trips.getValue(ready.tripId).profile)
+    }
+
+    @Test
+    fun recordContinueKeepsTheTripsStopsAndProfile() = runTest(dispatcher) {
+        val old = tripManager.startTrip(TripType.MULTI_DAY, RouteProfile.BALANCED, listOf(a, b).toTripStops()).id
+        val vm = viewModel() // default profile CYCLEWAY_FIRST
+
+        vm.onRecordPressed()
+        runCurrent()
+        assertInstanceOf(TripStartState.AskContinue::class.java, vm.state.value)
+        vm.continueTrip()
+        runCurrent()
+
+        assertEquals(TripStartState.Ready(old), vm.state.value)
+        assertEquals(listOf("남산", "여의도"), store.stops(old).map { it.name })
+        assertEquals(RouteProfile.BALANCED, store.trips.getValue(old).profile)
+        assertTrue(offline.deleted.isEmpty())
+    }
+
+    @Test
+    fun aPlanStartAfterARecordStartUsesThePlanAgain() = runTest(dispatcher) {
+        val vm = viewModel()
+        vm.onRecordPressed()
+        runCurrent()
+        vm.dismiss()
+
+        vm.onStartPressed(plan)
+        runCurrent()
+        vm.chooseType(TripType.SINGLE_DAY)
+        runCurrent()
+
+        val ready = vm.state.value as TripStartState.Ready
+        assertEquals(listOf("남산", "여의도"), store.stops(ready.tripId).map { it.name })
+    }
+
+    @Test
+    fun planStartWithEmptyStopsStillDoesNothing() = runTest(dispatcher) {
+        val vm = viewModel()
+
+        vm.onStartPressed(StartPlan(RouteProfile.BALANCED, emptyList()))
+        runCurrent()
+
         assertEquals(TripStartState.Idle, vm.state.value)
     }
 }

@@ -51,8 +51,13 @@ import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.sources.GeoJsonSource
 
-/** What BikeMap draws on top of the base map. */
-data class MapOverlay(val route: Route?, val stops: List<Stop>, val user: LocationFix?)
+/** What BikeMap draws on top of the base map. [track]: the recorded path so far (a red line under the user dot). */
+data class MapOverlay(
+    val route: Route?,
+    val stops: List<Stop>,
+    val user: LocationFix?,
+    val track: List<GeoPoint> = emptyList(),
+)
 
 /**
  * One-shot request to frame [points] (a single point just centres on it, at most [maxZoom]).
@@ -71,7 +76,9 @@ enum class CameraMode {
 private const val ROUTE_SOURCE = "bike-route"
 private const val STOPS_SOURCE = "bike-stops"
 private const val USER_SOURCE = "bike-user"
+private const val TRACK_SOURCE = "bike-track"
 private const val ROUTE_COLOR = "#1E88E5"
+private const val TRACK_COLOR = "#E53935"
 private const val FOLLOW_ZOOM = 17.0
 private const val FOLLOW_TILT = 50.0
 private const val FOLLOW_ANIMATION_MS = 800
@@ -215,6 +222,9 @@ fun BikeMap(
     LaunchedEffect(style, overlay.stops) {
         style?.getSourceAs<GeoJsonSource>(STOPS_SOURCE)?.setGeoJson(stopsGeoJson(overlay.stops))
     }
+    LaunchedEffect(style, overlay.track) {
+        style?.getSourceAs<GeoJsonSource>(TRACK_SOURCE)?.setGeoJson(trackGeoJson(overlay.track))
+    }
     LaunchedEffect(style, overlay.user) {
         style?.getSourceAs<GeoJsonSource>(USER_SOURCE)?.setGeoJson(userGeoJson(overlay.user))
     }
@@ -290,11 +300,21 @@ private fun installOverlayLayers(style: Style) {
     style.addSource(GeoJsonSource(ROUTE_SOURCE, EMPTY_COLLECTION))
     style.addSource(GeoJsonSource(STOPS_SOURCE, EMPTY_COLLECTION))
     style.addSource(GeoJsonSource(USER_SOURCE, EMPTY_COLLECTION))
+    style.addSource(GeoJsonSource(TRACK_SOURCE, EMPTY_COLLECTION))
 
     style.addLayer(
         LineLayer("$ROUTE_SOURCE-line", ROUTE_SOURCE).withProperties(
             PropertyFactory.lineColor(Color.parseColor(ROUTE_COLOR)),
             PropertyFactory.lineWidth(6f),
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+        ),
+    )
+    // The recorded path: above the planned route, below the stops and the user dot.
+    style.addLayer(
+        LineLayer("$TRACK_SOURCE-line", TRACK_SOURCE).withProperties(
+            PropertyFactory.lineColor(Color.parseColor(TRACK_COLOR)),
+            PropertyFactory.lineWidth(5f),
             PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
             PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
         ),
@@ -326,9 +346,13 @@ private fun installOverlayLayers(style: Style) {
 
 private fun coordinate(p: GeoPoint) = "[${p.lon},${p.lat}]"
 
-private fun routeGeoJson(route: Route?): String {
-    val points = route?.points
-    if (points == null || points.size < 2) return EMPTY_COLLECTION
+private fun routeGeoJson(route: Route?): String = lineGeoJson(route?.points.orEmpty())
+
+/** The recorded path as a LineString ([lon,lat] pairs); fewer than 2 points draw nothing. */
+internal fun trackGeoJson(points: List<GeoPoint>): String = lineGeoJson(points)
+
+private fun lineGeoJson(points: List<GeoPoint>): String {
+    if (points.size < 2) return EMPTY_COLLECTION
     val coords = points.joinToString(",", transform = ::coordinate)
     return """{"type":"Feature","properties":{},"geometry":{"type":"LineString","coordinates":[$coords]}}"""
 }

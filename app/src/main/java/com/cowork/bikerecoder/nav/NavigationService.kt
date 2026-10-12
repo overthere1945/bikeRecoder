@@ -65,7 +65,7 @@ class NavigationService : Service() {
             ServiceCompat.startForeground(
                 this,
                 NavNotifications.PROGRESS_ID,
-                NavNotifications.progress(this, initial, NavNotifications.isGuiding(nav)),
+                NavNotifications.progress(this, initial),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
             )
         } catch (e: Exception) {
@@ -81,13 +81,11 @@ class NavigationService : Service() {
         if (mirror == null) {
             mirror = scope.launch {
                 // Latest: a new start while waiting for the voice below cancels the pending stop.
-                combine(container.navigationUi, container.rideUi) { navState, ride ->
-                    NavNotifications.rideNotice(navState, ride)?.let { it to NavNotifications.isGuiding(navState) }
-                }
+                combine(container.navigationUi, container.rideUi, NavNotifications::rideNotice)
                     .distinctUntilChanged()
                     .collectLatest { shown ->
                         if (shown != null) {
-                            NavNotifications.notifyProgress(this@NavigationService, shown.first, shown.second)
+                            NavNotifications.notifyProgress(this@NavigationService, shown)
                         } else {
                             // Stay in the foreground until "목적지에 도착했습니다" (or whatever is queued) is spoken.
                             awaitVoiceIdle(container.voice.speaking, VOICE_DRAIN_MAX_MS)
