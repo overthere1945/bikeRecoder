@@ -105,8 +105,8 @@ class SettingsScreenTest {
         composeRule.onNodeWithText("E125_N35  ·  필수").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("설치됨 · 2 KB").assertIsDisplayed()
         composeRule.onNodeWithText("E130_N35  ·  선택").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag(SettingsTags.segmentDownload("E130_N35")).assertIsDisplayed()
-        composeRule.onNodeWithTag(SettingsTags.segmentCheck("E125_N35")).assertIsDisplayed()
+        composeRule.onNodeWithTag(SettingsTags.segmentDownload("E130_N35")).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag(SettingsTags.segmentCheck("E125_N35")).performScrollTo().assertIsDisplayed()
 
         composeRule.waitUntil(5_000) {
             composeRule.onAllNodesWithText("사용 중인 저장 공간 5.0 MB").fetchSemanticsNodes().isNotEmpty()

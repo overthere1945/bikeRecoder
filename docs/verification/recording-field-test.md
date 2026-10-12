@@ -25,9 +25,11 @@
 
 빌드 확인: `:app:assembleDebug`, `:app:assembleDebugAndroidTest` 성공(기기 테스트 코드 컴파일 포함).
 
-### 기기 테스트 (Galaxy S25 Ultra (SM-S938N), Android 16 / API 36)
+### 기기 테스트 (Galaxy S22 Ultra (SM-S908N), Android 16 / API 36)
 
-**기기 검증 대기.** 이 기록을 쓸 때 승인된 휴대폰(시리얼 `R3CY903ZYQV`)이 연결되어 있지 않았습니다. 기기 테스트는 이 휴대폰에서만 실행합니다. 연결한 뒤 아래 명령을 실행하고, 결과를 이 표에 채웁니다.
+실행일: 2026-10-13. S25 Ultra(`R3CY903ZYQV`)가 연결되어 있지 않아, 사용자가 허락한 S22 Ultra(`R5CT43TFS9A`)에서 실행했습니다. 첫 전체 실행에서는 휴대폰이 잠겨 있어 화면 테스트 28개가 "No compose hierarchies found"로 실패했습니다. 잠금을 푼 뒤 화면 테스트만 다시 실행했고, `SettingsScreenTest`의 스크롤 누락(작은 화면에서 버튼이 화면 밖) 1건을 테스트 코드에서 고친 뒤 모두 통과했습니다.
+
+아래 명령의 시리얼은 실행하는 휴대폰에 맞게 바꿉니다.
 
 전체 실행:
 
@@ -39,15 +41,15 @@ ANDROID_SERIAL=R3CY903ZYQV ./gradlew :app:connectedDebugAndroidTest
 
 | 클래스 | 테스트 수 | 확인하는 것 | 결과 |
 |---|---|---|---|
-| `com.cowork.bikerecoder.ui.settings.SettingsScreenTest` | 6 | 설정 화면(기록 설정 두 가지 포함) | 기기 검증 대기 |
-| `com.cowork.bikerecoder.data.RoomRideStoreTest` | 7 | 구간·위치 저장, 날짜 합계, 빈 구간은 목록에서 제외, 삭제 CASCADE | 기기 검증 대기 |
-| `com.cowork.bikerecoder.data.RideDatabaseMigrationTest` | 1 | DB v1 → v2 후 기존 여행 유지 (스펙 ⑥) | 기기 검증 대기 |
-| `com.cowork.bikerecoder.data.RoomTripStoreTest` | 6 | 여행 저장소(DB v2에서 재확인) | 기기 검증 대기 |
-| `com.cowork.bikerecoder.nav.NavigationScenarioTest` | 6 | 안내 GPX 시나리오, 공유 위치 스트림·옮긴 도우미 위에서 다시 실행 | 기기 검증 대기 |
-| `com.cowork.bikerecoder.ui.record.RecordScreenTest` | 10 | 기록 화면 2쪽, 자동 일시정지 칩, 정지 확인, 쪽 점 48dp, 서비스 경고 | 기기 검증 대기 |
-| `com.cowork.bikerecoder.ui.trip.EndNavigationDialogTest` | 3 | 안내 종료 대화상자(기록과 함께 끝내기) | 기기 검증 대기 |
-| `com.cowork.bikerecoder.ui.history.HistoryScreenTest` | 3 | 목록 → 상세, 길게 눌러 삭제 | 기기 검증 대기 |
-| `com.cowork.bikerecoder.ride.RideScenarioTest` | 5 | GPX 시나리오 ①~⑤ (아래) | 기기 검증 대기 |
+| `com.cowork.bikerecoder.ui.settings.SettingsScreenTest` | 6 | 설정 화면(기록 설정 두 가지 포함) | 6/6 통과 |
+| `com.cowork.bikerecoder.data.RoomRideStoreTest` | 7 | 구간·위치 저장, 날짜 합계, 빈 구간은 목록에서 제외, 삭제 CASCADE | 7/7 통과 |
+| `com.cowork.bikerecoder.data.RideDatabaseMigrationTest` | 1 | DB v1 → v2 후 기존 여행 유지 (스펙 ⑥) | 1/1 통과 |
+| `com.cowork.bikerecoder.data.RoomTripStoreTest` | 6 | 여행 저장소(DB v2에서 재확인) | 6/6 통과 |
+| `com.cowork.bikerecoder.nav.NavigationScenarioTest` | 6 | 안내 GPX 시나리오, 공유 위치 스트림·옮긴 도우미 위에서 다시 실행 | 6/6 통과 |
+| `com.cowork.bikerecoder.ui.record.RecordScreenTest` | 10 | 기록 화면 2쪽, 자동 일시정지 칩, 정지 확인, 쪽 점 48dp, 서비스 경고 | 10/10 통과 |
+| `com.cowork.bikerecoder.ui.trip.EndNavigationDialogTest` | 3 | 안내 종료 대화상자(기록과 함께 끝내기) | 3/3 통과 |
+| `com.cowork.bikerecoder.ui.history.HistoryScreenTest` | 3 | 목록 → 상세, 길게 눌러 삭제 | 3/3 통과 |
+| `com.cowork.bikerecoder.ride.RideScenarioTest` | 5 | GPX 시나리오 ①~⑤ (아래) | 5/5 통과 |
 
 `RideScenarioTest` 시나리오(20배속 재생, in-memory Room): ① 기록만 3km(시작 1회, 1km 문장 3회, 저장 거리 3,010m ±1) ② 신호 대기 2회(일시정지·재개 각 2회, 이동 시간 < 경과 시간, 거리 1,470m ±1) ③ 안내+기록(합친 문장 km 1·2, 안내만의 1km 문장 없음) ④ 강제 종료 후 [이어서 기록](구간 2개, 앞 구간 닫힘) ⑤ 도착(안내·기록 함께 종료, 거리 2,370m ±15, 여행 완료). 스펙 ⑥(마이그레이션)은 `RideDatabaseMigrationTest`입니다.
 
@@ -55,7 +57,7 @@ ANDROID_SERIAL=R3CY903ZYQV ./gradlew :app:connectedDebugAndroidTest
 
 | 기기 전체 실행 | 테스트 수 | 실패 | 결과 |
 |---|---|---|---|
-| `:app:connectedDebugAndroidTest` | 61 | ___ | 기기 검증 대기 |
+| `:app:connectedDebugAndroidTest` | 61 | 0 | 61/61 통과 (화면 테스트 28개는 잠금 해제 후 재실행) |
 
 ### 수동 확인 (기기 검증 대기)
 
