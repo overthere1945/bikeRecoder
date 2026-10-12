@@ -246,12 +246,11 @@ class NavigationController(
     /** Stops whatever runs without changing the trip (cancel a start, close an error or a finished trip). */
     fun close() {
         endRun()
-        unmute()
         _ui.value = NavUiState.Idle
     }
 
     private fun endRun() {
-        unmute()
+        unmute() // Also when nothing runs any more (e.g. [close] after a finished guidance).
         val r = run ?: return
         r.cancelJobs()
         run = null
