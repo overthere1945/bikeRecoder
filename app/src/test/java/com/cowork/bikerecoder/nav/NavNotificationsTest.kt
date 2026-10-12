@@ -67,12 +67,12 @@ class NavNotificationsTest {
         assertFalse(NavNotifications.canPost(sdkInt = 36, notificationsEnabled = false, postPermissionGranted = true))
     }
 
-    private fun recording(state: RecordingState = RecordingState.Recording) = RideUiState.Active(
+    private fun recording(state: RecordingState = RecordingState.Recording, distanceM: Double = 3_010.0) = RideUiState.Active(
         tripId = 1,
         tripType = TripType.SINGLE_DAY,
         segmentId = 7,
         state = state,
-        stats = RideStats.ZERO.copy(distanceM = 3_010.0, movingTimeMs = 600_000),
+        stats = RideStats.ZERO.copy(distanceM = distanceM, movingTimeMs = 600_000),
         autoPause = true,
         track = emptyList(),
         fix = null,
@@ -84,7 +84,18 @@ class NavNotificationsTest {
 
     @Test
     fun `recording only notice`() {
-        assertEquals(RideNotice("주행 기록 중", "3.01km · 이동 10분"), NavNotifications.rideNotice(NavUiState.Idle, recording()))
+        assertEquals(RideNotice("주행 기록 중", "3.0km · 이동 10분"), NavNotifications.rideNotice(NavUiState.Idle, recording()))
+    }
+
+    @Test
+    fun `the recording notice changes only every 100 m`() {
+        // The notification is re-posted only when its text changes: not with every 10 m of the ride.
+        fun text(m: Double) = NavNotifications.rideNotice(NavUiState.Idle, recording(distanceM = m))?.text
+
+        assertEquals(text(3_000.0), text(3_099.9))
+        assertEquals("3.0km · 이동 10분", text(3_099.9))
+        assertEquals("3.1km · 이동 10분", text(3_100.1))
+        assertEquals("0.0km · 이동 10분", text(0.0))
     }
 
     @Test
@@ -99,7 +110,7 @@ class NavNotificationsTest {
     fun `paused notice`() {
         val notice = NavNotifications.rideNotice(NavUiState.Idle, recording(RecordingState.Paused(PauseKind.AUTO)))
 
-        assertEquals(RideNotice("일시정지됨", "3.01km · 이동 10분"), notice)
+        assertEquals(RideNotice("일시정지됨", "3.0km · 이동 10분"), notice)
     }
 
     @Test

@@ -21,6 +21,8 @@ import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.voice.KoreanPhrases
 import com.cowork.bikerecoder.ride.RideUiState
+import java.math.BigDecimal
+import java.math.RoundingMode
 
 /** What the ride service's ongoing notification says. */
 data class RideNotice(val title: String, val text: String)
@@ -80,12 +82,21 @@ object NavNotifications {
             guiding -> RideNotice("길 안내 중", contentText(nav))
             ride is RideUiState.Starting -> RideNotice("주행 기록 중", "기록을 준비하는 중…")
             ride is RideUiState.Active -> {
-                val text = "${RideFormat.distance(ride.stats.distanceM)} · 이동 ${RideFormat.duration(ride.stats.movingTimeMs)}"
+                val text = "${noticeDistance(ride.stats.distanceM)} · 이동 ${RideFormat.duration(ride.stats.movingTimeMs)}"
                 RideNotice(if (ride.state is RecordingState.Paused) "일시정지됨" else "주행 기록 중", text)
             }
             else -> null
         }
     }
+
+    /**
+     * "3.0km": rounded down to 100 m, so the notification (re-posted only when its text changes) is not updated with
+     * every few metres of the ride.
+     */
+    private fun noticeDistance(m: Double): String =
+        "${BigDecimal(m).divide(THOUSAND, 1, RoundingMode.DOWN).toPlainString()}km"
+
+    private val THOUSAND = BigDecimal(1_000)
 
     fun isGuiding(nav: NavUiState): Boolean = nav is NavUiState.Starting || nav is NavUiState.Active
 
