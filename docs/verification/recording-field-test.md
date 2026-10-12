@@ -4,7 +4,7 @@
 
 ## 자동 검증
 
-실행일: 2026-10-12 (브랜치 `feature/recording-v1.1.0`, Task 16 반영 후)
+실행일: 2026-10-12 (브랜치 `feature/recording-v1.1.0`, 최종 리뷰 수정 반영 후)
 
 ### PC 단위 테스트
 
@@ -18,10 +18,10 @@
 
 | 모음 | 클래스 수 | 테스트 수 | 실패 | 건너뜀 |
 |---|---|---|---|---|
-| `:core:test` | 21 | 173 | 0 | 0 |
+| `:core:test` | 21 | 176 | 0 | 0 |
 | `:routing-brouter:test` | 4 | 16 | 0 | 0 |
-| `:app:testDebugUnitTest` | 33 | 286 | 0 | 0 |
-| 합계 | 58 | 475 | 0 | 0 |
+| `:app:testDebugUnitTest` | 35 | 309 | 0 | 0 |
+| 합계 | 60 | 501 | 0 | 0 |
 
 빌드 확인: `:app:assembleDebug`, `:app:assembleDebugAndroidTest` 성공(기기 테스트 코드 컴파일 포함).
 
@@ -40,22 +40,22 @@ ANDROID_SERIAL=R3CY903ZYQV ./gradlew :app:connectedDebugAndroidTest
 | 클래스 | 테스트 수 | 확인하는 것 | 결과 |
 |---|---|---|---|
 | `com.cowork.bikerecoder.ui.settings.SettingsScreenTest` | 6 | 설정 화면(기록 설정 두 가지 포함) | 기기 검증 대기 |
-| `com.cowork.bikerecoder.data.RoomRideStoreTest` | 6 | 구간·위치 저장, 날짜 합계, 삭제 CASCADE | 기기 검증 대기 |
+| `com.cowork.bikerecoder.data.RoomRideStoreTest` | 7 | 구간·위치 저장, 날짜 합계, 빈 구간은 목록에서 제외, 삭제 CASCADE | 기기 검증 대기 |
 | `com.cowork.bikerecoder.data.RideDatabaseMigrationTest` | 1 | DB v1 → v2 후 기존 여행 유지 (스펙 ⑥) | 기기 검증 대기 |
 | `com.cowork.bikerecoder.data.RoomTripStoreTest` | 6 | 여행 저장소(DB v2에서 재확인) | 기기 검증 대기 |
 | `com.cowork.bikerecoder.nav.NavigationScenarioTest` | 6 | 안내 GPX 시나리오, 공유 위치 스트림·옮긴 도우미 위에서 다시 실행 | 기기 검증 대기 |
-| `com.cowork.bikerecoder.ui.record.RecordScreenTest` | 8 | 기록 화면 2쪽, 자동 일시정지 칩, 정지 확인 | 기기 검증 대기 |
+| `com.cowork.bikerecoder.ui.record.RecordScreenTest` | 10 | 기록 화면 2쪽, 자동 일시정지 칩, 정지 확인, 쪽 점 48dp, 서비스 경고 | 기기 검증 대기 |
 | `com.cowork.bikerecoder.ui.trip.EndNavigationDialogTest` | 3 | 안내 종료 대화상자(기록과 함께 끝내기) | 기기 검증 대기 |
 | `com.cowork.bikerecoder.ui.history.HistoryScreenTest` | 3 | 목록 → 상세, 길게 눌러 삭제 | 기기 검증 대기 |
 | `com.cowork.bikerecoder.ride.RideScenarioTest` | 5 | GPX 시나리오 ①~⑤ (아래) | 기기 검증 대기 |
 
 `RideScenarioTest` 시나리오(20배속 재생, in-memory Room): ① 기록만 3km(시작 1회, 1km 문장 3회, 저장 거리 3,010m ±1) ② 신호 대기 2회(일시정지·재개 각 2회, 이동 시간 < 경과 시간, 거리 1,470m ±1) ③ 안내+기록(합친 문장 km 1·2, 안내만의 1km 문장 없음) ④ 강제 종료 후 [이어서 기록](구간 2개, 앞 구간 닫힘) ⑤ 도착(안내·기록 함께 종료, 거리 2,370m ±15, 여행 완료). 스펙 ⑥(마이그레이션)은 `RideDatabaseMigrationTest`입니다.
 
-이 외에 같은 명령으로 이미 있던 클래스(`GpxLocationSourceTest`, `MapLibreOfflineControllerTest`, `PlanScreenTest`, `SettingsSegmentActionsTest`)도 전체 실행에 포함됩니다. 기기 전체 테스트 수는 58개입니다.
+이 외에 같은 명령으로 이미 있던 클래스(`GpxLocationSourceTest`, `MapLibreOfflineControllerTest`, `PlanScreenTest`, `SettingsSegmentActionsTest`)도 전체 실행에 포함됩니다. 기기 전체 테스트 수는 61개입니다.
 
 | 기기 전체 실행 | 테스트 수 | 실패 | 결과 |
 |---|---|---|---|
-| `:app:connectedDebugAndroidTest` | 58 | ___ | 기기 검증 대기 |
+| `:app:connectedDebugAndroidTest` | 61 | ___ | 기기 검증 대기 |
 
 ### 수동 확인 (기기 검증 대기)
 
@@ -64,7 +64,9 @@ ANDROID_SERIAL=R3CY903ZYQV ./gradlew :app:connectedDebugAndroidTest
 | 확인 | 방법 | 결과 |
 |---|---|---|
 | 기록 흐름 | 지도의 [기록 시작] → 기록 화면 2쪽(지도/요약) 넘기기 → 일시정지·재개 → [종료] → 구간 요약. 기록 화면 캡처 1장을 남깁니다 | [ ] 미실시 |
-| 안내 화면의 기록 | 안내 시작 시 기록 자동 시작, 안내 화면 하단 페이저 넘기기, 안내 종료 대화상자에서 기록과 함께/안내만 종료, 요약 화면, 저장 실패 안내문 | [ ] 미실시 |
+| 안내 화면의 기록 | 안내 시작 시 기록 자동 시작(지도가 다시 그려지지 않고 그대로 이어지는지), 안내 화면 하단 페이저 넘기기, 안내 종료 대화상자에서 기록과 함께/안내만 종료, 요약 화면, 저장 실패 안내문 | [ ] 미실시 |
+| 안내 중 기록 조작 | 안내 화면 숫자 쪽의 [일시정지]/[재개], [자동 일시정지 ON/OFF], [기록 끝내기](안내는 계속, 요약은 안내가 끝날 때 또는 메인 화면에서) | [ ] 미실시 |
+| 음소거 | 안내 중 [음소거] → [안내만 끝내기] 뒤 기록의 1km·일시정지 문장이 다시 들리는지 | [ ] 미실시 |
 | 기록 목록 | 기록 목록 → 여행 상세 → 구간 상세, 고도·속도 그래프가 코스와 맞는지 | [ ] 미실시 |
 | 삭제 | 목록·상세에서 길게 눌러 삭제, 확인 후 사라지는지 | [ ] 미실시 |
 
