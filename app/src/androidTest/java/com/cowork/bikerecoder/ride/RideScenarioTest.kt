@@ -51,7 +51,8 @@ import org.junit.runner.RunWith
  * Recording scenarios (spec §5.2 ①–⑤) against the real [RideController] and [NavigationController] on the main
  * thread, an in-memory Room DB and a recording voice. The track is replayed at 20× through one
  * [SharedLocationSource] that both controllers subscribe to; [ReplayClock] makes the controller's clock run at the same
- * 20× so elapsed time matches the replay. Nothing is spoken for real and no file is written.
+ * 20× from the first fix's time (one t0 for the fixes and the clock), with ticks every 50 ms (1 s of replay time), so
+ * elapsed time and the GPS watchdog match the replay. Nothing is spoken for real and no file is written.
  */
 @RunWith(AndroidJUnit4::class)
 class RideScenarioTest {
@@ -93,7 +94,8 @@ class RideScenarioTest {
     private inner class Stack(fixes: List<LocationFix>, routeJson: String? = null, scope: CoroutineScope = newScope()) {
         val replay = Replay(fixes, SPEEDUP)
         val shared = SharedLocationSource({ replay }, scope)
-        val clock = ReplayClock(startMillis = System.currentTimeMillis(), speedup = SPEEDUP)
+        // One t0: the clock starts at the first fix's time.
+        val clock = ReplayClock(startMillis = fixes.first().timeMillis, speedup = SPEEDUP)
         val router = AssetRouter(listOfNotNull(routeJson))
         val navigation = NavigationController(
             router, tripManager, tripStore, NoOffline, voice, { shared }, flowOf(true), scope,
@@ -109,7 +111,9 @@ class RideScenarioTest {
             settings = flowOf(AppSettings()),
             scope = scope,
             clock = clock,
-            saveIntervalMs = 250,
+            // 1 s and 5 s of replay time.
+            tickIntervalMs = (1_000 / SPEEDUP).toLong(),
+            saveIntervalMs = (5_000 / SPEEDUP).toLong(),
         )
         val lastFixTime = fixes.last().timeMillis
 
