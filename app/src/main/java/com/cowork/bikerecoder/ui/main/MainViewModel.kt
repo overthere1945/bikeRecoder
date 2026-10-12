@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
+import com.cowork.bikerecoder.androidWarnLog
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.recording.RideSegment
@@ -253,8 +254,11 @@ class MainViewModel(
     }
 
     companion object {
+        private const val TAG = "MainViewModel"
+
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer {
+                val log = androidWarnLog(TAG)
                 MainViewModel(
                     container.tripManager,
                     container.tripStore,
@@ -264,7 +268,18 @@ class MainViewModel(
                     // Read without creating the ride controller (it would create the guidance and bind the TTS
                     // engine); without one nothing records, so every open segment is interrupted.
                     interrupted = {
-                        if (container.rideState == RideUiState.Idle) container.rideStore.openSegments().firstOrNull() else null
+                        if (container.rideState != RideUiState.Idle) {
+                            null
+                        } else {
+                            try {
+                                container.rideStore.openSegments().firstOrNull()
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                log.warn("Could not read the open segments", e)
+                                null
+                            }
+                        }
                     },
                     closeInterrupted = { container.ride.closeInterrupted() },
                 )

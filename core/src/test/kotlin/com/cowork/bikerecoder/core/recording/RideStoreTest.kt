@@ -30,4 +30,10 @@ class RideStoreTest {
     fun `empty ride stats convert to the zero totals`() {
         assertEquals(SegmentTotals.ZERO, RideStats.ZERO.toTotals())
     }
+
+    @Test
+    fun `segment average speed is distance over moving time`() {
+        assertEquals(5.0, SegmentTotals.ZERO.copy(distanceM = 1_000.0, movingTimeMs = 200_000).avgSpeedMps)
+        assertEquals(0.0, SegmentTotals.ZERO.copy(distanceM = 1_000.0, movingTimeMs = 0).avgSpeedMps)
+    }
 }

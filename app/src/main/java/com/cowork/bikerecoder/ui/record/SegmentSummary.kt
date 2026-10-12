@@ -21,7 +21,6 @@ import com.cowork.bikerecoder.core.recording.RideSegment
 @Composable
 fun SegmentSummaryContent(segment: RideSegment, map: @Composable (Modifier) -> Unit, onConfirm: () -> Unit) {
     val totals = segment.totals
-    val avgMps = if (totals.movingTimeMs > 0) totals.distanceM / (totals.movingTimeMs / 1_000.0) else 0.0
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier.fillMaxSize().systemBarsPadding().padding(16.dp),
@@ -39,7 +38,7 @@ fun SegmentSummaryContent(segment: RideSegment, map: @Composable (Modifier) -> U
                 "이동 시간" to RideFormat.clock(totals.movingTimeMs),
             )
             NumberRow(
-                "평균/최고" to "${RideFormat.speedKmh(avgMps)} / ${RideFormat.speedKmh(totals.maxSpeedMps)}km/h",
+                "평균/최고" to "${RideFormat.speedKmh(totals.avgSpeedMps)} / ${RideFormat.speedKmh(totals.maxSpeedMps)}km/h",
                 "누적 상승" to RideFormat.altitude(totals.ascentM),
             )
             map(Modifier.fillMaxWidth().weight(1f))

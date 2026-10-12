@@ -39,7 +39,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,7 +50,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -68,6 +66,7 @@ import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.nav.FinishReason
 import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.nav.NavigationService
+import com.cowork.bikerecoder.ui.common.KeepScreenOn
 import com.cowork.bikerecoder.ui.trip.EndNavigationDialog
 import com.cowork.bikerecoder.ui.trip.TRIP_COMPLETED
 import com.cowork.bikerecoder.ui.trip.canConvertToMultiDay
@@ -173,15 +172,6 @@ fun NavigateScreen(viewModel: NavigateViewModel, tileSource: TileSource, onClose
             },
             onDismiss = { askEnd = false },
         )
-    }
-}
-
-@Composable
-private fun KeepScreenOn(enabled: Boolean) {
-    val view = LocalView.current
-    DisposableEffect(view, enabled) {
-        view.keepScreenOn = enabled
-        onDispose { view.keepScreenOn = false }
     }
 }
 

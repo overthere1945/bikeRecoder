@@ -14,6 +14,10 @@ data class SegmentTotals(
     val minAltitudeM: Double?,
     val maxAltitudeM: Double?,
 ) {
+    /** 평균 속도 = distanceM / (movingTimeMs / 1000.0), 이동 시간 0이면 0 ([DayTotals.avgSpeedMps]와 같은 식). */
+    val avgSpeedMps: Double
+        get() = if (movingTimeMs > 0) distanceM / (movingTimeMs / 1000.0) else 0.0
+
     companion object {
         val ZERO = SegmentTotals(
             distanceM = 0.0,

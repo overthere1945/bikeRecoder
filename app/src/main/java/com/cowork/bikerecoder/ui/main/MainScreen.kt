@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,7 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -171,11 +172,16 @@ fun MainScreen(
             }
             if (!state.recording) {
                 // Disabled until the interrupted recording is answered (closing it would race the new start).
-                val enabled = state.canStartRecording
-                ExtendedFloatingActionButton(
-                    onClick = { if (enabled) withLocationPermission(onStartRecording) },
-                    containerColor = if (enabled) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceVariant,
-                    contentColor = if (enabled) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                Button(
+                    onClick = { withLocationPermission(onStartRecording) },
+                    enabled = state.canStartRecording,
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    ),
+                    elevation = ButtonDefaults.elevatedButtonElevation(defaultElevation = 6.dp),
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
                 ) { Text("● 기록 시작") }
             }
         }
@@ -187,9 +193,12 @@ fun MainScreen(
             onDismissRequest = {},
             text = { Text(RECORDING_INTERRUPTED) },
             confirmButton = {
+                // Without the permission the offer stays (the denial dialog explains why).
                 Button(onClick = {
-                    viewModel.dismissInterrupted()
-                    withLocationPermission { onContinueRecording(interrupted.tripId) }
+                    withLocationPermission {
+                        viewModel.dismissInterrupted()
+                        onContinueRecording(interrupted.tripId)
+                    }
                 }) { Text("이어서 기록") }
             },
             dismissButton = { TextButton(onClick = viewModel::closeInterruptedRide) { Text("종료") } },

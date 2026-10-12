@@ -34,7 +34,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,7 +47,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -65,6 +63,7 @@ import com.cowork.bikerecoder.map.CameraMode
 import com.cowork.bikerecoder.map.MapOverlay
 import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.nav.NavigationService
+import com.cowork.bikerecoder.ui.common.KeepScreenOn
 import com.cowork.bikerecoder.ride.RecordingEnd
 import com.cowork.bikerecoder.ride.RideUiState
 import kotlinx.coroutines.CoroutineScope
@@ -79,6 +78,9 @@ object RecordTags {
     const val STOP = "record-stop"
     const val BAND = "record-band"
     const val NUMBERS_PAGE = "record-numbers"
+
+    /** The top strip (chip and bands). */
+    const val TOP = "record-top"
 
     /** The bottom summary line of the map page. */
     const val SUMMARY = "record-summary"
@@ -181,8 +183,9 @@ fun RecordStatusContent(state: RideUiState, onClose: () -> Unit) {
 
 /**
  * The running recording (spec §3.2): the auto-pause chip and the pause / weak-GPS bands on top, two pages (the map with
- * the summary line, the numbers) and [일시정지]/[재개] [정지] below. Drags on the map move the map, so the pages turn by
- * swiping the summary line or the top bands, or by tapping the page dots.
+ * the summary line, the numbers) and [일시정지]/[재개] [정지] below. The pager itself takes no drags: MapLibre's view never
+ * asks its parents not to intercept, so a scrolling pager would claim every horizontal drag on the map and cancel it.
+ * Pages turn by swiping the summary line, the numbers page or the top strip, or by tapping the page dots.
  */
 @Composable
 fun RecordContent(
@@ -207,7 +210,8 @@ fun RecordContent(
                     .fillMaxWidth()
                     .statusBarsPadding()
                     .swipeTurnsPages(pager, scope)
-                    .padding(12.dp),
+                    .padding(12.dp)
+                    .testTag(RecordTags.TOP),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 FilterChip(
@@ -222,9 +226,15 @@ fun RecordContent(
                 if (state.gpsWeak) Band("GPS 신호 약함", MaterialTheme.colorScheme.error)
             }
 
-            HorizontalPager(state = pager, modifier = Modifier.weight(1f).fillMaxWidth().testTag(RecordTags.PAGER)) { page ->
+            HorizontalPager(
+                state = pager,
+                // Keeps the map page (its MapView and camera) alive while the numbers page shows.
+                beyondViewportPageCount = 1,
+                userScrollEnabled = false,
+                modifier = Modifier.weight(1f).fillMaxWidth().testTag(RecordTags.PAGER),
+            ) { page ->
                 if (page == MAP_PAGE) {
-                    // The summary line sits below the map, not over it, so a swipe on it reaches the pager.
+                    // The summary line sits below the map, not over it, so a swipe on it never reaches the map.
                     Column(modifier = Modifier.fillMaxSize()) {
                         map(Modifier.weight(1f).fillMaxWidth())
                         Text(
@@ -236,6 +246,7 @@ fun RecordContent(
                                 .background(MaterialTheme.colorScheme.surfaceVariant)
                                 .padding(vertical = 14.dp, horizontal = 12.dp)
                                 .alpha(dimAlpha)
+                                .swipeTurnsPages(pager, scope)
                                 .testTag(RecordTags.SUMMARY),
                         )
                     }
@@ -243,7 +254,7 @@ fun RecordContent(
                     RideNumbersPage(
                         stats = state.stats,
                         dimmed = paused != null,
-                        modifier = Modifier.fillMaxSize().testTag(RecordTags.NUMBERS_PAGE),
+                        modifier = Modifier.fillMaxSize().swipeTurnsPages(pager, scope).testTag(RecordTags.NUMBERS_PAGE),
                     )
                 }
             }
@@ -399,15 +410,6 @@ private fun SummaryMap(track: List<GeoPoint>, tileSource: TileSource, modifier: 
         initialZoom = 14.0,
         fit = fit,
     )
-}
-
-@Composable
-private fun KeepScreenOn(enabled: Boolean) {
-    val view = LocalView.current
-    DisposableEffect(view, enabled) {
-        view.keepScreenOn = enabled
-        onDispose { view.keepScreenOn = false }
-    }
 }
 
 private const val PAGE_COUNT = 2
