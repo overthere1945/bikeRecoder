@@ -29,6 +29,9 @@ class FakeRideStore(private val trips: FakeTripStore, private val clock: () -> L
     var failedAppends = 0
         private set
 
+    /** The next this many [appendPoints] calls throw (counted in [failedAppends]), then they work again. */
+    var failNextAppends = 0
+
     /** Successful [appendPoints] calls: (clock time, totals). */
     val appendCalls = mutableListOf<Pair<Long, SegmentTotals>>()
     val deletedTrips = mutableListOf<Long>()
@@ -41,7 +44,8 @@ class FakeRideStore(private val trips: FakeTripStore, private val clock: () -> L
     }
 
     override suspend fun appendPoints(segmentId: Long, points: List<TrackPoint>, totals: SegmentTotals) {
-        if (failAppend) {
+        if (failAppend || failNextAppends > 0) {
+            if (failNextAppends > 0) failNextAppends--
             failedAppends++
             throw IOException("disk full")
         }

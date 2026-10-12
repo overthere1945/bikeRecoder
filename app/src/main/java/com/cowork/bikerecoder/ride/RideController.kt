@@ -203,7 +203,8 @@ class RideController(
     }
 
     /**
-     * Stops the session, saves the last points, closes the segment, ends the trip as [end] says and shows
+     * Stops the session, saves the last points (a failed write is tried once more; failing again leaves the segment open
+     * at its last good save and the summary shows the error), closes the segment, ends the trip as [end] says and shows
      * [RideUiState.Finished]. A stop while starting waits for the start; a stop while stopping waits for that stop
      * (whose [end] wins).
      */
@@ -502,9 +503,13 @@ class RideController(
         r.stopping = true
         releaseKmSource(r)
         r.cancelJobs()
-        var ok = save(r)
+        // The last points: tried once more if the first write fails. If both fail, the segment stays open at its last
+        // good save (the interrupted-recording recovery or the next start closes it there) rather than being closed
+        // with totals its saved points do not have.
+        val saved = save(r) || save(r)
         val totals = session.stats.toTotals()
-        ok = saving("close segment ${r.segmentId}") { rideStore.closeSegment(r.segmentId, now, totals) } != null && ok
+        var ok = saved &&
+            saving("close segment ${r.segmentId}") { rideStore.closeSegment(r.segmentId, now, totals) } != null
         val tripId = r.tripId
         ok = when (end) {
             RecordingEnd.SEGMENT_ONLY -> true

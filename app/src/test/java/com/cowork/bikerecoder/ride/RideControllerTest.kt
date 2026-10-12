@@ -461,4 +461,41 @@ class RideControllerTest {
         assertTrue(log.messages.any { it.startsWith("Could not touch trip $tripId") }, log.messages.toString())
         assertTrue(h.store.appendCalls.isNotEmpty(), "the saves go on")
     }
+
+    @Test
+    fun aFailedFinalSaveIsRetriedOnceAtTheStop() = runTest {
+        val h = harness(straight(500.0))
+        val tripId = h.trip()
+        h.start(tripId)
+        play(12_500)
+        val segmentId = h.active.segmentId
+        h.store.failNextAppends = 1
+
+        h.controller.stopRecording(RecordingEnd.SEGMENT_ONLY)
+
+        val finished = h.controller.ui.value as RideUiState.Finished
+        assertNull(finished.error, "the retry saved the last points")
+        assertEquals(1, h.store.failedAppends)
+        assertNotNull(h.store.segment(segmentId)!!.endedAt)
+        assertEquals(13, h.store.points(segmentId).size, "every point up to the stop, once")
+    }
+
+    @Test
+    fun aFinalSaveFailingTwiceLeavesTheSegmentOpenForRecovery() = runTest {
+        val h = harness(straight(500.0))
+        val tripId = h.trip(TripType.MULTI_DAY)
+        h.start(tripId)
+        play(12_500)
+        val segmentId = h.active.segmentId
+        val lastGood = h.store.segment(segmentId)!!
+        h.store.failAppend = true
+
+        h.controller.stopRecording(RecordingEnd.SEGMENT_ONLY)
+
+        val finished = h.controller.ui.value as RideUiState.Finished
+        assertEquals(RideController.MSG_SAVE_PROBLEM, finished.error)
+        assertEquals(2, h.store.failedAppends, "tried once more")
+        assertEquals(lastGood, h.store.segment(segmentId), "still open at its last good save; recovery closes it there")
+        assertEquals(segmentId, h.store.openSegments().single().id)
+    }
 }
