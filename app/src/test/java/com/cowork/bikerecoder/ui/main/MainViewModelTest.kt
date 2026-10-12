@@ -239,4 +239,22 @@ class MainViewModelTest {
         runCurrent()
         assertTrue(vm.state.value.canStartRecording)
     }
+
+    @Test
+    fun aSummaryLeftByGuidanceIsPendingAndBlocksANewRecording() = runTest(dispatcher) {
+        val vm = viewModel()
+        assertFalse(vm.state.value.pendingSummary)
+        assertTrue(vm.state.value.canStartRecording)
+
+        // Arrival stopped the recording: its summary waits to be seen.
+        ride.value = RideUiState.Finished(segment(id = 4, tripId = 9).copy(endedAt = 60_000), emptyList(), error = null)
+        runCurrent()
+        assertTrue(vm.state.value.pendingSummary)
+        assertFalse(vm.state.value.canStartRecording, "[기록 시작] must not replace the summary")
+
+        ride.value = RideUiState.Idle // dismissed
+        runCurrent()
+        assertFalse(vm.state.value.pendingSummary)
+        assertTrue(vm.state.value.canStartRecording)
+    }
 }

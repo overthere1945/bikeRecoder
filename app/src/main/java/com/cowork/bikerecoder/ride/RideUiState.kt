@@ -39,3 +39,11 @@ sealed interface RideUiState {
      */
     data class Finished(val segment: RideSegment, val track: List<GeoPoint>, val error: String?) : RideUiState
 }
+
+/** The trip of a recording that is starting or running; null when none is. */
+val RideUiState.recordingTripId: Long?
+    get() = when (this) {
+        is RideUiState.Starting -> tripId
+        is RideUiState.Active -> tripId
+        else -> null
+    }

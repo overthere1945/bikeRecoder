@@ -189,10 +189,13 @@ fun BikeNavHost(
                     navController.openOnMain(route)
                 },
                 onStartRecording = {
-                    // While guiding, the recording belongs to the guided trip: no questions.
-                    when (val nav = container.navigationState) {
-                        is NavUiState.Starting -> navController.openOnMain(Routes.record(nav.tripId))
-                        is NavUiState.Active -> navController.openOnMain(Routes.record(nav.tripId))
+                    val nav = container.navigationState
+                    when {
+                        // A summary not seen yet is shown first, never replaced by a new start.
+                        container.rideState is RideUiState.Finished -> navController.openOnMain(Routes.record())
+                        // While guiding, the recording belongs to the guided trip: no questions.
+                        nav is NavUiState.Starting -> navController.openOnMain(Routes.record(nav.tripId))
+                        nav is NavUiState.Active -> navController.openOnMain(Routes.record(nav.tripId))
                         else -> tripStart.onRecordPressed()
                     }
                 },
@@ -211,6 +214,15 @@ fun BikeNavHost(
                 val ready = startState as? TripStartState.Ready ?: return@LaunchedEffect
                 tripStart.consumeReady()
                 navController.openOnMain(Routes.record(ready.tripId))
+            }
+            // A recording that ended while another screen showed (e.g. guidance arrival stopped it after the guidance
+            // screen was left): its summary is shown on the record screen. Checked live: [확인] there may have closed it
+            // before this state caught up.
+            val mainState by viewModel.state.collectAsStateWithLifecycle()
+            LaunchedEffect(mainState.pendingSummary) {
+                if (mainState.pendingSummary && container.rideState is RideUiState.Finished) {
+                    navController.openOnMain(Routes.record())
+                }
             }
         }
         composable(Routes.SEARCH) {
@@ -273,12 +285,15 @@ fun BikeNavHost(
                     planViewModel.clear()
                 }
             }
+            val isCurrent = { navController.currentBackStackEntry?.id == entry.id }
             NavigateScreen(
                 viewModel = viewModel,
                 tileSource = container.tileSource,
                 onClose = {
                     if (!navController.popBackStack(Routes.MAIN, inclusive = false)) navController.navigate(Routes.MAIN)
                 },
+                // [안내만 끝내기 (기록 계속)]: the recording goes on, on the record screen.
+                onGuidanceEndedWhileRecording = { if (isCurrent()) navController.openOnMain(Routes.record()) },
             )
         }
         composable(

@@ -45,15 +45,15 @@ fun TripStartDialogs(
     }
 }
 
-/** [종료] on the guidance screen: "안내를 끝낼까요?" with the trip type's choices (see [endChoices]). */
+/** [종료] on the guidance screen: "안내를 끝낼까요?" with the trip type's choices, which depend on [recording] ([endChoices]). */
 @Composable
-fun EndNavigationDialog(type: TripType, onChoose: (EndAction) -> Unit, onDismiss: () -> Unit) {
+fun EndNavigationDialog(type: TripType, recording: Boolean, onChoose: (EndAction) -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         text = { Text(END_QUESTION) },
         confirmButton = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                endChoices(type).forEach { choice ->
+                endChoices(type, recording).forEach { choice ->
                     Button(onClick = { onChoose(choice.action) }, modifier = Modifier.fillMaxWidth()) { Text(choice.label) }
                 }
                 OutlinedButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("취소") }

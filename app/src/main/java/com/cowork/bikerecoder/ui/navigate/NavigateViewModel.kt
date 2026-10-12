@@ -10,11 +10,15 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.nav.FinishReason
 import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.nav.NavigationController
 import com.cowork.bikerecoder.offline.OfflineProgress
+import com.cowork.bikerecoder.ride.RideUiState
+import com.cowork.bikerecoder.ride.recordingTripId
 import com.cowork.bikerecoder.tts.VoiceOutput
 import com.cowork.bikerecoder.ui.trip.EndAction
+import com.cowork.bikerecoder.ui.trip.canConvertToMultiDay
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -46,9 +50,18 @@ class NavigateViewModel(
     log: WarnLog = androidWarnLog(TAG),
     /** "화면이 꺼지면 안내가 멈출 수 있습니다" when the location foreground service could not start. */
     val serviceWarning: StateFlow<String?> = MutableStateFlow(null),
+    /** The app-wide recording (shown with the guidance; its summary when both end). */
+    val rideUi: StateFlow<RideUiState> = MutableStateFlow(RideUiState.Idle),
+    /** Closes the recording's summary ([com.cowork.bikerecoder.ride.RideController.dismissSummary]). */
+    private val dismissRideSummary: () -> Unit = {},
 ) : ViewModel() {
 
     val ui: StateFlow<NavUiState> = controller.ui
+
+    /** A recording is starting or running: [종료] offers to end the guidance only, and the recording goes on. */
+    val recording: StateFlow<Boolean> = rideUi.map(::isRecording)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, isRecording(rideUi.value))
+
     val keepScreenOn: StateFlow<Boolean> = keepScreenOn.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
     private val _ttsNotice = MutableStateFlow(false)
@@ -93,11 +106,28 @@ class NavigateViewModel(
         when (action) {
             EndAction.STOP_TODAY -> controller.stopToday()
             EndAction.COMPLETE_TRIP -> viewModelScope.launch { controller.completeTrip() }
+            // The trip stays as it is; the recording goes on (the screen then shows the record screen).
+            EndAction.END_GUIDANCE_ONLY -> controller.close()
         }
     }
 
+    /** [여러 날로 바꾸기] on the finished screen; the summary shown with it is closed once the trip is converted. */
     fun convertToMultiDay() {
-        viewModelScope.launch { controller.convertToMultiDay() }
+        viewModelScope.launch {
+            controller.convertToMultiDay()
+            if (controller.ui.value == NavUiState.Idle) dismissSummary()
+        }
+    }
+
+    /** [확인] (or back) on the finished screen: closes the recording's summary shown there, then the guidance. */
+    fun confirmFinished() {
+        dismissSummary()
+        close()
+    }
+
+    /** Only a summary: a start error of the recording is not shown here. */
+    private fun dismissSummary() {
+        if (rideUi.value is RideUiState.Finished) dismissRideSummary()
     }
 
     /** Leave guidance without changing the trip (cancel a start, close an error or a finished trip). */
@@ -124,8 +154,45 @@ class NavigateViewModel(
                     markTtsNoticeShown = { container.settings.update { it.copy(ttsNoticeShown = true) } },
                     offlineProgress = container.offlineMaps.progress,
                     serviceWarning = container.guidanceService.warning,
+                    // Starting the guidance creates the ride controller anyway (it follows the guidance).
+                    rideUi = container.ride.ui,
+                    dismissRideSummary = container.ride::dismissSummary,
                 )
             }
         }
+    }
+}
+
+private fun isRecording(ride: RideUiState): Boolean = ride.recordingTripId != null
+
+/** What the guidance screen shows once guidance finished (spec §3.3, §3.4). */
+sealed interface FinishedView {
+    /** The recording of the guided trip is still stopping: its summary comes next. */
+    data object Waiting : FinishedView
+
+    /** Stopped for today without a summary: nothing to confirm (the main screen's banner offers [이어서 안내]). */
+    data object Close : FinishedView
+
+    /** The trip's new state was not saved: say so instead of reporting success. */
+    data class Error(val message: String) : FinishedView
+
+    /**
+     * [summary] (the guided trip's segment, null if none) above "여행을 완료했습니다" when [completed], with
+     * [여러 날로 바꾸기] when [canConvert], and [확인].
+     */
+    data class Done(val summary: RideUiState.Finished?, val completed: Boolean, val canConvert: Boolean) : FinishedView
+}
+
+/** The finished screen for [nav] while the recording is [ride]. */
+fun finishedView(nav: NavUiState.Finished, ride: RideUiState): FinishedView {
+    // Any finished guidance stops the recording of its trip; wait for that stop (also before closing for today).
+    if (ride.recordingTripId == nav.tripId) return FinishedView.Waiting
+    nav.error?.let { return FinishedView.Error(it) }
+    val summary = (ride as? RideUiState.Finished)?.takeIf { it.segment.tripId == nav.tripId }
+    return when {
+        nav.reason != FinishReason.STOPPED_TODAY ->
+            FinishedView.Done(summary, completed = true, canConvert = canConvertToMultiDay(nav))
+        summary != null -> FinishedView.Done(summary, completed = false, canConvert = false)
+        else -> FinishedView.Close
     }
 }

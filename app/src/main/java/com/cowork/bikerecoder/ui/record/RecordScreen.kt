@@ -2,8 +2,6 @@ package com.cowork.bikerecoder.ui.record
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,13 +10,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -45,11 +40,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -66,7 +58,6 @@ import com.cowork.bikerecoder.nav.NavigationService
 import com.cowork.bikerecoder.ui.common.KeepScreenOn
 import com.cowork.bikerecoder.ride.RecordingEnd
 import com.cowork.bikerecoder.ride.RideUiState
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 /** Test tags of the record screen. */
@@ -197,7 +188,7 @@ fun RecordContent(
     onEnd: (RecordingEnd) -> Unit,
     map: @Composable (Modifier) -> Unit,
 ) {
-    val pager = rememberPagerState { PAGE_COUNT }
+    val pager = rememberPagerState { RIDE_PAGE_COUNT }
     val scope = rememberCoroutineScope()
     var askEnd by rememberSaveable { mutableStateOf(false) }
     val paused = state.state as? RecordingState.Paused
@@ -233,7 +224,7 @@ fun RecordContent(
                 userScrollEnabled = false,
                 modifier = Modifier.weight(1f).fillMaxWidth().testTag(RecordTags.PAGER),
             ) { page ->
-                if (page == MAP_PAGE) {
+                if (page == RIDE_MAP_PAGE) {
                     // The summary line sits below the map, not over it, so a swipe on it never reaches the map.
                     Column(modifier = Modifier.fillMaxSize()) {
                         map(Modifier.weight(1f).fillMaxWidth())
@@ -313,50 +304,6 @@ private fun RecordEndDialog(type: TripType, navigating: Boolean, onChoose: (Reco
     )
 }
 
-/** A horizontal swipe here turns the page (one page per swipe). */
-private fun Modifier.swipeTurnsPages(pager: PagerState, scope: CoroutineScope): Modifier = pointerInput(pager) {
-    var total = 0f
-    detectHorizontalDragGestures(
-        onDragStart = { total = 0f },
-        onDragEnd = {
-            val target = when {
-                total < -SWIPE_THRESHOLD_PX -> pager.currentPage + 1
-                total > SWIPE_THRESHOLD_PX -> pager.currentPage - 1
-                else -> pager.currentPage
-            }.coerceIn(0, PAGE_COUNT - 1)
-            if (target != pager.currentPage) scope.launch { pager.animateScrollToPage(target) }
-        },
-    ) { change, dx ->
-        total += dx
-        change.consume()
-    }
-}
-
-@Composable
-private fun PageDots(current: Int, onSelect: (Int) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        repeat(PAGE_COUNT) { page ->
-            val name = if (page == MAP_PAGE) "지도" else "숫자"
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(24.dp)
-                    .clickable { onSelect(page) }
-                    .semantics { contentDescription = name },
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(8.dp)
-                        .background(
-                            if (page == current) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                            CircleShape,
-                        ),
-                )
-            }
-        }
-    }
-}
-
 @Composable
 private fun Band(text: String, color: Color, modifier: Modifier = Modifier) {
     Text(
@@ -397,7 +344,7 @@ private fun RecordMap(state: RideUiState.Active, tileSource: TileSource, modifie
 
 /** The summary's map: the whole track framed. */
 @Composable
-private fun SummaryMap(track: List<GeoPoint>, tileSource: TileSource, modifier: Modifier) {
+internal fun SummaryMap(track: List<GeoPoint>, tileSource: TileSource, modifier: Modifier) {
     val fit = remember(track) { track.takeIf { it.isNotEmpty() }?.let { CameraFit(it) } }
     BikeMap(
         tileSource = tileSource,
@@ -412,7 +359,4 @@ private fun SummaryMap(track: List<GeoPoint>, tileSource: TileSource, modifier: 
     )
 }
 
-private const val PAGE_COUNT = 2
-private const val MAP_PAGE = 0
 private const val DIMMED_ALPHA = 0.4f
-private const val SWIPE_THRESHOLD_PX = 48f

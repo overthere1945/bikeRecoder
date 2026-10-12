@@ -15,6 +15,7 @@ import com.cowork.bikerecoder.core.trip.TripManager
 import com.cowork.bikerecoder.core.trip.TripStop
 import com.cowork.bikerecoder.core.trip.TripStore
 import com.cowork.bikerecoder.core.trip.TripType
+import com.cowork.bikerecoder.ride.recordingTripId
 import com.cowork.bikerecoder.ui.plan.PlannedStop
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -62,6 +63,11 @@ fun List<PlannedStop>.toTripStops(): List<TripStop> = mapIndexed { index, stop -
  *
  * [● 기록 시작] on the map main screen ([onRecordPressed]) asks the same questions for a recording without a plan:
  * a new trip has no stops and [defaultProfile]; [이어서] keeps the trip's stops and profile as they are.
+ *
+ * A recording of another trip ([recordingTrip]) is ended by [endRecording] (a segment only, no summary) before the
+ * new trip starts or another trip is continued: starting a trip completes the active one, which must not happen under
+ * a live recording, and the new guidance then records its own trip. Stopping is preferred over refusing the start:
+ * the user has already chosen to end that trip, and the segment keeps every point recorded so far.
  */
 class TripStartViewModel(
     private val tripManager: TripManager,
@@ -69,6 +75,10 @@ class TripStartViewModel(
     private val log: WarnLog = androidWarnLog(TAG),
     /** The settings' route profile, for trips started by [onRecordPressed]. */
     private val defaultProfile: suspend () -> RouteProfile = { RouteProfile.CYCLEWAY_FIRST },
+    /** The trip being recorded (starting or running), null if none. */
+    private val recordingTrip: () -> Long? = { null },
+    /** Ends that recording as a segment only, leaving no summary. */
+    private val endRecording: suspend () -> Unit = {},
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<TripStartState>(TripStartState.Idle)
@@ -104,7 +114,11 @@ class TripStartViewModel(
     fun chooseType(type: TripType) {
         val p = plan ?: return
         if (_state.value != TripStartState.AskType) return
-        work { TripStartState.Ready(tripManager.startTrip(type, p.profile, p.stops.toTripStops()).id) }
+        work {
+            // A new trip: whatever is recorded belongs to another trip.
+            if (recordingTrip() != null) endRecording()
+            TripStartState.Ready(tripManager.startTrip(type, p.profile, p.stops.toTripStops()).id)
+        }
     }
 
     fun continueTrip() {
@@ -112,6 +126,7 @@ class TripStartViewModel(
         val ask = _state.value as? TripStartState.AskContinue ?: return
         work {
             val tripId = ask.trip.id
+            if (recordingTrip().let { it != null && it != tripId }) endRecording()
             // Recording only: the trip keeps its stops and profile.
             if (recordOnly) return@work TripStartState.Ready(tripId)
             // The route is computed from the trip's profile: the one chosen on the plan screen wins.
@@ -176,6 +191,9 @@ class TripStartViewModel(
                     container.tripManager,
                     container.tripStore,
                     defaultProfile = { container.settings.settings.first().defaultProfile },
+                    // Read without creating the ride controller; it exists whenever something records.
+                    recordingTrip = { container.rideState.recordingTripId },
+                    endRecording = { container.ride.endForAnotherTrip() },
                 )
             }
         }

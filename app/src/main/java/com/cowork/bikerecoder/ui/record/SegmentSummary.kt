@@ -17,9 +17,17 @@ import androidx.compose.ui.unit.dp
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.recording.RideSegment
 
-/** The summary after a recording ends (spec §3.4): distance, moving time, average/maximum, climb and the map. */
+/**
+ * The summary after a recording ends (spec §3.4): distance, moving time, average/maximum, climb and the map, then
+ * [footer] (e.g. the guidance's "여행을 완료했습니다") above [확인].
+ */
 @Composable
-fun SegmentSummaryContent(segment: RideSegment, map: @Composable (Modifier) -> Unit, onConfirm: () -> Unit) {
+fun SegmentSummaryContent(
+    segment: RideSegment,
+    map: @Composable (Modifier) -> Unit,
+    onConfirm: () -> Unit,
+    footer: @Composable () -> Unit = {},
+) {
     val totals = segment.totals
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -42,6 +50,7 @@ fun SegmentSummaryContent(segment: RideSegment, map: @Composable (Modifier) -> U
                 "누적 상승" to RideFormat.altitude(totals.ascentM),
             )
             map(Modifier.fillMaxWidth().weight(1f))
+            footer()
             Button(onClick = onConfirm, modifier = Modifier.fillMaxWidth()) { Text("확인") }
         }
     }

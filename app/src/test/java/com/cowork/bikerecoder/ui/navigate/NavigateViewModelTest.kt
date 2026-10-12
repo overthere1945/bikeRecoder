@@ -3,6 +3,10 @@ package com.cowork.bikerecoder.ui.navigate
 import androidx.lifecycle.SavedStateHandle
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.RouteProfile
+import com.cowork.bikerecoder.core.recording.RecordingState
+import com.cowork.bikerecoder.core.recording.RideSegment
+import com.cowork.bikerecoder.core.recording.RideStats
+import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.trip.TripManager
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripStop
@@ -17,6 +21,7 @@ import com.cowork.bikerecoder.nav.RecordingVoiceOutput
 import com.cowork.bikerecoder.nav.ScriptedLocationSource
 import com.cowork.bikerecoder.nav.fixture
 import com.cowork.bikerecoder.nav.gpxFixture
+import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.tts.VoiceOutput
 import com.cowork.bikerecoder.ui.trip.EndAction
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +43,7 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import java.time.LocalDate
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class NavigateViewModelTest {
@@ -55,6 +61,10 @@ class NavigateViewModelTest {
 
     private class Setup(val vm: NavigateViewModel, val tripManager: TripManager, val controller: NavigationController)
 
+    /** The recording the view model sees, and how often its summary was dismissed. */
+    private val rideUi = MutableStateFlow<RideUiState>(RideUiState.Idle)
+    private var summaryDismissals = 0
+
     private fun TestScope.setup(
         args: Map<String, Any?> = emptyMap(),
         voice: VoiceOutput = RecordingVoiceOutput(),
@@ -70,6 +80,11 @@ class NavigateViewModelTest {
         val vm = NavigateViewModel(
             controller, voice, flowOf(true), SavedStateHandle(args), noticeShown, { noticeShown.value = true },
             serviceWarning = serviceStatus.warning,
+            rideUi = rideUi,
+            dismissRideSummary = {
+                summaryDismissals++
+                rideUi.value = RideUiState.Idle
+            },
         )
         return Setup(vm, tripManager, controller)
     }
@@ -190,5 +205,159 @@ class NavigateViewModelTest {
         runCurrent()
 
         assertFalse(s.vm.ttsNotice.value)
+    }
+
+    private fun recordingOf(tripId: Long) = RideUiState.Active(
+        tripId = tripId,
+        tripType = TripType.SINGLE_DAY,
+        segmentId = 1,
+        state = RecordingState.Recording,
+        stats = RideStats.ZERO.copy(distanceM = 1_200.0, movingTimeMs = 240_000),
+        autoPause = true,
+        track = emptyList(),
+        fix = null,
+        gpsWeak = false,
+        saveWarning = null,
+    )
+
+    private fun summaryOf(tripId: Long, error: String? = null) = RideUiState.Finished(
+        segment = RideSegment(1, tripId, startedAt = 0, endedAt = 60_000, LocalDate.of(2026, 10, 12), SegmentTotals.ZERO),
+        track = emptyList(),
+        error = error,
+    )
+
+    @Test
+    fun endGuidanceOnlyKeepsTheTripAndGoesIdle() = runTest(dispatcher) {
+        val s = setup()
+        val id = s.runningTrip(TripType.SINGLE_DAY)
+        rideUi.value = recordingOf(id)
+
+        s.vm.onEndChoice(EndAction.END_GUIDANCE_ONLY)
+        runCurrent()
+
+        assertEquals(NavUiState.Idle, s.vm.ui.value)
+        assertEquals(TripStatus.ACTIVE, store.trips.getValue(id).status)
+        assertEquals(0, summaryDismissals, "the recording goes on")
+    }
+
+    @Test
+    fun recordingFlagFollowsRideUi() = runTest(dispatcher) {
+        val s = setup()
+        runCurrent()
+        assertFalse(s.vm.recording.value)
+
+        rideUi.value = RideUiState.Starting(1)
+        runCurrent()
+        assertTrue(s.vm.recording.value, "a starting recording goes on after the guidance ends")
+
+        rideUi.value = recordingOf(1)
+        runCurrent()
+        assertTrue(s.vm.recording.value)
+
+        rideUi.value = summaryOf(1)
+        runCurrent()
+        assertFalse(s.vm.recording.value)
+    }
+
+    @Test
+    fun theFinishedScreenWaitsForTheRecordingOfItsTripToStop() {
+        val arrived = NavUiState.Finished(1, TripType.SINGLE_DAY, FinishReason.ARRIVED)
+        val stopped = NavUiState.Finished(1, TripType.MULTI_DAY, FinishReason.STOPPED_TODAY)
+
+        assertEquals(FinishedView.Waiting, finishedView(arrived, recordingOf(1)))
+        assertEquals(FinishedView.Waiting, finishedView(arrived, RideUiState.Starting(1)))
+        // A stop for today must not close before its summary arrives.
+        assertEquals(FinishedView.Waiting, finishedView(stopped, recordingOf(1)))
+        // A recording of another trip is not stopped by this guidance: nothing to wait for.
+        assertEquals(FinishedView.Done(summary = null, completed = true, canConvert = true), finishedView(arrived, recordingOf(2)))
+    }
+
+    @Test
+    fun theSegmentSummaryIsShownAboveTheTripCompletion() {
+        val summary = summaryOf(1)
+
+        assertEquals(
+            FinishedView.Done(summary, completed = true, canConvert = true),
+            finishedView(NavUiState.Finished(1, TripType.SINGLE_DAY, FinishReason.ARRIVED), summary),
+        )
+        assertEquals(
+            FinishedView.Done(summary, completed = true, canConvert = false),
+            finishedView(NavUiState.Finished(1, TripType.MULTI_DAY, FinishReason.COMPLETED), summary),
+        )
+        // Not recording: V1.0.0.
+        assertEquals(
+            FinishedView.Done(summary = null, completed = true, canConvert = true),
+            finishedView(NavUiState.Finished(1, TripType.SINGLE_DAY, FinishReason.COMPLETED), RideUiState.Idle),
+        )
+        // Another trip's summary is not this guidance's.
+        assertEquals(
+            FinishedView.Done(summary = null, completed = true, canConvert = true),
+            finishedView(NavUiState.Finished(1, TripType.SINGLE_DAY, FinishReason.COMPLETED), summaryOf(2)),
+        )
+    }
+
+    @Test
+    fun stoppedTodayClosesAtOnceUnlessThereIsASummary() {
+        val stopped = NavUiState.Finished(1, TripType.MULTI_DAY, FinishReason.STOPPED_TODAY)
+        val summary = summaryOf(1)
+
+        assertEquals(FinishedView.Close, finishedView(stopped, RideUiState.Idle))
+        assertEquals(FinishedView.Done(summary, completed = false, canConvert = false), finishedView(stopped, summary))
+    }
+
+    @Test
+    fun aTripWriteErrorIsShownInsteadOfSuccess() {
+        val failed = NavUiState.Finished(1, TripType.SINGLE_DAY, FinishReason.ARRIVED, error = "저장 실패")
+
+        assertEquals(FinishedView.Error("저장 실패"), finishedView(failed, summaryOf(1)))
+        assertEquals(FinishedView.Waiting, finishedView(failed, recordingOf(1)))
+    }
+
+    @Test
+    fun confirmingTheFinishedScreenDismissesTheSummaryAndCloses() = runTest(dispatcher) {
+        val s = setup()
+        val id = s.runningTrip(TripType.SINGLE_DAY)
+        s.vm.onEndChoice(EndAction.COMPLETE_TRIP)
+        runCurrent()
+        rideUi.value = summaryOf(id)
+        runCurrent()
+
+        s.vm.confirmFinished()
+
+        assertEquals(1, summaryDismissals)
+        assertEquals(RideUiState.Idle, rideUi.value)
+        assertEquals(NavUiState.Idle, s.vm.ui.value)
+    }
+
+    @Test
+    fun confirmingWithoutASummaryDismissesNothing() = runTest(dispatcher) {
+        val s = setup()
+        s.runningTrip(TripType.SINGLE_DAY)
+        s.vm.onEndChoice(EndAction.COMPLETE_TRIP)
+        runCurrent()
+        rideUi.value = RideUiState.Failed(9, "기록을 시작하지 못했습니다")
+        runCurrent()
+
+        s.vm.confirmFinished()
+
+        assertEquals(0, summaryDismissals, "only a summary is dismissed here")
+        assertEquals(NavUiState.Idle, s.vm.ui.value)
+    }
+
+    @Test
+    fun convertingToMultiDayDismissesTheSummaryItWasShownWith() = runTest(dispatcher) {
+        val s = setup()
+        val id = s.runningTrip(TripType.SINGLE_DAY)
+        s.vm.onEndChoice(EndAction.COMPLETE_TRIP)
+        runCurrent()
+        rideUi.value = summaryOf(id)
+        runCurrent()
+
+        s.vm.convertToMultiDay()
+        runCurrent()
+
+        assertEquals(NavUiState.Idle, s.vm.ui.value)
+        assertEquals(TripType.MULTI_DAY, store.trips.getValue(id).type)
+        assertEquals(1, summaryDismissals)
     }
 }

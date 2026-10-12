@@ -5,11 +5,23 @@ import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.trip.TripManager
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripType
+import com.cowork.bikerecoder.data.AppSettings
+import com.cowork.bikerecoder.nav.AssetRouter
 import com.cowork.bikerecoder.nav.FakeTripStore
+import com.cowork.bikerecoder.nav.NavigationController
+import com.cowork.bikerecoder.nav.RecordingLog
 import com.cowork.bikerecoder.nav.RecordingOfflineMaps
+import com.cowork.bikerecoder.nav.RecordingVoiceOutput
+import com.cowork.bikerecoder.nav.ScriptedLocationSource
+import com.cowork.bikerecoder.ride.FakeRideStore
+import com.cowork.bikerecoder.ride.RideController
+import com.cowork.bikerecoder.ride.RideUiState
+import com.cowork.bikerecoder.ride.recordingTripId
 import com.cowork.bikerecoder.ui.plan.PlannedStop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.resetMain
@@ -19,6 +31,8 @@ import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
+import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -292,5 +306,110 @@ class TripStartViewModelTest {
         runCurrent()
 
         assertEquals(TripStartState.Idle, vm.state.value)
+    }
+
+    /** A real recording controller on the same fakes (no fixes needed: only starting and stopping matter here). */
+    private inner class Recording(scope: TestScope) {
+        val clock = { scope.testScheduler.currentTime }
+        val rideStore = FakeRideStore(store, clock)
+        private val log = RecordingLog()
+        val controller = RideController(
+            rideStore = rideStore,
+            tripStore = store,
+            tripManager = tripManager,
+            navigation = NavigationController(
+                AssetRouter(emptyList()), tripManager, store, offline, RecordingVoiceOutput(),
+                { ScriptedLocationSource(emptyList()) }, flowOf(true), scope.backgroundScope, clock = clock, log = log,
+            ),
+            voice = RecordingVoiceOutput(),
+            location = ScriptedLocationSource(emptyList()),
+            pressure = null,
+            settings = MutableStateFlow(AppSettings()),
+            scope = scope.backgroundScope,
+            clock = clock,
+            log = log,
+        )
+
+        /** The trip's status when the recording was ended for another trip (null: never ended). */
+        var statusWhenEnded: TripStatus? = null
+
+        fun viewModel(recordedTrip: Long) = TripStartViewModel(
+            tripManager,
+            store,
+            recordingTrip = { controller.ui.value.recordingTripId },
+            endRecording = {
+                controller.endForAnotherTrip()
+                statusWhenEnded = store.trips.getValue(recordedTrip).status
+            },
+        )
+
+        suspend fun record(tripId: Long) {
+            val start = controller.startRecording(tripId)
+            assertNotNull(start, "started")
+            start!!.join()
+            assertInstanceOf(RideUiState.Active::class.java, controller.ui.value)
+        }
+    }
+
+    @Test
+    fun guidingANewTripFirstEndsTheRunningRecordingAsASegmentWithoutSummary() = runTest(dispatcher) {
+        val r = Recording(this)
+        val old = existingTrip(TripType.SINGLE_DAY)
+        r.record(old)
+        val vm = r.viewModel(old).also { runCurrent() }
+
+        vm.onStartPressed(plan)
+        runCurrent()
+        assertEquals(TripStartState.AskType, vm.state.value)
+        assertEquals(null, r.statusWhenEnded, "asking ends nothing")
+        vm.chooseType(TripType.SINGLE_DAY)
+        runCurrent()
+
+        val ready = vm.state.value as TripStartState.Ready
+        assertNotEquals(old, ready.tripId)
+        // The segment was closed while the old trip was still active, and only then was the old trip completed.
+        assertEquals(TripStatus.ACTIVE, r.statusWhenEnded)
+        assertNotNull(r.rideStore.segments(old).single().endedAt)
+        assertEquals(TripStatus.COMPLETED, store.trips.getValue(old).status)
+        assertEquals(RideUiState.Idle, r.controller.ui.value, "no summary is left behind")
+    }
+
+    @Test
+    fun startNewOnARecordedMultiDayTripEndsItsRecordingFirst() = runTest(dispatcher) {
+        val r = Recording(this)
+        val old = existingTrip(TripType.MULTI_DAY)
+        r.record(old)
+        val vm = r.viewModel(old).also { runCurrent() }
+
+        vm.onStartPressed(plan)
+        runCurrent()
+        assertInstanceOf(TripStartState.AskContinue::class.java, vm.state.value)
+        vm.startNew()
+        vm.chooseType(TripType.MULTI_DAY)
+        runCurrent()
+
+        assertInstanceOf(TripStartState.Ready::class.java, vm.state.value)
+        assertEquals(TripStatus.ACTIVE, r.statusWhenEnded)
+        assertNotNull(r.rideStore.segments(old).single().endedAt)
+        assertEquals(TripStatus.COMPLETED, store.trips.getValue(old).status)
+        assertEquals(RideUiState.Idle, r.controller.ui.value)
+    }
+
+    @Test
+    fun continuingTheRecordedTripKeepsItsRecording() = runTest(dispatcher) {
+        val r = Recording(this)
+        val old = existingTrip(TripType.MULTI_DAY)
+        r.record(old)
+        val vm = r.viewModel(old).also { runCurrent() }
+
+        vm.onStartPressed(plan)
+        runCurrent()
+        vm.continueTrip()
+        runCurrent()
+
+        assertEquals(TripStartState.Ready(old), vm.state.value)
+        assertEquals(null, r.statusWhenEnded)
+        assertInstanceOf(RideUiState.Active::class.java, r.controller.ui.value)
+        assertEquals(null, r.rideStore.segments(old).single().endedAt)
     }
 }

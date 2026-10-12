@@ -206,6 +206,17 @@ class RideController(
         scope.launch { finish(r, end) }.join()
     }
 
+    /**
+     * Another trip is about to start (and the recorded trip to end): stops the running recording as
+     * [RecordingEnd.SEGMENT_ONLY] — its segment is closed while its trip is still active — and leaves no summary
+     * behind. Does nothing unless a recording is starting or running.
+     */
+    suspend fun endForAnotherTrip() {
+        if (run == null) return
+        stopRecording(RecordingEnd.SEGMENT_ONLY)
+        dismissSummary()
+    }
+
     /** Closes the summary or the start error. */
     fun dismissSummary() {
         val state = _ui.value

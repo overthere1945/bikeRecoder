@@ -77,15 +77,20 @@ data class MainUiState(
     val interrupted: InterruptedRide? = null,
     /** The interrupted-recording check has not answered yet, or its [종료] is still closing the segment. */
     val recoveryBusy: Boolean = false,
+    /**
+     * A finished recording's summary has not been seen yet (e.g. guidance arrival stopped the recording while another
+     * screen showed): it is shown before anything else records.
+     */
+    val pendingSummary: Boolean = false,
 ) {
     /** The trip banner gives way to the riding banner. */
     val visibleBanner: TripBanner? get() = banner.takeUnless { guiding || riding != null }
 
     /**
-     * [● 기록 시작] may start a recording: none runs, and the interrupted recording was answered (closing it would
-     * race the new start).
+     * [● 기록 시작] may start a recording: none runs, the interrupted recording was answered (closing it would
+     * race the new start) and no summary waits to be seen (a new start would replace it).
      */
-    val canStartRecording: Boolean get() = !recording && !recoveryBusy && interrupted == null
+    val canStartRecording: Boolean get() = !recording && !recoveryBusy && interrupted == null && !pendingSummary
 }
 
 class MainViewModel(
@@ -114,13 +119,14 @@ class MainViewModel(
         viewModelScope.launch {
             combine(guidance, ride) { nav, r -> riding(nav, r) }
                 .distinctUntilChanged()
-                .collect { (guiding, recording, riding) ->
+                .collect { (guiding, recording, riding, pendingSummary) ->
                     val before = _state.value
                     _state.update {
                         it.copy(
                             guiding = guiding,
                             recording = recording,
                             riding = riding,
+                            pendingSummary = pendingSummary,
                             // A new recording closes the leftover segment itself; while guiding it is not offered.
                             interrupted = it.interrupted.takeUnless { guiding || recording },
                         )
@@ -132,7 +138,12 @@ class MainViewModel(
         viewModelScope.launch { checkInterrupted() }
     }
 
-    private data class Riding(val guiding: Boolean, val recording: Boolean, val banner: RidingBanner?)
+    private data class Riding(
+        val guiding: Boolean,
+        val recording: Boolean,
+        val banner: RidingBanner?,
+        val pendingSummary: Boolean,
+    )
 
     /** A starting recording shows zero distance and time; a summary or a start error is not riding. */
     private fun riding(nav: NavUiState, rideState: RideUiState): Riding {
@@ -149,7 +160,7 @@ class MainViewModel(
             guiding -> RidingBanner("● 주행 중 · 안내 중", target)
             else -> null
         }
-        return Riding(guiding, stats != null, banner)
+        return Riding(guiding, stats != null, banner, pendingSummary = rideState is RideUiState.Finished)
     }
 
     /** Spec §4.6: offered once, when the main screen opens with nothing riding. */
