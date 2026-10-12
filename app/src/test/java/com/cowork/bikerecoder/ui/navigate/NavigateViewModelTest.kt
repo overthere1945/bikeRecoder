@@ -21,6 +21,8 @@ import com.cowork.bikerecoder.nav.RecordingVoiceOutput
 import com.cowork.bikerecoder.nav.ScriptedLocationSource
 import com.cowork.bikerecoder.nav.fixture
 import com.cowork.bikerecoder.nav.gpxFixture
+import com.cowork.bikerecoder.ride.RecordingEnd
+import com.cowork.bikerecoder.ride.RideControls
 import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.tts.VoiceOutput
 import com.cowork.bikerecoder.ui.trip.EndAction
@@ -62,6 +64,26 @@ class NavigateViewModelTest {
 
     private class Setup(val vm: NavigateViewModel, val tripManager: TripManager, val controller: NavigationController)
 
+    /** The recording commands the view model sent. */
+    private val rideCommands = mutableListOf<String>()
+    private val rideControls = object : RideControls {
+        override fun pause() {
+            rideCommands += "pause"
+        }
+
+        override fun resume() {
+            rideCommands += "resume"
+        }
+
+        override fun setAutoPause(enabled: Boolean) {
+            rideCommands += "autoPause $enabled"
+        }
+
+        override suspend fun stopRecording(end: RecordingEnd) {
+            rideCommands += "stop $end"
+        }
+    }
+
     /** The recording the view model sees, and how often its summary was dismissed. */
     private val rideUi = MutableStateFlow<RideUiState>(RideUiState.Idle)
     private var summaryDismissals = 0
@@ -86,6 +108,7 @@ class NavigateViewModelTest {
                 summaryDismissals++
                 rideUi.value = RideUiState.Idle
             },
+            rideControls = rideControls,
         )
         return Setup(vm, tripManager, controller)
     }
@@ -418,5 +441,23 @@ class NavigateViewModelTest {
         assertEquals("이전 기록 저장에 문제가 있습니다", s.vm.takeRecordNotice())
         assertNull(s.vm.takeRecordNotice())
         assertNull(setup(args = mapOf(NavigateViewModel.ARG_TRIP to 7L)).vm.takeRecordNotice())
+    }
+
+    @Test
+    fun theRecordControlsOfTheNumbersPageCommandTheRecording() = runTest(dispatcher) {
+        // Ruling F2: pause / resume / the auto-pause chip / [기록 끝내기] while guiding.
+        val s = setup()
+        val id = s.runningTrip(TripType.SINGLE_DAY)
+        rideUi.value = recordingOf(id)
+
+        s.vm.pauseRecording()
+        s.vm.resumeRecording()
+        s.vm.setRecordingAutoPause(false)
+        s.vm.endRecording()
+        runCurrent()
+
+        assertEquals(listOf("pause", "resume", "autoPause false", "stop SEGMENT_ONLY"), rideCommands)
+        assertInstanceOf(NavUiState.Active::class.java, s.vm.ui.value, "the guidance goes on")
+        assertEquals(TripStatus.ACTIVE, store.trips.getValue(id).status)
     }
 }

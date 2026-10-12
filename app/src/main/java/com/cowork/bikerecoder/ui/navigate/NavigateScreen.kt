@@ -74,11 +74,16 @@ import com.cowork.bikerecoder.nav.NavigationService
 import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.ride.recordingTripId
 import com.cowork.bikerecoder.ui.common.KeepScreenOn
+import com.cowork.bikerecoder.ui.record.AutoPauseChip
 import com.cowork.bikerecoder.ui.record.PageDots
+import com.cowork.bikerecoder.ui.record.PauseBand
+import com.cowork.bikerecoder.ui.record.PauseResumeButton
+import com.cowork.bikerecoder.ui.record.RecordEndDialog
 import com.cowork.bikerecoder.ui.record.RIDE_MAP_PAGE
 import com.cowork.bikerecoder.ui.record.RIDE_PAGE_COUNT
 import com.cowork.bikerecoder.ui.record.RideNumbersPage
 import com.cowork.bikerecoder.ui.record.SegmentSummaryContent
+import com.cowork.bikerecoder.ui.record.StopButton
 import com.cowork.bikerecoder.ui.record.SummaryMap
 import com.cowork.bikerecoder.ui.record.rideSummaryLine
 import com.cowork.bikerecoder.ui.record.swipeTurnsPages
@@ -98,6 +103,10 @@ object NavigateTags {
     const val RECORD_LINE = "navigate-record-line"
     const val NUMBERS_PAGE = "navigate-numbers"
     const val PANEL = "navigate-panel"
+    const val CHIP = "navigate-record-chip"
+    const val PAUSE = "navigate-record-pause"
+    const val RESUME = "navigate-record-resume"
+    const val END_RECORDING = "navigate-record-end"
 }
 
 private const val PAUSED_ALPHA = 0.4f
@@ -192,6 +201,12 @@ fun NavigateScreen(
                 serviceWarning = serviceWarning,
                 onMute = viewModel::setMuted,
                 onEnd = { askEnd = true },
+                recordControls = RecordControls(
+                    onPause = viewModel::pauseRecording,
+                    onResume = viewModel::resumeRecording,
+                    onToggleAutoPause = viewModel::setRecordingAutoPause,
+                    onEnd = viewModel::endRecording,
+                ),
             )
             is NavUiState.Finished -> when (val view = finishedView(state, ride)) {
                 FinishedView.Waiting -> SavingContent()
@@ -249,6 +264,7 @@ private fun ActiveContent(
     serviceWarning: String?,
     onMute: (Boolean) -> Unit,
     onEnd: () -> Unit,
+    recordControls: RecordControls,
 ) {
     var cameraMode by rememberSaveable { mutableStateOf(CameraMode.FOLLOW) }
     var fit by remember { mutableStateOf<CameraFit?>(null) }
@@ -323,13 +339,23 @@ private fun ActiveContent(
             mapPage = { recordLine -> MapPage(recordLine) },
             followButton = { if (cameraMode == CameraMode.FREE) FollowButton() },
             panel = { modifier -> Panel(modifier) },
+            controls = recordControls,
         )
     }
 }
 
+/** The recording's controls on the guidance numbers page (ruling F2). [onEnd]: [기록 끝내기] after its confirmation. */
+private class RecordControls(
+    val onPause: () -> Unit,
+    val onResume: () -> Unit,
+    val onToggleAutoPause: (Boolean) -> Unit,
+    val onEnd: () -> Unit,
+)
+
 /**
  * Guidance while recording (spec §3.3): two pages, the guidance map with the record line under the turn card, and the
- * recording's numbers; the bottom panel stays below both. As on the record screen the pager takes no drags (the map
+ * recording's numbers with its controls (ruling F2: the auto-pause chip, [일시정지]/[재개] and [기록 끝내기], which ends
+ * only the recording); the bottom panel stays below both. As on the record screen the pager takes no drags (the map
  * keeps its own): pages turn by swiping the record line, the numbers page or the bottom panel, or by the page dots.
  */
 @Composable
@@ -338,10 +364,13 @@ private fun RecordingPages(
     mapPage: @Composable (recordLine: @Composable () -> Unit) -> Unit,
     followButton: @Composable () -> Unit,
     panel: @Composable (Modifier) -> Unit,
+    controls: RecordControls,
 ) {
     val pager = rememberPagerState { RIDE_PAGE_COUNT }
     val scope = rememberCoroutineScope()
-    val paused = ride.state is RecordingState.Paused
+    val pausedState = ride.state as? RecordingState.Paused
+    val paused = pausedState != null
+    var askEndRecording by rememberSaveable { mutableStateOf(false) }
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -368,15 +397,34 @@ private fun RecordingPages(
                         )
                     }
                 } else {
-                    RideNumbersPage(
-                        stats = ride.stats,
-                        dimmed = paused,
+                    Column(
                         modifier = Modifier
                             .fillMaxSize()
                             .statusBarsPadding()
                             .swipeTurnsPages(pager, scope)
+                            .padding(12.dp)
                             .testTag(NavigateTags.NUMBERS_PAGE),
-                    )
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        AutoPauseChip(ride.autoPause, controls.onToggleAutoPause, Modifier.testTag(NavigateTags.CHIP))
+                        if (pausedState != null) PauseBand(pausedState.kind)
+                        RideNumbersPage(stats = ride.stats, dimmed = paused, modifier = Modifier.weight(1f).fillMaxWidth())
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            PauseResumeButton(
+                                paused = paused,
+                                onPause = controls.onPause,
+                                onResume = controls.onResume,
+                                pauseTag = NavigateTags.PAUSE,
+                                resumeTag = NavigateTags.RESUME,
+                                modifier = Modifier.weight(1f),
+                            )
+                            StopButton(
+                                "기록 끝내기",
+                                onClick = { askEndRecording = true },
+                                modifier = Modifier.weight(1f).testTag(NavigateTags.END_RECORDING),
+                            )
+                        }
+                    }
                 }
             }
             Column(
@@ -391,6 +439,19 @@ private fun RecordingPages(
                 panel(Modifier.swipeTurnsPages(pager, scope).testTag(NavigateTags.PANEL))
             }
         }
+    }
+
+    if (askEndRecording) {
+        // While guiding, only the recording ends (the guidance owns the trip).
+        RecordEndDialog(
+            type = ride.tripType,
+            navigating = true,
+            onChoose = {
+                askEndRecording = false
+                controls.onEnd()
+            },
+            onDismiss = { askEndRecording = false },
+        )
     }
 }
 

@@ -95,7 +95,7 @@ class RideController(
     private val tickIntervalMs: Long = 1_000,
     private val saveIntervalMs: Long = 5_000,
     private val log: WarnLog = androidWarnLog(TAG),
-) {
+) : RideControls {
     constructor(container: AppContainer, scope: CoroutineScope) : this(
         rideStore = container.rideStore,
         tripStore = container.tripStore,
@@ -181,19 +181,19 @@ class RideController(
         return job
     }
 
-    fun pause() {
+    override fun pause() {
         val (r, session) = recording() ?: return
         handle(r, session.pause(clock()))
     }
 
     /** Resumes a manual or an automatic pause. */
-    fun resume() {
+    override fun resume() {
         val (r, session) = recording() ?: return
         handle(r, session.resume(clock()))
     }
 
     /** The auto-pause chip of this recording (the setting is only its default). */
-    fun setAutoPause(enabled: Boolean) {
+    override fun setAutoPause(enabled: Boolean) {
         val (r, session) = recording() ?: return
         handle(r, session.setAutoPause(enabled, clock()))
     }
@@ -203,7 +203,7 @@ class RideController(
      * [RideUiState.Finished]. A stop while starting waits for the start; a stop while stopping waits for that stop
      * (whose [end] wins).
      */
-    suspend fun stopRecording(end: RecordingEnd) {
+    override suspend fun stopRecording(end: RecordingEnd) {
         val r = run ?: return
         r.startJob?.join()
         if (run !== r || r.session == null) return

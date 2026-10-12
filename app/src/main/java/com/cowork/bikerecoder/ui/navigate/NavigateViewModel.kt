@@ -14,6 +14,8 @@ import com.cowork.bikerecoder.nav.FinishReason
 import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.nav.NavigationController
 import com.cowork.bikerecoder.offline.OfflineProgress
+import com.cowork.bikerecoder.ride.RecordingEnd
+import com.cowork.bikerecoder.ride.RideControls
 import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.ride.recordingTripId
 import com.cowork.bikerecoder.tts.VoiceOutput
@@ -54,6 +56,8 @@ class NavigateViewModel(
     val rideUi: StateFlow<RideUiState> = MutableStateFlow(RideUiState.Idle),
     /** Closes the recording's summary ([com.cowork.bikerecoder.ride.RideController.dismissSummary]). */
     private val dismissRideSummary: () -> Unit = {},
+    /** The recording's commands for the controls on the numbers page (ruling F2). */
+    private val rideControls: RideControls = RideControls.None,
 ) : ViewModel() {
 
     val ui: StateFlow<NavUiState> = controller.ui
@@ -121,6 +125,20 @@ class NavigateViewModel(
         }
     }
 
+    fun pauseRecording() = rideControls.pause()
+
+    fun resumeRecording() = rideControls.resume()
+
+    fun setRecordingAutoPause(enabled: Boolean) = rideControls.setAutoPause(enabled)
+
+    /**
+     * [기록 끝내기] on the numbers page: only the recording ends (its trip is the guidance's); the guidance goes on and the
+     * summary waits for the end of the guidance (or the main screen). The stop finishes in the ride scope.
+     */
+    fun endRecording() {
+        viewModelScope.launch { rideControls.stopRecording(RecordingEnd.SEGMENT_ONLY) }
+    }
+
     /** [여러 날로 바꾸기] on the finished screen; the summary shown with it is closed once the trip is converted. */
     fun convertToMultiDay() {
         val shown = shownSummary()
@@ -182,6 +200,7 @@ class NavigateViewModel(
                     // Starting the guidance creates the ride controller anyway (it follows the guidance).
                     rideUi = container.ride.ui,
                     dismissRideSummary = container.ride::dismissSummary,
+                    rideControls = container.ride,
                 )
             }
         }

@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cowork.bikerecoder.core.model.GeoPoint
+import com.cowork.bikerecoder.core.recording.PauseKind
 import com.cowork.bikerecoder.core.recording.RecordingState
 import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.map.BikeMap
@@ -205,15 +206,8 @@ fun RecordContent(
                     .testTag(RecordTags.TOP),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                FilterChip(
-                    selected = state.autoPause,
-                    onClick = { onToggleAutoPause(!state.autoPause) },
-                    label = { Text(autoPauseChipText(state.autoPause)) },
-                    modifier = Modifier.testTag(RecordTags.CHIP),
-                )
-                if (paused != null) {
-                    Band(pauseBandText(paused.kind), MaterialTheme.colorScheme.tertiary, Modifier.testTag(RecordTags.BAND))
-                }
+                AutoPauseChip(state.autoPause, onToggleAutoPause, Modifier.testTag(RecordTags.CHIP))
+                if (paused != null) PauseBand(paused.kind, Modifier.testTag(RecordTags.BAND))
                 if (state.gpsWeak) Band("GPS 신호 약함", MaterialTheme.colorScheme.error)
             }
 
@@ -257,18 +251,15 @@ fun RecordContent(
             ) {
                 PageDots(current = pager.currentPage, onSelect = { scope.launch { pager.animateScrollToPage(it) } })
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    if (paused != null) {
-                        Button(onClick = onResume, modifier = Modifier.weight(1f).testTag(RecordTags.RESUME)) { Text("재개") }
-                    } else {
-                        OutlinedButton(onClick = onPause, modifier = Modifier.weight(1f).testTag(RecordTags.PAUSE)) {
-                            Text("일시정지")
-                        }
-                    }
-                    Button(
-                        onClick = { askEnd = true },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                        modifier = Modifier.weight(1f).testTag(RecordTags.STOP),
-                    ) { Text("정지") }
+                    PauseResumeButton(
+                        paused = paused != null,
+                        onPause = onPause,
+                        onResume = onResume,
+                        pauseTag = RecordTags.PAUSE,
+                        resumeTag = RecordTags.RESUME,
+                        modifier = Modifier.weight(1f),
+                    )
+                    StopButton("정지", onClick = { askEnd = true }, modifier = Modifier.weight(1f).testTag(RecordTags.STOP))
                 }
             }
         }
@@ -287,9 +278,53 @@ fun RecordContent(
     }
 }
 
+/** The auto-pause chip of the running recording ([autoPauseChipText]); a tap toggles it. */
+@Composable
+internal fun AutoPauseChip(enabled: Boolean, onToggle: (Boolean) -> Unit, modifier: Modifier = Modifier) {
+    FilterChip(
+        selected = enabled,
+        onClick = { onToggle(!enabled) },
+        label = { Text(autoPauseChipText(enabled)) },
+        modifier = modifier,
+    )
+}
+
+/** The band shown while the recording is paused ([pauseBandText]). */
+@Composable
+internal fun PauseBand(kind: PauseKind, modifier: Modifier = Modifier) {
+    Band(pauseBandText(kind), MaterialTheme.colorScheme.tertiary, modifier)
+}
+
+/** [재개] while paused, else [일시정지]; [pauseTag] / [resumeTag] tag the button shown. */
+@Composable
+internal fun PauseResumeButton(
+    paused: Boolean,
+    onPause: () -> Unit,
+    onResume: () -> Unit,
+    pauseTag: String,
+    resumeTag: String,
+    modifier: Modifier = Modifier,
+) {
+    if (paused) {
+        Button(onClick = onResume, modifier = modifier.testTag(resumeTag)) { Text("재개") }
+    } else {
+        OutlinedButton(onClick = onPause, modifier = modifier.testTag(pauseTag)) { Text("일시정지") }
+    }
+}
+
+/** The red button that ends the recording ([정지], [기록 끝내기]); it asks first ([RecordEndDialog]). */
+@Composable
+internal fun StopButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Button(
+        onClick = onClick,
+        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+        modifier = modifier,
+    ) { Text(label) }
+}
+
 /** "기록을 끝낼까요?" with [recordEndChoices] and [취소]. */
 @Composable
-private fun RecordEndDialog(type: TripType, navigating: Boolean, onChoose: (RecordingEnd) -> Unit, onDismiss: () -> Unit) {
+internal fun RecordEndDialog(type: TripType, navigating: Boolean, onChoose: (RecordingEnd) -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         text = { Text(RECORD_END_QUESTION) },
