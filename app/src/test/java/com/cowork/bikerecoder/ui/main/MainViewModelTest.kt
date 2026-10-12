@@ -39,7 +39,8 @@ class MainViewModelTest {
 
     private val dispatcher = StandardTestDispatcher()
     private val store = FakeTripStore()
-    private val tripManager = TripManager(store, RecordingOfflineMaps(), clock = { 1_000L })
+    private var now = 1_000L
+    private val tripManager = TripManager(store, RecordingOfflineMaps(), clock = { now })
     private val guidance = MutableStateFlow<NavUiState>(NavUiState.Idle)
     private val ride = MutableStateFlow<RideUiState>(RideUiState.Idle)
     private var openSegment: RideSegment? = null
@@ -256,5 +257,46 @@ class MainViewModelTest {
         runCurrent()
         assertFalse(vm.state.value.pendingSummary)
         assertTrue(vm.state.value.canStartRecording)
+    }
+
+    private val fourDaysMs = 4L * 24 * 60 * 60 * 1000
+
+    @Test
+    fun aMultiDayTripIdleForDaysIsAskedAbout() = runTest(dispatcher) {
+        val tripId = multiDayTrip()
+        now += fourDaysMs
+
+        assertEquals(StaleTrip(tripId, "여의도"), viewModel().state.value.staleTrip)
+    }
+
+    @Test
+    fun noStaleTripPromptWhileItIsRecorded() = runTest(dispatcher) {
+        val tripId = multiDayTrip()
+        now += fourDaysMs
+        ride.value = recording(tripId, distanceM = 100.0, movingMs = 20_000)
+
+        assertNull(viewModel().state.value.staleTrip)
+    }
+
+    @Test
+    fun noStaleTripPromptWhileGuiding() = runTest(dispatcher) {
+        val tripId = multiDayTrip()
+        now += fourDaysMs
+        guidance.value = NavUiState.Starting(tripId)
+
+        assertNull(viewModel().state.value.staleTrip)
+    }
+
+    @Test
+    fun aStaleTripPromptIsWithdrawnWhenARideStarts() = runTest(dispatcher) {
+        val tripId = multiDayTrip()
+        now += fourDaysMs
+        val vm = viewModel()
+        assertEquals(tripId, vm.state.value.staleTrip?.tripId)
+
+        ride.value = RideUiState.Starting(tripId)
+        runCurrent()
+
+        assertNull(vm.state.value.staleTrip, "[완료] must not complete the trip being recorded")
     }
 }

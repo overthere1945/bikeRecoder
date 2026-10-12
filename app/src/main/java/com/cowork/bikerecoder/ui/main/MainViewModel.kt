@@ -111,10 +111,7 @@ class MainViewModel(
     private var addressJob: Job? = null
 
     init {
-        viewModelScope.launch {
-            val stale = runCatchingNonCancel { tripManager.stalePrompt() }
-            _state.update { it.copy(staleTrip = stale?.let { t -> StaleTrip(t.id, destinationName(t.id)) }) }
-        }
+        viewModelScope.launch { checkStale() }
         refreshBanner()
         viewModelScope.launch {
             combine(guidance, ride) { nav, r -> riding(nav, r) }
@@ -129,6 +126,8 @@ class MainViewModel(
                             pendingSummary = pendingSummary,
                             // A new recording closes the leftover segment itself; while guiding it is not offered.
                             interrupted = it.interrupted.takeUnless { guiding || recording },
+                            // A trip being ridden is not idle: its [완료] must not end it under the ride.
+                            staleTrip = it.staleTrip.takeUnless { guiding || recording },
                         )
                     }
                     // Guidance or recording ended (arrived, stopped for today, ...): the trip may have changed.
@@ -161,6 +160,16 @@ class MainViewModel(
             else -> null
         }
         return Riding(guiding, stats != null, banner, pendingSummary = rideState is RideUiState.Finished)
+    }
+
+    /** The stale-trip question, asked once when the main screen opens with nothing riding (a ride touches its trip). */
+    private suspend fun checkStale() {
+        if (riding(guidance.first(), ride.first()).banner != null) return
+        val stale = runCatchingNonCancel { tripManager.stalePrompt() } ?: return
+        val name = destinationName(stale.id)
+        val now = _state.value
+        if (now.guiding || now.recording) return
+        _state.update { it.copy(staleTrip = StaleTrip(stale.id, name)) }
     }
 
     /** Spec §4.6: offered once, when the main screen opens with nothing riding. */

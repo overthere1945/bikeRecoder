@@ -59,7 +59,8 @@ enum class RecordingEnd { SEGMENT_ONLY, STOP_TODAY, COMPLETE_TRIP }
  * kilometre announcements continue across segments of a day. While it records, this controller feeds the session from
  * [location] (resubscribed [LOCATION_RETRY_MS] after the stream fails or ends — the session keeps running and its GPS
  * watchdog reports the gap), from [pressure] and with ticks every [tickIntervalMs] by [clock]; every [saveIntervalMs]
- * it appends the buffered points with the totals so far (also while paused). A failed save keeps the points for the
+ * it appends the buffered points with the totals so far (also while paused). The trip is touched when the recording
+ * starts and with a successful save at most every [TOUCH_INTERVAL_MS] (best effort). A failed save keeps the points for the
  * next one and raises [RideUiState.Active.saveWarning] once. Session events are spoken unless the voice setting is
  * off; a kilometre is announced here only while no guidance runs (guidance announces the combined sentence then).
  *
@@ -128,6 +129,9 @@ class RideController(
         var lastFix: LocationFix? = null
         var gpsWeak = false
         var saveWarning: String? = null
+
+        /** When the trip was last touched (or tried), by the controller's clock. */
+        var touchedAt = 0L
 
         /** This recording as the guidance's km source (set once the session runs), and the day distance last seen. */
         var kmSource: KmAnnouncementSource? = null
@@ -311,9 +315,12 @@ class RideController(
             }
         }
         r.jobs += scope.launch {
+            touchTrip(r)
             while (true) {
                 delay(saveIntervalMs)
-                if (!save(r) && r.saveWarning == null) {
+                if (save(r)) {
+                    if (clock() - r.touchedAt >= TOUCH_INTERVAL_MS) touchTrip(r)
+                } else if (r.saveWarning == null) {
                     r.saveWarning = MSG_SAVE_PROBLEM
                     publish(r)
                 }
@@ -478,6 +485,15 @@ class RideController(
         }
     }
 
+    /**
+     * Best effort: marks the trip as active now, so the stale-trip prompt never takes a trip being recorded for an
+     * abandoned one. A failure is logged and retried with a save [TOUCH_INTERVAL_MS] later.
+     */
+    private suspend fun touchTrip(r: Run) {
+        r.touchedAt = clock()
+        saving("touch trip ${r.tripId}") { tripManager.touch(r.tripId) }
+    }
+
     private suspend fun finish(r: Run, end: RecordingEnd) = withContext(NonCancellable) {
         val session = r.session
         if (run !== r || session == null || r.stopping) return@withContext
@@ -554,6 +570,9 @@ class RideController(
 
         /** A failed or ended location stream is subscribed again after this long. */
         const val LOCATION_RETRY_MS = 5_000L
+
+        /** The trip is touched when the recording starts and with a successful save at most this often. */
+        const val TOUCH_INTERVAL_MS = 60_000L
 
         /** The map track keeps an accepted location only this far from the previous kept one. */
         private const val TRACK_SPACING_M = 10.0

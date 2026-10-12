@@ -430,4 +430,35 @@ class RideControllerTest {
         assertNotNull(h.store.segments(tripId).single().endedAt, "closed before the other trip starts")
         assertEquals(RideUiState.Idle, c.ui.value)
     }
+
+    @Test
+    fun recordingTouchesItsTripAtTheStartAndAtMostOncePerMinuteWithTheSaves() = runTest {
+        // The stale-trip prompt must not see a trip that is being recorded as idle.
+        val h = harness(straight(2_000.0))
+        val tripId = h.trip(TripType.MULTI_DAY)
+        play(10_000)
+
+        h.start(tripId)
+        runCurrent()
+        assertEquals(10_000L, trips.trips.getValue(tripId).lastActiveAt, "touched when the recording starts")
+
+        play(55_000) // t = 65 s: saves at 15..65 s, less than a minute since the touch
+        assertEquals(10_000L, trips.trips.getValue(tripId).lastActiveAt)
+        play(5_000) // t = 70 s: the save a minute after the touch touches again
+        assertEquals(70_000L, trips.trips.getValue(tripId).lastActiveAt)
+    }
+
+    @Test
+    fun aFailingTouchIsLoggedAndTheRecordingGoesOn() = runTest {
+        val h = harness(straight(500.0))
+        val tripId = h.trip(TripType.MULTI_DAY)
+        trips.failUpdate = { true }
+
+        h.start(tripId)
+        play(70_000)
+
+        assertInstanceOf(RideUiState.Active::class.java, h.controller.ui.value)
+        assertTrue(log.messages.any { it.startsWith("Could not touch trip $tripId") }, log.messages.toString())
+        assertTrue(h.store.appendCalls.isNotEmpty(), "the saves go on")
+    }
 }
