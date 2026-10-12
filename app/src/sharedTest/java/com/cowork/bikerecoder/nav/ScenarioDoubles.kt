@@ -1,12 +1,22 @@
 package com.cowork.bikerecoder.nav
 
+import android.content.Context
+import com.cowork.bikerecoder.core.gpx.GpxParser
+import com.cowork.bikerecoder.core.model.LocationFix
+import com.cowork.bikerecoder.core.model.Route
 import com.cowork.bikerecoder.core.routing.RouteRequest
 import com.cowork.bikerecoder.core.routing.RouteResult
 import com.cowork.bikerecoder.core.routing.Router
+import com.cowork.bikerecoder.core.trip.OfflineMapController
+import com.cowork.bikerecoder.location.GpxLocationSource
+import com.cowork.bikerecoder.location.LocationSource
 import com.cowork.bikerecoder.routing.BRouterGeoJsonParser
 import com.cowork.bikerecoder.tts.VoiceOutput
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.onCompletion
 import java.util.concurrent.CopyOnWriteArrayList
 
 // Test doubles shared by the JVM tests (src/test) and the device scenario test (src/androidTest).
@@ -40,3 +50,23 @@ class RecordingVoiceOutput : VoiceOutput {
 
     override fun shutdown() = Unit
 }
+
+/** [GpxLocationSource] at [speedup] (default 20×) that reports through [done] when its replay has ended. */
+class Replay(fixes: List<LocationFix>, speedup: Double = 20.0) : LocationSource {
+    private val gpx = GpxLocationSource(fixes, speedup)
+    val done = CompletableDeferred<Unit>()
+    override fun fixes(): Flow<LocationFix> = gpx.fixes().onCompletion { done.complete(Unit) }
+}
+
+/** No offline maps: the trip's download and delete do nothing. */
+object NoOffline : OfflineMapController {
+    override suspend fun deleteForTrip(tripId: Long) = Unit
+    override suspend fun downloadForTrip(tripId: Long, route: Route, fromDistanceAlongM: Double) = Unit
+}
+
+/** A text asset of the androidTest APK; [context] is the instrumentation context (`instrumentation.context`). */
+fun scenarioAsset(context: Context, name: String): String =
+    context.assets.open(name).use { it.readBytes().decodeToString() }
+
+/** A GPX asset of the androidTest APK as fixes. */
+fun scenarioGpx(context: Context, name: String): List<LocationFix> = GpxParser.parse(scenarioAsset(context, name))
