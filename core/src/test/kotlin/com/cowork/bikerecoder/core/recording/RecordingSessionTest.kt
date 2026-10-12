@@ -209,6 +209,22 @@ class RecordingSessionTest {
     }
 
     @Test
+    fun `only accepted fixes keep the gps watchdog quiet`() {
+        // Fixes keep coming but every one is too inaccurate (> 30 m): the rider has no usable GPS.
+        val s = started(autoPause = false)
+        s.feed(fix(0, 0.0, 18.0))
+        val t0 = 1_000_000L
+        assertFalse(s.onTick(t0).gpsWeak)
+        for (i in 1..10) {
+            s.onFix(fix(sec(i), 5.0 * i, 18.0, accuracyM = 50f), t0 + i * 1_000L - 500)
+            s.onTick(t0 + i * 1_000L)
+        }
+        assertTrue(s.onTick(t0 + 10_001).gpsWeak, "rejected fixes are not a signal")
+        assertTrue(s.onFix(fix(sec(11), 55.0, 18.0, accuracyM = 50f), t0 + 10_500).gpsWeak, "still weak")
+        assertFalse(s.onFix(fix(sec(12), 60.0, 18.0), t0 + 11_000).gpsWeak, "an accepted fix clears it")
+    }
+
+    @Test
     fun `ascent only while recording`() {
         val s = started(autoPause = false)
         fun step(t: Int, altM: Double) {

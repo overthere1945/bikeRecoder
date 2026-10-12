@@ -55,7 +55,7 @@ data class RecordingUpdate(
  *   필요한 정지 지점까지 지워 버리기 때문이다.
  * - 그날 합계 [day] = initialDay + 이 세션의 거리·이동 시간. nowMillis의 [zone] 날짜가 바뀌면 0부터 다시
  *   세고 km도 1부터 센다. 날짜가 바뀌는 위치의 구간은 새 날짜에 들어간다.
- * - GPS 감시: [onFix]는 "봤음"만 표시하고, [onTick]이 마지막 활동 tick 이후 [gpsTimeoutMs]가 지나면 약함으로 본다.
+ * - GPS 감시: [onFix]는 필터가 채택한 위치일 때만 "봤음"을 표시하고(버린 위치는 신호로 치지 않는다), [onTick]이 마지막 활동 tick 이후 [gpsTimeoutMs]가 지나면 약함으로 본다.
  * - [stop] 이후 호출은 상태·통계를 바꾸지 않고 빈 이벤트를 돌려준다.
  *
  * 스레드: 단일 스레드(rideScope)에서만 호출한다.
@@ -126,10 +126,11 @@ class RecordingSession(
     fun onFix(fix: LocationFix, nowMillis: Long): RecordingUpdate {
         if (state == RecordingState.Stopped) return update()
         observe(nowMillis)
+
+        // Only a usable fix counts for the GPS watchdog: a stream of rejected ones (e.g. all > 30 m) is no signal.
+        val accepted = filter.accept(fix) ?: return update()
         fixSinceLastTick = true
         gpsWeak = false
-
-        val accepted = filter.accept(fix) ?: return update()
         fix.altitudeM?.let { fusion.onGps(it, fix.verticalAccuracyM, nowMillis) }
 
         val events = mutableListOf<RecordingEvent>()
