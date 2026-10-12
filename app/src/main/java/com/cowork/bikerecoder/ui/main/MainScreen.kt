@@ -22,6 +22,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.IconButton
@@ -63,6 +65,9 @@ fun MainScreen(
     tileSource: TileSource,
     currentLocation: StateFlow<LocationFix?>,
     onOpenSearch: () -> Unit,
+    /** ☰ → [기록]. */
+    onOpenHistory: () -> Unit,
+    /** ☰ → [설정]. */
     onOpenSettings: () -> Unit,
     onResumeTrip: (tripId: Long) -> Unit,
     /** [보기] on the riding banner. */
@@ -141,8 +146,21 @@ fun MainScreen(
                         Text("장소, 주소 검색", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                Surface(shape = RoundedCornerShape(28.dp), shadowElevation = 4.dp) {
-                    IconButton(onClick = onOpenSettings) { GlyphIcon("⚙", "설정") }
+                Box {
+                    var menuOpen by remember { mutableStateOf(false) }
+                    Surface(shape = RoundedCornerShape(28.dp), shadowElevation = 4.dp) {
+                        IconButton(onClick = { menuOpen = true }) { GlyphIcon("☰", "메뉴") }
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(text = { Text("기록") }, onClick = {
+                            menuOpen = false
+                            onOpenHistory()
+                        })
+                        DropdownMenuItem(text = { Text("설정") }, onClick = {
+                            menuOpen = false
+                            onOpenSettings()
+                        })
+                    }
                 }
             }
             state.riding?.let { riding ->

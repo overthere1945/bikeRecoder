@@ -31,6 +31,12 @@ import com.cowork.bikerecoder.ui.onboarding.OnboardingStep
 import com.cowork.bikerecoder.ui.onboarding.OnboardingViewModel
 import com.cowork.bikerecoder.ui.onboarding.effectiveOnboardingStep
 import com.cowork.bikerecoder.ui.onboarding.readPermissionState
+import com.cowork.bikerecoder.ui.history.HistoryScreen
+import com.cowork.bikerecoder.ui.history.HistoryViewModel
+import com.cowork.bikerecoder.ui.history.SegmentDetailScreen
+import com.cowork.bikerecoder.ui.history.SegmentDetailViewModel
+import com.cowork.bikerecoder.ui.history.TripDetailScreen
+import com.cowork.bikerecoder.ui.history.TripDetailViewModel
 import com.cowork.bikerecoder.ui.main.MainScreen
 import com.cowork.bikerecoder.ui.main.MainViewModel
 import com.cowork.bikerecoder.ui.plan.PlanMap
@@ -64,6 +70,13 @@ object Routes {
     const val SETTINGS = "settings"
     const val RECORD = "record"
     const val RECORD_PATTERN = "$RECORD?${RecordViewModel.ARG_TRIP}={${RecordViewModel.ARG_TRIP}}"
+    const val HISTORY = "history"
+    const val TRIP_DETAIL = "history/trip/{${TripDetailViewModel.ARG_TRIP}}"
+    const val SEGMENT_DETAIL = "history/segment/{${SegmentDetailViewModel.ARG_SEGMENT}}"
+
+    fun tripDetail(tripId: Long) = "history/trip/$tripId"
+
+    fun segmentDetail(segmentId: Long) = "history/segment/$segmentId"
 
     /**
      * The guidance screen; with [tripId] it starts guiding that trip once visible. [recordNotice]: tell once that the
@@ -184,6 +197,7 @@ fun BikeNavHost(
                 tileSource = container.tileSource,
                 currentLocation = container.currentLocation,
                 onOpenSearch = { navController.navigate(Routes.SEARCH) },
+                onOpenHistory = { navController.navigate(Routes.HISTORY) },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                 onResumeTrip = { tripId -> navController.openOnMain(Routes.navigate(tripId)) },
                 onShowRide = { target ->
@@ -337,6 +351,36 @@ fun BikeNavHost(
                     }
                 },
                 onShowGuidance = { if (isCurrent()) navController.openOnMain(Routes.navigate()) },
+            )
+        }
+        composable(Routes.HISTORY) {
+            val viewModel: HistoryViewModel = viewModel(factory = HistoryViewModel.factory(container))
+            HistoryScreen(
+                viewModel = viewModel,
+                onOpenTrip = { tripId -> navController.navigate(Routes.tripDetail(tripId)) },
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(
+            Routes.TRIP_DETAIL,
+            arguments = listOf(navArgument(TripDetailViewModel.ARG_TRIP) { type = NavType.LongType }),
+        ) {
+            val viewModel: TripDetailViewModel = viewModel(factory = TripDetailViewModel.factory(container))
+            TripDetailScreen(
+                viewModel = viewModel,
+                onOpenSegment = { segmentId -> navController.navigate(Routes.segmentDetail(segmentId)) },
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(
+            Routes.SEGMENT_DETAIL,
+            arguments = listOf(navArgument(SegmentDetailViewModel.ARG_SEGMENT) { type = NavType.LongType }),
+        ) {
+            val viewModel: SegmentDetailViewModel = viewModel(factory = SegmentDetailViewModel.factory(container))
+            SegmentDetailScreen(
+                viewModel = viewModel,
+                tileSource = container.tileSource,
+                onBack = { navController.popBackStack() },
             )
         }
         composable(Routes.SETTINGS) {
