@@ -144,7 +144,8 @@ abstract class RideDao {
     @Query(
         "SELECT tripId, MIN(localDate) AS firstDate, COUNT(DISTINCT localDate) AS dayCount, " +
             "SUM(distanceM) AS distanceM, SUM(movingTimeMs) AS movingTimeMs, MAX(startedAt) AS lastStartedAt " +
-            "FROM ride_segment GROUP BY tripId ORDER BY lastStartedAt DESC, tripId DESC",
+            // Empty segments (no distance, RideSegment.isEmpty) are not part of the history.
+            "FROM ride_segment WHERE distanceM > 0 GROUP BY tripId ORDER BY lastStartedAt DESC, tripId DESC",
     )
     abstract suspend fun tripRideRows(): List<TripRideRow>
 

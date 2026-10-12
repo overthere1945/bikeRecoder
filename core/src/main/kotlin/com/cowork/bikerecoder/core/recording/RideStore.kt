@@ -51,9 +51,15 @@ data class RideSegment(
     val endedAt: Long?,
     val localDate: LocalDate,
     val totals: SegmentTotals,
-)
+) {
+    /** 간 거리가 없는 구간(쓸 만한 위치 없이 끝난 기록 등): 기록 목록에 보이지 않는다(데이터는 지우지 않는다). */
+    val isEmpty: Boolean get() = totals.distanceM <= 0.0
+}
 
-/** 목록 카드 한 장: dayCount = 구간이 있는 서로 다른 날짜 수, firstDate = 가장 이른 구간 날짜. */
+/**
+ * 목록 카드 한 장: dayCount = 구간이 있는 서로 다른 날짜 수, firstDate = 가장 이른 구간 날짜. 빈 구간([RideSegment.isEmpty])은
+ * 세지 않는다.
+ */
 data class TripRideSummary(
     val trip: Trip,
     val firstDate: LocalDate,
@@ -85,7 +91,7 @@ interface RideStore {
     /** 그 여행·그 날짜 구간의 합. */
     suspend fun dayTotals(tripId: Long, localDate: LocalDate): DayTotals
 
-    /** 구간이 1개 이상인 여행, lastStartedAt 내림차순. */
+    /** 빈 구간이 아닌([RideSegment.isEmpty]) 구간이 1개 이상인 여행, lastStartedAt 내림차순. */
     suspend fun tripSummaries(): List<TripRideSummary>
 
     /** 위치 기록도 CASCADE로 지운다. */

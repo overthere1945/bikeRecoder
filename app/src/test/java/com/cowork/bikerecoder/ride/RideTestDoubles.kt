@@ -16,8 +16,9 @@ import java.io.IOException
 import java.time.LocalDate
 
 /**
- * In-memory [RideStore] like RoomRideStore: [tripSummaries] joins [trips] (rows whose trip is gone are dropped),
- * [deleteTrip] removes the trip with its segments and points (the CASCADE). [clock] stamps [appendCalls].
+ * In-memory [RideStore] like RoomRideStore: [tripSummaries] joins [trips] (rows whose trip is gone are dropped) and
+ * skips empty segments, [deleteTrip] removes the trip with its segments and points (the CASCADE). [clock] stamps
+ * [appendCalls].
  */
 class FakeRideStore(private val trips: FakeTripStore, private val clock: () -> Long = { 0L }) : RideStore {
     private val segmentsById = linkedMapOf<Long, RideSegment>()
@@ -76,7 +77,7 @@ class FakeRideStore(private val trips: FakeTripStore, private val clock: () -> L
     }
 
     override suspend fun tripSummaries(): List<TripRideSummary> =
-        segmentsById.values.groupBy { it.tripId }
+        segmentsById.values.filterNot { it.isEmpty }.groupBy { it.tripId }
             .mapNotNull { (tripId, segments) ->
                 val trip = trips.trips[tripId] ?: return@mapNotNull null
                 TripRideSummary(

@@ -145,6 +145,25 @@ class RoomRideStoreTest {
     }
 
     @Test
+    fun tripSummariesSkipEmptySegments() = runTest {
+        val tripA = newTrip()
+        val tripB = newTrip()
+        val empty = store.openSegment(tripA, 10_000L, day1)
+        store.closeSegment(empty, 40_000L, totals(0.0, 0L))
+        val a2 = store.openSegment(tripA, 50_000L, day2)
+        store.closeSegment(a2, 60_000L, totals(800.0, 10_000L))
+        val onlyEmpty = store.openSegment(tripB, 90_000L, day2)
+        store.closeSegment(onlyEmpty, 95_000L, totals(0.0, 0L))
+
+        val summaries = store.tripSummaries()
+
+        assertEquals(listOf(tripA), summaries.map { it.trip.id })
+        assertEquals(day2, summaries.single().firstDate)
+        assertEquals(1, summaries.single().dayCount)
+        assertEquals("kept in the store", 2, store.segments(tripA).size)
+    }
+
+    @Test
     fun deletingATripCascades() = runTest {
         val tripId = newTrip()
         trips.replaceStops(

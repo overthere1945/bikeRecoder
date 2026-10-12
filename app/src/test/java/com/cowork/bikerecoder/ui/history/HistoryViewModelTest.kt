@@ -259,4 +259,36 @@ class HistoryViewModelTest {
             minAltitudeM = min,
             maxAltitudeM = max,
         )
+
+    @Test
+    fun aTripWithOnlyEmptySegmentsIsNotListed() = runTest(dispatcher) {
+        // E.g. a recording started and stopped before any usable fix: kept in the store, not shown.
+        trip(1, TripStatus.COMPLETED)
+        trip(2, TripStatus.COMPLETED)
+        segment(1, startedAt = 100, totals = SegmentTotals.ZERO.copy(elapsedMs = 30_000))
+        segment(2, startedAt = 200, date = day1, totals = SegmentTotals.ZERO.copy(elapsedMs = 30_000))
+        segment(2, startedAt = 300, date = day2)
+        val vm = history()
+        advanceUntilIdle()
+
+        val listed = vm.trips.value.single()
+        assertEquals(2L, listed.trip.id)
+        assertEquals(day2, listed.firstDate, "the empty segment's day does not count")
+        assertEquals(1, listed.dayCount)
+        assertEquals(3, rides.segments(1).size + rides.segments(2).size, "nothing deleted")
+    }
+
+    @Test
+    fun emptySegmentsAreHiddenFromTheTripDetail() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        segment(1, startedAt = 100, date = day1, totals = SegmentTotals.ZERO.copy(elapsedMs = 30_000))
+        val kept = segment(1, startedAt = 200, date = day2)
+        val vm = TripDetailViewModel(rides, tripId = 1)
+        advanceUntilIdle()
+
+        assertEquals(listOf(day2), vm.segmentsByDate.value.keys.toList())
+        assertEquals(listOf(kept), vm.segmentsByDate.value.getValue(day2).map { it.id })
+        assertEquals(1_000.0, vm.total.value.distanceM)
+        assertEquals(0L, vm.total.value.elapsedMs, "the hidden segment's time is not in the totals")
+    }
 }

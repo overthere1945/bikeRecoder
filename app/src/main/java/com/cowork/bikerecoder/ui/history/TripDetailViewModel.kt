@@ -22,7 +22,8 @@ import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 
 /**
- * One trip's segments by date (oldest first) and the trip's totals (spec §3.5). An open segment (still being recorded,
+ * One trip's segments by date (oldest first) and the trip's totals (spec §3.5), without empty segments
+ * ([RideSegment.isEmpty]). An open segment (still being recorded,
  * endedAt == null) cannot be deleted; a closed one is deleted after confirmation.
  */
 class TripDetailViewModel(
@@ -89,7 +90,8 @@ class TripDetailViewModel(
 
     private suspend fun load() {
         guarded("Could not read the segments of trip $tripId") {
-            val segments = rideStore.segments(tripId)
+            // Empty segments are kept in the store but not listed (nor counted in the totals).
+            val segments = rideStore.segments(tripId).filterNot { it.isEmpty }
             _segmentsByDate.value = segments.groupBy { it.localDate }.toSortedMap()
             _total.value = tripTotals(segments)
         }
