@@ -10,9 +10,11 @@ import com.cowork.bikerecoder.core.trip.TripStore
 import com.cowork.bikerecoder.data.AppDatabase
 import com.cowork.bikerecoder.data.DataStoreDayDistances
 import com.cowork.bikerecoder.data.DayDistances
+import com.cowork.bikerecoder.data.RoomFavoriteStore
 import com.cowork.bikerecoder.data.RoomRideStore
 import com.cowork.bikerecoder.data.RoomTripStore
 import com.cowork.bikerecoder.data.SettingsRepository
+import com.cowork.bikerecoder.favorite.FavoriteRepository
 import com.cowork.bikerecoder.location.BarometerSource
 import com.cowork.bikerecoder.location.FusedLocationSource
 import com.cowork.bikerecoder.location.LocationSource
@@ -92,6 +94,7 @@ class AppContainer(context: Context) {
     val offline: OfflineMapController = offlineMaps
     val tripManager: TripManager = TripManager(tripStore, offline, clock = System::currentTimeMillis)
     val rideStore: RideStore = RoomRideStore(db)
+    val favorites: FavoriteRepository = FavoriteRepository(RoomFavoriteStore(db), clock = System::currentTimeMillis)
 
     /** The device barometer; null without one (altitude then comes from GPS only). */
     val barometer: PressureSource? = BarometerSource(appContext).takeIf { it.available }

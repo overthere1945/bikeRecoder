@@ -6,6 +6,7 @@ import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
 import com.cowork.bikerecoder.core.recording.SegmentTotals
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 abstract class TripDao {
@@ -151,4 +152,22 @@ abstract class RideDao {
 
     @Query("DELETE FROM ride_segment WHERE id = :id")
     abstract suspend fun deleteSegment(id: Long)
+}
+
+@Dao
+interface FavoriteDao {
+    @Query("SELECT * FROM favorite_place")
+    fun observeAll(): Flow<List<FavoritePlaceEntity>>
+
+    @Query("SELECT * FROM favorite_place")
+    suspend fun all(): List<FavoritePlaceEntity>
+
+    @Insert
+    suspend fun insert(entity: FavoritePlaceEntity): Long
+
+    @Update
+    suspend fun update(entity: FavoritePlaceEntity)
+
+    @Query("DELETE FROM favorite_place WHERE id = :id")
+    suspend fun delete(id: Long)
 }

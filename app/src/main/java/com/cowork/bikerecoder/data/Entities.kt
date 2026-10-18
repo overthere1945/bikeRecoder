@@ -103,3 +103,15 @@ data class TrackPointEntity(
     val speedMps: Float?,
     val accuracyM: Float,
 )
+
+/** kind는 FavoriteKind의 name. */
+@Entity(tableName = "favorite_place")
+data class FavoritePlaceEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long,
+    val kind: String,
+    val name: String,
+    val lat: Double,
+    val lon: Double,
+    val address: String?,
+    val createdAt: Long,
+)

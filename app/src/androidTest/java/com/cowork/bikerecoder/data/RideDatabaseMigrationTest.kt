@@ -11,6 +11,8 @@ import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripStop
 import com.cowork.bikerecoder.core.trip.TripType
+import com.cowork.bikerecoder.favorite.Favorite
+import com.cowork.bikerecoder.favorite.FavoriteKind
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -68,6 +70,47 @@ class RideDatabaseMigrationTest {
             assertEquals(emptyList<Any>(), rides.tripSummaries())
             val segmentId = rides.openSegment(5, startedAt = 3_000L, localDate = LocalDate.of(2026, 10, 12))
             assertEquals(listOf(segmentId), rides.openSegments().map { it.id })
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun v2DataSurvivesMigrationTo3() = runBlocking {
+        helper.createDatabase(DB, 2).apply {
+            execSQL(
+                "INSERT INTO trip (id, type, status, profile, createdAt, lastActiveAt, completedAt) " +
+                    "VALUES (5, 'MULTI_DAY', 'ACTIVE', 'BALANCED', 1000, 2000, NULL)",
+            )
+            execSQL(
+                "INSERT INTO ride_segment (id, tripId, startedAt, endedAt, localDate, distanceM, movingTimeMs, " +
+                    "elapsedMs, maxSpeedMps, ascentM, descentM, minAltitudeM, maxAltitudeM) " +
+                    "VALUES (21, 5, 3000, 4000, '2026-10-12', 1500.0, 60000, 90000, 8.5, 10.0, 4.0, NULL, NULL)",
+            )
+            close()
+        }
+
+        helper.runMigrationsAndValidate(DB, 3, true).close()
+
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, DB).build()
+        try {
+            val trip = RoomTripStore(db).trip(5)
+            assertNotNull(trip)
+            assertEquals(TripType.MULTI_DAY, trip!!.type)
+            assertEquals(TripStatus.ACTIVE, trip.status)
+            assertEquals(1_000L, trip.createdAt)
+            assertEquals(2_000L, trip.lastActiveAt)
+
+            val segments = RoomRideStore(db).segments(5)
+            assertEquals(1, segments.size)
+            assertEquals(21L, segments[0].id)
+            assertEquals(4_000L, segments[0].endedAt)
+            assertEquals(1500.0, segments[0].totals.distanceM, 0.0)
+
+            val favorites = RoomFavoriteStore(db)
+            assertEquals(emptyList<Favorite>(), favorites.all())
+            val id = favorites.insert(Favorite(0, FavoriteKind.HOME, "집", GeoPoint(37.5, 127.0), null, 5_000L))
+            assertEquals(listOf(id), favorites.all().map { it.id })
         } finally {
             db.close()
         }
