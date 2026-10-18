@@ -9,12 +9,14 @@ import com.cowork.bikerecoder.core.post.PhotoCandidate
 import com.cowork.bikerecoder.core.post.PhotoPositionSource
 import com.cowork.bikerecoder.core.post.PlacedPhoto
 import com.cowork.bikerecoder.core.recording.RideSegment
+import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.nav.FakeTripStore
 import com.cowork.bikerecoder.ride.FakeRideStore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
@@ -42,8 +44,9 @@ class PostProcessorTest {
         photoSource: PhotoSource = photos,
         hrSource: HeartRateSource = heartRate,
         scope: CoroutineScope = backgroundScope,
+        rideStore: RideStore = rides,
     ) = PostProcessor(
-        rides, postStore, photoSource, hrSource, clock = { now }, scope = scope,
+        rideStore, postStore, photoSource, hrSource, clock = { now }, scope = scope,
         warnLog = { message, _ -> warnings += message },
     )
 
@@ -978,12 +981,17 @@ class PostProcessorTest {
         }
     }
 
-    /** Store wrapper counting [saveExtras]. */
+    /** Store wrapper counting [saveExtras] and the photo-row reads ([observePhotos]). */
     private inner class CountingStore : PostStore by store {
         var extrasWrites = 0
+        var photoReads = 0
         override suspend fun saveExtras(extras: SegmentExtras) {
             extrasWrites++
             store.saveExtras(extras)
+        }
+        override fun observePhotos(segmentIds: List<Long>): Flow<List<RidePhoto>> {
+            photoReads++
+            return store.observePhotos(segmentIds)
         }
     }
 
@@ -1084,6 +1092,154 @@ class PostProcessorTest {
 
         assertEquals(HrStatus.PENDING, extras(segment)!!.hrStatus)
         assertEquals(1, heartRate.calls.size)
+    }
+
+    // ---- N1 / R16: under "선택한 사진만" old segments are rescanned at most once a day; no no-op writes ----
+
+    /** Ride store wrapper counting the trip reads ([segments]) the photo step makes. */
+    private inner class CountingRides : RideStore by rides {
+        var tripReads = 0
+        override suspend fun segments(tripId: Long): List<RideSegment> {
+            tripReads++
+            return rides.segments(tripId)
+        }
+    }
+
+    /**
+     * Five rides a day apart whose heart rate and route are done, so only their (never finished) photo scan is left;
+     * the last ended three days before the returned time.
+     */
+    private suspend fun fiveOldRidesOnlyPhotosLeft(): List<RideSegment> = (0 until 5).map { i ->
+        ride(START + i * DAY, END + i * DAY).also {
+            store.saveExtras(SegmentExtras(it.id, hrStatus = HrStatus.NONE, simplifiedDone = true))
+        }
+    }
+
+    @Test
+    fun partialAccessRescansOldSegmentsAtMostOnceADay() = runTest {
+        val old = fiveOldRidesOnlyPhotosLeft()
+        photos.access = PhotoAccess.PARTIAL
+        photos.photos = old.map { PhotoCandidate(it.id, it.startedAt + 60_000L, exif = null) }
+        val counting = CountingStore()
+        val trips = CountingRides()
+        val p = processor(postStore = counting, rideStore = trips)
+        val pass1 = END + 4 * DAY + 3 * DAY // the newest ended three days ago
+        now = pass1
+
+        p.runOnce()
+
+        assertEquals(5, photos.queries.size)
+        assertTrue(counting.extrasWrites <= 5, "pass 1 wrote ${counting.extrasWrites}")
+        old.forEach {
+            assertEquals(listOf(it.id), photosOf(it).map { photo -> photo.mediaId })
+            assertEquals(pass1, extras(it)!!.photosScannedAt)
+            assertFalse(extras(it)!!.photoScanDone, "R15: PARTIAL never finishes")
+        }
+        assertEquals(5, store.segmentsNeedingWork(now).size, "PARTIAL segments stay listed")
+
+        // An hour later (the next app open): no trip read, no photo read, no MediaStore query, no write.
+        val before = store.extrasById.value
+        val reads = Triple(counting.photoReads, trips.tripReads, counting.extrasWrites)
+        now = pass1 + 60 * 60_000L
+        p.runOnce()
+
+        assertEquals(5, photos.queries.size)
+        assertEquals(reads, Triple(counting.photoReads, trips.tripReads, counting.extrasWrites))
+        assertEquals(before, store.extrasById.value)
+
+        // Still throttled just short of a day after the last scan...
+        now = pass1 + DAY - 1
+        p.runOnce()
+        assertEquals(5, photos.queries.size)
+
+        // ...and a day after the last scan, each is scanned again (a newly selected photo turns up).
+        photos.photos = photos.photos + PhotoCandidate(100, old[0].startedAt + 120_000L, exif = null)
+        now = pass1 + DAY + 60 * 60_000L
+        p.runOnce()
+
+        assertEquals(10, photos.queries.size)
+        assertEquals(listOf(old[0].id, 100L), photosOf(old[0]).map { it.mediaId })
+        old.forEach { assertEquals(now, extras(it)!!.photosScannedAt) }
+    }
+
+    @Test
+    fun partialToFullScansOldSegmentsOnTheNextPass() = runTest {
+        val old = fiveOldRidesOnlyPhotosLeft()
+        photos.access = PhotoAccess.PARTIAL
+        val p = processor()
+        now = END + 4 * DAY + 3 * DAY
+        p.runOnce()
+        now += 60 * 60_000L
+        p.runOnce()
+        assertEquals(5, photos.queries.size, "the second PARTIAL pass is throttled")
+
+        // The rider allows all photos: the very next pass scans every old segment and finishes it (R15).
+        photos.access = PhotoAccess.FULL
+        photos.photos = old.map { PhotoCandidate(it.id, it.startedAt + 60_000L, exif = null) }
+        now += 60_000L
+        p.runOnce()
+
+        assertEquals(10, photos.queries.size)
+        old.forEach {
+            assertEquals(listOf(it.id), photosOf(it).map { photo -> photo.mediaId })
+            assertTrue(extras(it)!!.photoScanDone)
+        }
+        assertEquals(emptyList<RideSegment>(), store.segmentsNeedingWork(now))
+    }
+
+    @Test
+    fun recentSegmentUnderPartialStillScansEveryPass() = runTest {
+        val segment = ride()
+        photos.access = PhotoAccess.PARTIAL
+        val p = processor()
+        now = END + 60_000L
+        p.runOnce()
+
+        // A photo saved (and selected) late still turns up on the next pass within the 24 hours.
+        photos.photos = listOf(PhotoCandidate(1, END + 2 * 60_000L, exif = null))
+        now += 60 * 60_000L
+        p.runOnce()
+        now = END + DAY // the limit itself included
+        p.runOnce()
+
+        assertEquals(3, photos.queries.size)
+        assertEquals(listOf(1L), photosOf(segment).map { it.mediaId })
+        assertEquals(now, extras(segment)!!.photosScannedAt)
+        assertFalse(extras(segment)!!.photoScanDone)
+    }
+
+    @Test
+    fun skippedPhotoStepWritesNothing() = runTest {
+        // An old PARTIAL segment scanned an hour ago: the whole pass touches nothing.
+        val old = ride()
+        val scanned = END + 3 * DAY
+        store.saveExtras(SegmentExtras(old.id, photosScannedAt = scanned, hrStatus = HrStatus.NONE, simplifiedDone = true))
+        photos.access = PhotoAccess.PARTIAL
+        val counting = CountingStore()
+        val trips = CountingRides()
+        now = scanned + 60 * 60_000L
+
+        processor(postStore = counting, rideStore = trips).runOnce()
+
+        assertEquals(emptyList<Pair<Long, Long>>(), photos.queries)
+        assertEquals(0, counting.extrasWrites)
+        assertEquals(0, counting.photoReads)
+        assertEquals(0, trips.tripReads)
+        assertEquals(scanned, extras(old)!!.photosScannedAt)
+
+        // A scan that changes nothing a reader or the throttle uses writes nothing either (same clock, same result).
+        val recentStart = START + 3 * DAY + 2 * 60 * 60_000L
+        val recent = ride(recentStart, recentStart + TEN_MIN)
+        store.saveExtras(SegmentExtras(recent.id, hrStatus = HrStatus.NONE, simplifiedDone = true))
+        now = recentStart + TEN_MIN + 60_000L // the old one is still within its day
+        val p = processor(postStore = counting)
+        p.runOnce()
+        assertEquals(1, photos.queries.size, "only the recent segment is scanned")
+        assertEquals(1, counting.extrasWrites, "the first scan records photosScannedAt")
+        p.runOnce()
+        assertEquals(2, photos.queries.size, "a recent segment is scanned every pass")
+        assertEquals(1, counting.extrasWrites)
+        assertEquals(scanned, extras(old)!!.photosScannedAt)
     }
 
     private companion object {

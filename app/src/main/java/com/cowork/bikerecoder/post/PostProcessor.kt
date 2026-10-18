@@ -180,7 +180,9 @@ class PostProcessor(
         if (!extras.photoScanDone) {
             step("Photo scan", segment) {
                 val access = photos.access()
-                if (access != PhotoAccess.NONE) scanPhotos(segment, endedAt, now, access, points)
+                if (access != PhotoAccess.NONE && !rescanThrottled(extras, endedAt, now, access)) {
+                    scanPhotos(segment, endedAt, now, access, points)
+                }
             }
         }
         if (HrRetryPolicy.shouldTry(extras.hrStatus, endedAt, extras.hrFirstTriedAt, now) && canReadHeartRate()) {
@@ -189,6 +191,16 @@ class PostProcessor(
         if (!extras.simplifiedDone) {
             step("Route simplification", segment) { simplify(segment, points()) }
         }
+    }
+
+    /**
+     * 판정 R16: "선택한 사진만"([PhotoAccess.PARTIAL])이면 끝난 지 24시간이 지난 구간의 사진은 마지막으로 찾은 뒤
+     * 24시간이 지나야 다시 찾는다 — 그 구간은 끝나지 않으니(R15) 앱을 열 때마다 구간마다 찾고 쓰지 않게. 구간 끝 뒤
+     * 24시간 안은 바퀴마다, [PhotoAccess.FULL]은 언제나 찾는다(모두 허용하면 다음 바퀴에 나머지를 찾고 끝낸다).
+     */
+    private fun rescanThrottled(extras: SegmentExtras, endedAt: Long, now: Long, access: PhotoAccess): Boolean {
+        val scannedAt = extras.photosScannedAt ?: return false
+        return access != PhotoAccess.FULL && now > endedAt + PHOTO_RESCAN_MS && now - scannedAt < PHOTO_RESCAN_MS
     }
 
     private suspend inline fun step(what: String, segment: RideSegment, block: () -> Unit) {
@@ -302,16 +314,19 @@ class PostProcessor(
         updateExtras(segment.id) { it.copy(simplifiedDone = true) }
     }
 
+    /** 행이 없거나 [change]로 무언가 바뀔 때만 쓴다(같은 값을 다시 써서 extras 관찰자를 깨우지 않게). */
     private suspend fun updateExtras(segmentId: Long, change: (SegmentExtras) -> SegmentExtras) {
         writeLock.withLock {
-            store.saveExtras(change(store.extras(segmentId) ?: SegmentExtras(segmentId)))
+            val current = store.extras(segmentId)
+            val next = change(current ?: SegmentExtras(segmentId))
+            if (next != current) store.saveExtras(next)
         }
     }
 
     companion object {
         /**
          * 구간 끝에서 이 시간 동안은 바퀴마다 사진을 다시 찾는다(늦게 저장된 사진). 지나면 한 번 더 찾고 끝.
-         * 심박 다시 읽기 한도와 같은 "구간 끝 + 24시간".
+         * 심박 다시 읽기 한도와 같은 "구간 끝 + 24시간". "선택한 사진만"이면 끝나지 않고 이 간격으로 다시 찾는다(R16).
          */
         const val PHOTO_RESCAN_MS = HrRetryPolicy.GIVE_UP_MS
     }
