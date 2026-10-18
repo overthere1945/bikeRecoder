@@ -2,6 +2,7 @@ package com.cowork.bikerecoder.data
 
 import androidx.room.Dao
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
@@ -170,4 +171,59 @@ interface FavoriteDao {
 
     @Query("DELETE FROM favorite_place WHERE id = :id")
     suspend fun delete(id: Long)
+}
+
+@Dao
+abstract class PostDao {
+    /** extras가 없거나 할 일이 남은 끝난 구간. FAILED는 [failedUntil] 한도(구간 끝 + 이 값) 안일 때만. */
+    @Query(
+        "SELECT s.* FROM ride_segment s LEFT JOIN segment_extras e ON e.segmentId = s.id " +
+            "WHERE s.endedAt IS NOT NULL AND (e.segmentId IS NULL OR e.photoScanDone = 0 OR e.simplifiedDone = 0 " +
+            "OR e.hrStatus = 'PENDING' OR (e.hrStatus = 'FAILED' AND :now <= s.endedAt + :failedUntil)) " +
+            "ORDER BY s.startedAt ASC, s.id ASC",
+    )
+    abstract suspend fun segmentsNeedingWork(now: Long, failedUntil: Long): List<RideSegmentEntity>
+
+    @Query("SELECT * FROM segment_extras WHERE segmentId = :segmentId")
+    abstract suspend fun extras(segmentId: Long): SegmentExtrasEntity?
+
+    @Query("SELECT * FROM segment_extras WHERE segmentId IN (:segmentIds)")
+    abstract fun observeExtras(segmentIds: List<Long>): Flow<List<SegmentExtrasEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun saveExtras(extras: SegmentExtrasEntity)
+
+    @Query("SELECT * FROM ride_photo WHERE segmentId IN (:segmentIds) ORDER BY takenAt ASC, id ASC")
+    abstract fun observePhotos(segmentIds: List<Long>): Flow<List<RidePhotoEntity>>
+
+    /** 같은 (segmentId, mediaId)가 있으면 건너뛴다. 외래 키 위반은 IGNORE와 상관없이 실패한다. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    abstract suspend fun insertPhotos(photos: List<RidePhotoEntity>)
+
+    @Query("UPDATE ride_photo SET hidden = :hidden WHERE id = :photoId")
+    abstract suspend fun setHidden(photoId: Long, hidden: Boolean)
+
+    @Query("DELETE FROM ride_photo WHERE mediaId IN (:mediaIds)")
+    abstract suspend fun deletePhotosByMediaId(mediaIds: List<Long>)
+
+    @Query("DELETE FROM heart_rate_sample WHERE segmentId = :segmentId")
+    abstract suspend fun deleteSamples(segmentId: Long)
+
+    @Insert
+    abstract suspend fun insertSamples(samples: List<HeartRateSampleEntity>)
+
+    @Transaction
+    open suspend fun replaceSamples(segmentId: Long, samples: List<HeartRateSampleEntity>) {
+        deleteSamples(segmentId)
+        insertSamples(samples)
+    }
+
+    @Query("SELECT * FROM heart_rate_sample WHERE segmentId = :segmentId ORDER BY timeMillis ASC, id ASC")
+    abstract suspend fun samples(segmentId: Long): List<HeartRateSampleEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun saveSimplified(route: SegmentRouteSimplifiedEntity)
+
+    @Query("SELECT * FROM segment_route_simplified ORDER BY localDate ASC, segmentId ASC")
+    abstract suspend fun simplifiedRoutes(): List<SegmentRouteSimplifiedEntity>
 }
