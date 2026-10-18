@@ -83,7 +83,7 @@ sealed interface FavoriteDialog {
         val suggestions: List<String> = emptyList(),
         val loadingSuggestions: Boolean = false,
         val error: String? = null,
-        val register: Boolean = true,
+        val register: Boolean,
         val accuracyWarning: String? = null,
     ) : FavoriteDialog {
         /** The same request (place and origin), whatever its field state: a save or the suggestions may land on it. */
@@ -116,6 +116,7 @@ class FavoritesViewModel(
     private val repository: FavoriteRepository,
     private val placeSearch: PlaceSearch,
     private val log: WarnLog = androidWarnLog(TAG),
+    private val clock: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
 
     // Declared before [favorites]: its eager collection may set this while the view model is still being built.
@@ -151,10 +152,26 @@ class FavoritesViewModel(
     /** The address of the current location being looked up ([registerCurrent]); a second press waits for it. */
     private var locating: Job? = null
 
+    private val _locatingCurrent = MutableStateFlow(false)
+
+    /** True while [registerCurrent] looks up the address ([📍 현재 위치] says "현재 위치를 확인하는 중…"). */
+    val locatingCurrent: StateFlow<Boolean> = _locatingCurrent.asStateFlow()
+
+    /**
+     * Drops a running [registerCurrent] lookup: its answer is no longer wanted (another dialog opened, the dialog was
+     * dismissed, or the register-mode search was left).
+     */
+    fun cancelCurrentLocation() {
+        locating?.cancel()
+        locating = null
+        _locatingCurrent.value = false
+    }
+
     /** The "추천 이름" of the open [FavoriteDialog.NameFavorite]. */
     private var suggesting: Job? = null
 
     fun startSave(place: FavoritePlace) {
+        cancelCurrentLocation()
         _dialog.value = FavoriteDialog.ChooseName(place)
     }
 
@@ -177,6 +194,7 @@ class FavoritesViewModel(
      * prefilled with the place name, then [saveCustom].
      */
     fun saveAs(place: FavoritePlace, kind: FavoriteKind) {
+        cancelCurrentLocation()
         if (kind == FavoriteKind.CUSTOM) {
             if (work?.isActive != true) openName(place, prefill = place.name, register = true)
             return
@@ -220,6 +238,7 @@ class FavoritesViewModel(
     /** Only custom favorites can be renamed. */
     fun startRename(favorite: Favorite) {
         if (favorite.kind != FavoriteKind.CUSTOM) return
+        cancelCurrentLocation()
         _dialog.value = FavoriteDialog.Rename(favorite)
     }
 
@@ -235,6 +254,7 @@ class FavoritesViewModel(
     }
 
     fun askDelete(favorite: Favorite) {
+        cancelCurrentLocation()
         _dialog.value = FavoriteDialog.ConfirmDelete(favorite)
     }
 
@@ -251,23 +271,36 @@ class FavoritesViewModel(
     fun startCustom() {
         val current = _dialog.value as? FavoriteDialog.ChooseName ?: return
         if (work?.isActive == true) return
+        cancelCurrentLocation()
         openName(current.place, prefill = current.place.name, register = false)
     }
 
     /**
      * [📍 현재 위치] in the register-mode search (spec §8.3). No [fix] yet → [MSG_NO_LOCATION]. Else its address is
      * looked up, then home or work asks [FavoriteDialog.ConfirmCurrent] and a custom favorite its name
-     * ([FavoriteDialog.NameFavorite]). A fix rougher than [MAX_ACCURACY_M] carries [accuracyWarning].
+     * ([FavoriteDialog.NameFavorite]). A fix rougher than [MAX_ACCURACY_M] carries [accuracyWarning]; one older than
+     * [MAX_FIX_AGE_MS] (the last one kept after the location stopped) counts as none.
+     *
+     * While the address is looked up [locatingCurrent] is true. Its answer is shown only if this lookup is still the
+     * current one and no dialog opened meanwhile: anything else the rider does first ([saveAs], [registerPicked],
+     * another dialog, [dismiss], leaving the screen) cancels it ([cancelCurrentLocation]).
      */
     fun registerCurrent(kind: FavoriteKind, fix: LocationFix?) {
         if (work?.isActive == true || locating?.isActive == true) return
-        if (fix == null) {
+        if (fix == null || clock() - fix.timeMillis > MAX_FIX_AGE_MS) {
             _dialog.value = FavoriteDialog.Message(MSG_NO_LOCATION)
             return
         }
         val warning = accuracyWarning(fix.accuracyM)
+        _locatingCurrent.value = true
         locating = viewModelScope.launch {
+            val self = coroutineContext[Job]
             val address = placeSearch.addressOrNull(fix.point)
+            if (locating !== self) return@launch
+            // Done: from here on this lookup is no longer "running" (opening the name dialog must not cancel it).
+            locating = null
+            _locatingCurrent.value = false
+            if (_dialog.value != null) return@launch
             val place = FavoritePlace(address ?: coordinates(fix.point), fix.point, address)
             when (kind) {
                 FavoriteKind.HOME, FavoriteKind.WORK ->
@@ -288,6 +321,7 @@ class FavoritesViewModel(
      * button was the confirmation; [saveAs]), a custom favorite asks its name.
      */
     fun registerPicked(kind: FavoriteKind, picked: PickedPoint) {
+        cancelCurrentLocation()
         val place = FavoritePlace(picked.address ?: PickedPoint.FALLBACK_NAME, picked.point, picked.address)
         when (kind) {
             FavoriteKind.HOME, FavoriteKind.WORK -> saveAs(place, kind)
@@ -300,6 +334,7 @@ class FavoritesViewModel(
      * field's name; null (current location, map pick) takes the nearest place, else the address, else empty.
      */
     private fun openName(place: FavoritePlace, prefill: String?, register: Boolean, warning: String? = null) {
+        cancelCurrentLocation()
         suggesting?.cancel()
         val opened = FavoriteDialog.NameFavorite(
             place = place,
@@ -383,11 +418,13 @@ class FavoritesViewModel(
         // The placeholder list before the first answer says nothing about the count: the press is ignored.
         if (!favoritesLoaded.value) return false
         if (favorites.value.size < FavoriteRepository.MAX_COUNT) return true
+        cancelCurrentLocation()
         _dialog.value = FavoriteDialog.Message(FavoriteRepository.MSG_LIMIT)
         return false
     }
 
     fun dismiss() {
+        cancelCurrentLocation()
         suggesting?.cancel()
         _dialog.value = null
     }
@@ -429,6 +466,9 @@ class FavoritesViewModel(
 
         /** A fix rougher than this (m) is warned about (spec §8.3); saving is still allowed. */
         const val MAX_ACCURACY_M = 50f
+
+        /** A fix older than this (ms, by its wall-clock time) is not "the current location". */
+        const val MAX_FIX_AGE_MS = 30_000L
 
         /** "현재 위치를 집으로 저장할까요?" / "현재 위치를 회사로 저장할까요?" */
         fun currentQuestion(kind: FavoriteKind): String = when (kind) {

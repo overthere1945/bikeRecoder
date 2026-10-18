@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -112,6 +113,8 @@ fun SearchScreen(
     onPickOnMap: (() -> Unit)? = null,
     /** [📍 현재 위치] (spec §8.3, the register mode): register the current location. Null hides the line. */
     onCurrentLocation: (() -> Unit)? = null,
+    /** The current location's address is being looked up: that line shows "현재 위치를 확인하는 중…" with a spinner. */
+    locatingCurrent: Boolean = false,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val focus = remember { FocusRequester() }
@@ -152,7 +155,13 @@ fun SearchScreen(
             Column(modifier = Modifier.weight(1f).fillMaxWidth().imePadding().testTag(SearchTags.RESULTS_AREA)) {
                 // Under the chips (none in the register mode), above the recent places or the results; shown with a
                 // query too.
-                if (onCurrentLocation != null) ActionLine("📍 현재 위치", SearchTags.CURRENT_LOCATION, onCurrentLocation)
+                if (onCurrentLocation != null) {
+                    if (locatingCurrent) {
+                        LoadingLine("현재 위치를 확인하는 중…", SearchTags.CURRENT_LOCATION)
+                    } else {
+                        ActionLine("📍 현재 위치", SearchTags.CURRENT_LOCATION, onCurrentLocation)
+                    }
+                }
                 if (onPickOnMap != null) ActionLine("🗺 지도에서 선택", SearchTags.MAP_PICK, onPickOnMap)
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) { SearchResultsArea(state, onPlaceTap, viewModel) }
             }
@@ -196,6 +205,25 @@ private fun ActionLine(text: String, tag: String, onClick: () -> Unit) {
             .heightIn(min = 48.dp)
             .padding(horizontal = 16.dp, vertical = 14.dp),
     )
+    HorizontalDivider()
+}
+
+/** [ActionLine]'s place while its action runs: a spinner and [text], not tappable. */
+@Composable
+private fun LoadingLine(text: String, tag: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(tag)
+            .semantics(mergeDescendants = true) {}
+            .heightIn(min = 48.dp)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+        Text(text, style = MaterialTheme.typography.bodyLarge)
+    }
     HorizontalDivider()
 }
 

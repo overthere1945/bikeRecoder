@@ -62,6 +62,7 @@ class MapPickViewModelTest {
         val vm = MapPickViewModel(search, start)
         assertEquals(start, vm.state.value.center)
         assertTrue(vm.state.value.loading)
+        assertFalse(vm.state.value.canConfirm)
         assertEquals("주소를 확인하는 중…", vm.state.value.title)
         advanceTimeBy(299)
         assertTrue(asked.isEmpty())
@@ -110,10 +111,11 @@ class MapPickViewModelTest {
         assertNull(vm.result())
         vm.onCameraIdle(a)
         assertFalse(vm.state.value.moving)
-        assertTrue(vm.state.value.canConfirm)
-        // Settable before the address arrives: it then has no address.
-        assertEquals(PickedPoint(a, null), vm.result())
+        // Stopped, but its address is still being looked up.
+        assertFalse(vm.state.value.canConfirm)
+        assertNull(vm.result())
         advanceTimeBy(400)
+        assertTrue(vm.state.value.canConfirm)
         assertEquals(PickedPoint(a, "주소 35.1"), vm.result())
     }
 
@@ -177,6 +179,8 @@ class MapPickViewModelTest {
         assertNull(vm.state.value.address)
         assertFalse(vm.state.value.loading)
         assertEquals("35.10000, 129.00000", vm.state.value.title)
+        // A failed lookup never blocks the button.
+        assertTrue(vm.state.value.canConfirm)
         assertEquals(PickedPoint(a, null), vm.result())
     }
 
@@ -190,6 +194,8 @@ class MapPickViewModelTest {
         assertNull(vm.state.value.address)
         assertFalse(vm.state.value.loading)
         assertEquals("35.20000, 129.10000", vm.state.value.title)
+        assertTrue(vm.state.value.canConfirm)
+        assertEquals(PickedPoint(b, null), vm.result())
     }
 
     @Test

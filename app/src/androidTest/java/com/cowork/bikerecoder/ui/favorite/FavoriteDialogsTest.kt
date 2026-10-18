@@ -73,7 +73,7 @@ class FavoriteDialogsTest {
 
     @Test
     fun nameFavoriteIsPrefilledAndSavesTheName() {
-        show(FavoriteDialog.NameFavorite(FavoritePlace("해운대 해수욕장", p, null), initialName = "해운대 해수욕장"))
+        show(FavoriteDialog.NameFavorite(FavoritePlace("해운대 해수욕장", p, null), initialName = "해운대 해수욕장", register = true))
 
         composeRule.onNodeWithText("즐겨찾기 이름").assertIsDisplayed()
         composeRule.onNodeWithText("집").assertDoesNotExist()
@@ -100,6 +100,7 @@ class FavoriteDialogsTest {
                 FavoritePlace("부산 해운대구 우동 1", p, "부산 해운대구 우동 1"),
                 initialName = "GS25 우동점",
                 suggestions = listOf("GS25 우동점", "스타벅스 해운대점", "부산 해운대구 우동 1"),
+                register = true,
             ),
         )
 
@@ -120,7 +121,7 @@ class FavoriteDialogsTest {
     @Test
     fun theNameFollowsTheSuggestionsUntilEdited() {
         val place = FavoritePlace("부산 해운대구 우동 1", p, "부산 해운대구 우동 1")
-        var dialog by mutableStateOf<FavoriteDialog?>(FavoriteDialog.NameFavorite(place, "", loadingSuggestions = true))
+        var dialog by mutableStateOf<FavoriteDialog?>(FavoriteDialog.NameFavorite(place, "", loadingSuggestions = true, register = true))
         composeRule.setContent {
             MaterialTheme {
                 FavoriteDialogs(
@@ -140,13 +141,13 @@ class FavoriteDialogsTest {
         field.assertTextEquals("이름", "")
         composeRule.onNodeWithText("추천 이름").assertIsDisplayed()
 
-        dialog = FavoriteDialog.NameFavorite(place, "스타벅스", suggestions = listOf("스타벅스", place.address!!))
+        dialog = FavoriteDialog.NameFavorite(place, "스타벅스", suggestions = listOf("스타벅스", place.address!!), register = true)
         composeRule.waitForIdle()
         field.assertTextEquals("이름", "스타벅스")
 
         // Once the rider typed, a later name does not overwrite it.
         field.performTextReplacement("우리 집 앞")
-        dialog = FavoriteDialog.NameFavorite(place, "다른 이름", suggestions = listOf("다른 이름"))
+        dialog = FavoriteDialog.NameFavorite(place, "다른 이름", suggestions = listOf("다른 이름"), register = true)
         composeRule.waitForIdle()
         field.assertTextEquals("이름", "우리 집 앞")
     }
@@ -158,6 +159,7 @@ class FavoriteDialogsTest {
                 FavoritePlace("카페", p, null),
                 initialName = "카페",
                 error = "같은 이름의 즐겨찾기가 있습니다",
+                register = false,
                 accuracyWarning = "위치 오차가 큽니다(약 88m)",
             ),
         )

@@ -48,6 +48,12 @@ class FavoritesViewModelTest {
     private val addresses = mutableMapOf<GeoPoint, String?>()
     private val nearbyPlaces = mutableMapOf<GeoPoint, SearchResult<List<Place>>>()
     private var nearbyGate: CompletableDeferred<Unit>? = null
+
+    /** Holds every address answer until completed. */
+    private var addressGate: CompletableDeferred<Unit>? = null
+
+    /** The wall clock the view model reads; fixes are taken "now" unless a test says otherwise. */
+    private var wallNow = 1_800_000_000_000L
     private var nearbyThrows = false
     private val nearbyAsked = mutableListOf<GeoPoint>()
     private val addressAsked = mutableListOf<GeoPoint>()
@@ -57,6 +63,7 @@ class FavoritesViewModelTest {
 
         override suspend fun addressOf(point: GeoPoint): SearchResult<String?> {
             addressAsked += point
+            addressGate?.await()
             return SearchResult.Ok(addresses[point])
         }
 
@@ -70,7 +77,7 @@ class FavoritesViewModelTest {
 
     private fun near(vararg names: String) = SearchResult.Ok(names.mapIndexed { i, n -> Place(n, "", p1, 10 * (i + 1)) })
 
-    private fun fix(point: GeoPoint, accuracyM: Float = 8f) = LocationFix(point, accuracyM, null, null, 0L)
+    private fun fix(point: GeoPoint, accuracyM: Float = 8f, at: Long = wallNow) = LocationFix(point, accuracyM, null, null, at)
 
     /** A loaded name dialog: [initial] in the field, the nearby names then the address as suggestions. */
     private fun named(
@@ -101,7 +108,7 @@ class FavoritesViewModelTest {
     }
 
     private fun viewModel(store: FakeFavoriteStore) =
-        FavoritesViewModel(FavoriteRepository(store) { now++ }, search, log)
+        FavoritesViewModel(FavoriteRepository(store) { now++ }, search, log, clock = { wallNow })
 
     private fun custom(id: Long, name: String, at: Long = id) =
         Favorite(id, FavoriteKind.CUSTOM, name, p1, null, at)
@@ -820,7 +827,13 @@ class FavoritesViewModelTest {
         vm.saveCustom("장소1")
         settle()
         assertEquals(
-            FavoriteDialog.NameFavorite(place1, "장소1", loadingSuggestions = true, error = FavoriteRepository.MSG_DUPLICATE),
+            FavoriteDialog.NameFavorite(
+                place1,
+                "장소1",
+                loadingSuggestions = true,
+                error = FavoriteRepository.MSG_DUPLICATE,
+                register = true,
+            ),
             vm.dialog.value,
         )
         gate.complete(Unit)
@@ -869,5 +882,140 @@ class FavoritesViewModelTest {
         settle()
         assertNull(vm.dialog.value)
         assertEquals(emptyList<GeoPoint>(), nearbyAsked)
+    }
+
+    // --- Fix round 1: the current-location lookup never lands late ---
+
+    @Test
+    fun theLookupIsShownWhileItRuns() = runTest {
+        val gate = CompletableDeferred<Unit>().also { addressGate = it }
+        val vm = viewModel(FakeFavoriteStore())
+        assertEquals(false, vm.locatingCurrent.value)
+        vm.registerCurrent(FavoriteKind.HOME, fix(p1))
+        settle()
+        assertEquals(true, vm.locatingCurrent.value)
+        assertNull(vm.dialog.value)
+
+        gate.complete(Unit)
+        settle()
+        assertEquals(false, vm.locatingCurrent.value)
+        assertEquals(FavoriteDialog.ConfirmCurrent::class, vm.dialog.value!!::class)
+    }
+
+    @Test
+    fun aSecondPressDuringTheLookupIsIgnored() = runTest {
+        val gate = CompletableDeferred<Unit>().also { addressGate = it }
+        val vm = viewModel(FakeFavoriteStore())
+        vm.registerCurrent(FavoriteKind.HOME, fix(p1))
+        settle()
+        vm.registerCurrent(FavoriteKind.HOME, fix(p2))
+        vm.registerCurrent(FavoriteKind.HOME, null)
+        settle()
+        assertEquals(listOf(p1), addressAsked)
+        assertNull(vm.dialog.value)
+        gate.complete(Unit)
+        settle()
+        assertEquals(p1, (vm.dialog.value as FavoriteDialog.ConfirmCurrent).place.point)
+    }
+
+    @Test
+    fun aSearchResultTappedDuringTheLookupKeepsItsNameDialog() = runTest {
+        val gate = CompletableDeferred<Unit>().also { addressGate = it }
+        addresses[p2] = "다른 주소"
+        val vm = viewModel(FakeFavoriteStore())
+        vm.registerCurrent(FavoriteKind.CUSTOM, fix(p2))
+        settle()
+        vm.saveAs(place1, FavoriteKind.CUSTOM)
+        settle()
+        assertEquals(false, vm.locatingCurrent.value)
+        assertEquals(named(place1), vm.dialog.value)
+
+        gate.complete(Unit)
+        settle()
+        assertEquals(named(place1), vm.dialog.value)
+        assertEquals(listOf(p1), nearbyAsked)
+    }
+
+    @Test
+    fun aHomeSavedFromTheResultsDuringTheLookupIsNotAskedAgain() = runTest {
+        val gate = CompletableDeferred<Unit>().also { addressGate = it }
+        val store = FakeFavoriteStore()
+        val vm = viewModel(store)
+        val events = events(vm)
+        vm.registerCurrent(FavoriteKind.HOME, fix(p2))
+        settle()
+        vm.saveAs(place1, FavoriteKind.HOME)
+        settle()
+        gate.complete(Unit)
+        settle()
+        assertNull(vm.dialog.value)
+        assertEquals(listOf(FavoriteEvent.Registered(FavoriteKind.HOME)), events)
+        assertEquals(p1, store.current.single().point)
+    }
+
+    @Test
+    fun aPointPickedDuringTheLookupWins() = runTest {
+        val gate = CompletableDeferred<Unit>().also { addressGate = it }
+        val vm = viewModel(FakeFavoriteStore())
+        vm.registerCurrent(FavoriteKind.CUSTOM, fix(p2))
+        settle()
+        vm.registerPicked(FavoriteKind.CUSTOM, PickedPoint(p1, "주소"))
+        settle()
+        gate.complete(Unit)
+        settle()
+        assertEquals(p1, (vm.dialog.value as FavoriteDialog.NameFavorite).place.point)
+    }
+
+    @Test
+    fun dismissDuringTheLookupShowsNothing() = runTest {
+        val gate = CompletableDeferred<Unit>().also { addressGate = it }
+        val vm = viewModel(FakeFavoriteStore())
+        vm.registerCurrent(FavoriteKind.HOME, fix(p1))
+        settle()
+        vm.dismiss()
+        assertEquals(false, vm.locatingCurrent.value)
+        gate.complete(Unit)
+        settle()
+        assertNull(vm.dialog.value)
+    }
+
+    @Test
+    fun leavingTheScreenDuringTheLookupShowsNothing() = runTest {
+        val gate = CompletableDeferred<Unit>().also { addressGate = it }
+        val vm = viewModel(FakeFavoriteStore())
+        vm.registerCurrent(FavoriteKind.CUSTOM, fix(p1))
+        settle()
+        vm.cancelCurrentLocation()
+        assertEquals(false, vm.locatingCurrent.value)
+        gate.complete(Unit)
+        settle()
+        assertNull(vm.dialog.value)
+        assertEquals(emptyList<GeoPoint>(), nearbyAsked)
+    }
+
+    @Test
+    fun anotherDialogOpenedDuringTheLookupStays() = runTest {
+        val gate = CompletableDeferred<Unit>().also { addressGate = it }
+        val vm = viewModel(FakeFavoriteStore())
+        vm.registerCurrent(FavoriteKind.WORK, fix(p1))
+        settle()
+        vm.startSave(place2)
+        gate.complete(Unit)
+        settle()
+        assertEquals(FavoriteDialog.ChooseName(place2), vm.dialog.value)
+    }
+
+    @Test
+    fun aFixOlderThanThirtySecondsCountsAsNone() = runTest {
+        val vm = viewModel(FakeFavoriteStore())
+        vm.registerCurrent(FavoriteKind.HOME, fix(p1, at = wallNow - 31_000))
+        settle()
+        assertEquals(FavoriteDialog.Message("현재 위치를 찾는 중입니다. 잠시 후 다시 눌러 주세요"), vm.dialog.value)
+        assertEquals(emptyList<GeoPoint>(), addressAsked)
+
+        vm.dismiss()
+        vm.registerCurrent(FavoriteKind.HOME, fix(p1, at = wallNow - 29_000))
+        settle()
+        assertEquals(p1, (vm.dialog.value as FavoriteDialog.ConfirmCurrent).place.point)
     }
 }

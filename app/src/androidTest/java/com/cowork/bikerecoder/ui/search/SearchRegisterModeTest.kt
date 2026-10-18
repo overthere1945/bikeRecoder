@@ -66,7 +66,7 @@ class SearchRegisterModeTest {
 
     private fun top(tag: String) = composeRule.onNodeWithTag(tag).fetchSemanticsNode().positionInRoot.y
 
-    private fun show(kind: FavoriteKind) {
+    private fun show(kind: FavoriteKind, locating: Boolean = false) {
         composeRule.setContent {
             MaterialTheme {
                 SearchScreen(
@@ -79,6 +79,7 @@ class SearchRegisterModeTest {
                     onRegister = { place, k -> registered += place to k },
                     onPickOnMap = { pickOnMap++ },
                     onCurrentLocation = { currentLocation++ },
+                    locatingCurrent = locating,
                 )
             }
         }
@@ -170,6 +171,17 @@ class SearchRegisterModeTest {
         assertEquals(1, pickOnMap)
         assertEquals(1, currentLocation)
         assertEquals(emptyList<Pair<FavoritePlace, FavoriteKind>>(), registered)
+    }
+
+    @Test
+    fun whileLocatingTheLineSaysSoAndCannotBePressedAgain() {
+        show(FavoriteKind.HOME, locating = true)
+
+        composeRule.onNodeWithTag(SearchTags.CURRENT_LOCATION).assertIsDisplayed().assertTextEquals("현재 위치를 확인하는 중…")
+        composeRule.onNodeWithText("📍 현재 위치").assertDoesNotExist()
+        composeRule.onNodeWithTag(SearchTags.CURRENT_LOCATION).performClick()
+        assertEquals(0, currentLocation)
+        assertTrue(top(SearchTags.CURRENT_LOCATION) < top(SearchTags.MAP_PICK))
     }
 
     @Test

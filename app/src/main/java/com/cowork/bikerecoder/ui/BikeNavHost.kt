@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
@@ -197,6 +198,7 @@ fun BikeNavHost(
     val favorites by favoritesViewModel.favorites.collectAsStateWithLifecycle()
     val favoritesLoaded by favoritesViewModel.favoritesLoaded.collectAsStateWithLifecycle()
     val favoriteDialog by favoritesViewModel.dialog.collectAsStateWithLifecycle()
+    val locatingCurrent by favoritesViewModel.locatingCurrent.collectAsStateWithLifecycle()
     // The chips and the favorites screen: a favorite becomes the destination, then the plan screen.
     val selectFavorite: (Favorite) -> Unit = { favorite ->
         planViewModel.setDestination(favorite)
@@ -339,6 +341,10 @@ fun BikeNavHost(
             val registerKind = SearchViewModel.registerKind(entry.arguments?.getString(SearchViewModel.ARG_REGISTER))
             // [이 위치로 설정] on the pick screen: like a tapped result (the sheet), or in the register mode (spec §8.3)
             // home/work saved at once and a custom favorite named.
+            // A current-location lookup still running when this screen goes (back, the pick screen) is not wanted any more.
+            if (registerKind != null) {
+                DisposableEffect(entry) { onDispose { favoritesViewModel.cancelCurrentLocation() } }
+            }
             MapPickResultEffect(entry.savedStateHandle) { picked ->
                 if (registerKind != null) favoritesViewModel.registerPicked(registerKind, picked) else viewModel.onMapPicked(picked)
             }
@@ -356,6 +362,7 @@ fun BikeNavHost(
                 onCurrentLocation = registerKind?.let { kind ->
                     { if (isCurrent()) favoritesViewModel.registerCurrent(kind, container.currentLocation.value) }
                 },
+                locatingCurrent = registerKind != null && locatingCurrent,
             )
         }
         composable(Routes.MAP_PICK) { entry ->

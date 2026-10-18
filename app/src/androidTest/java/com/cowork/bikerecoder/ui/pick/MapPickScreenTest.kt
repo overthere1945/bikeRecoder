@@ -73,9 +73,15 @@ class MapPickScreenTest {
     }
 
     @Test
-    fun whileTheAddressLoadsTheCardSaysSoAndTheButtonStillWorks() {
+    fun whileTheAddressLoadsTheCardSaysSoAndTheButtonWaits() {
         show(MapPickState(center = point, loading = true))
         address().assertTextEquals("주소를 확인하는 중…")
+        confirm().assertIsNotEnabled()
+        confirm().performClick()
+        assertEquals(0, confirmed)
+
+        state = state.copy(loading = false, address = "부산 동구 중앙대로 206")
+        composeRule.waitForIdle()
         confirm().assertIsEnabled()
     }
 
@@ -95,7 +101,11 @@ class MapPickScreenTest {
         confirm().performClick()
         assertEquals(0, confirmed)
 
+        // Stopped: still disabled until its address lookup ends (here: failed → the coordinates).
         state = state.copy(moving = false)
+        composeRule.waitForIdle()
+        confirm().assertIsNotEnabled()
+        state = state.copy(loading = false)
         composeRule.waitForIdle()
         confirm().assertIsEnabled()
     }

@@ -62,7 +62,7 @@ fun FavoriteDialogs(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(dialog.place.name)
-                    ErrorText(dialog.accuracyWarning)
+                    WarningText(dialog.accuracyWarning)
                 }
             },
             confirmButton = { TextButton(onClick = onConfirmCurrent) { Text("저장") } },
@@ -154,7 +154,7 @@ private fun NameFavoriteDialog(dialog: FavoriteDialog.NameFavorite, onSave: (Str
         title = { Text("즐겨찾기 이름") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                ErrorText(dialog.accuracyWarning)
+                WarningText(dialog.accuracyWarning)
                 OutlinedTextField(
                     value = name,
                     onValueChange = {
@@ -195,6 +195,12 @@ private fun NameFavoriteDialog(dialog: FavoriteDialog.NameFavorite, onSave: (Str
         confirmButton = { TextButton(onClick = { onSave(name) }, enabled = name.isNotBlank()) { Text("저장") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
     )
+}
+
+/** A caution that does not block saving (e.g. the location accuracy): not in the error colour. */
+@Composable
+private fun WarningText(warning: String?) {
+    if (warning != null) Text(warning, color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable

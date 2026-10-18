@@ -41,8 +41,11 @@ data class MapPickState(
     val address: String? = null,
     val loading: Boolean = false,
 ) {
-    /** [이 위치로 설정] works only on a stopped map with a known point. */
-    val canConfirm: Boolean get() = !moving && center != null
+    /**
+     * [이 위치로 설정] works only on a stopped map with a known point whose address lookup has finished (found or not: a
+     * failed lookup still enables it, with the coordinates).
+     */
+    val canConfirm: Boolean get() = !moving && !loading && center != null
 
     /** The card's line: "주소를 확인하는 중…" while looking up, then the address, else the coordinates. */
     val title: String?
@@ -93,7 +96,7 @@ class MapPickViewModel(
     fun result(): PickedPoint? {
         val s = _state.value
         val center = s.center ?: return null
-        return if (s.moving) null else PickedPoint(center, s.address)
+        return if (!s.canConfirm) null else PickedPoint(center, s.address)
     }
 
     companion object {
