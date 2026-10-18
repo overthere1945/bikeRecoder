@@ -4,7 +4,10 @@ import android.annotation.SuppressLint
 import android.view.MotionEvent
 import android.view.View
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -23,7 +26,9 @@ import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
 import com.cowork.bikerecoder.core.recording.PauseKind
 import com.cowork.bikerecoder.core.recording.RecordingState
+import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStats
+import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.ride.RecordingEnd
 import com.cowork.bikerecoder.ride.RideUiState
@@ -31,6 +36,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Rule
 import org.junit.Test
+import java.time.LocalDate
 
 /**
  * The record screen's content. The map slot is a classic View that consumes every touch (as MapLibre's MapView does,
@@ -230,5 +236,32 @@ class RecordScreenTest {
 
     private companion object {
         const val MAP = "map-slot"
+    }
+
+    @Test
+    fun summaryShowsThePhotoCount() {
+        var count by mutableIntStateOf(3)
+        composeRule.setContent {
+            MaterialTheme {
+                SegmentSummaryContent(
+                    segment = RideSegment(
+                        id = 1,
+                        tripId = 1,
+                        startedAt = 0L,
+                        endedAt = 600_000L,
+                        localDate = LocalDate.of(2026, 10, 18),
+                        totals = SegmentTotals.ZERO.copy(distanceM = 3_010.0, movingTimeMs = 600_000),
+                    ),
+                    map = {},
+                    onConfirm = {},
+                    footer = { SummaryPhotoCount(count) },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("사진 3장").assertIsDisplayed()
+        count = 0
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("사진", substring = true).assertDoesNotExist()
     }
 }

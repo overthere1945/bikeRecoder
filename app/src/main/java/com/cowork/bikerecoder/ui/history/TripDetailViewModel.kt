@@ -9,27 +9,48 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
+import com.cowork.bikerecoder.post.PostProcessor
+import com.cowork.bikerecoder.post.PostStore
+import com.cowork.bikerecoder.post.RidePhoto
+import com.cowork.bikerecoder.ui.photo.RidePhotos
+import com.cowork.bikerecoder.ui.photo.observeRidePhotos
+import com.cowork.bikerecoder.ui.photo.setPhotoHidden
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
 
 /**
  * One trip's segments by date (oldest first) and the trip's totals (spec §3.5), without empty segments
  * ([RideSegment.isEmpty]). An open segment (still being recorded,
  * endedAt == null) cannot be deleted; a closed one is deleted after confirmation.
+ * The map shows the listed segments' tracks joined in order ([track]) and the photos of every day ([photos], spec §2.3).
+ * The first load drops the photos deleted from the gallery and asks for a post-processing pass, once per screen.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class TripDetailViewModel(
     private val rideStore: RideStore,
     private val tripId: Long,
+    private val postStore: PostStore,
+    private val postProcessor: PostProcessor,
     private val log: WarnLog = WarnLog { _, _ -> },
+    private val compute: CoroutineDispatcher = Dispatchers.Default,
 ) : ViewModel() {
 
     private val _segmentsByDate = MutableStateFlow<Map<LocalDate, List<RideSegment>>>(emptyMap())
@@ -41,7 +62,21 @@ class TripDetailViewModel(
     private val _dialog = MutableStateFlow<HistoryDialog?>(null)
     val dialog: StateFlow<HistoryDialog?> = _dialog.asStateFlow()
 
+    private val _track = MutableStateFlow<List<GeoPoint>>(emptyList())
+    val track: StateFlow<List<GeoPoint>> = _track.asStateFlow()
+
+    /** The listed segments' ids; null until the first load. */
+    private val segmentIds = MutableStateFlow<List<Long>?>(null)
+
+    val photos: StateFlow<RidePhotos> = segmentIds.filterNotNull()
+        .flatMapLatest { ids -> observeRidePhotos(postStore.observePhotos(ids), log) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, RidePhotos())
+
     private val mutex = Mutex()
+
+    /** The segments [track] was read for (it is read again only when they change, e.g. a recording went on). */
+    private var trackOf: List<RideSegment>? = null
+    private var opened = false
 
     init {
         refresh()
@@ -85,6 +120,11 @@ class TripDetailViewModel(
         _dialog.value = null
     }
 
+    /** [숨기기] ([hidden] = true) / [다시 보이기] in the full-screen view. */
+    fun setHidden(photo: RidePhoto, hidden: Boolean) {
+        viewModelScope.launch { setPhotoHidden(postStore, photo, hidden, log) }
+    }
+
     /** A segment already gone counts as closed (deleting it again is harmless). */
     private suspend fun isOpen(segmentId: Long): Boolean = rideStore.segment(segmentId)?.let { it.endedAt == null } ?: false
 
@@ -94,6 +134,20 @@ class TripDetailViewModel(
             val segments = rideStore.segments(tripId).filterNot { it.isEmpty }
             _segmentsByDate.value = segments.groupBy { it.localDate }.toSortedMap()
             _total.value = tripTotals(segments)
+            val ids = segments.map { it.id }
+            segmentIds.value = ids
+            if (!opened) {
+                opened = true
+                viewModelScope.launch { postProcessor.pruneDeletedPhotos(ids) }
+                postProcessor.request()
+            }
+            if (segments != trackOf) {
+                // In the order listed (by date, then start); the segments' points are read one after another.
+                val ordered = _segmentsByDate.value.values.flatten()
+                val points = ordered.map { rideStore.points(it.id) }
+                _track.value = withContext(compute) { points.flatMap { list -> list.map { it.point } } }
+                trackOf = segments
+            }
         }
     }
 
@@ -112,7 +166,9 @@ class TripDetailViewModel(
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 val tripId = requireNotNull(createSavedStateHandle().get<Long>(ARG_TRIP)) { "missing $ARG_TRIP" }
-                TripDetailViewModel(container.rideStore, tripId, androidWarnLog("TripDetail"))
+                TripDetailViewModel(
+                    container.rideStore, tripId, container.postStore, container.postProcessor, androidWarnLog("TripDetail"),
+                )
             }
         }
     }

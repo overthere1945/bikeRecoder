@@ -1,7 +1,10 @@
 package com.cowork.bikerecoder.ui.record
 
 import androidx.lifecycle.SavedStateHandle
+import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.RouteProfile
+import com.cowork.bikerecoder.core.post.PhotoPositionSource
+import com.cowork.bikerecoder.core.post.PlacedPhoto
 import com.cowork.bikerecoder.core.recording.PauseKind
 import com.cowork.bikerecoder.core.recording.RecordingState
 import com.cowork.bikerecoder.core.trip.TripManager
@@ -17,6 +20,10 @@ import com.cowork.bikerecoder.nav.RecordingLog
 import com.cowork.bikerecoder.nav.RecordingOfflineMaps
 import com.cowork.bikerecoder.nav.RecordingVoiceOutput
 import com.cowork.bikerecoder.nav.ScriptedLocationSource
+import com.cowork.bikerecoder.post.FakeHeartRateSource
+import com.cowork.bikerecoder.post.FakePhotoSource
+import com.cowork.bikerecoder.post.FakePostStore
+import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.ride.FakePressureSource
 import com.cowork.bikerecoder.ride.FakeRideStore
 import com.cowork.bikerecoder.ride.RecordingEnd
@@ -63,7 +70,11 @@ class RecordViewModelTest {
         val tripManager: TripManager,
         val navigation: MutableStateFlow<NavUiState>,
         val ride: RideController,
-    )
+        val postStore: FakePostStore,
+    ) {
+        /** Post-processing passes so far. */
+        var passes = 0
+    }
 
     private fun TestScope.setup(
         args: Map<String, Any?> = emptyMap(),
@@ -83,8 +94,14 @@ class RecordViewModelTest {
             clock = clock,
             log = log,
         )
+        val rideStore = FakeRideStore(trips, clock)
+        val postStore = FakePostStore { trips.trips.keys.flatMap { rideStore.segments(it) } }
+        val postProcessor = PostProcessor(
+            rideStore, postStore, FakePhotoSource(), FakeHeartRateSource(), clock = clock, scope = backgroundScope,
+            warnLog = { _, _ -> },
+        )
         val ride = RideController(
-            rideStore = FakeRideStore(trips, clock),
+            rideStore = rideStore,
             tripStore = trips,
             tripManager = tripManager,
             navigation = navigation,
@@ -97,9 +114,13 @@ class RecordViewModelTest {
             log = log,
         )
         val navState = MutableStateFlow<NavUiState>(NavUiState.Idle)
-        val vm = RecordViewModel(ride, navState, flowOf(true), SavedStateHandle(args), serviceStatus.warning)
+        val vm = RecordViewModel(
+            ride, navState, flowOf(true), SavedStateHandle(args), serviceStatus.warning, postStore, postProcessor,
+        )
+        val setup = Setup(vm, tripManager, navState, ride, postStore)
+        postStore.beforeList = { setup.passes++ }
         runCurrent()
-        return Setup(vm, tripManager, navState, ride)
+        return setup
     }
 
     @Test
@@ -214,5 +235,34 @@ class RecordViewModelTest {
         val active = s.vm.ui.value as RideUiState.Active
         assertTrue(active.segmentId != firstSegment, "a new segment records")
         assertEquals("새 구간으로 기록을 시작합니다", s.vm.noticeForScreen.value?.text)
+    }
+
+    @Test
+    fun summaryCountsVisiblePhotosAndRequestsOnePass() = runTest(dispatcher) {
+        val s = setup()
+        val tripId = s.tripManager.startTrip(TripType.SINGLE_DAY, RouteProfile.CYCLEWAY_FIRST, emptyList()).id
+        s.vm.start(tripId)
+        runCurrent()
+        assertEquals(0, s.vm.summaryPhotoCount.value)
+        assertEquals(0, s.passes, "no pass while recording")
+
+        s.vm.onEndChoice(RecordingEnd.COMPLETE_TRIP)
+        runCurrent()
+        val segmentId = (s.vm.ui.value as RideUiState.Finished).segment.id
+        assertEquals(1, s.passes, "the summary asks for one pass")
+
+        s.postStore.upsertPhotos(
+            segmentId,
+            (1L..3L).map { PlacedPhoto(it, it, GeoPoint(37.5, 127.0), PhotoPositionSource.TRACK) },
+        )
+        s.postStore.setHidden(s.postStore.photos.value.first().id, hidden = true)
+        runCurrent()
+        assertEquals(2, s.vm.summaryPhotoCount.value, "hidden photos are not counted")
+        assertEquals(1, s.passes)
+
+        s.vm.dismissSummary()
+        runCurrent()
+        assertEquals(0, s.vm.summaryPhotoCount.value)
+        assertEquals(1, s.passes)
     }
 }

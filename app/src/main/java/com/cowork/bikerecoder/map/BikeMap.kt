@@ -1,6 +1,12 @@
 package com.cowork.bikerecoder.map
 
+import android.graphics.Bitmap
+import android.graphics.BitmapShader
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.Shader
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,7 +28,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -52,15 +61,27 @@ import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
 
-/** What BikeMap draws on top of the base map. [track]: the recorded path so far (a red line under the user dot). */
+/**
+ * What BikeMap draws on top of the base map. [track]: the recorded path so far (a red line under the user dot).
+ * [photos]: round previews of ride photos where they were taken (spec §2.3).
+ */
 data class MapOverlay(
     val route: Route?,
     val stops: List<Stop>,
     val user: LocationFix?,
     val track: List<GeoPoint> = emptyList(),
+    val photos: List<MapPhoto> = emptyList(),
 )
+
+/** A ride photo on the map: a round preview [MAP_PHOTO_DIAMETER] wide with a white border; a grey disc while [thumbnail] is null. */
+data class MapPhoto(val photoId: Long, val point: GeoPoint, val thumbnail: ImageBitmap?)
+
+/** The diameter of a photo preview on the map (spec §2.3). */
+val MAP_PHOTO_DIAMETER = 40.dp
+private val MAP_PHOTO_BORDER = 2.dp
 
 /**
  * One-shot request to frame [points] (a single point just centres on it, at most [maxZoom]).
@@ -80,6 +101,9 @@ private const val ROUTE_SOURCE = "bike-route"
 private const val STOPS_SOURCE = "bike-stops"
 private const val USER_SOURCE = "bike-user"
 private const val TRACK_SOURCE = "bike-track"
+private const val PHOTOS_SOURCE = "bike-photos"
+private const val PHOTOS_LAYER = "$PHOTOS_SOURCE-symbol"
+private const val PHOTO_PLACEHOLDER_COLOR = "#9E9E9E"
 private const val ROUTE_COLOR = "#1E88E5"
 private const val TRACK_COLOR = "#E53935"
 private const val FOLLOW_ZOOM = 17.0
@@ -105,6 +129,8 @@ fun BikeMap(
     onCameraIdle: ((GeoPoint) -> Unit)? = null,
     /** The camera started moving, for any reason (gesture, animation, or a programmatic move). */
     onCameraMoveStarted: (() -> Unit)? = null,
+    /** A tap on a photo preview of [MapOverlay.photos], with its [MapPhoto.photoId]. */
+    onPhotoClick: ((Long) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -116,6 +142,7 @@ fun BikeMap(
     val currentOnUserGesture by rememberUpdatedState(onUserGesture)
     val currentOnCameraIdle by rememberUpdatedState(onCameraIdle)
     val currentOnCameraMoveStarted by rememberUpdatedState(onCameraMoveStarted)
+    val currentOnPhotoClick by rememberUpdatedState(onPhotoClick)
 
     var styleAttempt by remember { mutableIntStateOf(0) }
     val styleResult by produceState<Result<String>?>(initialValue = null, tileSource, styleAttempt) {
@@ -179,6 +206,13 @@ fun BikeMap(
             m.uiSettings.isCompassEnabled = false
             m.addOnMapLongClickListener { latLng ->
                 currentOnLongPress(GeoPoint(latLng.latitude, latLng.longitude))
+                true
+            }
+            m.addOnMapClickListener { latLng ->
+                val onPhoto = currentOnPhotoClick ?: return@addOnMapClickListener false
+                val tapped = m.queryRenderedFeatures(m.projection.toScreenLocation(latLng), PHOTOS_LAYER).firstOrNull()
+                val photoId = tapped?.getNumberProperty(PHOTO_ID)?.toLong() ?: return@addOnMapClickListener false
+                onPhoto(photoId)
                 true
             }
             m.addOnMoveListener(object : MapLibreMap.OnMoveListener {
@@ -251,6 +285,26 @@ fun BikeMap(
     }
     LaunchedEffect(style, overlay.user) {
         style?.getSourceAs<GeoJsonSource>(USER_SOURCE)?.setGeoJson(userGeoJson(overlay.user))
+    }
+    // One style image per photo ("photo-<id>"), re-made only when its thumbnail changes; images of photos no longer
+    // shown are removed. A new style starts without images, so the bookkeeping is per style.
+    val density = LocalDensity.current
+    val markerPx = with(density) { MAP_PHOTO_DIAMETER.roundToPx() }
+    val borderPx = with(density) { MAP_PHOTO_BORDER.toPx() }
+    val photoImages = remember(style) { mutableMapOf<Long, ImageBitmap?>() }
+    LaunchedEffect(style, overlay.photos) {
+        val loaded = style ?: return@LaunchedEffect
+        val wanted = overlay.photos.associateBy { it.photoId }
+        (photoImages.keys - wanted.keys).forEach { id ->
+            loaded.removeImage(photoImageName(id))
+            photoImages.remove(id)
+        }
+        wanted.values.forEach { photo ->
+            if (photoImages.containsKey(photo.photoId) && photoImages[photo.photoId] === photo.thumbnail) return@forEach
+            loaded.addImage(photoImageName(photo.photoId), photoMarker(photo.thumbnail, markerPx, borderPx))
+            photoImages[photo.photoId] = photo.thumbnail
+        }
+        loaded.getSourceAs<GeoJsonSource>(PHOTOS_SOURCE)?.setGeoJson(photosGeoJson(overlay.photos))
     }
 
     // Frame the requested points once the style (and so the map size) is ready.
@@ -325,6 +379,7 @@ private fun installOverlayLayers(style: Style) {
     style.addSource(GeoJsonSource(STOPS_SOURCE, EMPTY_COLLECTION))
     style.addSource(GeoJsonSource(USER_SOURCE, EMPTY_COLLECTION))
     style.addSource(GeoJsonSource(TRACK_SOURCE, EMPTY_COLLECTION))
+    style.addSource(GeoJsonSource(PHOTOS_SOURCE, EMPTY_COLLECTION))
 
     style.addLayer(
         LineLayer("$ROUTE_SOURCE-line", ROUTE_SOURCE).withProperties(
@@ -356,6 +411,14 @@ private fun installOverlayLayers(style: Style) {
             ),
             PropertyFactory.circleStrokeColor(Color.WHITE),
             PropertyFactory.circleStrokeWidth(3f),
+        ),
+    )
+    // Photo previews: above the line and the stops, below the user dot; all of them always drawn.
+    style.addLayer(
+        SymbolLayer(PHOTOS_LAYER, PHOTOS_SOURCE).withProperties(
+            PropertyFactory.iconImage(Expression.get(PHOTO_IMAGE)),
+            PropertyFactory.iconAllowOverlap(true),
+            PropertyFactory.iconIgnorePlacement(true),
         ),
     )
     style.addLayer(
@@ -392,4 +455,46 @@ private fun stopsGeoJson(stops: List<Stop>): String {
 private fun userGeoJson(user: LocationFix?): String {
     if (user == null) return EMPTY_COLLECTION
     return """{"type":"Feature","properties":{},"geometry":{"type":"Point","coordinates":${coordinate(user.point)}}}"""
+}
+
+private const val PHOTO_ID = "photoId"
+private const val PHOTO_IMAGE = "image"
+
+private fun photoImageName(photoId: Long) = "photo-$photoId"
+
+/** The photos as points with their id and style image name ([photoImageName]). */
+internal fun photosGeoJson(photos: List<MapPhoto>): String {
+    if (photos.isEmpty()) return EMPTY_COLLECTION
+    val features = photos.joinToString(",") {
+        """{"type":"Feature","properties":{"$PHOTO_ID":${it.photoId},"$PHOTO_IMAGE":"${photoImageName(it.photoId)}"},""" +
+            """"geometry":{"type":"Point","coordinates":${coordinate(it.point)}}}"""
+    }
+    return """{"type":"FeatureCollection","features":[$features]}"""
+}
+
+/** A [diameterPx] disc: white, with [thumbnail] centre-cropped inside a [borderPx] white ring (grey without one). */
+private fun photoMarker(thumbnail: ImageBitmap?, diameterPx: Int, borderPx: Float): Bitmap {
+    val marker = Bitmap.createBitmap(diameterPx, diameterPx, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(marker)
+    val radius = diameterPx / 2f
+    val inner = radius - borderPx
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    paint.color = Color.WHITE
+    canvas.drawCircle(radius, radius, radius, paint)
+    val source = thumbnail?.asAndroidBitmap()?.let {
+        // A hardware bitmap cannot be drawn into a software canvas.
+        if (it.config == Bitmap.Config.HARDWARE) it.copy(Bitmap.Config.ARGB_8888, false) else it
+    }
+    if (source == null || source.width == 0 || source.height == 0) {
+        paint.color = Color.parseColor(PHOTO_PLACEHOLDER_COLOR)
+    } else {
+        val scale = 2 * inner / minOf(source.width, source.height)
+        val matrix = Matrix().apply {
+            setScale(scale, scale)
+            postTranslate(radius - source.width * scale / 2, radius - source.height * scale / 2)
+        }
+        paint.shader = BitmapShader(source, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply { setLocalMatrix(matrix) }
+    }
+    canvas.drawCircle(radius, radius, inner, paint)
+    return marker
 }

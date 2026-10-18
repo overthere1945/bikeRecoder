@@ -28,6 +28,10 @@ data class AppSettings(
     val autoPauseEnabled: Boolean = true,
     /** 기록 중에 안내를 새로 시작할 때 기록을 어떻게 할지. */
     val recordingOnNewGuidance: GuidanceRecording = GuidanceRecording.ASK,
+    /** 사진 권한 카드를 [나중에]/[닫기]했거나 거절했다(다시 띄우지 않는다; 설정 "사진·심박 연결"에서 다시). */
+    val photoPromptDismissed: Boolean = false,
+    /** 심박(Health Connect) 권한 카드를 [나중에]했거나 거절했다. */
+    val heartRatePromptDismissed: Boolean = false,
 )
 
 /** 기록 중에 안내를 새로 시작할 때 기록을 어떻게 할지(스펙 §4.3). */
@@ -60,6 +64,8 @@ class SettingsRepository(context: Context) {
             prefs[AUTO_START_RECORDING] = next.autoStartRecordingWithNavigation
             prefs[AUTO_PAUSE] = next.autoPauseEnabled
             prefs[RECORDING_ON_NEW_GUIDANCE] = next.recordingOnNewGuidance.name
+            prefs[PHOTO_PROMPT_DISMISSED] = next.photoPromptDismissed
+            prefs[HEART_RATE_PROMPT_DISMISSED] = next.heartRatePromptDismissed
         }
     }
 
@@ -82,6 +88,8 @@ class SettingsRepository(context: Context) {
             recordingOnNewGuidance = this[RECORDING_ON_NEW_GUIDANCE]
                 ?.let { name -> GuidanceRecording.entries.firstOrNull { it.name == name } }
                 ?: defaults.recordingOnNewGuidance,
+            photoPromptDismissed = this[PHOTO_PROMPT_DISMISSED] ?: defaults.photoPromptDismissed,
+            heartRatePromptDismissed = this[HEART_RATE_PROMPT_DISMISSED] ?: defaults.heartRatePromptDismissed,
         )
     }
 
@@ -95,5 +103,7 @@ class SettingsRepository(context: Context) {
         val AUTO_START_RECORDING = booleanPreferencesKey("auto_start_recording_with_navigation")
         val AUTO_PAUSE = booleanPreferencesKey("auto_pause_enabled")
         val RECORDING_ON_NEW_GUIDANCE = stringPreferencesKey("recording_on_new_guidance")
+        val PHOTO_PROMPT_DISMISSED = booleanPreferencesKey("photo_prompt_dismissed")
+        val HEART_RATE_PROMPT_DISMISSED = booleanPreferencesKey("heart_rate_prompt_dismissed")
     }
 }

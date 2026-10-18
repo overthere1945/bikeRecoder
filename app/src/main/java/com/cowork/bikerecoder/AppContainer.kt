@@ -34,6 +34,7 @@ import com.cowork.bikerecoder.post.HealthConnectHeartRateSource
 import com.cowork.bikerecoder.post.HeartRateSource
 import com.cowork.bikerecoder.post.MediaStorePhotoSource
 import com.cowork.bikerecoder.post.PhotoSource
+import com.cowork.bikerecoder.post.PhotoThumbnails
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.ride.RideController
@@ -203,6 +204,9 @@ class AppContainer(context: Context) {
     val postStore: PostStore = RoomPostStore(db)
     val photoSource: PhotoSource = MediaStorePhotoSource(appContext)
     val heartRateSource: HeartRateSource = HealthConnectHeartRateSource(appContext)
+
+    /** Gallery thumbnails and photos for the photo screens (memory caches shared by every screen). */
+    val photoThumbnails: PhotoThumbnails = PhotoThumbnails(appContext.contentResolver, photoSource)
 
     /** Started while the app is on screen ([MainActivity.onStart] and the screens that show its results). */
     val postProcessor: PostProcessor = PostProcessor(

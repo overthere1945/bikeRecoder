@@ -87,6 +87,7 @@ object RecordTags {
  * view and the segment summary. Leaving the screen never stops the recording. [onClose] goes back to the map main
  * screen; after the summary, [onShowGuidance] is used instead while guidance runs. [onSetDestination]: [목적지 정하기]
  * (spec §4.1), offered while no guidance runs. The recording's on-screen notices show here while it runs.
+ * The summary also shows "사진 N장" and [photoPrompt] (the photo permission card where it applies, spec §2.4).
  */
 @Composable
 fun RecordScreen(
@@ -95,12 +96,14 @@ fun RecordScreen(
     onClose: () -> Unit,
     onShowGuidance: () -> Unit,
     onSetDestination: () -> Unit = {},
+    photoPrompt: @Composable () -> Unit = {},
 ) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val navigating by viewModel.navigating.collectAsStateWithLifecycle()
     val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
     val serviceWarning by viewModel.serviceWarning.collectAsStateWithLifecycle()
     val notice by viewModel.noticeForScreen.collectAsStateWithLifecycle()
+    val summaryPhotoCount by viewModel.summaryPhotoCount.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
 
@@ -159,6 +162,10 @@ fun RecordScreen(
                 segment = state.segment,
                 map = { modifier -> SummaryMap(state.track, tileSource, modifier) },
                 onConfirm = closeSummary,
+                footer = {
+                    SummaryPhotoCount(summaryPhotoCount)
+                    photoPrompt()
+                },
             )
         }
         SnackbarHost(snackbar, modifier = Modifier.align(Alignment.Center).padding(16.dp))
@@ -410,6 +417,12 @@ private fun RecordMap(state: RideUiState.Active, tileSource: TileSource, modifie
             ) { Text("현재 위치로") }
         }
     }
+}
+
+/** "사진 N장" under the summary's map; nothing without photos. */
+@Composable
+internal fun SummaryPhotoCount(count: Int) {
+    if (count > 0) Text("사진 ${count}장", style = MaterialTheme.typography.titleMedium)
 }
 
 /** The summary's map: the whole track framed. */

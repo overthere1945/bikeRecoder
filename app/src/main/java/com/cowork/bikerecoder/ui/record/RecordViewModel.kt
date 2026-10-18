@@ -10,15 +10,23 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.nav.NavNotifications
 import com.cowork.bikerecoder.nav.NavUiState
+import com.cowork.bikerecoder.post.PostProcessor
+import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.ride.RecordingEnd
 import com.cowork.bikerecoder.ride.RideController
 import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.ride.ScreenNotice
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -28,7 +36,11 @@ import kotlinx.coroutines.launch
  * UI being destroyed) does not stop it.
  *
  * @param savedState carries [ARG_TRIP], the trip to start recording once the screen is resumed (-1 = none).
+ *
+ * The summary shows how many (not hidden) photos the segment has (spec §2.3); when it appears it asks for a
+ * post-processing pass (spec §1.1 ①).
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class RecordViewModel(
     private val ride: RideController,
     navigation: StateFlow<NavUiState>,
@@ -36,9 +48,29 @@ class RecordViewModel(
     private val savedState: SavedStateHandle,
     /** "화면이 꺼지면 안내가 멈출 수 있습니다" when the location foreground service could not start. */
     val serviceWarning: StateFlow<String?> = MutableStateFlow(null),
+    private val postStore: PostStore,
+    private val postProcessor: PostProcessor,
 ) : ViewModel() {
 
     val ui: StateFlow<RideUiState> = ride.ui
+
+    /** The summary's segment, while the summary shows. */
+    private val summarySegment = ride.ui.map { (it as? RideUiState.Finished)?.segment?.id }.distinctUntilChanged()
+
+    /** "사진 N장" on the summary: the summary segment's photos that are not hidden (0 without a summary). */
+    val summaryPhotoCount: StateFlow<Int> = summarySegment
+        .flatMapLatest { id ->
+            if (id == null) {
+                flowOf(0)
+            } else {
+                postStore.observePhotos(listOf(id)).map { photos -> photos.count { !it.hidden } }.catch { emit(0) }
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    init {
+        viewModelScope.launch { summarySegment.filterNotNull().collect { postProcessor.request() } }
+    }
 
     /** Guidance is starting or running: [정지] then ends only the recording. */
     val navigating: StateFlow<Boolean> = navigation.map(NavNotifications::isGuiding)
@@ -94,6 +126,8 @@ class RecordViewModel(
                     keepScreenOn = container.settings.settings.map { it.keepScreenOn },
                     savedState = createSavedStateHandle(),
                     serviceWarning = container.guidanceService.warning,
+                    postStore = container.postStore,
+                    postProcessor = container.postProcessor,
                 )
             }
         }

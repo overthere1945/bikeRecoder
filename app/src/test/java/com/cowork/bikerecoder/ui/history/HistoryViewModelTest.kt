@@ -12,10 +12,15 @@ import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.nav.FakeTripStore
 import com.cowork.bikerecoder.nav.RecordingLog
 import com.cowork.bikerecoder.nav.RecordingOfflineMaps
+import com.cowork.bikerecoder.post.FakeHeartRateSource
+import com.cowork.bikerecoder.post.FakePhotoSource
+import com.cowork.bikerecoder.post.FakePostStore
+import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.ride.FakeRideStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -65,6 +70,18 @@ class HistoryViewModelTest {
     }
 
     private fun history(offlineMaps: OfflineMapController = offline) = HistoryViewModel(rides, offlineMaps, log)
+
+    private val postStore = FakePostStore { trips.trips.keys.flatMap { rides.segments(it) } }
+
+    private fun TestScope.postProcessor() = PostProcessor(
+        rides, postStore, FakePhotoSource(), FakeHeartRateSource(), clock = { 0L }, scope = backgroundScope,
+        warnLog = { _, _ -> },
+    )
+
+    private fun TestScope.tripDetail() = TripDetailViewModel(rides, 1, postStore, postProcessor(), compute = dispatcher)
+
+    private fun TestScope.segmentDetail(id: Long) =
+        SegmentDetailViewModel(rides, id, postStore, postProcessor(), log, compute = dispatcher)
 
     @Test
     fun activeTripCannotBeDeleted() = runTest(dispatcher) {
@@ -169,7 +186,7 @@ class HistoryViewModelTest {
         val a = segment(1, 100, day1, totals = totals(10_000.0, 1_000, maxSpeed = 8.0, ascent = 30.0, min = 20.0, max = 90.0))
         val b = segment(1, 200, day2, totals = totals(5_000.0, 2_000, maxSpeed = 9.0, ascent = 10.0, min = 40.0, max = 120.0))
         val c = segment(1, 300, day2, totals = totals(1_000.0, 500, maxSpeed = 6.0, ascent = 5.0, min = null, max = null))
-        val vm = TripDetailViewModel(rides, tripId = 1)
+        val vm = tripDetail()
         advanceUntilIdle()
 
         assertEquals(listOf(day1, day2), vm.segmentsByDate.value.keys.toList())
@@ -188,7 +205,7 @@ class HistoryViewModelTest {
     fun openSegmentCannotBeDeleted() = runTest(dispatcher) {
         trip(1, TripStatus.ACTIVE)
         val open = segment(1, startedAt = 100, open = true)
-        val vm = TripDetailViewModel(rides, tripId = 1)
+        val vm = tripDetail()
         advanceUntilIdle()
 
         vm.requestDeleteSegment(open)
@@ -205,7 +222,7 @@ class HistoryViewModelTest {
         trip(1, TripStatus.ACTIVE)
         val first = segment(1, startedAt = 100)
         val second = segment(1, startedAt = 200)
-        val vm = TripDetailViewModel(rides, tripId = 1)
+        val vm = tripDetail()
         advanceUntilIdle()
 
         vm.requestDeleteSegment(first)
@@ -228,7 +245,7 @@ class HistoryViewModelTest {
             TrackPoint(i * 1_000L, GeoPoint(37.5 + Math.toDegrees(m / 6_371_008.8), 127.0), 100.0 + i, null, 5f)
         }
         rides.appendPoints(id, points, SegmentTotals.ZERO)
-        val vm = SegmentDetailViewModel(rides, id, log, compute = dispatcher)
+        val vm = segmentDetail(id)
         advanceUntilIdle()
 
         val loaded = vm.state.value as SegmentDetailState.Loaded
@@ -242,7 +259,7 @@ class HistoryViewModelTest {
 
     @Test
     fun deletedSegmentShowsMissing() = runTest(dispatcher) {
-        val vm = SegmentDetailViewModel(rides, 42, log, compute = dispatcher)
+        val vm = segmentDetail(42)
         advanceUntilIdle()
 
         assertEquals(SegmentDetailState.Missing, vm.state.value)
@@ -283,7 +300,7 @@ class HistoryViewModelTest {
         trip(1, TripStatus.COMPLETED)
         segment(1, startedAt = 100, date = day1, totals = SegmentTotals.ZERO.copy(elapsedMs = 30_000))
         val kept = segment(1, startedAt = 200, date = day2)
-        val vm = TripDetailViewModel(rides, tripId = 1)
+        val vm = tripDetail()
         advanceUntilIdle()
 
         assertEquals(listOf(day2), vm.segmentsByDate.value.keys.toList())

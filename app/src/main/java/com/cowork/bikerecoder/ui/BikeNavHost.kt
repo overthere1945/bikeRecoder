@@ -67,6 +67,7 @@ import com.cowork.bikerecoder.ui.navigate.NavigateScreen
 import com.cowork.bikerecoder.ui.navigate.NavigateViewModel
 import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.ui.main.RideTarget
+import com.cowork.bikerecoder.ui.post.PhotoPermissionPrompt
 import com.cowork.bikerecoder.ui.record.RecordScreen
 import com.cowork.bikerecoder.ui.record.RecordViewModel
 import com.cowork.bikerecoder.ui.trip.StartPlan
@@ -514,6 +515,7 @@ fun BikeNavHost(
                 },
                 onShowGuidance = { if (isCurrent()) navController.openOnMain(Routes.navigate()) },
                 onSetDestination = { if (isCurrent()) navController.navigate(Routes.SEARCH) },
+                photoPrompt = { PhotoPrompt(container) },
             )
         }
         composable(Routes.HISTORY) {
@@ -531,8 +533,11 @@ fun BikeNavHost(
             val viewModel: TripDetailViewModel = viewModel(factory = TripDetailViewModel.factory(container))
             TripDetailScreen(
                 viewModel = viewModel,
+                tileSource = container.tileSource,
+                thumbnails = container.photoThumbnails,
                 onOpenSegment = { segmentId -> navController.navigate(Routes.segmentDetail(segmentId)) },
                 onBack = { navController.popBackStack() },
+                photoPrompt = { PhotoPrompt(container) },
             )
         }
         composable(
@@ -543,7 +548,9 @@ fun BikeNavHost(
             SegmentDetailScreen(
                 viewModel = viewModel,
                 tileSource = container.tileSource,
+                thumbnails = container.photoThumbnails,
                 onBack = { navController.popBackStack() },
+                photoPrompt = { PhotoPrompt(container) },
             )
         }
         composable(Routes.SETTINGS) {
@@ -596,4 +603,10 @@ private fun Context.findActivity(): ComponentActivity {
         c = c.baseContext
     }
     error("BikeNavHost must be hosted in a ComponentActivity")
+}
+
+/** The photo permission card of the summary and the detail screens; access gained → a post-processing pass. */
+@Composable
+private fun PhotoPrompt(container: AppContainer) {
+    PhotoPermissionPrompt(container.photoSource, container.settings, onAccessGained = container.postProcessor::request)
 }

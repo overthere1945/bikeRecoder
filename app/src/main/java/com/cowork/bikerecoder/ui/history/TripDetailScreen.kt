@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,14 +24,32 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.SegmentTotals
+import com.cowork.bikerecoder.map.TileSource
+import com.cowork.bikerecoder.post.PhotoThumbnails
+import com.cowork.bikerecoder.ui.photo.PhotoStrip
+import com.cowork.bikerecoder.ui.photo.PhotoViewerHost
+import com.cowork.bikerecoder.ui.photo.rememberMapPhotos
+import com.cowork.bikerecoder.ui.photo.rememberPhotoViewerState
 import com.cowork.bikerecoder.ui.record.NumberRow
 import java.time.LocalDate
 
+/** [photoPrompt]: the photo permission card where it applies (spec §2.4), shown under the photo strip. */
 @Composable
-fun TripDetailScreen(viewModel: TripDetailViewModel, onOpenSegment: (Long) -> Unit, onBack: () -> Unit) {
+fun TripDetailScreen(
+    viewModel: TripDetailViewModel,
+    tileSource: TileSource,
+    thumbnails: PhotoThumbnails,
+    onOpenSegment: (Long) -> Unit,
+    onBack: () -> Unit,
+    photoPrompt: @Composable () -> Unit = {},
+) {
     val segmentsByDate by viewModel.segmentsByDate.collectAsStateWithLifecycle()
     val total by viewModel.total.collectAsStateWithLifecycle()
     val dialog by viewModel.dialog.collectAsStateWithLifecycle()
+    val track by viewModel.track.collectAsStateWithLifecycle()
+    val photos by viewModel.photos.collectAsStateWithLifecycle()
+    val viewer = rememberPhotoViewerState()
+    val mapPhotos = rememberMapPhotos(photos.visible, thumbnails)
     // A recording of this trip may have gone on meanwhile.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refresh() }
     TripDetailContent(
@@ -42,10 +61,30 @@ fun TripDetailScreen(viewModel: TripDetailViewModel, onOpenSegment: (Long) -> Un
         onConfirmDelete = viewModel::confirmDelete,
         onDismiss = viewModel::dismiss,
         onBack = onBack,
+        map = { modifier ->
+            SegmentMap(track, tileSource, modifier, mapPhotos) { photoId ->
+                viewer.open(photos.visible, photos.visible.indexOfFirst { it.id == photoId })
+            }
+        },
+        photos = {
+            PhotoStrip(
+                photos = photos.visible,
+                hiddenCount = photos.hidden.size,
+                thumbnails = thumbnails,
+                onOpen = { viewer.open(photos.visible, it) },
+                onOpenHidden = { viewer.open(photos.hidden, 0) },
+            )
+            photoPrompt()
+        },
     )
+    PhotoViewerHost(viewer, photos, thumbnails, onToggleHidden = { viewModel.setHidden(it, hidden = !it.hidden) })
 }
 
-/** The trip's totals on top, then its segments under a header per date (spec §3.5); a long press asks to delete. */
+/**
+ * The trip's map ([map], every day's track and photos; outside the scrolling part, so it keeps its drags), then
+ * [photos] (the photo strip and card, spec §2.3), the totals and its segments under a header per date (spec §3.5);
+ * a long press asks to delete.
+ */
 @Composable
 fun TripDetailContent(
     segmentsByDate: Map<LocalDate, List<RideSegment>>,
@@ -56,42 +95,62 @@ fun TripDetailContent(
     onConfirmDelete: () -> Unit,
     onDismiss: () -> Unit,
     onBack: () -> Unit,
+    map: (@Composable (Modifier) -> Unit)? = null,
+    photos: @Composable () -> Unit = {},
 ) {
     HistoryScaffold(title = "여행 기록", onBack = onBack) {
         if (segmentsByDate.isEmpty()) {
             EmptyText()
         } else {
-            LazyColumn(
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                item(key = "total") { TripTotal(total) }
-                segmentsByDate.forEach { (date, segments) ->
-                    item(key = "date-$date") {
-                        Text(
-                            RideFormat.date(date),
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.padding(top = 8.dp),
-                        )
-                    }
-                    items(segments, key = { it.id }) { segment ->
-                        Text(
-                            segmentRowText(segment),
-                            modifier = Modifier.fillMaxWidth()
-                                .combinedClickable(
-                                    onClick = { onOpenSegment(segment.id) },
-                                    onLongClick = { onRequestDelete(segment.id) },
-                                )
-                                .padding(vertical = 12.dp),
-                        )
-                        HorizontalDivider()
-                    }
-                }
+            Column(modifier = Modifier.fillMaxSize()) {
+                map?.invoke(Modifier.fillMaxWidth().height(240.dp))
+                TripDetailList(segmentsByDate, total, onOpenSegment, onRequestDelete, photos, Modifier.weight(1f))
             }
         }
     }
     HistoryDialogs(dialog, CONFIRM_DELETE_SEGMENT, onConfirmDelete, onDismiss)
+}
+
+@Composable
+private fun TripDetailList(
+    segmentsByDate: Map<LocalDate, List<RideSegment>>,
+    total: SegmentTotals,
+    onOpenSegment: (Long) -> Unit,
+    onRequestDelete: (Long) -> Unit,
+    photos: @Composable () -> Unit,
+    modifier: Modifier,
+) {
+    LazyColumn(
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        item(key = "photos") {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { photos() }
+        }
+        item(key = "total") { TripTotal(total) }
+        segmentsByDate.forEach { (date, segments) ->
+            item(key = "date-$date") {
+                Text(
+                    RideFormat.date(date),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+            items(segments, key = { it.id }) { segment ->
+                Text(
+                    segmentRowText(segment),
+                    modifier = Modifier.fillMaxWidth()
+                        .combinedClickable(
+                            onClick = { onOpenSegment(segment.id) },
+                            onLongClick = { onRequestDelete(segment.id) },
+                        )
+                        .padding(vertical = 12.dp),
+                )
+                HorizontalDivider()
+            }
+        }
+    }
 }
 
 @Composable
