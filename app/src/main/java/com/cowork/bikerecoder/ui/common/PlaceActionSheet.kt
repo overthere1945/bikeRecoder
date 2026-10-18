@@ -16,7 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
-/** The choice sheet shared by the map long-press and the search results. */
+/** The choice sheet shared by the map long-press and the search results; [onSaveFavorite] adds [즐겨찾기에 저장]. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlaceActionSheet(
@@ -25,6 +25,8 @@ fun PlaceActionSheet(
     onSetDestination: () -> Unit,
     onAddWaypoint: () -> Unit,
     onDismiss: () -> Unit,
+    onSaveFavorite: (() -> Unit)? = null,
+    saveEnabled: Boolean = true,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -38,6 +40,11 @@ fun PlaceActionSheet(
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                 Button(onClick = onSetDestination, modifier = Modifier.weight(1f)) { Text("목적지로 설정") }
                 OutlinedButton(onClick = onAddWaypoint, modifier = Modifier.weight(1f)) { Text("경유지로 추가") }
+            }
+            if (onSaveFavorite != null) {
+                OutlinedButton(onClick = onSaveFavorite, enabled = saveEnabled, modifier = Modifier.fillMaxWidth()) {
+                    Text("즐겨찾기에 저장")
+                }
             }
         }
     }

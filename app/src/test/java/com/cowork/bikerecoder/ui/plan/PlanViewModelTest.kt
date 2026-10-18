@@ -66,12 +66,15 @@ class PlanViewModelTest {
         Dispatchers.resetMain()
     }
 
+    private var addresses: suspend (GeoPoint) -> String? = { null }
+
     private fun viewModel() = PlanViewModel(
         router = router,
         defaultProfile = flowOf(RouteProfile.CYCLEWAY_FIRST),
         locations = locations,
         segmentsReady = { segmentsReady },
         clock = { now },
+        addressOf = { addresses(it) },
     )
 
     private fun TestScope.settle() {
@@ -428,5 +431,45 @@ class PlanViewModelTest {
                 summary = RouteSummary(14_000.0, 100, 0.5, profile),
             )
         }
+    }
+
+    @Test
+    fun `long press then add waypoint puts it right before the destination`() = runTest {
+        val vm = viewModel()
+        vm.setDestination("여의도", c)
+        vm.addWaypoint("남산", a)
+        vm.onLongPress(b)
+        runCurrent()
+        val pressed = vm.pressed.value!!
+        vm.dismissPressed()
+        vm.addWaypoint(pressed.title, pressed.point)
+        assertEquals(listOf("남산", pressed.title, "여의도"), vm.state.value.stops.map { it.name })
+        assertEquals(null, vm.pressed.value)
+        settle()
+        assertEquals(listOf(a, b, c), router.lastRequest.stops)
+    }
+
+    @Test
+    fun `long press then set destination keeps the waypoints`() = runTest {
+        val vm = viewModel()
+        vm.setDestination("여의도", c)
+        vm.addWaypoint("남산", a)
+        vm.onLongPress(b)
+        runCurrent()
+        val pressed = vm.pressed.value!!
+        vm.dismissPressed()
+        vm.setDestination(pressed.title, pressed.point)
+        assertEquals(listOf("남산", pressed.title), vm.state.value.stops.map { it.name })
+    }
+
+    @Test
+    fun `long press looks the address up`() = runTest {
+        addresses = { "부산 해운대구 우동" }
+        val vm = viewModel()
+        vm.onLongPress(b)
+        assertEquals(true, vm.pressed.value!!.loading)
+        runCurrent()
+        assertEquals("부산 해운대구 우동", vm.pressed.value!!.address)
+        assertEquals(false, vm.pressed.value!!.loading)
     }
 }

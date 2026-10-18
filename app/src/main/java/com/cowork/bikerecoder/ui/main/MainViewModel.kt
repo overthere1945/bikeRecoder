@@ -17,10 +17,11 @@ import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.search.PlaceSearch
-import com.cowork.bikerecoder.search.SearchResult
+import com.cowork.bikerecoder.ui.common.PlaceLookup
+import com.cowork.bikerecoder.ui.common.PressedPlace
+import com.cowork.bikerecoder.ui.common.addressOrNull
 import com.cowork.bikerecoder.ui.trip.RIDE_RECORD_NAME
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
@@ -31,7 +32,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.util.Locale
 
 /** The trip banner's button. */
 enum class BannerAction(val label: String) {
@@ -49,12 +49,6 @@ data class TripBanner(val tripId: Long, val destinationName: String, val dayNumb
 
 /** A trip left idle for 3+ days, asked about once when the main screen first opens. */
 data class StaleTrip(val tripId: Long, val destinationName: String)
-
-/** The map point the user long-pressed, with its address lookup. */
-data class PressedPlace(val point: GeoPoint, val address: String?, val loading: Boolean) {
-    /** Address when known, else the coordinates (also the fallback when the lookup failed). */
-    val title: String get() = address ?: String.format(Locale.ROOT, "%.5f, %.5f", point.lat, point.lon)
-}
 
 /** Which screen the riding banner's [보기] opens. */
 enum class RideTarget { NAVIGATE, RECORD }
@@ -108,9 +102,10 @@ class MainViewModel(
     private val _state = MutableStateFlow(MainUiState(recoveryBusy = true))
     val state: StateFlow<MainUiState> = _state.asStateFlow()
 
-    private var addressJob: Job? = null
+    private val lookup = PlaceLookup({ placeSearch.addressOrNull(it) }, viewModelScope)
 
     init {
+        viewModelScope.launch { lookup.pressed.collect { p -> _state.update { it.copy(pressed = p) } } }
         viewModelScope.launch { checkStale() }
         refreshBanner()
         viewModelScope.launch {
@@ -238,25 +233,9 @@ class MainViewModel(
         _state.update { it.copy(staleTrip = null) }
     }
 
-    fun onLongPress(point: GeoPoint) {
-        addressJob?.cancel()
-        _state.update { it.copy(pressed = PressedPlace(point, address = null, loading = true)) }
-        addressJob = viewModelScope.launch {
-            val address = try {
-                (placeSearch.addressOf(point) as? SearchResult.Ok)?.value?.takeIf { it.isNotBlank() }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                null
-            }
-            _state.update { s -> s.copy(pressed = s.pressed?.takeIf { it.point == point }?.copy(address = address, loading = false)) }
-        }
-    }
+    fun onLongPress(point: GeoPoint) = lookup.onLongPress(point)
 
-    fun dismissPressed() {
-        addressJob?.cancel()
-        _state.update { it.copy(pressed = null) }
-    }
+    fun dismissPressed() = lookup.dismiss()
 
     private suspend fun destinationName(tripId: Long): String {
         val stops = runCatchingNonCancel { tripStore.stops(tripId) }.orEmpty()

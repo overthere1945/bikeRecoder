@@ -261,7 +261,7 @@ fun BikeNavHost(
             val startState by tripStart.state.collectAsStateWithLifecycle()
             PlanScreen(
                 viewModel = planViewModel,
-                map = { state, modifier -> PlanMap(state, user, container.tileSource, modifier) },
+                map = { state, modifier -> PlanMap(state, user, container.tileSource, modifier, onLongPress = planViewModel::onLongPress) },
                 onBack = { navController.popBackStack() },
                 onAddStop = { navController.navigate(Routes.SEARCH) },
                 onStartNavigation = {

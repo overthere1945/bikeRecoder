@@ -53,7 +53,7 @@ import com.cowork.bikerecoder.map.CameraMode
 import com.cowork.bikerecoder.map.MapOverlay
 import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.ui.common.GlyphIcon
-import com.cowork.bikerecoder.ui.common.PlaceActionSheet
+import com.cowork.bikerecoder.ui.common.PressedPlaceSheet
 import com.cowork.bikerecoder.ui.record.RECORDING_INTERRUPTED
 import kotlinx.coroutines.flow.StateFlow
 
@@ -250,19 +250,17 @@ fun MainScreen(
     }
 
     state.pressed?.let { pressed ->
-        // While the address is loading the title falls back to the coordinates.
-        val name = pressed.title
-        PlaceActionSheet(
-            title = if (pressed.loading) "주소를 확인하는 중…" else pressed.title,
-            subtitle = null,
-            onSetDestination = {
+        PressedPlaceSheet(
+            pressed = pressed,
+            onSetDestination = { name, point ->
                 viewModel.dismissPressed()
-                onSetDestination(name, pressed.point)
+                onSetDestination(name, point)
             },
-            onAddWaypoint = {
+            onAddWaypoint = { name, point ->
                 viewModel.dismissPressed()
-                onAddWaypoint(name, pressed.point)
+                onAddWaypoint(name, point)
             },
+            onSaveFavorite = null, // Task 4
             onDismiss = viewModel::dismissPressed,
         )
     }
