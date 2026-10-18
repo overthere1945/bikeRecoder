@@ -48,9 +48,7 @@ fun FavoriteChips(
 ) {
     if (favorites.isEmpty()) return
     Row(
-        // The padding is part of the row, so an empty list (nothing drawn) leaves no blank strip.
-        modifier = modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp)
-            .testTag(FavoriteTags.ROW),
+        modifier = modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).testTag(FavoriteTags.ROW),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

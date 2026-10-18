@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -15,6 +16,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
@@ -165,8 +167,10 @@ fun BikeNavHost(
     )
     val favorites by favoritesViewModel.favorites.collectAsStateWithLifecycle()
     val favoriteDialog by favoritesViewModel.dialog.collectAsStateWithLifecycle()
-    val favoriteChips: @Composable () -> Unit = {
+    // [chipsModifier] is the caller's outer spacing (outside the sideways scroll); an empty list draws nothing at all.
+    val favoriteChips: @Composable (Modifier) -> Unit = { chipsModifier ->
         FavoriteChips(
+            modifier = chipsModifier,
             favorites = favorites,
             onSelect = { favorite ->
                 planViewModel.setDestination(favorite)
@@ -243,7 +247,7 @@ fun BikeNavHost(
                 onContinueRecording = { tripId -> navController.openOnMain(Routes.record(tripId)) },
                 onSetDestination = setDestinationAndOpenPlan,
                 onAddWaypoint = addWaypointAndOpenPlan,
-                favoriteChips = favoriteChips,
+                favoriteChips = { favoriteChips(Modifier) },
                 onSaveFavorite = favoritesViewModel::startSave,
             )
             TripStartDialogs(
@@ -277,7 +281,7 @@ fun BikeNavHost(
                 onBack = { navController.popBackStack() },
                 onSetDestination = setDestinationAndOpenPlan,
                 onAddWaypoint = addWaypointAndOpenPlan,
-                favoriteChips = favoriteChips,
+                favoriteChips = { favoriteChips(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) },
                 onSaveFavorite = favoritesViewModel::startSave,
             )
         }

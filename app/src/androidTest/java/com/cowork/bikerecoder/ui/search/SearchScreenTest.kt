@@ -3,7 +3,9 @@ package com.cowork.bikerecoder.ui.search
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.hasAnyAncestor
@@ -17,12 +19,14 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
+import androidx.compose.ui.unit.dp
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.search.Place
 import com.cowork.bikerecoder.search.PlaceSearch
 import com.cowork.bikerecoder.search.SearchResult
+import com.cowork.bikerecoder.ui.favorite.FavoriteChips
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -58,6 +62,16 @@ class SearchScreenTest {
                     onBack = {},
                     onSetDestination = { _, _ -> },
                     onAddWaypoint = { _, _ -> },
+                    // The same slot BikeNavHost builds for the search screen, with no favorites saved.
+                    favoriteChips = {
+                        FavoriteChips(
+                            favorites = emptyList(),
+                            onSelect = {},
+                            onRename = {},
+                            onDelete = {},
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        )
+                    },
                 )
             }
         }
@@ -112,5 +126,14 @@ class SearchScreenTest {
         composeRule.onNodeWithTag(SearchTags.RESULTS).performTouchInput { swipeUp() }
         composeRule.waitUntil(5_000) { imeHeight() == 0 }
         composeRule.onNodeWithTag(SearchTags.QUERY).assertIsNotFocused()
+    }
+
+    @Test
+    fun withoutFavoritesTheResultsAreaSitsRightUnderTheSearchRow() {
+        // Empty query + no favorites: nothing but the search row's own 4dp padding may separate them.
+        val query = composeRule.onNodeWithTag(SearchTags.QUERY).fetchSemanticsNode().boundsInWindow
+        val area = composeRule.onNodeWithTag(SearchTags.RESULTS_AREA).fetchSemanticsNode().boundsInWindow
+        val rowPadding = with(composeRule.density) { 4.dp.toPx() }
+        assertTrue("gap ${area.top - query.bottom}px must be at most the row padding ${rowPadding}px", area.top - query.bottom <= rowPadding + 1)
     }
 }

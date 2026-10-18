@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
@@ -30,10 +29,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -50,6 +49,7 @@ import com.cowork.bikerecoder.ui.common.PlaceActionSheet
 object SearchTags {
     const val QUERY = "search-query"
     const val RESULTS = "search-results"
+    const val RESULTS_AREA = "search-results-area"
 }
 
 /** Hides the keyboard and releases focus when the user starts dragging the list (code-driven scrolls leave it up). */
@@ -102,7 +102,7 @@ fun SearchScreen(
             if (state.query.isEmpty()) {
                 favoriteChips()
             }
-            Box(modifier = Modifier.weight(1f).fillMaxWidth().imePadding()) {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth().imePadding().testTag(SearchTags.RESULTS_AREA)) {
                 when (val result = state.result) {
                     SearchUiState.Idle -> Unit
                     SearchUiState.Loading -> CircularProgressIndicator(Modifier.align(Alignment.TopCenter).padding(24.dp))
@@ -115,7 +115,6 @@ fun SearchScreen(
                         Text("검색 결과가 없습니다", modifier = Modifier.padding(16.dp))
                     } else {
                         LazyColumn(
-                            state = rememberLazyListState(),
                             modifier = Modifier.fillMaxSize().nestedScroll(rememberHideKeyboardOnDrag()).testTag(SearchTags.RESULTS),
                         ) {
                             items(result.places) { place ->
