@@ -46,7 +46,7 @@ data class SummaryExtrasState(
  *
  * While the summary is also really on screen ([onScreen]), its heart rate is read again every minute, at most
  * [REFETCH_TIMES] times per segment (spec §3.2: "1분마다(최대 15분)"), until it is READY. Closing the summary or
- * leaving the screen stops that; coming back goes on with the reads left.
+ * leaving the screen stops that; coming back goes on with the reads left, at the time the next one was due.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SummaryExtras(
@@ -60,6 +60,12 @@ class SummaryExtras(
 
     /** Reads done by the one-minute loop, per segment (touched only from [scope]'s loop). */
     private val refetched = HashMap<Long, Int>()
+
+    /**
+     * When the next read of each segment is due ([PostProcessor.clock] time). Kept while the screen is left, so a
+     * screen stopped and started more often than once a minute still reads every minute.
+     */
+    private val nextDue = HashMap<Long, Long>()
 
     val state: StateFlow<SummaryExtrasState> = segment
         .flatMapLatest { id ->
@@ -96,9 +102,12 @@ class SummaryExtras(
 
     private suspend fun refetchWhileShown(id: Long) {
         while ((refetched[id] ?: 0) < REFETCH_TIMES) {
-            delay(REFETCH_EVERY_MS)
+            val due = nextDue.getOrPut(id) { postProcessor.clock() + REFETCH_EVERY_MS }
+            // A clock set back or forward never waits longer than one period.
+            delay((due - postProcessor.clock()).coerceIn(0L, REFETCH_EVERY_MS))
             if (isReady(id)) return
             refetched[id] = (refetched[id] ?: 0) + 1
+            nextDue[id] = postProcessor.clock() + REFETCH_EVERY_MS
             postProcessor.refetchHeartRate(id)
         }
     }

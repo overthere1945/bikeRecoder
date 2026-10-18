@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Shader
+import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,6 +33,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -102,9 +104,14 @@ private val MAP_PHOTO_BORDER = 2.dp
 
 /**
  * One-shot request to frame [points] (a single point just centres on it, at most [maxZoom]).
+ * [padding]: room kept free on each side when framing several points, e.g. under controls drawn over the map; null =
+ * the usual margin all round.
  * Deliberately has no equals: every new instance is a new request, even for identical points.
  */
-class CameraFit(val points: List<GeoPoint>, val maxZoom: Double = 16.0)
+class CameraFit(val points: List<GeoPoint>, val maxZoom: Double = 16.0, val padding: FitPadding? = null)
+
+/** Per-side room for [CameraFit.padding] (start = left, end = right). */
+data class FitPadding(val start: Dp, val top: Dp, val end: Dp, val bottom: Dp)
 
 enum class CameraMode {
     /** The user controls the camera; BikeMap never moves it on its own. */
@@ -297,11 +304,12 @@ fun BikeMap(
     // The recorded track grows with every ride point: it is redrawn at most every TRACK_UPDATE_MS (always ending with
     // the latest track), its GeoJSON built off the main thread (the track lists are immutable snapshots). Its colours
     // and the other lines go to the same source.
+    // Only the live track's growth is throttled: new colours ([기본] ↔ [심박]) or lines are drawn at once.
     val currentTrack by rememberUpdatedState(TrackDrawing(overlay.track, overlay.trackColors, overlay.lines))
     LaunchedEffect(style) {
         val source = style?.getSourceAs<GeoJsonSource>(TRACK_SOURCE) ?: return@LaunchedEffect
         snapshotFlow { currentTrack }
-            .atMostEvery(TRACK_UPDATE_MS)
+            .atMostEveryUnless(TRACK_UPDATE_MS, SystemClock::uptimeMillis, ::redrawAtOnce)
             .collect { d -> source.setGeoJson(withContext(Dispatchers.Default) { trackGeoJson(d.track, d.colors, d.lines) }) }
     }
     // Many long paths: built off the main thread; a newer list cancels the one still being built.
@@ -353,7 +361,17 @@ fun BikeMap(
                 val bounds = LatLngBounds.Builder().apply {
                     fit.points.forEach { include(LatLng(it.lat, it.lon)) }
                 }.build()
-                m.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, FIT_PADDING_PX), FIT_ANIMATION_MS)
+                val pad = fit.padding
+                val update = if (pad == null) {
+                    CameraUpdateFactory.newLatLngBounds(bounds, FIT_PADDING_PX)
+                } else {
+                    with(density) {
+                        CameraUpdateFactory.newLatLngBounds(
+                            bounds, pad.start.roundToPx(), pad.top.roundToPx(), pad.end.roundToPx(), pad.bottom.roundToPx(),
+                        )
+                    }
+                }
+                m.animateCamera(update, FIT_ANIMATION_MS)
             }
         } catch (e: IllegalStateException) {
             // Degenerate bounds (identical points) or a not-yet-sized map: leave the camera alone.
@@ -478,7 +496,14 @@ private fun coordinate(p: GeoPoint) = "[${p.lon},${p.lat}]"
 private fun routeGeoJson(route: Route?): String = lineGeoJson(route?.points.orEmpty())
 
 /** What the track source draws (compared by value, so an unchanged overlay is not drawn again). */
-private data class TrackDrawing(val track: List<GeoPoint>, val colors: List<String>?, val lines: List<MapLine>)
+internal data class TrackDrawing(val track: List<GeoPoint>, val colors: List<String>?, val lines: List<MapLine>)
+
+/**
+ * Whether [next] is drawn at once instead of waiting for the track throttle: anything but the live track itself
+ * changing (its colours, or the separate lines).
+ */
+internal fun redrawAtOnce(last: TrackDrawing, next: TrackDrawing): Boolean =
+    next.colors != last.colors || next.lines != last.lines
 
 private const val LINE_COLOR = "color"
 

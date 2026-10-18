@@ -75,10 +75,11 @@ fun TripDetailScreen(
         onDismiss = viewModel::dismiss,
         onBack = onBack,
         map = { modifier ->
-            ColoredDetailMap(heartRate.canColor, colorMode, viewModel::setColorMode, modifier) { inner ->
+            ColoredDetailMap(heartRate.canColor, colorMode, viewModel::setColorMode, modifier) { inner, fitPadding ->
                 map(
                     DetailMapContent(
                         emptyList(), mapPhotos, { photoId -> viewer.openPhoto(photos.visible, photoId) }, lines = lines,
+                        fitPadding = fitPadding,
                     ),
                     inner,
                 )

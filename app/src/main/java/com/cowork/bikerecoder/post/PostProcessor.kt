@@ -14,6 +14,7 @@ import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -38,7 +40,8 @@ class PostProcessor(
     private val store: PostStore,
     private val photos: PhotoSource,
     private val heartRate: HeartRateSource,
-    private val clock: () -> Long,
+    /** Wall-clock milliseconds (also the summary's refetch schedule, [com.cowork.bikerecoder.ui.record.SummaryExtras]). */
+    internal val clock: () -> Long,
     private val scope: CoroutineScope,
     private val warnLog: WarnLog = androidWarnLog("PostProcessor"),
 ) {
@@ -197,26 +200,29 @@ class PostProcessor(
             warnLog.warn("Heart rate read failed for segment ${segment.id}", e)
             HrRead.Failed
         }
+        // Not cancellable once begun: new samples are never left stored under the old summary and state.
         writeLock.withLock {
-            val current = store.extras(segment.id) ?: SegmentExtras(segment.id)
-            val next = when {
-                read == null -> current.copy(hrLastTriedAt = now)
-                read is HrRead.Samples -> {
-                    store.replaceSamples(segment.id, read.samples)
-                    val stats = HeartRateSummary.of(read.samples, segment.totals.movingTimeMs)
-                    current.tried(now).copy(
-                        hrStatus = HrRetryPolicy.after(read, endedAt, now),
-                        hrDetailed = stats?.detailed ?: false,
-                        avgBpm = stats?.avgBpm,
-                        maxBpm = stats?.maxBpm,
-                        calories = read.calories,
-                    )
+            withContext(NonCancellable) {
+                val current = store.extras(segment.id) ?: SegmentExtras(segment.id)
+                val next = when {
+                    read == null -> current.copy(hrLastTriedAt = now)
+                    read is HrRead.Samples -> {
+                        store.replaceSamples(segment.id, read.samples)
+                        val stats = HeartRateSummary.of(read.samples, segment.totals.movingTimeMs)
+                        current.tried(now).copy(
+                            hrStatus = HrRetryPolicy.after(read, endedAt, now),
+                            hrDetailed = stats?.detailed ?: false,
+                            avgBpm = stats?.avgBpm,
+                            maxBpm = stats?.maxBpm,
+                            calories = read.calories,
+                        )
+                    }
+                    // keep heart rate already read (R7; only [refetchHeartRate] reads a READY segment)
+                    current.hrStatus == HrStatus.READY -> current.tried(now)
+                    else -> current.tried(now).copy(hrStatus = HrRetryPolicy.after(read, endedAt, now))
                 }
-                // keep heart rate already read (R7; only [refetchHeartRate] reads a READY segment)
-                current.hrStatus == HrStatus.READY -> current.tried(now)
-                else -> current.tried(now).copy(hrStatus = HrRetryPolicy.after(read, endedAt, now))
+                store.saveExtras(next)
             }
-            store.saveExtras(next)
         }
     }
 

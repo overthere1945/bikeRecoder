@@ -230,6 +230,25 @@ class DetailHeartRateTest {
         assertEquals(List(5) { "#E53935" }, lines[1].colors)
     }
 
+    /** Review minor 1: once no segment is detailed (no [심박] any more), the trip's lines lose their colours. */
+    @Test
+    fun theTripLinesAreNotColouredOnceTheToggleIsGone() = runTest(dispatcher) {
+        val a = segment(startedAt = 0, n = 3)
+        ready(a, listOf(HeartRateSample(0L, 90)))
+        val vm = tripDetail()
+        advanceUntilIdle()
+        vm.setColorMode(TrackColorMode.HEART_RATE)
+        advanceUntilIdle()
+        assertEquals(3, vm.lines.value.single().colors?.size)
+
+        // Read again: now not detailed.
+        ready(a, listOf(HeartRateSample(0L, 90)), detailed = false)
+        advanceUntilIdle()
+
+        assertFalse(vm.heartRate.value.canColor)
+        assertNull(vm.lines.value.single().colors, "no colours without the toggle and the key")
+    }
+
     private companion object {
         const val TRIP = 1L
     }

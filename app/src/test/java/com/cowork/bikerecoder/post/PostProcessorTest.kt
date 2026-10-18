@@ -410,6 +410,34 @@ class PostProcessorTest {
         assertEquals(newer, store.samples(segment.id))
     }
 
+    /** Review minor 3: a read cancelled while it writes still stores samples and their summary together. */
+    @Test
+    fun aCancelledRefetchStillStoresSamplesAndSummaryTogether() = runTest {
+        val segment = ride()
+        now = END + 60_000L
+        heartRate.reads = { _, _ -> HrRead.Samples(samples(), 50.0) }
+        val writing = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val slowStore = object : PostStore by store {
+            override suspend fun replaceSamples(segmentId: Long, samples: List<HeartRateSample>) {
+                store.replaceSamples(segmentId, samples)
+                writing.complete(Unit)
+                gate.await()
+            }
+        }
+        val p = processor(postStore = slowStore)
+
+        val job = launch { p.refetchHeartRate(segment.id) }
+        writing.await()
+        job.cancel()
+        gate.complete(Unit)
+        job.join()
+
+        assertEquals(samples(), store.samplesById[segment.id])
+        assertEquals(HrStatus.READY, extras(segment)?.hrStatus, "the summary of the stored samples was saved too")
+        assertEquals(105, extras(segment)?.avgBpm)
+    }
+
     @Test
     fun refetchTurnsNoneIntoReady() = runTest {
         val segment = ride()

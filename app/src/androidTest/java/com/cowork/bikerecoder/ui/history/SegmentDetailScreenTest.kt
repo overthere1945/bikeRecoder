@@ -2,12 +2,18 @@ package com.cowork.bikerecoder.ui.history
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.height
 import androidx.test.platform.app.InstrumentationRegistry
 import com.cowork.bikerecoder.core.post.HeartRateSample
 import com.cowork.bikerecoder.core.post.HrRead
@@ -32,6 +38,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -84,7 +91,7 @@ class SegmentDetailScreenTest {
             MaterialTheme {
                 SegmentDetailScreen(vm, NoTiles, fakeThumbnails(), onBack = {}, heartRateGate = gate) { c, modifier ->
                     content = c
-                    Box(modifier)
+                    Box(modifier.testTag(MAP))
                 }
             }
         }
@@ -101,6 +108,28 @@ class SegmentDetailScreenTest {
         composeRule.onNodeWithTag(TrackColorTags.HEART_RATE).assertDoesNotExist()
         composeRule.onNodeWithTag(TrackColorTags.DEFAULT).assertDoesNotExist()
         assertEquals(null, content?.trackColors)
+        assertEquals("no controls: the usual framing", null, content?.fitPadding)
+    }
+
+    /** Review Important 1: the toggle and the key lie inside the top band the framing keeps free, in both modes. */
+    @Test
+    fun theColourControlsStayInTheBandTheFramingKeepsFree() {
+        ready(detailed = true)
+        show()
+        composeRule.waitUntil(5_000) { content?.fitPadding != null }
+        assertEquals("kept free already in [기본]", COLOR_CONTROLS_FIT_PADDING, content?.fitPadding)
+
+        composeRule.onNodeWithTag(TrackColorTags.HEART_RATE).performClick()
+        composeRule.waitUntil(5_000) { content?.trackColors != null }
+        assertEquals(COLOR_CONTROLS_FIT_PADDING, content?.fitPadding)
+
+        val map = composeRule.onNodeWithTag(MAP).getBoundsInRoot()
+        val toggle = composeRule.onNodeWithTag(TrackColorTags.TOGGLE).getBoundsInRoot()
+        val legend = composeRule.onNodeWithTag(TrackColorTags.LEGEND).getBoundsInRoot()
+        assertTrue("toggle ${toggle.bottom - map.top}", toggle.bottom - map.top <= COLOR_CONTROLS_TOP)
+        assertTrue("legend ${legend.bottom - map.top}", legend.bottom - map.top <= COLOR_CONTROLS_TOP)
+        assertTrue("compact legend ${legend.height}", legend.height <= 64.dp)
+        assertTrue("side by side: ${legend.right} < ${toggle.left}", legend.right < toggle.left)
     }
 
     @Test
@@ -123,6 +152,17 @@ class SegmentDetailScreenTest {
         composeRule.onNodeWithText("기본").performClick()
         composeRule.waitUntil(5_000) { content?.trackColors == null }
         composeRule.onNodeWithText("160 이상").assertDoesNotExist()
+    }
+
+    /** Review minor 5: READY with no chart points yet shows no empty heart-rate chart. */
+    @Test
+    fun noHeartRateChartWithoutPoints() {
+        runBlocking {
+            postStore.saveExtras(SegmentExtras(1, hrStatus = HrStatus.READY, hrLastTriedAt = 1L, hrDetailed = false, avgBpm = 130, maxBpm = 165))
+        }
+        show()
+        composeRule.onNodeWithText("평균 심박 130 · 최고 165 bpm · – kcal").performScrollTo().assertIsDisplayed()
+        composeRule.onAllNodesWithText("심박").assertCountEquals(0)
     }
 
     @Test
@@ -155,6 +195,10 @@ class SegmentDetailScreenTest {
         }
         composeRule.onNodeWithText("심박 가져오는 중").assertDoesNotExist()
         composeRule.onNodeWithText("워치 심박을 가져오려면 Health Connect 접근을 허용해 주세요").assertDoesNotExist()
+    }
+
+    private companion object {
+        const val MAP = "map-slot"
     }
 
     @Test

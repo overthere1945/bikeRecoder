@@ -124,6 +124,26 @@ class SummaryExtrasTest {
         assertEquals(15, refetches(), "at most 15 in all for one summary")
     }
 
+    /** Review minor 2: stopping and starting more often than once a minute does not put the next read off. */
+    @Test
+    fun aScreenStoppedAndStartedOftenStillReadsEveryMinute() = runTest {
+        val (id, extras) = setup()
+        extras.onScreen(true)
+        shown.value = id
+        runCurrent()
+
+        // On for 25 s, off for 1 s, eleven times (to 286 s): reads fall due at 60, 120, 180 and 240 s.
+        repeat(11) {
+            advanceTimeBy(25_000)
+            extras.onScreen(false)
+            advanceTimeBy(1_000)
+            extras.onScreen(true)
+        }
+        runCurrent()
+
+        assertEquals(4, refetches(), "every minute although no stretch on screen lasts a minute")
+    }
+
     @Test
     fun refetchNowReadsTheShownSegmentAtOnce() = runTest {
         val (id, extras) = setup()

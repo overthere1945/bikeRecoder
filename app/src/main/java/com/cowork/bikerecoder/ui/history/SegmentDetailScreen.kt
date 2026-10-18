@@ -29,6 +29,7 @@ import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.map.BikeMap
 import com.cowork.bikerecoder.map.CameraFit
 import com.cowork.bikerecoder.map.CameraMode
+import com.cowork.bikerecoder.map.FitPadding
 import com.cowork.bikerecoder.map.MapLine
 import com.cowork.bikerecoder.map.MapOverlay
 import com.cowork.bikerecoder.map.MapPhoto
@@ -56,17 +57,36 @@ class DetailMapContent(
     val onPhotoClick: (Long) -> Unit,
     val trackColors: List<String>? = null,
     val lines: List<MapLine> = emptyList(),
+    /** Room the framing keeps free under the colour controls ([COLOR_CONTROLS_FIT_PADDING]); null = the usual margin. */
+    val fitPadding: FitPadding? = null,
 )
 
 /** The detail screens' MapLibre map ([SegmentMap]) for [content]. */
 @Composable
 internal fun DetailMap(content: DetailMapContent, tileSource: TileSource, modifier: Modifier) {
-    SegmentMap(content.track, tileSource, modifier, content.photos, content.onPhotoClick, content.trackColors, content.lines)
+    SegmentMap(
+        content.track, tileSource, modifier, content.photos, content.onPhotoClick, content.trackColors, content.lines,
+        content.fitPadding,
+    )
 }
 
 /**
- * [map] with the colour controls over it (spec §3.3): [기본] [심박] in the top corner when [canColor], and the colours'
- * key in the bottom corner while [mode] is [TrackColorMode.HEART_RATE].
+ * Height of the band at the map's top kept free for the colour controls: an 8 dp margin, the key (about 60 dp; the
+ * chips are 48 dp) and room for a start/end marker drawn at the band's edge.
+ */
+internal val COLOR_CONTROLS_TOP = 84.dp
+
+/**
+ * How a map with the colour controls is framed: the top band ([COLOR_CONTROLS_TOP]) stays free for [기본] [심박] and
+ * the key, the bottom for the attribution line, so no track end or marker lies under them.
+ */
+internal val COLOR_CONTROLS_FIT_PADDING = FitPadding(start = 24.dp, top = COLOR_CONTROLS_TOP, end = 24.dp, bottom = 32.dp)
+
+/**
+ * [map] with the colour controls over it (spec §3.3) when [canColor]: [기본] [심박] in the top-right corner and,
+ * while [mode] is [TrackColorMode.HEART_RATE], the colours' key in the top-left corner. [map] gets the framing room to
+ * keep free under them ([COLOR_CONTROLS_FIT_PADDING]) whenever [canColor] — in [기본] too, so switching never needs a
+ * new framing — and null otherwise.
  */
 @Composable
 internal fun ColoredDetailMap(
@@ -74,13 +94,13 @@ internal fun ColoredDetailMap(
     mode: TrackColorMode,
     onModeChange: (TrackColorMode) -> Unit,
     modifier: Modifier,
-    map: @Composable BoxScope.(Modifier) -> Unit,
+    map: @Composable BoxScope.(Modifier, FitPadding?) -> Unit,
 ) {
     Box(modifier) {
-        map(Modifier.fillMaxSize())
+        map(Modifier.fillMaxSize(), COLOR_CONTROLS_FIT_PADDING.takeIf { canColor })
         if (canColor) {
             TrackColorToggle(mode, onModeChange, Modifier.align(Alignment.TopEnd).padding(8.dp))
-            if (mode == TrackColorMode.HEART_RATE) HeartRateLegend(Modifier.align(Alignment.BottomEnd).padding(8.dp))
+            if (mode == TrackColorMode.HEART_RATE) HeartRateLegend(Modifier.align(Alignment.TopStart).padding(8.dp))
         }
     }
 }
@@ -120,10 +140,11 @@ fun SegmentDetailScreen(
                 altitude = s.altitude,
                 speed = s.speed,
                 map = { modifier ->
-                    ColoredDetailMap(canColor, colorMode, viewModel::setColorMode, modifier) { inner ->
+                    ColoredDetailMap(canColor, colorMode, viewModel::setColorMode, modifier) { inner, fitPadding ->
                         map(
                             DetailMapContent(
                                 s.track, mapPhotos, { photoId -> viewer.openPhoto(photos.visible, photoId) }, trackColors,
+                                fitPadding = fitPadding,
                             ),
                             inner,
                         )
@@ -141,7 +162,7 @@ fun SegmentDetailScreen(
                     photoPrompt()
                 },
                 heartRate = { HeartRateSection(heartRate, viewModel::refetchHeartRate, heartRateGate) },
-                heartRateChart = heartRateChart.takeIf { heartRate?.hrStatus == HrStatus.READY },
+                heartRateChart = heartRateChart.takeIf { heartRate?.hrStatus == HrStatus.READY && it.isNotEmpty() },
             )
         }
     }
@@ -210,8 +231,8 @@ fun SegmentDetailContent(
 }
 
 /**
- * The [track] (in [trackColors]) or the separate [lines] framed, with a start (orange) and an end (red) marker (the
- * first and last point of all), and the [photos] ([onPhotoClick] opens one).
+ * The [track] (in [trackColors]) or the separate [lines] framed (keeping [fitPadding] free, if given), with a start
+ * (orange) and an end (red) marker (the first and last point of all), and the [photos] ([onPhotoClick] opens one).
  */
 @Composable
 internal fun SegmentMap(
@@ -222,9 +243,10 @@ internal fun SegmentMap(
     onPhotoClick: ((Long) -> Unit)? = null,
     trackColors: List<String>? = null,
     lines: List<MapLine> = emptyList(),
+    fitPadding: FitPadding? = null,
 ) {
     val all = remember(track, lines) { track + lines.flatMap { it.points } }
-    val fit = remember(all) { all.takeIf { it.isNotEmpty() }?.let { CameraFit(it) } }
+    val fit = remember(all, fitPadding) { all.takeIf { it.isNotEmpty() }?.let { CameraFit(it, padding = fitPadding) } }
     val stops = remember(all) { startEndStops(all) }
     BikeMap(
         tileSource = tileSource,

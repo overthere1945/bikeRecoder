@@ -108,8 +108,16 @@ class TripDetailViewModel(
         .map { list -> list.filter { it.hrStatus == HrStatus.READY }.associate { it.segmentId to it.hrLastTriedAt } }
         .distinctUntilChanged()
 
-    /** One line per listed segment; in [TrackColorMode.HEART_RATE] each coloured by its own samples. */
-    val lines: StateFlow<List<MapLine>> = combine(tracks, colorMode, readyAt) { tracks, mode, _ -> tracks to mode }
+    /**
+     * One line per listed segment; in [TrackColorMode.HEART_RATE] each coloured by its own samples — only while [심박]
+     * is offered ([TripHeartRate.canColor]), so lines are never coloured without the toggle and the key.
+     */
+    val lines: StateFlow<List<MapLine>> = combine(
+        tracks,
+        colorMode,
+        readyAt,
+        heartRate.map { it.canColor }.distinctUntilChanged(),
+    ) { tracks, mode, _, canColor -> tracks to (if (canColor) mode else TrackColorMode.DEFAULT) }
         .mapLatest { (tracks, mode) ->
             if (mode == TrackColorMode.DEFAULT) {
                 withContext(compute) { tracks.map { (_, points) -> MapLine(points.map { it.point }) } }
