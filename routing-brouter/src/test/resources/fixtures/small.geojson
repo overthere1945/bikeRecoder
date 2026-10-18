@@ -1,0 +1,37 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "creator": "BRouter-1.7.10",
+        "name": "brouter_balanced_0",
+        "track-length": "400",
+        "filtered ascend": "7",
+        "plain-ascend": "7",
+        "total-time": "90",
+        "total-energy": "1000",
+        "cost": "500",
+        "voicehints": [
+          [1,2,0,100.0,-90],
+          [2,13,2,50.0,0]
+        ],
+        "messages": [
+          ["Longitude", "Latitude", "Elevation", "Distance", "CostPerKm", "ElevCost", "TurnCost", "NodeCost", "InitialCost", "WayTags", "NodeTags", "Time", "Energy"],
+          ["126900000", "37500000", "20", "300", "1000", "0", "0", "0", "0", "highway=cycleway surface=asphalt", "", "60", "700"],
+          ["126900000", "37503600", "27", "100", "4000", "0", "0", "0", "0", "highway=primary cycleway=no", "", "30", "300"]
+        ],
+        "times": [0,30,60,90]
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [126.9000000, 37.5000000, 20],
+          [126.9000000, 37.5013000, 22],
+          [126.9015000, 37.5013000, 25],
+          [126.9015000, 37.5030000, 27]
+        ]
+      }
+    }
+  ]
+}
