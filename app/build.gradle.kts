@@ -99,6 +99,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.maplibre)
     implementation(libs.play.services.location)
+    implementation(libs.androidx.health.connect)
 
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.okhttp.mockwebserver)
