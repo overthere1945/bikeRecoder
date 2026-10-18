@@ -182,16 +182,16 @@ class DetailPhotosTest {
         assertEquals(listOf(2L), vm.photos.value.visible.map { it.mediaId })
     }
 
+    /** Ruling R10: each segment is its own line (no connector between segments or days). */
     @Test
-    fun tripDetailTrackJoinsTheSegmentsInOrder() = runTest(dispatcher) {
+    fun tripDetailMapHasTheSegmentsInOrderAsSeparateLines() = runTest(dispatcher) {
         val a = segment(startedAt = 100, date = day1, lat = 37.0)
         val b = segment(startedAt = 200, date = day2, lat = 38.0)
 
         val vm = tripDetail()
         advanceUntilIdle()
 
-        val expected = (rides.points(a) + rides.points(b)).map { it.point }
-        assertEquals(expected, vm.track.value)
+        assertEquals(listOf(rides.points(a), rides.points(b)).map { p -> p.map { it.point } }, vm.lines.value.map { it.points })
     }
 
     private companion object {

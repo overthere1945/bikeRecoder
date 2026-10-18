@@ -4,6 +4,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -26,6 +28,9 @@ import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.post.PhotoThumbnails
+import com.cowork.bikerecoder.ui.health.HeartRateGate
+import com.cowork.bikerecoder.ui.health.HeartRateNotice
+import com.cowork.bikerecoder.ui.health.heartRateLine
 import com.cowork.bikerecoder.ui.photo.PhotoStrip
 import com.cowork.bikerecoder.ui.photo.PhotoViewerHost
 import com.cowork.bikerecoder.ui.photo.rememberMapPhotos
@@ -35,6 +40,7 @@ import java.time.LocalDate
 
 /**
  * [photoPrompt]: the photo permission card where it applies (spec §2.4), shown under the photo strip.
+ * [heartRateGate]: the heart-rate permission card or "Health Connect를 사용할 수 없습니다" (spec §3.4; null = none).
  * [map]: the map for its content (replaceable in tests).
  */
 @Composable
@@ -45,12 +51,15 @@ fun TripDetailScreen(
     onOpenSegment: (Long) -> Unit,
     onBack: () -> Unit,
     photoPrompt: @Composable () -> Unit = {},
+    heartRateGate: HeartRateGate? = null,
     map: @Composable (DetailMapContent, Modifier) -> Unit = { content, modifier -> DetailMap(content, tileSource, modifier) },
 ) {
     val segmentsByDate by viewModel.segmentsByDate.collectAsStateWithLifecycle()
     val total by viewModel.total.collectAsStateWithLifecycle()
     val dialog by viewModel.dialog.collectAsStateWithLifecycle()
-    val track by viewModel.track.collectAsStateWithLifecycle()
+    val lines by viewModel.lines.collectAsStateWithLifecycle()
+    val heartRate by viewModel.heartRate.collectAsStateWithLifecycle()
+    val colorMode by viewModel.colorMode.collectAsStateWithLifecycle()
     val photos by viewModel.photos.collectAsStateWithLifecycle()
     val viewer = rememberPhotoViewerState()
     val mapPhotos = rememberMapPhotos(photos, thumbnails)
@@ -66,7 +75,14 @@ fun TripDetailScreen(
         onDismiss = viewModel::dismiss,
         onBack = onBack,
         map = { modifier ->
-            map(DetailMapContent(track, mapPhotos) { photoId -> viewer.openPhoto(photos.visible, photoId) }, modifier)
+            ColoredDetailMap(heartRate.canColor, colorMode, viewModel::setColorMode, modifier) { inner ->
+                map(
+                    DetailMapContent(
+                        emptyList(), mapPhotos, { photoId -> viewer.openPhoto(photos.visible, photoId) }, lines = lines,
+                    ),
+                    inner,
+                )
+            }
         },
         photos = {
             PhotoStrip(
@@ -77,15 +93,17 @@ fun TripDetailScreen(
                 onOpenHidden = { viewer.open(photos.hidden, 0) },
             )
             photoPrompt()
+            HeartRateNotice(heartRateGate)
         },
+        heartRate = heartRate,
     )
     PhotoViewerHost(viewer, photos, thumbnails, onToggleHidden = { viewModel.setHidden(it, hidden = !it.hidden) })
 }
 
 /**
  * The trip's map ([map], every day's track and photos; outside the scrolling part, so it keeps its drags), then
- * [photos] (the photo strip and card, spec §2.3), the totals and its segments under a header per date (spec §3.5);
- * a long press asks to delete.
+ * [photos] (the photo strip and card, spec §2.3), the totals (with the trip's [heartRate], spec §3.3) and its segments
+ * under a header per date (with that day's average heart rate); a long press asks to delete.
  */
 @Composable
 fun TripDetailContent(
@@ -99,6 +117,7 @@ fun TripDetailContent(
     onBack: () -> Unit,
     map: (@Composable (Modifier) -> Unit)? = null,
     photos: @Composable () -> Unit = {},
+    heartRate: TripHeartRate = TripHeartRate(),
 ) {
     HistoryScaffold(title = "여행 기록", onBack = onBack) {
         if (segmentsByDate.isEmpty()) {
@@ -106,7 +125,7 @@ fun TripDetailContent(
         } else {
             Column(modifier = Modifier.fillMaxSize()) {
                 map?.invoke(Modifier.fillMaxWidth().height(240.dp))
-                TripDetailList(segmentsByDate, total, onOpenSegment, onRequestDelete, photos, Modifier.weight(1f))
+                TripDetailList(segmentsByDate, total, heartRate, onOpenSegment, onRequestDelete, photos, Modifier.weight(1f))
             }
         }
     }
@@ -117,6 +136,7 @@ fun TripDetailContent(
 private fun TripDetailList(
     segmentsByDate: Map<LocalDate, List<RideSegment>>,
     total: SegmentTotals,
+    heartRate: TripHeartRate,
     onOpenSegment: (Long) -> Unit,
     onRequestDelete: (Long) -> Unit,
     photos: @Composable () -> Unit,
@@ -130,14 +150,20 @@ private fun TripDetailList(
         item(key = "photos") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { photos() }
         }
-        item(key = "total") { TripTotal(total) }
+        item(key = "total") { TripTotal(total, heartRate) }
         segmentsByDate.forEach { (date, segments) ->
             item(key = "date-$date") {
-                Text(
-                    RideFormat.date(date),
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
+                Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    Text(RideFormat.date(date), style = MaterialTheme.typography.titleMedium)
+                    heartRate.avgByDate[date]?.let { avg ->
+                        Spacer(Modifier.weight(1f))
+                        Text(
+                            "평균 심박 $avg bpm",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
             items(segments, key = { it.id }) { segment ->
                 Text(
@@ -156,7 +182,7 @@ private fun TripDetailList(
 }
 
 @Composable
-private fun TripTotal(total: SegmentTotals) {
+private fun TripTotal(total: SegmentTotals, heartRate: TripHeartRate) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("여행 합계", style = MaterialTheme.typography.titleMedium)
@@ -168,6 +194,9 @@ private fun TripTotal(total: SegmentTotals) {
                 "평균/최고" to "${RideFormat.speedKmh(total.avgSpeedMps)} / ${RideFormat.speedKmh(total.maxSpeedMps)}km/h",
                 "누적 상승" to RideFormat.altitude(total.ascentM),
             )
+            if (heartRate.avgBpm != null) {
+                Text(heartRateLine(heartRate.avgBpm, heartRate.maxBpm, heartRate.calories), style = MaterialTheme.typography.bodyLarge)
+            }
         }
     }
 }

@@ -77,6 +77,7 @@ import com.cowork.bikerecoder.nav.NavigationService
 import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.ride.ScreenNotice
 import com.cowork.bikerecoder.ui.common.KeepScreenOn
+import com.cowork.bikerecoder.ui.health.HeartRateGate
 import com.cowork.bikerecoder.ui.common.NoticeSnackbarHost
 import com.cowork.bikerecoder.ui.record.AutoPauseChip
 import com.cowork.bikerecoder.ui.record.PageDots
@@ -140,6 +141,8 @@ fun NavigateScreen(
     onGuidanceEndedWhileRecording: () -> Unit,
     /** The photo permission card of the segment summary (spec §2.4, ruling R9). */
     photoPrompt: @Composable () -> Unit = {},
+    /** The heart-rate permission flow of the segment summary (spec §3.4, ruling R9). */
+    heartRateGate: HeartRateGate? = null,
 ) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val summaryExtras by viewModel.summaryExtras.collectAsStateWithLifecycle()
@@ -248,7 +251,10 @@ fun NavigateScreen(
                             map = { modifier -> SummaryMap(summary.track, tileSource, modifier) },
                             onConfirm = viewModel::confirmFinished,
                         ) {
-                            SummaryExtrasContent(summaryExtras, photoPrompt)
+                            SummaryExtrasContent(
+                                summaryExtras, photoPrompt, heartRateGate, viewModel::refetchHeartRate,
+                                viewModel::summaryOnScreen,
+                            )
                             if (view.completed) Text(TRIP_COMPLETED, style = MaterialTheme.typography.headlineSmall)
                             if (view.canConvert) {
                                 OutlinedButton(onClick = viewModel::convertToMultiDay) { Text("여러 날로 바꾸기") }

@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.test.assertHeightIsAtLeast
@@ -20,16 +21,17 @@ import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
+import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.recording.PauseKind
 import com.cowork.bikerecoder.core.recording.RecordingState
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStats
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.trip.TripType
+import com.cowork.bikerecoder.post.SegmentExtras
 import com.cowork.bikerecoder.ride.RecordingEnd
 import com.cowork.bikerecoder.ride.RideUiState
 import org.junit.Assert.assertEquals
@@ -263,5 +265,40 @@ class RecordScreenTest {
         count = 0
         composeRule.waitForIdle()
         composeRule.onNodeWithText("사진", substring = true).assertDoesNotExist()
+    }
+
+    /** Spec §3.3, ruling R9: the summary's heart-rate row, [다시 가져오기], and telling it is on screen. */
+    @Test
+    fun summaryShowsTheHeartRateRow() {
+        var refetches = 0
+        val onScreen = mutableListOf<Boolean>()
+        val state = SummaryExtrasState(
+            heartRate = SegmentExtras(1, hrStatus = HrStatus.READY, hrDetailed = true, avgBpm = 128, maxBpm = 166, calories = 210.0),
+        )
+        composeRule.setContent {
+            MaterialTheme {
+                SegmentSummaryContent(
+                    segment = RideSegment(
+                        id = 1,
+                        tripId = 1,
+                        startedAt = 0L,
+                        endedAt = 600_000L,
+                        localDate = LocalDate.of(2026, 10, 18),
+                        totals = SegmentTotals.ZERO.copy(distanceM = 3_010.0, movingTimeMs = 600_000),
+                    ),
+                    map = {},
+                    onConfirm = {},
+                    footer = {
+                        SummaryExtrasContent(state, photoPrompt = {}, onRefetch = { refetches++ }, onScreen = { onScreen += it })
+                    },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("평균 심박 128 · 최고 166 bpm · 210 kcal").assertIsDisplayed()
+        composeRule.onNodeWithText("다시 가져오기").performClick()
+        composeRule.waitForIdle()
+        assertEquals(1, refetches)
+        assertEquals(listOf(true), onScreen)
     }
 }

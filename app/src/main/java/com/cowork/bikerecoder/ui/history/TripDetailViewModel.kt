@@ -9,13 +9,20 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
-import com.cowork.bikerecoder.core.model.GeoPoint
+import com.cowork.bikerecoder.core.post.HeartRateColor
+import com.cowork.bikerecoder.core.post.HeartRateStats
+import com.cowork.bikerecoder.core.post.HeartRateSummary
+import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
+import com.cowork.bikerecoder.core.recording.TrackPoint
+import com.cowork.bikerecoder.map.MapLine
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.post.RidePhoto
+import com.cowork.bikerecoder.post.SegmentExtras
+import com.cowork.bikerecoder.ui.health.TrackColorMode
 import com.cowork.bikerecoder.ui.photo.RidePhotos
 import com.cowork.bikerecoder.ui.photo.observeRidePhotos
 import com.cowork.bikerecoder.ui.photo.setPhotoHidden
@@ -27,8 +34,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -40,7 +52,9 @@ import java.time.LocalDate
  * One trip's segments by date (oldest first) and the trip's totals (spec §3.5), without empty segments
  * ([RideSegment.isEmpty]). An open segment (still being recorded,
  * endedAt == null) cannot be deleted; a closed one is deleted after confirmation.
- * The map shows the listed segments' tracks joined in order ([track]) and the photos of every day ([photos], spec §2.3).
+ * The map shows each listed segment's track as its own line, in order ([lines], ruling R10), coloured in
+ * [TrackColorMode.HEART_RATE] by that segment's own samples, and the photos of every day ([photos], spec §2.3).
+ * [heartRate]: the trip's time-weighted average, highest heart rate and calories, and each day's average (spec §3.3).
  * The first load drops the photos deleted from the gallery and asks for a post-processing pass, once per screen.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -62,8 +76,8 @@ class TripDetailViewModel(
     private val _dialog = MutableStateFlow<HistoryDialog?>(null)
     val dialog: StateFlow<HistoryDialog?> = _dialog.asStateFlow()
 
-    private val _track = MutableStateFlow<List<GeoPoint>>(emptyList())
-    val track: StateFlow<List<GeoPoint>> = _track.asStateFlow()
+    /** The listed segments' ids and track points, in the order listed. */
+    private val tracks = MutableStateFlow<List<Pair<Long, List<TrackPoint>>>>(emptyList())
 
     /** The listed segments' ids; null until the first load. */
     private val segmentIds = MutableStateFlow<List<Long>?>(null)
@@ -72,9 +86,50 @@ class TripDetailViewModel(
         .flatMapLatest { ids -> observeRidePhotos(postStore.observePhotos(ids), log) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, RidePhotos())
 
+    private val extras: StateFlow<List<SegmentExtras>> = segmentIds.filterNotNull()
+        .flatMapLatest { ids ->
+            postStore.observeExtras(ids).catch { e ->
+                log.warn("Could not read the heart rate of trip $tripId", e)
+                emit(emptyList())
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    val heartRate: StateFlow<TripHeartRate> = combine(_segmentsByDate, extras, ::tripHeartRate)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, TripHeartRate())
+
+    private val _colorMode = MutableStateFlow(TrackColorMode.DEFAULT)
+
+    /** [기본] first, every time the screen opens (not remembered). */
+    val colorMode: StateFlow<TrackColorMode> = _colorMode.asStateFlow()
+
+    /** When each READY segment's samples were stored: its samples are read again when this changes. */
+    private val readyAt = extras
+        .map { list -> list.filter { it.hrStatus == HrStatus.READY }.associate { it.segmentId to it.hrLastTriedAt } }
+        .distinctUntilChanged()
+
+    /** One line per listed segment; in [TrackColorMode.HEART_RATE] each coloured by its own samples. */
+    val lines: StateFlow<List<MapLine>> = combine(tracks, colorMode, readyAt) { tracks, mode, _ -> tracks to mode }
+        .mapLatest { (tracks, mode) ->
+            if (mode == TrackColorMode.DEFAULT) {
+                withContext(compute) { tracks.map { (_, points) -> MapLine(points.map { it.point }) } }
+            } else {
+                val samples = tracks.map { (id, _) -> guarded("Could not read the samples of segment $id") { postStore.samples(id) } }
+                withContext(compute) {
+                    tracks.mapIndexed { i, (_, points) ->
+                        MapLine(
+                            points.map { it.point },
+                            HeartRateColor.bands(points, samples[i].orEmpty()).map { it.colorHex },
+                        )
+                    }
+                }
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     private val mutex = Mutex()
 
-    /** The segments [track] was read for (it is read again only when they change, e.g. a recording went on). */
+    /** The segments [lines] were read for (read again only when they change, e.g. a recording went on). */
     private var trackOf: List<RideSegment>? = null
     private var opened = false
 
@@ -120,6 +175,10 @@ class TripDetailViewModel(
         _dialog.value = null
     }
 
+    fun setColorMode(mode: TrackColorMode) {
+        _colorMode.value = mode
+    }
+
     /** [숨기기] ([hidden] = true) / [다시 보이기] in the full-screen view. */
     fun setHidden(photo: RidePhoto, hidden: Boolean) {
         viewModelScope.launch { setPhotoHidden(postStore, photo, hidden, log) }
@@ -144,8 +203,7 @@ class TripDetailViewModel(
             if (segments != trackOf) {
                 // In the order listed (by date, then start); the segments' points are read one after another.
                 val ordered = _segmentsByDate.value.values.flatten()
-                val points = ordered.map { rideStore.points(it.id) }
-                _track.value = withContext(compute) { points.flatMap { list -> list.map { it.point } } }
+                tracks.value = ordered.map { it.id to rideStore.points(it.id) }
                 trackOf = segments
             }
         }
@@ -172,6 +230,40 @@ class TripDetailViewModel(
             }
         }
     }
+}
+
+/**
+ * The trip's heart rate (spec §3.3) over its READY segments: average weighted by moving time
+ * ([HeartRateSummary.tripAverage]), the highest, the calories that are known summed (null if none is), and each date's
+ * average. [canColor]: some segment has detailed heart rate, so [심박] is offered on the map.
+ */
+data class TripHeartRate(
+    val avgBpm: Int? = null,
+    val maxBpm: Int? = null,
+    val calories: Double? = null,
+    val avgByDate: Map<LocalDate, Int> = emptyMap(),
+    val canColor: Boolean = false,
+)
+
+internal fun tripHeartRate(segmentsByDate: Map<LocalDate, List<RideSegment>>, extras: List<SegmentExtras>): TripHeartRate {
+    val byId = extras.filter { it.hrStatus == HrStatus.READY }.associateBy { it.segmentId }
+    fun parts(segments: List<RideSegment>) = segments.mapNotNull { s ->
+        val e = byId[s.id] ?: return@mapNotNull null
+        val avg = e.avgBpm ?: return@mapNotNull null
+        val max = e.maxBpm ?: return@mapNotNull null
+        Triple(HeartRateStats(avg, max, e.hrDetailed), s.totals.movingTimeMs, e.calories)
+    }
+    val all = parts(segmentsByDate.values.flatten())
+    if (all.isEmpty()) return TripHeartRate()
+    return TripHeartRate(
+        avgBpm = HeartRateSummary.tripAverage(all.map { it.first to it.second }),
+        maxBpm = all.maxOf { it.first.maxBpm },
+        calories = all.mapNotNull { it.third }.takeIf { it.isNotEmpty() }?.sum(),
+        avgByDate = segmentsByDate.mapNotNull { (date, segments) ->
+            HeartRateSummary.tripAverage(parts(segments).map { it.first to it.second })?.let { date to it }
+        }.toMap(),
+        canColor = all.any { it.first.detailed },
+    )
 }
 
 /** The trip's totals: sums, except the highest speed and the altitude range (over the segments that know them). */

@@ -66,6 +66,11 @@ import org.maplibre.android.style.sources.GeoJsonSource
 
 /**
  * What BikeMap draws on top of the base map. [track]: the recorded path so far (a red line under the user dot).
+ * [trackColors]: a colour ("#RRGGBB") per point of [track], same length, e.g. the heart-rate colours (spec §3.3); the
+ * piece from one point to the next takes the first point's colour, and points of one colour in a row are drawn as one
+ * line. Null, or a list of another length, draws the track red.
+ * [lines]: more recorded paths drawn like [track], each on its own (nothing joins one to the next), e.g. a trip's
+ * segments (ruling R10).
  * [photos]: round previews of ride photos where they were taken (spec §2.3).
  */
 data class MapOverlay(
@@ -74,7 +79,15 @@ data class MapOverlay(
     val user: LocationFix?,
     val track: List<GeoPoint> = emptyList(),
     val photos: List<MapPhoto> = emptyList(),
+    val trackColors: List<String>? = null,
+    val lines: List<MapLine> = emptyList(),
 )
+
+/**
+ * One recorded path of [MapOverlay.lines], drawn in the track's style. [colors]: as [MapOverlay.trackColors], for
+ * [points] (null = the track's red).
+ */
+data class MapLine(val points: List<GeoPoint>, val colors: List<String>? = null)
 
 /** A ride photo on the map: a round preview [MAP_PHOTO_DIAMETER] wide with a white border; a grey disc while [thumbnail] is null. */
 data class MapPhoto(val photoId: Long, val point: GeoPoint, val thumbnail: ImageBitmap?)
@@ -275,13 +288,14 @@ fun BikeMap(
         style?.getSourceAs<GeoJsonSource>(STOPS_SOURCE)?.setGeoJson(stopsGeoJson(overlay.stops))
     }
     // The recorded track grows with every ride point: it is redrawn at most every TRACK_UPDATE_MS (always ending with
-    // the latest track), its GeoJSON built off the main thread (the track lists are immutable snapshots).
-    val currentTrack by rememberUpdatedState(overlay.track)
+    // the latest track), its GeoJSON built off the main thread (the track lists are immutable snapshots). Its colours
+    // and the other lines go to the same source.
+    val currentTrack by rememberUpdatedState(TrackDrawing(overlay.track, overlay.trackColors, overlay.lines))
     LaunchedEffect(style) {
         val source = style?.getSourceAs<GeoJsonSource>(TRACK_SOURCE) ?: return@LaunchedEffect
         snapshotFlow { currentTrack }
             .atMostEvery(TRACK_UPDATE_MS)
-            .collect { track -> source.setGeoJson(withContext(Dispatchers.Default) { trackGeoJson(track) }) }
+            .collect { d -> source.setGeoJson(withContext(Dispatchers.Default) { trackGeoJson(d.track, d.colors, d.lines) }) }
     }
     LaunchedEffect(style, overlay.user) {
         style?.getSourceAs<GeoJsonSource>(USER_SOURCE)?.setGeoJson(userGeoJson(overlay.user))
@@ -390,10 +404,12 @@ private fun installOverlayLayers(style: Style) {
             PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
         ),
     )
-    // The recorded path: above the planned route, below the stops and the user dot.
+    // The recorded path: above the planned route, below the stops and the user dot; each line its own colour.
     style.addLayer(
         LineLayer("$TRACK_SOURCE-line", TRACK_SOURCE).withProperties(
-            PropertyFactory.lineColor(Color.parseColor(TRACK_COLOR)),
+            PropertyFactory.lineColor(
+                Expression.toColor(Expression.coalesce(Expression.get(LINE_COLOR), Expression.literal(TRACK_COLOR))),
+            ),
             PropertyFactory.lineWidth(5f),
             PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
             PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
@@ -436,8 +452,48 @@ private fun coordinate(p: GeoPoint) = "[${p.lon},${p.lat}]"
 
 private fun routeGeoJson(route: Route?): String = lineGeoJson(route?.points.orEmpty())
 
-/** The recorded path as a LineString ([lon,lat] pairs); fewer than 2 points draw nothing. */
-internal fun trackGeoJson(points: List<GeoPoint>): String = lineGeoJson(points)
+/** What the track source draws (compared by value, so an unchanged overlay is not drawn again). */
+private data class TrackDrawing(val track: List<GeoPoint>, val colors: List<String>?, val lines: List<MapLine>)
+
+private const val LINE_COLOR = "color"
+
+/**
+ * The recorded path as a LineString ([lon,lat] pairs); fewer than 2 points draw nothing. With [colors] or [lines]: a
+ * collection of LineStrings with a "color" each — the track and then every line, each cut where its colour changes
+ * (the point where it changes ends one piece and starts the next).
+ */
+internal fun trackGeoJson(
+    points: List<GeoPoint>,
+    colors: List<String>? = null,
+    lines: List<MapLine> = emptyList(),
+): String {
+    if (colors == null && lines.isEmpty()) return lineGeoJson(points)
+    val features = (listOf(MapLine(points, colors)) + lines).flatMap(::colorRuns)
+    if (features.isEmpty()) return EMPTY_COLLECTION
+    return """{"type":"FeatureCollection","features":[${features.joinToString(",")}]}"""
+}
+
+/** [line] as one LineString feature per run of one colour; nothing below 2 points. */
+private fun colorRuns(line: MapLine): List<String> {
+    val points = line.points
+    if (points.size < 2) return emptyList()
+    val colors = line.colors?.takeIf { it.size == points.size } ?: return listOf(colorFeature(points, TRACK_COLOR))
+    val features = mutableListOf<String>()
+    var start = 0
+    for (i in 1 until points.size) {
+        if (colors[i] != colors[start]) {
+            features += colorFeature(points.subList(start, i + 1), colors[start])
+            start = i
+        }
+    }
+    if (start < points.size - 1) features += colorFeature(points.subList(start, points.size), colors[start])
+    return features
+}
+
+private fun colorFeature(points: List<GeoPoint>, color: String): String {
+    val coords = points.joinToString(",", transform = ::coordinate)
+    return """{"type":"Feature","properties":{"$LINE_COLOR":"$color"},"geometry":{"type":"LineString","coordinates":[$coords]}}"""
+}
 
 private fun lineGeoJson(points: List<GeoPoint>): String {
     if (points.size < 2) return EMPTY_COLLECTION

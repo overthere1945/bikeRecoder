@@ -76,16 +76,25 @@ class NavigateViewModel(
 
     val ui: StateFlow<NavUiState> = controller.ui
 
-    /**
-     * "사진 N장" (and later the heart rate) of the segment summary shown on the finished screen, and its pass when it
-     * appears — the same as the record screen's summary ([SummaryExtras], ruling R9).
-     */
-    val summaryExtras: StateFlow<SummaryExtrasState> = SummaryExtras(
+    private val extras = SummaryExtras(
         summarySegment = combine(controller.ui, rideUi) { nav, ride -> shownSummary(nav, ride)?.segment?.id },
         postStore = postStore,
         postProcessor = postProcessor,
         scope = viewModelScope,
-    ).state
+    )
+
+    /**
+     * "사진 N장" and the heart rate of the segment summary shown on the finished screen, its pass when it appears and
+     * the heart rate read again every minute while it is on screen — the same as the record screen's summary
+     * ([SummaryExtras], ruling R9).
+     */
+    val summaryExtras: StateFlow<SummaryExtrasState> = extras.state
+
+    /** [다시 가져오기] on the segment summary. */
+    fun refetchHeartRate() = extras.refetchNow()
+
+    /** The segment summary is (or no longer is) on a started screen ([SummaryExtras.onScreen]). */
+    fun summaryOnScreen(shown: Boolean) = extras.onScreen(shown)
 
     /** A recording is starting or running: [종료] offers to end the guidance only, and the recording goes on. */
     val recording: StateFlow<Boolean> = rideUi.map(::isRecording)

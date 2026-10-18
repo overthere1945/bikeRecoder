@@ -31,7 +31,8 @@ import kotlinx.coroutines.launch
  *
  * @param savedState carries [ARG_TRIP], the trip to start recording once the screen is resumed (-1 = none).
  *
- * The summary's extras (photo count, spec §2.3) and its post-processing pass (spec §1.1 ①) come from [SummaryExtras].
+ * The summary's extras (photo count, spec §2.3; heart rate, spec §3.3) and its post-processing pass (spec §1.1 ①) come
+ * from [SummaryExtras].
  */
 class RecordViewModel(
     private val ride: RideController,
@@ -46,13 +47,24 @@ class RecordViewModel(
 
     val ui: StateFlow<RideUiState> = ride.ui
 
-    /** "사진 N장" (and later the heart rate) of the summary; a pass when it appears ([SummaryExtras]). */
-    val summaryExtras: StateFlow<SummaryExtrasState> = SummaryExtras(
+    private val extras = SummaryExtras(
         summarySegment = ride.ui.map { (it as? RideUiState.Finished)?.segment?.id },
         postStore = postStore,
         postProcessor = postProcessor,
         scope = viewModelScope,
-    ).state
+    )
+
+    /**
+     * "사진 N장" and the heart rate of the summary; a pass when it appears, and the heart rate read again every minute
+     * while it is on screen ([SummaryExtras]).
+     */
+    val summaryExtras: StateFlow<SummaryExtrasState> = extras.state
+
+    /** [다시 가져오기] on the summary. */
+    fun refetchHeartRate() = extras.refetchNow()
+
+    /** The summary is (or no longer is) on a started screen ([SummaryExtras.onScreen]). */
+    fun summaryOnScreen(shown: Boolean) = extras.onScreen(shown)
 
     /** Guidance is starting or running: [정지] then ends only the recording. */
     val navigating: StateFlow<Boolean> = navigation.map(NavNotifications::isGuiding)

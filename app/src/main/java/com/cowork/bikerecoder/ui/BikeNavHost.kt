@@ -42,6 +42,7 @@ import com.cowork.bikerecoder.ui.favorite.FavoriteDialogs
 import com.cowork.bikerecoder.ui.favorite.FavoriteEvent
 import com.cowork.bikerecoder.ui.favorite.FavoritesScreen
 import com.cowork.bikerecoder.ui.favorite.FavoritesViewModel
+import com.cowork.bikerecoder.ui.health.HeartRateGate
 import com.cowork.bikerecoder.ui.history.HistoryScreen
 import com.cowork.bikerecoder.ui.history.HistoryViewModel
 import com.cowork.bikerecoder.ui.history.SegmentDetailScreen
@@ -161,6 +162,10 @@ fun BikeNavHost(
 ) {
     val navController = rememberNavController()
     val context = LocalContext.current
+    // The heart-rate permission flow of the summaries and the detail screens; heart rate allowed → a pass.
+    val heartRateGate = remember(container) {
+        HeartRateGate(container.heartRateSource, container.settings, onGranted = container.postProcessor::request)
+    }
     // Activity-scoped so main, search and plan edit one shared plan.
     val planViewModel: PlanViewModel = viewModel(
         viewModelStoreOwner = context.findActivity(),
@@ -492,6 +497,7 @@ fun BikeNavHost(
                 // [안내만 끝내기 (기록 계속)]: the recording goes on, on the record screen.
                 onGuidanceEndedWhileRecording = { if (isCurrent()) navController.openOnMain(Routes.record()) },
                 photoPrompt = { PhotoPrompt(container) },
+                heartRateGate = heartRateGate,
             )
         }
         composable(
@@ -517,6 +523,7 @@ fun BikeNavHost(
                 onShowGuidance = { if (isCurrent()) navController.openOnMain(Routes.navigate()) },
                 onSetDestination = { if (isCurrent()) navController.navigate(Routes.SEARCH) },
                 photoPrompt = { PhotoPrompt(container) },
+                heartRateGate = heartRateGate,
             )
         }
         composable(Routes.HISTORY) {
@@ -539,6 +546,7 @@ fun BikeNavHost(
                 onOpenSegment = { segmentId -> navController.navigate(Routes.segmentDetail(segmentId)) },
                 onBack = { navController.popBackStack() },
                 photoPrompt = { PhotoPrompt(container) },
+                heartRateGate = heartRateGate,
             )
         }
         composable(
@@ -552,6 +560,7 @@ fun BikeNavHost(
                 thumbnails = container.photoThumbnails,
                 onBack = { navController.popBackStack() },
                 photoPrompt = { PhotoPrompt(container) },
+                heartRateGate = heartRateGate,
             )
         }
         composable(Routes.SETTINGS) {

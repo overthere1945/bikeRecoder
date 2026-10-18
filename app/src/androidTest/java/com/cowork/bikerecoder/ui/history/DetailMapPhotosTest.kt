@@ -9,14 +9,9 @@ import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.PhotoCandidate
 import com.cowork.bikerecoder.core.post.PhotoPositionSource
 import com.cowork.bikerecoder.core.post.PlacedPhoto
-import com.cowork.bikerecoder.core.recording.DayTotals
 import com.cowork.bikerecoder.core.recording.RideSegment
-import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
-import com.cowork.bikerecoder.core.recording.TrackPoint
-import com.cowork.bikerecoder.core.recording.TripRideSummary
 import com.cowork.bikerecoder.map.MapPhoto
-import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.post.FakeHeartRateSource
 import com.cowork.bikerecoder.post.FakePhotoSource
 import com.cowork.bikerecoder.post.FakePostStore
@@ -117,30 +112,6 @@ class DetailMapPhotosTest {
 
     private fun placed(mediaId: Long, takenAt: Long) =
         PlacedPhoto(mediaId, takenAt, GeoPoint(37.5, 127.0), PhotoPositionSource.TRACK)
-
-    /** Two points per segment; writes are not expected here. */
-    private class ReadOnlyRides(private val segments: List<RideSegment>) : RideStore {
-        override suspend fun segment(id: Long) = segments.firstOrNull { it.id == id }
-        override suspend fun segments(tripId: Long) = segments.filter { it.tripId == tripId }
-        override suspend fun points(segmentId: Long): List<TrackPoint> {
-            val s = segment(segmentId) ?: return emptyList()
-            return (0..1).map { i -> TrackPoint(s.startedAt + i * 1_000L, GeoPoint(37.5 + i * 0.001, 127.0), null, 5f, 5f) }
-        }
-        override suspend fun openSegments() = segments.filter { it.endedAt == null }
-        override suspend fun openSegment(tripId: Long, startedAt: Long, localDate: LocalDate): Long = error("read only")
-        override suspend fun appendPoints(segmentId: Long, points: List<TrackPoint>, totals: SegmentTotals) = error("read only")
-        override suspend fun closeSegment(segmentId: Long, endedAt: Long, totals: SegmentTotals) = error("read only")
-        override suspend fun dayTotals(tripId: Long, localDate: LocalDate): DayTotals = error("read only")
-        override suspend fun tripSummaries(): List<TripRideSummary> = error("read only")
-        override suspend fun deleteSegment(id: Long) = error("read only")
-        override suspend fun deleteTrip(tripId: Long) = error("read only")
-    }
-
-    private object NoTiles : TileSource {
-        override val styleUrl = "unused"
-        override val attribution = ""
-        override suspend fun styleJson(): String = error("the map is replaced in this test")
-    }
 
     private companion object {
         const val TRIP = 1L

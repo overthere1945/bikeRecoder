@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
@@ -71,6 +72,7 @@ class RecordViewModelTest {
         val navigation: MutableStateFlow<NavUiState>,
         val ride: RideController,
         val postStore: FakePostStore,
+        val heartRate: FakeHeartRateSource,
     ) {
         /** Post-processing passes so far. */
         var passes = 0
@@ -96,8 +98,9 @@ class RecordViewModelTest {
         )
         val rideStore = FakeRideStore(trips, clock)
         val postStore = FakePostStore { trips.trips.keys.flatMap { rideStore.segments(it) } }
+        val heartRate = FakeHeartRateSource()
         val postProcessor = PostProcessor(
-            rideStore, postStore, FakePhotoSource(), FakeHeartRateSource(), clock = clock, scope = backgroundScope,
+            rideStore, postStore, FakePhotoSource(), heartRate, clock = clock, scope = backgroundScope,
             warnLog = { _, _ -> },
         )
         val ride = RideController(
@@ -117,7 +120,7 @@ class RecordViewModelTest {
         val vm = RecordViewModel(
             ride, navState, flowOf(true), SavedStateHandle(args), serviceStatus.warning, postStore, postProcessor,
         )
-        val setup = Setup(vm, tripManager, navState, ride, postStore)
+        val setup = Setup(vm, tripManager, navState, ride, postStore, heartRate)
         postStore.beforeList = { setup.passes++ }
         runCurrent()
         return setup
@@ -264,5 +267,29 @@ class RecordViewModelTest {
         runCurrent()
         assertEquals(0, s.vm.summaryExtras.value.photoCount)
         assertEquals(1, s.passes)
+    }
+
+    @Test
+    fun summaryReadsTheHeartRateAgainEveryMinuteWhileOnScreen() = runTest(dispatcher) {
+        val s = setup()
+        val tripId = s.tripManager.startTrip(TripType.SINGLE_DAY, RouteProfile.CYCLEWAY_FIRST, emptyList()).id
+        s.vm.start(tripId)
+        runCurrent()
+        s.vm.onEndChoice(RecordingEnd.COMPLETE_TRIP)
+        runCurrent()
+        assertInstanceOf(RideUiState.Finished::class.java, s.vm.ui.value)
+        val passReads = s.heartRate.calls.size
+
+        advanceTimeBy(5 * 60_000L)
+        assertEquals(passReads, s.heartRate.calls.size, "not on screen: no reads")
+        s.vm.summaryOnScreen(true)
+        advanceTimeBy(15 * 60_000L + 1)
+        assertEquals(passReads + 15, s.heartRate.calls.size, "every minute, 15 times")
+        advanceTimeBy(15 * 60_000L)
+        assertEquals(passReads + 15, s.heartRate.calls.size, "at most 15")
+
+        s.vm.refetchHeartRate()
+        runCurrent()
+        assertEquals(passReads + 16, s.heartRate.calls.size, "[다시 가져오기] reads at once")
     }
 }

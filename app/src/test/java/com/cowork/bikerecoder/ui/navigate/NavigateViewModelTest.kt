@@ -21,6 +21,7 @@ import com.cowork.bikerecoder.nav.RecordingVoiceOutput
 import com.cowork.bikerecoder.nav.ScriptedLocationSource
 import com.cowork.bikerecoder.nav.fixture
 import com.cowork.bikerecoder.nav.gpxFixture
+import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.post.PhotoPositionSource
 import com.cowork.bikerecoder.core.post.PlacedPhoto
 import com.cowork.bikerecoder.post.FakeHeartRateSource
@@ -114,6 +115,7 @@ class NavigateViewModelTest {
     private val rides = FakeRideStore(store)
     private val postStore = FakePostStore { (store.trips.keys + OTHER_TRIP).flatMap { rides.segments(it) } }.also { it.beforeList = { passes++ } }
     private var passes = 0
+    private val heartRate = FakeHeartRateSource()
 
     private fun TestScope.setup(
         args: Map<String, Any?> = emptyMap(),
@@ -139,7 +141,7 @@ class NavigateViewModelTest {
             rideNotice = rideNotice,
             postStore = postStore,
             postProcessor = PostProcessor(
-                rides, postStore, FakePhotoSource(), FakeHeartRateSource(), clock = { testScheduler.currentTime },
+                rides, postStore, FakePhotoSource(), heartRate, clock = { testScheduler.currentTime },
                 scope = backgroundScope, warnLog = { _, _ -> },
             ),
         )
@@ -602,6 +604,33 @@ class NavigateViewModelTest {
         runCurrent()
         assertEquals(0, s.vm.summaryExtras.value.photoCount)
         assertEquals(1, passes)
+    }
+
+    /** Ruling R9: the guided summary reads its heart rate again every minute while on screen, like the record screen's. */
+    @Test
+    fun theGuidedSummaryReadsTheHeartRateAgainWhileOnScreen() = runTest(dispatcher) {
+        val s = setup()
+        val id = s.runningTrip(TripType.SINGLE_DAY)
+        val segmentId = rides.openSegment(id, 0L, LocalDate.of(2026, 10, 18))
+        rides.closeSegment(segmentId, 60_000L, SegmentTotals.ZERO)
+        rideUi.value = recordingOf(id)
+        s.vm.onEndChoice(EndAction.COMPLETE_TRIP)
+        runCurrent()
+        rideUi.value = RideUiState.Finished(rides.segment(segmentId)!!, track = emptyList(), error = null)
+        s.vm.summaryOnScreen(true)
+        runCurrent()
+        assertEquals(1, heartRate.calls.size, "the pass when the summary appears")
+        assertEquals(HrStatus.PENDING, s.vm.summaryExtras.value.heartRate?.hrStatus)
+
+        advanceTimeBy(3 * 60_000L + 1)
+        assertEquals(4, heartRate.calls.size, "read again every minute")
+        s.vm.refetchHeartRate()
+        runCurrent()
+        assertEquals(5, heartRate.calls.size, "[다시 가져오기]")
+
+        s.vm.confirmFinished()
+        advanceTimeBy(20 * 60_000L)
+        assertEquals(5, heartRate.calls.size, "closed: no more reads")
     }
 
     @Test

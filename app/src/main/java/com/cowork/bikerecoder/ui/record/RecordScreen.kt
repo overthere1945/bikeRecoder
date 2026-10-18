@@ -57,6 +57,7 @@ import com.cowork.bikerecoder.map.MapOverlay
 import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.nav.NavigationService
 import com.cowork.bikerecoder.ui.common.KeepScreenOn
+import com.cowork.bikerecoder.ui.health.HeartRateGate
 import com.cowork.bikerecoder.ui.common.NoticeSnackbarHost
 import com.cowork.bikerecoder.ride.RecordingEnd
 import com.cowork.bikerecoder.ride.RideUiState
@@ -87,7 +88,8 @@ object RecordTags {
  * view and the segment summary. Leaving the screen never stops the recording. [onClose] goes back to the map main
  * screen; after the summary, [onShowGuidance] is used instead while guidance runs. [onSetDestination]: [목적지 정하기]
  * (spec §4.1), offered while no guidance runs. The recording's on-screen notices show here while it runs.
- * The summary also shows "사진 N장" and [photoPrompt] (the photo permission card where it applies, spec §2.4).
+ * The summary also shows "사진 N장" and [photoPrompt] (the photo permission card where it applies, spec §2.4), and the
+ * heart rate with its permission flow ([heartRateGate], spec §3.3, §3.4).
  */
 @Composable
 fun RecordScreen(
@@ -97,6 +99,7 @@ fun RecordScreen(
     onShowGuidance: () -> Unit,
     onSetDestination: () -> Unit = {},
     photoPrompt: @Composable () -> Unit = {},
+    heartRateGate: HeartRateGate? = null,
 ) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val navigating by viewModel.navigating.collectAsStateWithLifecycle()
@@ -162,7 +165,11 @@ fun RecordScreen(
                 segment = state.segment,
                 map = { modifier -> SummaryMap(state.track, tileSource, modifier) },
                 onConfirm = closeSummary,
-                footer = { SummaryExtrasContent(summaryExtras, photoPrompt) },
+                footer = {
+                    SummaryExtrasContent(
+                        summaryExtras, photoPrompt, heartRateGate, viewModel::refetchHeartRate, viewModel::summaryOnScreen,
+                    )
+                },
             )
         }
         SnackbarHost(snackbar, modifier = Modifier.align(Alignment.Center).padding(16.dp))

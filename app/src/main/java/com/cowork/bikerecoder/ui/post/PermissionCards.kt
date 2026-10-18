@@ -30,11 +30,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.health.connect.client.PermissionController
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cowork.bikerecoder.data.SettingsRepository
 import com.cowork.bikerecoder.post.PhotoAccess
 import com.cowork.bikerecoder.post.PhotoSource
+import com.cowork.bikerecoder.ui.health.HeartRateAccess
+import com.cowork.bikerecoder.ui.health.HeartRateAccessState
+import com.cowork.bikerecoder.ui.health.HeartRateGate
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
@@ -125,6 +129,37 @@ fun PhotoPermissionPrompt(photoSource: PhotoSource, settings: SettingsRepository
                 Log.w("PhotoPermissionPrompt", "No app details screen", e)
             }
         },
+    )
+}
+
+/**
+ * The heart-rate card with its flow (spec §3.4, "처음 쓸 때"): shown while [access] is
+ * [HeartRateAccess.NO_PERMISSION] and the card was not dismissed
+ * ([com.cowork.bikerecoder.data.AppSettings.heartRatePromptDismissed]). [허용] asks Health Connect for
+ * [HeartRateGate.source]'s permissions; [access] is then read again (which calls [HeartRateGate.onGranted] once heart
+ * rate may be read). A refusal or [나중에] dismisses it for good.
+ */
+@Composable
+fun HeartRatePermissionPrompt(gate: HeartRateGate, access: HeartRateAccessState) {
+    val scope = rememberCoroutineScope()
+    val dismissedFlow = remember(gate) { gate.settings.settings.map { it.heartRatePromptDismissed } }
+    // Unknown until read: no card flashes up before the stored answer is known.
+    val dismissed by dismissedFlow.collectAsStateWithLifecycle(initialValue = null)
+    val dismiss: () -> Unit = { scope.launch { gate.settings.update { it.copy(heartRatePromptDismissed = true) } } }
+    val request = rememberLauncherForActivityResult(PermissionController.createRequestPermissionResultContract()) {
+        scope.launch { if (access.refresh() != HeartRateAccess.GRANTED) dismiss() }
+    }
+
+    if (dismissed != false || access.value != HeartRateAccess.NO_PERMISSION) return
+    HeartRatePermissionCard(
+        onAllow = {
+            try {
+                request.launch(gate.source.permissions)
+            } catch (e: ActivityNotFoundException) {
+                Log.w("HeartRatePermissionPrompt", "No Health Connect permission screen", e)
+            }
+        },
+        onLater = dismiss,
     )
 }
 
