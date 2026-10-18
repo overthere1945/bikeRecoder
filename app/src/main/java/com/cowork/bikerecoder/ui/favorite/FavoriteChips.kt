@@ -1,6 +1,8 @@
 package com.cowork.bikerecoder.ui.favorite
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -33,12 +35,17 @@ object FavoriteTags {
     const val ROW = "favorite-row"
 
     fun chip(id: Long) = "favorite-chip-$id"
+
+    /** The [🏠 집 등록] / [🏢 회사 등록] chip. */
+    fun register(kind: FavoriteKind) = "favorite-register-${kind.name.lowercase()}"
 }
 
 /**
- * The saved places as chips: home, work, then the custom ones, scrolling sideways. Nothing is drawn without
- * favorites. A tap is [onSelect]; a long press opens the menu: [이름 바꾸기] (custom ones only) and [삭제]. The row is
- * only as wide as its chips (the map around it keeps its pans and long presses); each chip is a 48 dp touch target.
+ * The saved places as chips: home, work, then the custom ones, scrolling sideways. A tap is [onSelect]; a long press
+ * opens the menu: [이름 바꾸기] (custom ones only) and [삭제]. With [onRegister] (the map main, spec §7.4) a missing home
+ * or work is a [🏠 집 등록] / [🏢 회사 등록] chip in its place, with no menu; without it nothing is drawn while there
+ * are no favorites. The row is only as wide as its chips (the map around it keeps its pans and long presses); each
+ * chip is a 48 dp touch target.
  */
 @Composable
 fun FavoriteChips(
@@ -47,16 +54,48 @@ fun FavoriteChips(
     onRename: (Favorite) -> Unit,
     onDelete: (Favorite) -> Unit,
     modifier: Modifier = Modifier,
+    onRegister: ((FavoriteKind) -> Unit)? = null,
 ) {
-    if (favorites.isEmpty()) return
+    val missing = if (onRegister == null) {
+        emptyList()
+    } else {
+        listOf(FavoriteKind.HOME, FavoriteKind.WORK).filter { kind -> favorites.none { it.kind == kind } }
+    }
+    if (favorites.isEmpty() && missing.isEmpty()) return
     Row(
         modifier = modifier.horizontalScroll(rememberScrollState()).testTag(FavoriteTags.ROW),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        favorites.forEach { favorite ->
-            FavoriteChip(favorite, onSelect = onSelect, onRename = onRename, onDelete = onDelete)
+        // Home → work → custom: a register chip stands where its favorite would be.
+        listOf(FavoriteKind.HOME, FavoriteKind.WORK, FavoriteKind.CUSTOM).forEach { kind ->
+            if (kind in missing && onRegister != null) RegisterChip(kind, onRegister)
+            favorites.filter { it.kind == kind }.forEach { favorite ->
+                FavoriteChip(favorite, onSelect = onSelect, onRename = onRename, onDelete = onDelete)
+            }
         }
+    }
+}
+
+/** Outlined, in the muted text color, so it reads as an empty slot rather than a saved place. */
+@Composable
+private fun RegisterChip(kind: FavoriteKind, onRegister: (FavoriteKind) -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        shadowElevation = 2.dp,
+        modifier = Modifier
+            .testTag(FavoriteTags.register(kind))
+            .minimumInteractiveComponentSize()
+            .clickable(role = Role.Button, onClick = { onRegister(kind) }),
+    ) {
+        Text(
+            if (kind == FavoriteKind.HOME) "🏠 집 등록" else "🏢 회사 등록",
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.heightIn(min = 20.dp).padding(horizontal = 14.dp, vertical = 10.dp),
+        )
     }
 }
 

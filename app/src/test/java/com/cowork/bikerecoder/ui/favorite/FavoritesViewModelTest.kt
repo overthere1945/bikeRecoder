@@ -9,6 +9,7 @@ import com.cowork.bikerecoder.favorite.FavoriteRepository
 import com.cowork.bikerecoder.nav.RecordingLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.resetMain
@@ -149,6 +150,94 @@ class FavoritesViewModelTest {
         settle()
         assertEquals(FavoriteDialog.ChooseName(place1, error = "즐겨찾기를 저장하지 못했습니다"), vm.dialog.value)
         assertEquals(1, log.messages.size)
+    }
+
+    private fun TestScope.events(vm: FavoritesViewModel): List<FavoriteEvent> {
+        val received = mutableListOf<FavoriteEvent>()
+        backgroundScope.launch { vm.events.collect { received += it } }
+        return received
+    }
+
+    @Test
+    fun saveAsHomeWithoutHomeSavesAndTellsOnce() = runTest {
+        val store = FakeFavoriteStore()
+        val vm = viewModel(store)
+        val events = events(vm)
+        vm.saveAs(place1, FavoriteKind.HOME)
+        settle()
+        assertNull(vm.dialog.value)
+        assertEquals(listOf(FavoriteEvent.Registered(FavoriteKind.HOME)), events)
+        val home = store.current.single()
+        assertEquals(FavoriteKind.HOME, home.kind)
+        assertEquals(p1, home.point)
+
+        settle()
+        assertEquals(1, events.size)
+    }
+
+    @Test
+    fun saveAsHomeWithHomeAsksToReplaceThenTells() = runTest {
+        val store = FakeFavoriteStore(listOf(Favorite(1, FavoriteKind.HOME, "집", p1, null, 0)))
+        val vm = viewModel(store)
+        val events = events(vm)
+        vm.saveAs(place2, FavoriteKind.HOME)
+        settle()
+        assertEquals(
+            FavoriteDialog.ConfirmReplace(place2, FavoriteKind.HOME, "기존 집을 이 장소로 바꿀까요?", register = true),
+            vm.dialog.value,
+        )
+        assertEquals(emptyList<FavoriteEvent>(), events)
+
+        vm.confirmReplace()
+        settle()
+        assertNull(vm.dialog.value)
+        assertEquals(listOf(FavoriteEvent.Registered(FavoriteKind.HOME)), events)
+        assertEquals(p2, store.current.single().point)
+    }
+
+    @Test
+    fun saveAsHomeWhenFullIsRefusedWithoutAnEvent() = runTest {
+        val full = (1L..19L).map { custom(it, "이름$it") } + Favorite(20, FavoriteKind.WORK, "회사", p1, null, 20)
+        val store = FakeFavoriteStore(full)
+        val vm = viewModel(store)
+        val events = events(vm)
+        vm.saveAs(place1, FavoriteKind.HOME)
+        settle()
+        assertEquals(FavoriteDialog.Message("즐겨찾기는 20개까지 저장할 수 있습니다"), vm.dialog.value)
+        assertEquals(emptyList<FavoriteEvent>(), events)
+        assertEquals(20, store.current.size)
+
+        vm.dismiss()
+        assertNull(vm.dialog.value)
+    }
+
+    @Test
+    fun saveAsStoreFailureShowsSaveFailed() = runTest {
+        val vm = viewModel(FakeFavoriteStore().apply { failWrites = true })
+        val events = events(vm)
+        vm.saveAs(place1, FavoriteKind.WORK)
+        settle()
+        assertEquals(FavoriteDialog.Message("즐겨찾기를 저장하지 못했습니다"), vm.dialog.value)
+        assertEquals(emptyList<FavoriteEvent>(), events)
+    }
+
+    @Test
+    fun registeredToastNamesTheKind() {
+        assertEquals("집으로 저장했습니다", FavoriteEvent.Registered(FavoriteKind.HOME).message)
+        assertEquals("회사로 저장했습니다", FavoriteEvent.Registered(FavoriteKind.WORK).message)
+    }
+
+    @Test
+    fun sheetSavesAreNotRegistrations() = runTest {
+        val vm = viewModel(FakeFavoriteStore(listOf(Favorite(1, FavoriteKind.HOME, "집", p1, null, 0))))
+        val events = events(vm)
+        vm.startSave(place2)
+        vm.save(FavoriteKind.HOME)
+        settle()
+        vm.confirmReplace()
+        settle()
+        assertNull(vm.dialog.value)
+        assertEquals(emptyList<FavoriteEvent>(), events)
     }
 
     @Test

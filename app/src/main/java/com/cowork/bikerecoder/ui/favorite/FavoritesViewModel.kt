@@ -15,11 +15,14 @@ import com.cowork.bikerecoder.favorite.FavoriteRepository
 import com.cowork.bikerecoder.favorite.FavoriteResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -32,12 +35,30 @@ sealed interface FavoriteDialog {
      */
     data class ChooseName(val place: FavoritePlace, val error: String? = null) : FavoriteDialog
 
-    data class ConfirmReplace(val place: FavoritePlace, val kind: FavoriteKind, val question: String) : FavoriteDialog
+    /** [register]: asked by [FavoritesViewModel.saveAs]; a confirmed replace then tells [FavoriteEvent.Registered]. */
+    data class ConfirmReplace(
+        val place: FavoritePlace,
+        val kind: FavoriteKind,
+        val question: String,
+        val register: Boolean = false,
+    ) : FavoriteDialog
+
+    /** A refused or failed [FavoritesViewModel.saveAs]: [text] [확인]. */
+    data class Message(val text: String) : FavoriteDialog
 
     data class Rename(val favorite: Favorite, val error: String? = null) : FavoriteDialog
 
     /** "즐겨찾기에서 삭제할까요?" [삭제] [취소] */
     data class ConfirmDelete(val favorite: Favorite) : FavoriteDialog
+}
+
+sealed interface FavoriteEvent {
+    /** [FavoritesViewModel.saveAs] saved the place as home or work ([kind]). */
+    data class Registered(val kind: FavoriteKind) : FavoriteEvent {
+        /** The Toast: "집으로 저장했습니다" / "회사로 저장했습니다". */
+        val message: String
+            get() = if (kind == FavoriteKind.HOME) "집으로 저장했습니다" else "회사로 저장했습니다"
+    }
 }
 
 /**
@@ -61,6 +82,11 @@ class FavoritesViewModel(
     private val _dialog = MutableStateFlow<FavoriteDialog?>(null)
     val dialog: StateFlow<FavoriteDialog?> = _dialog.asStateFlow()
 
+    private val _events = Channel<FavoriteEvent>(Channel.BUFFERED)
+
+    /** One-shot events; each is received by one collector only. */
+    val events: Flow<FavoriteEvent> = _events.receiveAsFlow()
+
     private var work: Job? = null
 
     fun startSave(place: FavoritePlace) {
@@ -79,15 +105,47 @@ class FavoritesViewModel(
         }
     }
 
-    fun confirmReplace() {
-        val current = _dialog.value as? FavoriteDialog.ConfirmReplace ?: return
-        write(current, onFailure = FavoriteDialog.ChooseName(current.place, MSG_SAVE_FAILED)) {
-            when (val result = repository.save(current.kind, null, current.place, replace = true)) {
-                FavoriteResult.Saved -> null
-                is FavoriteResult.ConfirmReplace -> current
-                is FavoriteResult.Rejected -> FavoriteDialog.ChooseName(current.place, result.message)
+    /**
+     * The register-mode search (spec §7.4): save [place] as home or work with no name dialog, under the same rules as
+     * [save]. Saved → [FavoriteEvent.Registered]; an existing one → [FavoriteDialog.ConfirmReplace]; refused or
+     * failed → [FavoriteDialog.Message].
+     */
+    fun saveAs(place: FavoritePlace, kind: FavoriteKind) {
+        require(kind != FavoriteKind.CUSTOM) { "only home or work is registered" }
+        val current = _dialog.value
+        write(current, onFailure = FavoriteDialog.Message(MSG_SAVE_FAILED)) {
+            when (val result = repository.save(kind, null, place)) {
+                FavoriteResult.Saved -> registered(kind)
+                is FavoriteResult.ConfirmReplace -> FavoriteDialog.ConfirmReplace(place, kind, result.question, register = true)
+                is FavoriteResult.Rejected -> FavoriteDialog.Message(result.message)
             }
         }
+    }
+
+    fun confirmReplace() {
+        val current = _dialog.value as? FavoriteDialog.ConfirmReplace ?: return
+        val onFailure = if (current.register) {
+            FavoriteDialog.Message(MSG_SAVE_FAILED)
+        } else {
+            FavoriteDialog.ChooseName(current.place, MSG_SAVE_FAILED)
+        }
+        write(current, onFailure = onFailure) {
+            when (val result = repository.save(current.kind, null, current.place, replace = true)) {
+                FavoriteResult.Saved -> if (current.register) registered(current.kind) else null
+                is FavoriteResult.ConfirmReplace -> current
+                is FavoriteResult.Rejected -> if (current.register) {
+                    FavoriteDialog.Message(result.message)
+                } else {
+                    FavoriteDialog.ChooseName(current.place, result.message)
+                }
+            }
+        }
+    }
+
+    /** Tells the save and closes the dialog. */
+    private fun registered(kind: FavoriteKind): FavoriteDialog? {
+        _events.trySend(FavoriteEvent.Registered(kind))
+        return null
     }
 
     /** Only custom favorites can be renamed. */
@@ -125,12 +183,12 @@ class FavoritesViewModel(
     }
 
     /**
-     * Runs [action] for the dialog [from]; its result replaces that dialog (null closes it) unless the dialog was
-     * changed or closed meanwhile. A store exception is logged and becomes [onFailure] (default: [from] with
-     * [MSG_SAVE_FAILED]).
+     * Runs [action] for the dialog [from] (null: started with no dialog); its result replaces that dialog (null closes
+     * it) unless the dialog was changed or closed meanwhile. A store exception is logged and becomes [onFailure]
+     * (default: [from] with [MSG_SAVE_FAILED]).
      */
     private fun write(
-        from: FavoriteDialog,
+        from: FavoriteDialog?,
         onFailure: FavoriteDialog? = failed(from),
         action: suspend () -> FavoriteDialog?,
     ) {
@@ -148,7 +206,7 @@ class FavoritesViewModel(
         }
     }
 
-    private fun failed(from: FavoriteDialog): FavoriteDialog? = when (from) {
+    private fun failed(from: FavoriteDialog?): FavoriteDialog? = when (from) {
         is FavoriteDialog.ChooseName -> from.copy(error = MSG_SAVE_FAILED)
         is FavoriteDialog.Rename -> from.copy(error = MSG_SAVE_FAILED)
         else -> null

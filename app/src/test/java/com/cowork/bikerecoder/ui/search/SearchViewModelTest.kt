@@ -1,6 +1,7 @@
 package com.cowork.bikerecoder.ui.search
 
 import com.cowork.bikerecoder.core.model.GeoPoint
+import com.cowork.bikerecoder.favorite.FavoriteKind
 import com.cowork.bikerecoder.search.Place
 import com.cowork.bikerecoder.search.PlaceSearch
 import com.cowork.bikerecoder.search.RecentPlaceRules
@@ -19,6 +20,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -154,5 +156,26 @@ class SearchViewModelTest {
         assertEquals(place, vm.state.value.selected)
         assertEquals(listOf(place), recent.added)
         assertTrue(vm.state.value.recent.isEmpty())
+    }
+
+    @Test
+    fun `in register mode a tap is only remembered, with no sheet`() = runTest {
+        val vm = SearchViewModel(search, recent, register = FavoriteKind.WORK) { here }
+        runCurrent()
+        assertEquals(FavoriteKind.WORK, vm.state.value.register)
+        vm.select(place)
+        runCurrent()
+        assertNull(vm.state.value.selected)
+        assertEquals(listOf(place), recent.added)
+        assertEquals(listOf(place.copy(distanceM = null)), vm.state.value.recent)
+    }
+
+    @Test
+    fun `the register argument names home or work only`() {
+        assertEquals(FavoriteKind.HOME, SearchViewModel.registerKind("HOME"))
+        assertEquals(FavoriteKind.WORK, SearchViewModel.registerKind("WORK"))
+        assertNull(SearchViewModel.registerKind(null))
+        assertNull(SearchViewModel.registerKind("CUSTOM"))
+        assertNull(SearchViewModel.registerKind("bogus"))
     }
 }

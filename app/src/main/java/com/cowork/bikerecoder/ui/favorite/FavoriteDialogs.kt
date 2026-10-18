@@ -39,6 +39,11 @@ fun FavoriteDialogs(
             confirmButton = { TextButton(onClick = onConfirmReplace) { Text("바꾸기") } },
             dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
         )
+        is FavoriteDialog.Message -> AlertDialog(
+            onDismissRequest = onDismiss,
+            text = { Text(dialog.text) },
+            confirmButton = { TextButton(onClick = onDismiss) { Text("확인") } },
+        )
         is FavoriteDialog.Rename -> RenameDialog(dialog, onRename, onDismiss)
         is FavoriteDialog.ConfirmDelete -> AlertDialog(
             onDismissRequest = onDismiss,

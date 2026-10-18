@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cowork.bikerecoder.core.format.SummaryFormatter
 import com.cowork.bikerecoder.core.model.GeoPoint
+import com.cowork.bikerecoder.favorite.FavoriteKind
 import com.cowork.bikerecoder.favorite.FavoritePlace
 import com.cowork.bikerecoder.search.Place
 import com.cowork.bikerecoder.ui.common.GlyphIcon
@@ -86,11 +87,16 @@ fun SearchScreen(
     favoriteChips: @Composable () -> Unit = {},
     /** [즐겨찾기에 저장] on the result sheet; null hides it. */
     onSaveFavorite: ((FavoritePlace) -> Unit)? = null,
+    /** The register mode ([SearchScreenState.register]): a tapped place is saved as that home or work, with no sheet. */
+    onRegister: (FavoritePlace, FavoriteKind) -> Unit = { _, _ -> },
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val focus = remember { FocusRequester() }
-    // One path for a tapped search result or recent place.
-    val onPlaceTap: (Place) -> Unit = viewModel::select
+    // One path for a tapped search result or recent place; it is remembered as a recent place either way.
+    val onPlaceTap: (Place) -> Unit = { place ->
+        viewModel.select(place)
+        state.register?.let { kind -> onRegister(place.toFavoritePlace(), kind) }
+    }
     LaunchedEffect(Unit) { focus.requestFocus() }
 
     Surface(modifier = Modifier.fillMaxSize()) {
@@ -100,14 +106,23 @@ fun SearchScreen(
                 TextField(
                     value = state.query,
                     onValueChange = viewModel::onQueryChange,
-                    placeholder = { Text("장소, 주소 검색") },
+                    placeholder = {
+                        Text(
+                            when (state.register) {
+                                FavoriteKind.HOME -> "집 검색"
+                                FavoriteKind.WORK -> "회사 검색"
+                                else -> "장소, 주소 검색"
+                            },
+                        )
+                    },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = { /* results follow typing */ }),
                     modifier = Modifier.weight(1f).focusRequester(focus).testTag(SearchTags.QUERY),
                 )
             }
-            if (state.query.isEmpty()) {
+            // The register mode has no chips: it is choosing a place, not going to one.
+            if (state.query.isEmpty() && state.register == null) {
                 favoriteChips()
             }
             Box(modifier = Modifier.weight(1f).fillMaxWidth().imePadding().testTag(SearchTags.RESULTS_AREA)) {
@@ -159,12 +174,14 @@ fun SearchScreen(
             onSaveFavorite = onSaveFavorite?.let { save ->
                 {
                     viewModel.dismissSelection()
-                    save(FavoritePlace(place.name, place.point, place.address.ifBlank { null }))
+                    save(place.toFavoritePlace())
                 }
             },
         )
     }
 }
+
+private fun Place.toFavoritePlace() = FavoritePlace(name, point, address.ifBlank { null })
 
 /** "최근 검색" (spec §7.3): nothing at all while the list is empty. Rows show no distance (it was measured then). */
 @Composable

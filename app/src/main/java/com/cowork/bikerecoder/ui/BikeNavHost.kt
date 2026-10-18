@@ -2,6 +2,7 @@ package com.cowork.bikerecoder.ui
 
 import android.content.Context
 import android.content.ContextWrapper
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -27,6 +28,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.core.model.GeoPoint
+import com.cowork.bikerecoder.favorite.FavoriteKind
 import kotlinx.coroutines.flow.first
 import com.cowork.bikerecoder.ui.onboarding.OnboardingScreen
 import com.cowork.bikerecoder.ui.onboarding.OnboardingStep
@@ -35,6 +37,7 @@ import com.cowork.bikerecoder.ui.onboarding.effectiveOnboardingStep
 import com.cowork.bikerecoder.ui.onboarding.readPermissionState
 import com.cowork.bikerecoder.ui.favorite.FavoriteChips
 import com.cowork.bikerecoder.ui.favorite.FavoriteDialogs
+import com.cowork.bikerecoder.ui.favorite.FavoriteEvent
 import com.cowork.bikerecoder.ui.favorite.FavoritesViewModel
 import com.cowork.bikerecoder.ui.history.HistoryScreen
 import com.cowork.bikerecoder.ui.history.HistoryViewModel
@@ -67,6 +70,7 @@ object Routes {
     const val ONBOARDING = "onboarding"
     const val MAIN = "main"
     const val SEARCH = "search"
+    const val SEARCH_PATTERN = "$SEARCH?${SearchViewModel.ARG_REGISTER}={${SearchViewModel.ARG_REGISTER}}"
     const val PLAN = "plan"
     const val NAVIGATE = "navigate"
     const val ARG_FROM_PLAN = "fromPlan"
@@ -80,6 +84,9 @@ object Routes {
     const val SEGMENT_DETAIL = "history/segment/{${SegmentDetailViewModel.ARG_SEGMENT}}"
 
     fun tripDetail(tripId: Long) = "history/trip/$tripId"
+
+    /** The search in register mode (spec §7.4): a tapped place becomes this home or work. [SEARCH] is the normal one. */
+    fun searchRegister(kind: FavoriteKind) = "$SEARCH?${SearchViewModel.ARG_REGISTER}=${kind.name}"
 
     fun segmentDetail(segmentId: Long) = "history/segment/$segmentId"
 
@@ -167,8 +174,9 @@ fun BikeNavHost(
     )
     val favorites by favoritesViewModel.favorites.collectAsStateWithLifecycle()
     val favoriteDialog by favoritesViewModel.dialog.collectAsStateWithLifecycle()
-    // [chipsModifier] is the caller's outer spacing (outside the sideways scroll); an empty list draws nothing at all.
-    val favoriteChips: @Composable (Modifier) -> Unit = { chipsModifier ->
+    // [chipsModifier] is the caller's outer spacing (outside the sideways scroll). [onRegister] (the map main only) adds
+    // the home/work register chips; without it an empty list draws nothing at all.
+    val favoriteChips: @Composable (Modifier, ((FavoriteKind) -> Unit)?) -> Unit = { chipsModifier, onRegister ->
         FavoriteChips(
             modifier = chipsModifier,
             favorites = favorites,
@@ -178,6 +186,7 @@ fun BikeNavHost(
             },
             onRename = favoritesViewModel::startRename,
             onDelete = favoritesViewModel::askDelete,
+            onRegister = onRegister,
         )
     }
 
@@ -247,7 +256,9 @@ fun BikeNavHost(
                 onContinueRecording = { tripId -> navController.openOnMain(Routes.record(tripId)) },
                 onSetDestination = setDestinationAndOpenPlan,
                 onAddWaypoint = addWaypointAndOpenPlan,
-                favoriteChips = { favoriteChips(Modifier) },
+                favoriteChips = {
+                    favoriteChips(Modifier) { kind -> navController.navigate(Routes.searchRegister(kind)) }
+                },
                 onSaveFavorite = favoritesViewModel::startSave,
             )
             TripStartDialogs(
@@ -272,7 +283,16 @@ fun BikeNavHost(
                 }
             }
         }
-        composable(Routes.SEARCH) {
+        composable(
+            Routes.SEARCH_PATTERN,
+            arguments = listOf(
+                navArgument(SearchViewModel.ARG_REGISTER) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
+        ) {
             val viewModel: SearchViewModel = viewModel(factory = SearchViewModel.factory(container))
             // Keeps the shared location source running while searching (used as the "near" point).
             container.currentLocation.collectAsStateWithLifecycle()
@@ -281,8 +301,10 @@ fun BikeNavHost(
                 onBack = { navController.popBackStack() },
                 onSetDestination = setDestinationAndOpenPlan,
                 onAddWaypoint = addWaypointAndOpenPlan,
-                favoriteChips = { favoriteChips(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) },
+                favoriteChips = { favoriteChips(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), null) },
                 onSaveFavorite = favoritesViewModel::startSave,
+                // The replace question and refusals are the shared dialogs below; a save ends in [FavoriteEvent.Registered].
+                onRegister = favoritesViewModel::saveAs,
             )
         }
         composable(Routes.PLAN) {
@@ -420,6 +442,21 @@ fun BikeNavHost(
         composable(Routes.SETTINGS) {
             val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(container))
             SettingsScreen(viewModel = viewModel, onBack = { navController.popBackStack() })
+        }
+    }
+    // Collected here, not on the search screen: each save is told once even if that screen was left meanwhile; only a
+    // register-mode search still on top goes back to main.
+    LaunchedEffect(favoritesViewModel) {
+        favoritesViewModel.events.collect { event ->
+            when (event) {
+                is FavoriteEvent.Registered -> {
+                    Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
+                    val top = navController.currentBackStackEntry
+                    val registering = top?.destination?.route == Routes.SEARCH_PATTERN &&
+                        SearchViewModel.registerKind(top.arguments?.getString(SearchViewModel.ARG_REGISTER)) != null
+                    if (registering) navController.popBackStack()
+                }
+            }
         }
     }
     FavoriteDialogs(
