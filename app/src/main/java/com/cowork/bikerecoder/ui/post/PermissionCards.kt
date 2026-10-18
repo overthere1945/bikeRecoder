@@ -2,6 +2,7 @@ package com.cowork.bikerecoder.ui.post
 
 import android.Manifest
 import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -20,6 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -82,13 +84,101 @@ private fun PromptCard(text: String, primary: Pair<String, () -> Unit>, secondar
     }
 }
 
+/** [value]: the photo access as last read by [refresh]. */
+@Stable
+class PhotoAccessState internal constructor(private val source: PhotoSource) {
+    var value by mutableStateOf(source.access())
+        private set
+
+    /** Reads the access again; true when it now allows more than before. */
+    fun refresh(): Boolean {
+        val now = source.access()
+        val more = accessRank(now) > accessRank(value)
+        value = now
+        return more
+    }
+}
+
+/**
+ * The photo access, read again whenever the screen comes back (e.g. from the app's settings page); more access than
+ * before calls [onAccessGained] (a post-processing pass).
+ */
+@Composable
+fun rememberPhotoAccess(photoSource: PhotoSource, onAccessGained: () -> Unit): PhotoAccessState {
+    val state = remember(photoSource) { PhotoAccessState(photoSource) }
+    val currentOnAccessGained by rememberUpdatedState(onAccessGained)
+    LifecycleResumeEffect(state) {
+        if (state.refresh()) currentOnAccessGained()
+        onPauseOrDispose { }
+    }
+    return state
+}
+
+/**
+ * The photo [허용] flow (spec §2.4): asks for [photoPermissionsFor] and, once photos may be read,
+ * `ACCESS_MEDIA_LOCATION` (for the photos' GPS position), then [onAccessGained]. Still no access → [onRefused].
+ * Returns what [허용] calls.
+ */
+@Composable
+fun rememberPhotoPermissionRequest(
+    access: PhotoAccessState,
+    onAccessGained: () -> Unit,
+    onRefused: () -> Unit,
+): () -> Unit {
+    val currentOnAccessGained by rememberUpdatedState(onAccessGained)
+    val currentOnRefused by rememberUpdatedState(onRefused)
+    val mediaLocation = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        currentOnAccessGained()
+    }
+    val photosPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        access.refresh()
+        if (access.value == PhotoAccess.NONE) currentOnRefused() else mediaLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
+    }
+    return remember(photosPermission) { { photosPermission.launch(photoPermissionsFor(Build.VERSION.SDK_INT)) } }
+}
+
+/** This app's page in the system settings, where "선택한 사진만" can become all photos. */
+fun openAppDetailsSettings(context: Context) {
+    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+    try {
+        context.startActivity(intent)
+    } catch (e: ActivityNotFoundException) {
+        Log.w("PermissionCards", "No app details screen", e)
+    }
+}
+
+/**
+ * The heart-rate [허용] flow (spec §3.4): asks Health Connect for [HeartRateGate.source]'s permissions; [access] is then
+ * read again (which calls [HeartRateGate.onGranted] once heart rate may be read), still not allowed → [onRefused].
+ * Returns what [허용] calls.
+ */
+@Composable
+fun rememberHeartRatePermissionRequest(
+    gate: HeartRateGate,
+    access: HeartRateAccessState,
+    onRefused: () -> Unit,
+): () -> Unit {
+    val scope = rememberCoroutineScope()
+    val currentOnRefused by rememberUpdatedState(onRefused)
+    val request = rememberLauncherForActivityResult(PermissionController.createRequestPermissionResultContract()) {
+        scope.launch { if (access.refresh() != HeartRateAccess.GRANTED) currentOnRefused() }
+    }
+    return remember(request, gate) {
+        {
+            try {
+                request.launch(gate.source.permissions)
+            } catch (e: ActivityNotFoundException) {
+                Log.w("PermissionCards", "No Health Connect permission screen", e)
+            }
+        }
+    }
+}
+
 /**
  * The photo card where it is needed, with its whole flow (spec §2.4, "처음 쓸 때"): shown while photo access is not
  * full and the card was not dismissed ([com.cowork.bikerecoder.data.AppSettings.photoPromptDismissed]).
- * [허용] asks for [photoPermissionsFor] and, once photos may be read, `ACCESS_MEDIA_LOCATION` (for the photos' GPS
- * position), then [onAccessGained] (a post-processing pass). [나중에], [닫기] or a refusal dismiss it for good.
- * The access is read again whenever the screen comes back (e.g. from the app's settings page); more access than before
- * also calls [onAccessGained].
+ * [허용] runs [rememberPhotoPermissionRequest]. [나중에], [닫기] or a refusal dismiss it for good (settings
+ * "사진·심박 연결" can ask again). The access is read again whenever the screen comes back ([rememberPhotoAccess]).
  */
 @Composable
 fun PhotoPermissionPrompt(photoSource: PhotoSource, settings: SettingsRepository, onAccessGained: () -> Unit) {
@@ -97,47 +187,25 @@ fun PhotoPermissionPrompt(photoSource: PhotoSource, settings: SettingsRepository
     val dismissedFlow = remember(settings) { settings.settings.map { it.photoPromptDismissed } }
     // Unknown until read: no card flashes up before the stored answer is known.
     val dismissed by dismissedFlow.collectAsStateWithLifecycle(initialValue = null)
-    var access by remember { mutableStateOf(photoSource.access()) }
-    val currentOnAccessGained by rememberUpdatedState(onAccessGained)
-
-    LifecycleResumeEffect(photoSource) {
-        val now = photoSource.access()
-        if (accessRank(now) > accessRank(access)) currentOnAccessGained()
-        access = now
-        onPauseOrDispose { }
-    }
-
+    val access = rememberPhotoAccess(photoSource, onAccessGained)
     val dismiss: () -> Unit = { scope.launch { settings.update { it.copy(photoPromptDismissed = true) } } }
-    val mediaLocation = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
-        currentOnAccessGained()
-    }
-    val photosPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        access = photoSource.access()
-        if (access == PhotoAccess.NONE) dismiss() else mediaLocation.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
-    }
+    val allow = rememberPhotoPermissionRequest(access, onAccessGained, onRefused = dismiss)
 
-    if (dismissed != false || access == PhotoAccess.FULL) return
+    if (dismissed != false || access.value == PhotoAccess.FULL) return
     PhotoPermissionCard(
-        access = access,
-        onAllow = { photosPermission.launch(photoPermissionsFor(Build.VERSION.SDK_INT)) },
+        access = access.value,
+        onAllow = allow,
         onLater = dismiss,
-        onOpenSettings = {
-            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
-            try {
-                context.startActivity(intent)
-            } catch (e: ActivityNotFoundException) {
-                Log.w("PhotoPermissionPrompt", "No app details screen", e)
-            }
-        },
+        onOpenSettings = { openAppDetailsSettings(context) },
     )
 }
 
 /**
  * The heart-rate card with its flow (spec §3.4, "처음 쓸 때"): shown while [access] is
  * [HeartRateAccess.NO_PERMISSION] and the card was not dismissed
- * ([com.cowork.bikerecoder.data.AppSettings.heartRatePromptDismissed]). [허용] asks Health Connect for
- * [HeartRateGate.source]'s permissions; [access] is then read again (which calls [HeartRateGate.onGranted] once heart
- * rate may be read). A refusal or [나중에] dismisses it for good.
+ * ([com.cowork.bikerecoder.data.AppSettings.heartRatePromptDismissed]). [허용] runs
+ * [rememberHeartRatePermissionRequest]. A refusal or [나중에] dismisses it for good (settings "사진·심박 연결" can ask
+ * again).
  */
 @Composable
 fun HeartRatePermissionPrompt(gate: HeartRateGate, access: HeartRateAccessState) {
@@ -146,21 +214,10 @@ fun HeartRatePermissionPrompt(gate: HeartRateGate, access: HeartRateAccessState)
     // Unknown until read: no card flashes up before the stored answer is known.
     val dismissed by dismissedFlow.collectAsStateWithLifecycle(initialValue = null)
     val dismiss: () -> Unit = { scope.launch { gate.settings.update { it.copy(heartRatePromptDismissed = true) } } }
-    val request = rememberLauncherForActivityResult(PermissionController.createRequestPermissionResultContract()) {
-        scope.launch { if (access.refresh() != HeartRateAccess.GRANTED) dismiss() }
-    }
+    val allow = rememberHeartRatePermissionRequest(gate, access, onRefused = dismiss)
 
     if (dismissed != false || access.value != HeartRateAccess.NO_PERMISSION) return
-    HeartRatePermissionCard(
-        onAllow = {
-            try {
-                request.launch(gate.source.permissions)
-            } catch (e: ActivityNotFoundException) {
-                Log.w("HeartRatePermissionPrompt", "No Health Connect permission screen", e)
-            }
-        },
-        onLater = dismiss,
-    )
+    HeartRatePermissionCard(onAllow = allow, onLater = dismiss)
 }
 
 /** How much [access] allows: NONE < PARTIAL < FULL. */

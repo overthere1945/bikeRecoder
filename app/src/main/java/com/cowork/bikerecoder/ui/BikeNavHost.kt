@@ -574,7 +574,13 @@ fun BikeNavHost(
         }
         composable(Routes.SETTINGS) {
             val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(container))
-            SettingsScreen(viewModel = viewModel, onBack = { navController.popBackStack() })
+            SettingsScreen(
+                viewModel = viewModel,
+                onBack = { navController.popBackStack() },
+                photoSource = container.photoSource,
+                heartRateGate = heartRateGate,
+                onPhotoAccessGained = container.postProcessor::request,
+            )
         }
     }
     // Collected here, not on the search screen: each save is told once even if that screen was left meanwhile; only a

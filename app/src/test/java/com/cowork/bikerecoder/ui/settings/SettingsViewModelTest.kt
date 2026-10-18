@@ -118,6 +118,23 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `photo and heart-rate prompts can be asked again and dismissed`() {
+        settings.value = AppSettings(photoPromptDismissed = true, heartRatePromptDismissed = true)
+
+        // [허용] in "사진·심박 연결": the cards may show again.
+        viewModel.setPhotoPromptDismissed(false)
+        assertFalse(settings.value.photoPromptDismissed)
+        assertTrue(settings.value.heartRatePromptDismissed)
+        viewModel.setHeartRatePromptDismissed(false)
+        assertFalse(settings.value.heartRatePromptDismissed)
+
+        // Refused again: not asked again, as from the cards.
+        viewModel.setPhotoPromptDismissed(true)
+        viewModel.setHeartRatePromptDismissed(true)
+        assertEquals(AppSettings(photoPromptDismissed = true, heartRatePromptDismissed = true), settings.value)
+    }
+
+    @Test
     fun recordingOnNewGuidanceDefaultsToAskAndIsSaved() {
         assertEquals(GuidanceRecording.ASK, viewModel.state.value.settings.recordingOnNewGuidance)
 

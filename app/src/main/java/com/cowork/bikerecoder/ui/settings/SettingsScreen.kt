@@ -30,6 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
@@ -39,8 +40,18 @@ import com.cowork.bikerecoder.BuildConfig
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.data.GuidanceRecording
 import com.cowork.bikerecoder.offline.SegmentInfo
+import com.cowork.bikerecoder.post.PhotoAccess
+import com.cowork.bikerecoder.post.PhotoSource
 import com.cowork.bikerecoder.ui.common.GlyphIcon
+import com.cowork.bikerecoder.ui.health.HEALTH_CONNECT_UNAVAILABLE
+import com.cowork.bikerecoder.ui.health.HeartRateAccess
+import com.cowork.bikerecoder.ui.health.HeartRateGate
+import com.cowork.bikerecoder.ui.health.rememberHeartRateAccess
 import com.cowork.bikerecoder.ui.plan.labelKo
+import com.cowork.bikerecoder.ui.post.openAppDetailsSettings
+import com.cowork.bikerecoder.ui.post.rememberHeartRatePermissionRequest
+import com.cowork.bikerecoder.ui.post.rememberPhotoAccess
+import com.cowork.bikerecoder.ui.post.rememberPhotoPermissionRequest
 
 /** Test tags used by the Compose test. */
 object SettingsTags {
@@ -53,6 +64,11 @@ object SettingsTags {
     const val MAP_SIZE = "settings_map_size"
     const val CONFIRM = "settings_confirm"
     const val CANCEL = "settings_cancel"
+    const val PHOTO_STATUS = "settings_photo_status"
+    const val PHOTO_ALLOW = "settings_photo_allow"
+    const val PHOTO_OPEN_SETTINGS = "settings_photo_open_settings"
+    const val HEART_RATE_STATUS = "settings_heart_rate_status"
+    const val HEART_RATE_ALLOW = "settings_heart_rate_allow"
     fun profile(profile: RouteProfile) = "settings_profile_${profile.name}"
     fun guidanceRecording(mode: GuidanceRecording) = "settings_guidance_recording_${mode.name}"
     fun segmentCheck(name: String) = "settings_segment_check_$name"
@@ -67,9 +83,33 @@ internal val ATTRIBUTIONS = listOf(
     "경로 탐색: BRouter © BRouter contributors (MIT License)",
 )
 
+/**
+ * The settings. "사진·심박 연결" reads the access from [photoSource] and [heartRateGate] whenever the screen comes back;
+ * its [허용] lets the card show again and runs the cards' flow (a refusal dismisses it again); photos gained →
+ * [onPhotoAccessGained], heart rate allowed → [HeartRateGate.onGranted] (post-processing passes).
+ */
 @Composable
-fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
+fun SettingsScreen(
+    viewModel: SettingsViewModel,
+    onBack: () -> Unit,
+    photoSource: PhotoSource,
+    heartRateGate: HeartRateGate,
+    onPhotoAccessGained: () -> Unit,
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val photoAccess = rememberPhotoAccess(photoSource, onPhotoAccessGained)
+    val heartRateAccess = rememberHeartRateAccess(heartRateGate)
+    val askPhotos = rememberPhotoPermissionRequest(
+        photoAccess,
+        onPhotoAccessGained,
+        onRefused = { viewModel.setPhotoPromptDismissed(true) },
+    )
+    val askHeartRate = rememberHeartRatePermissionRequest(
+        heartRateGate,
+        heartRateAccess,
+        onRefused = { viewModel.setHeartRatePromptDismissed(true) },
+    )
     SettingsContent(
         state = state,
         versionDisplay = AppVersion.display(BuildConfig.VERSION_NAME),
@@ -85,6 +125,21 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
         onDeleteSegment = viewModel::delete,
         onDeleteAllMaps = viewModel::deleteAllMaps,
         onSetRecordingOnNewGuidance = viewModel::setRecordingOnNewGuidance,
+        connections = {
+            ConnectionSection(
+                photo = photoAccess.value,
+                heartRate = heartRateAccess.value,
+                onAllowPhotos = {
+                    viewModel.setPhotoPromptDismissed(false)
+                    askPhotos()
+                },
+                onOpenPhotoSettings = { openAppDetailsSettings(context) },
+                onAllowHeartRate = {
+                    viewModel.setHeartRatePromptDismissed(false)
+                    askHeartRate()
+                },
+            )
+        },
     )
 }
 
@@ -104,6 +159,7 @@ internal fun SettingsContent(
     onDeleteSegment: (String) -> Unit,
     onDeleteAllMaps: () -> Unit,
     onSetRecordingOnNewGuidance: (GuidanceRecording) -> Unit = {},
+    connections: @Composable () -> Unit = {},
 ) {
     var confirmDeleteSegment by remember { mutableStateOf<SegmentInfo?>(null) }
     var confirmDeleteMaps by remember { mutableStateOf(false) }
@@ -170,6 +226,8 @@ internal fun SettingsContent(
                     }
                 }
                 HorizontalDivider()
+
+                connections()
 
                 SectionTitle("경로 데이터")
                 state.segments.forEach { info ->
@@ -264,6 +322,74 @@ internal fun SettingsContent(
                 TextButton(onClick = { confirmDeleteMaps = false }, modifier = Modifier.testTag(SettingsTags.CANCEL)) { Text("취소") }
             },
         )
+    }
+}
+
+/** "사진·심박 연결" (spec §5.1): each access with [허용] (or [설정 열기] for "선택한 사진만"), then a divider. */
+@Composable
+private fun ConnectionSection(
+    photo: PhotoAccess,
+    heartRate: HeartRateAccess,
+    onAllowPhotos: () -> Unit,
+    onOpenPhotoSettings: () -> Unit,
+    onAllowHeartRate: () -> Unit,
+) {
+    SectionTitle("사진·심박 연결")
+    ConnectionRow(
+        title = "사진",
+        status = when (photo) {
+            PhotoAccess.FULL -> "모든 사진 허용"
+            PhotoAccess.PARTIAL -> "선택한 사진만"
+            PhotoAccess.NONE -> "허용 안 함"
+        },
+        statusTag = SettingsTags.PHOTO_STATUS,
+    ) {
+        when (photo) {
+            PhotoAccess.NONE -> OutlinedButton(onClick = onAllowPhotos, modifier = Modifier.testTag(SettingsTags.PHOTO_ALLOW)) {
+                Text("허용")
+            }
+            PhotoAccess.PARTIAL -> OutlinedButton(
+                onClick = onOpenPhotoSettings,
+                modifier = Modifier.testTag(SettingsTags.PHOTO_OPEN_SETTINGS),
+            ) { Text("설정 열기") }
+            PhotoAccess.FULL -> Unit
+        }
+    }
+    ConnectionRow(
+        title = "심박",
+        status = when (heartRate) {
+            HeartRateAccess.CHECKING -> "확인 중…"
+            HeartRateAccess.GRANTED -> "허용됨"
+            HeartRateAccess.NO_PERMISSION -> "허용 안 함"
+            HeartRateAccess.UNAVAILABLE -> HEALTH_CONNECT_UNAVAILABLE
+        },
+        statusTag = SettingsTags.HEART_RATE_STATUS,
+    ) {
+        if (heartRate == HeartRateAccess.NO_PERMISSION) {
+            OutlinedButton(onClick = onAllowHeartRate, modifier = Modifier.testTag(SettingsTags.HEART_RATE_ALLOW)) {
+                Text("허용")
+            }
+        }
+    }
+    HorizontalDivider()
+}
+
+@Composable
+private fun ConnectionRow(title: String, status: String, statusTag: String, action: @Composable () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                status,
+                modifier = Modifier.testTag(statusTag),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        action()
     }
 }
 

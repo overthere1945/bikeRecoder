@@ -85,6 +85,12 @@ class SettingsViewModel(
     fun setAutoPause(enabled: Boolean) = edit { it.copy(autoPauseEnabled = enabled) }
     fun setRecordingOnNewGuidance(mode: GuidanceRecording) = edit { it.copy(recordingOnNewGuidance = mode) }
 
+    /** "사진·심박 연결" (spec §5.1): false lets the photo card show again ([허용]), true after a refusal. */
+    fun setPhotoPromptDismissed(dismissed: Boolean) = edit { it.copy(photoPromptDismissed = dismissed) }
+
+    /** "사진·심박 연결" (spec §5.1): false lets the heart-rate card show again ([허용]), true after a refusal. */
+    fun setHeartRatePromptDismissed(dismissed: Boolean) = edit { it.copy(heartRatePromptDismissed = dismissed) }
+
     private fun edit(transform: (AppSettings) -> AppSettings) {
         viewModelScope.launch { updateSettings(transform) }
     }
