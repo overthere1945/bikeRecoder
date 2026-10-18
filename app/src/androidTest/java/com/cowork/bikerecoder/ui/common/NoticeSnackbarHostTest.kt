@@ -84,6 +84,34 @@ class NoticeSnackbarHostTest {
         assertEquals(listOf(1L), shown)
     }
 
+    @Test
+    fun anInactiveHostLetsTheNoticeWaitUntilItIsActive() {
+        val active = mutableStateOf(false)
+        composeRule.mainClock.autoAdvance = false
+        composeRule.setContent {
+            MaterialTheme {
+                NoticeSnackbarHost(notice = notice.value, onShown = { shown += it }, active = active.value)
+            }
+        }
+
+        notice.value = ScreenNotice(1, "목적지에 도착했습니다")
+        composeRule.mainClock.advanceTimeBy(APPEAR_MS)
+        composeRule.onNodeWithText("목적지에 도착했습니다").assertDoesNotExist()
+        assertEquals(emptyList<Long>(), shown)
+
+        active.value = true
+        waitForText("목적지에 도착했습니다")
+        assertEquals(listOf(1L), shown)
+
+        // Hidden and seen again (the notice was not cleared here): not reported or shown a second time.
+        active.value = false
+        composeRule.mainClock.advanceTimeBy(APPEAR_MS)
+        active.value = true
+        composeRule.mainClock.advanceTimeBy(APPEAR_MS)
+        composeRule.onNodeWithText("목적지에 도착했습니다").assertDoesNotExist()
+        assertEquals(listOf(1L), shown)
+    }
+
     private companion object {
         const val APPEAR_MS = 1_000L
     }

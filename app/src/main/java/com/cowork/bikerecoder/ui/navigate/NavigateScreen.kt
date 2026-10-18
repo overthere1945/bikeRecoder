@@ -44,6 +44,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -278,7 +279,8 @@ fun NavigateScreen(
  * [rideFailure]: the guided trip's recording could not start (a banner; a tap closes it with [onDismissRideFailure]).
  * [showRecordingButtons]: a recording starts or runs — [GuidanceButtonRow]'s recording buttons, and [전체 경로] on the map.
  * The recording's on-screen [notice] sits at the bottom of the map page, above the BottomEnd [전체 경로] button, so it
- * covers neither that button nor the page dots ([onNoticeShown] reports it shown).
+ * covers neither that button nor the page dots ([onNoticeShown] reports it shown); while the numbers page shows, a
+ * notice waits until the map page is back.
  */
 @Composable
 private fun ActiveContent(
@@ -302,6 +304,10 @@ private fun ActiveContent(
     val nav = state.state
     val recording = ride != null
     val pager = rememberPagerState { if (recording) RIDE_PAGE_COUNT else 1 }
+    // The map page stays composed behind the numbers page: its notice host takes notices only while it is seen.
+    val mapPageSeen by remember(pager) {
+        derivedStateOf { pager.settledPage == RIDE_MAP_PAGE && !pager.isScrollInProgress }
+    }
     val scope = rememberCoroutineScope()
     val pausedState = ride?.state as? RecordingState.Paused
     val paused = pausedState != null
@@ -343,11 +349,12 @@ private fun ActiveContent(
                                     .testTag(GuidanceTags.OVERVIEW_ON_MAP),
                             ) { Text(GuidanceButton.OVERVIEW.label) }
                         }
-                        // Clears the 12 dp + 48 dp [전체 경로] button at BottomEnd.
+                        // Clears the 12 dp + 48 dp [전체 경로] button at BottomEnd. On the numbers page a notice waits.
                         NoticeSnackbarHost(
                             notice = notice,
                             onShown = onNoticeShown,
                             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp),
+                            active = mapPageSeen,
                         )
                         Column(
                             modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(12.dp),

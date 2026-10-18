@@ -212,10 +212,10 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.te
 | `com.cowork.bikerecoder.ui.settings.SettingsScreenTest` | 7 | 설정 화면, 「안내를 새로 시작할 때 기록」 선택지 | 기기 검증 대기 |
 | `com.cowork.bikerecoder.ui.trip.TripStartDialogsTest` | 1 | "기록을 어떻게 할까요?" 대화상자(이어서 기록·새 구간으로 나누기·취소) | 기기 검증 대기 |
 | `com.cowork.bikerecoder.ui.navigate.GuidanceButtonRowTest` | 3 | 기록 중 [안내 취소 · 기록 계속]·[주행 종료], 기록 중이 아니면 V1 버튼 | 기기 검증 대기 |
-| `com.cowork.bikerecoder.ui.common.NoticeSnackbarHostTest` | 3 | 알림 문구를 한 번 보이고 표시했다고 알림, 새 알림은 다시 보임 | 기기 검증 대기 |
+| `com.cowork.bikerecoder.ui.common.NoticeSnackbarHostTest` | 4 | 알림 문구를 한 번 보이고 표시했다고 알림, 새 알림은 다시 보임, 보이지 않는 동안(안내 화면 숫자 쪽)에는 알림이 기다림 | 기기 검증 대기 |
 | `com.cowork.bikerecoder.ui.record.RecordScreenTest` | 12 | 기록 화면 2쪽·정지 확인·서비스 경고, [목적지 정하기] 표시(안내 중에는 숨김) | 기기 검증 대기 |
 
-위 11개 클래스의 합은 44개입니다. 기기 전체 `@Test` 개수는 86개(20개 클래스)이며 아직 실행하지 않았습니다.
+위 11개 클래스의 합은 45개입니다. 기기 전체 `@Test` 개수는 87개(20개 클래스)이며 아직 실행하지 않았습니다.
 
 #### 설치 확인 (기기 검증 대기)
 
