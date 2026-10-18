@@ -8,13 +8,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotFocused
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
@@ -25,8 +28,12 @@ import androidx.core.view.WindowInsetsCompat
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.search.Place
 import com.cowork.bikerecoder.search.PlaceSearch
+import com.cowork.bikerecoder.search.RecentPlaceRules
+import com.cowork.bikerecoder.search.RecentPlaceStore
 import com.cowork.bikerecoder.search.SearchResult
 import com.cowork.bikerecoder.ui.favorite.FavoriteChips
+import kotlinx.coroutines.flow.MutableStateFlow
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -47,6 +54,31 @@ class SearchScreenTest {
         override suspend fun addressOf(point: GeoPoint): SearchResult<String?> = SearchResult.Ok(null)
     }
 
+    /** In memory, with the real list rules; empty unless a test fills it. */
+    private val recent = object : RecentPlaceStore {
+        override val places = MutableStateFlow<List<Place>>(emptyList())
+
+        override suspend fun add(place: Place) {
+            places.value = RecentPlaceRules.add(places.value, place)
+        }
+
+        override suspend fun remove(place: Place) {
+            places.value = RecentPlaceRules.remove(places.value, place)
+        }
+
+        override suspend fun clear() {
+            places.value = emptyList()
+        }
+    }
+
+    private val station = Place("부산역", "부산 동구 중앙대로 206", GeoPoint(35.115, 129.041), null)
+    private val beach = Place("해운대해수욕장", "부산 해운대구 우동", GeoPoint(35.158, 129.160), null)
+
+    private fun showRecent(vararg places: Place) {
+        recent.places.value = places.toList()
+        composeRule.waitForIdle()
+    }
+
     @Before
     fun setUp() {
         composeRule.runOnUiThread {
@@ -58,7 +90,7 @@ class SearchScreenTest {
         composeRule.setContent {
             MaterialTheme {
                 SearchScreen(
-                    viewModel = SearchViewModel(fake) { null },
+                    viewModel = SearchViewModel(fake, recent) { null },
                     onBack = {},
                     onSetDestination = { _, _ -> },
                     onAddWaypoint = { _, _ -> },
@@ -135,5 +167,77 @@ class SearchScreenTest {
         val area = composeRule.onNodeWithTag(SearchTags.RESULTS_AREA).fetchSemanticsNode().boundsInWindow
         val rowPadding = with(composeRule.density) { 4.dp.toPx() }
         assertTrue("gap ${area.top - query.bottom}px must be at most the row padding ${rowPadding}px", area.top - query.bottom <= rowPadding + 1)
+    }
+
+    @Test
+    fun withNoRecentPlacesNothingIsShown() {
+        composeRule.onNodeWithTag(SearchTags.RECENT_HEADER).assertDoesNotExist()
+        composeRule.onNodeWithText("최근 검색").assertDoesNotExist()
+    }
+
+    @Test
+    fun recentPlacesShowNewestFirstWithoutDistanceUnderAHeader() {
+        showRecent(beach, station.copy(distanceM = 3_400))
+        composeRule.onNodeWithTag(SearchTags.RECENT_HEADER).assertIsDisplayed().assertTextContains("최근 검색")
+        composeRule.onNodeWithTag(SearchTags.RECENT_CLEAR).assertIsDisplayed().assertTextContains("전체 삭제")
+        composeRule.onNodeWithTag(SearchTags.recent(0))
+            .assertTextContains("해운대해수욕장").assertTextContains("부산 해운대구 우동")
+        composeRule.onNodeWithTag(SearchTags.recent(1)).assertTextContains("부산역")
+        composeRule.onNodeWithText("km", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun typingAQueryHidesTheRecentPlaces() {
+        showRecent(station)
+        composeRule.onNodeWithTag(SearchTags.QUERY).performTextInput("카페")
+        composeRule.onNodeWithTag(SearchTags.RECENT_HEADER).assertDoesNotExist()
+        composeRule.onNodeWithTag(SearchTags.QUERY).performTextClearance()
+        composeRule.onNodeWithTag(SearchTags.RECENT_HEADER).assertIsDisplayed()
+    }
+
+    @Test
+    fun xRemovesOneRecentPlace() {
+        showRecent(beach, station)
+        composeRule.onNodeWithTag(SearchTags.recentRemove(0)).assertIsDisplayed()
+        assertEquals(2, composeRule.onAllNodes(hasContentDescription("지우기")).fetchSemanticsNodes().size)
+        composeRule.onNodeWithTag(SearchTags.recentRemove(0)).performClick()
+        composeRule.waitForIdle()
+        assertEquals(listOf(station), recent.places.value)
+        composeRule.onNodeWithText("해운대해수욕장").assertDoesNotExist()
+        composeRule.onNodeWithTag(SearchTags.recent(0)).assertTextContains("부산역")
+    }
+
+    @Test
+    fun clearAllRemovesTheListAndItsHeader() {
+        showRecent(beach, station)
+        composeRule.onNodeWithTag(SearchTags.RECENT_CLEAR).performClick()
+        composeRule.waitForIdle()
+        assertTrue(recent.places.value.isEmpty())
+        composeRule.onNodeWithTag(SearchTags.RECENT_HEADER).assertDoesNotExist()
+        composeRule.onNodeWithText("부산역").assertDoesNotExist()
+    }
+
+    @Test
+    fun tappingARecentPlaceOpensItsSheetAndMovesItToTheTop() {
+        showRecent(beach, station)
+        composeRule.onNodeWithTag(SearchTags.recent(1)).performClick()
+        composeRule.onNodeWithText("목적지로 설정").assertIsDisplayed()
+        composeRule.onNodeWithText("경유지로 추가").assertIsDisplayed()
+        composeRule.waitForIdle()
+        assertEquals(listOf(station, beach), recent.places.value)
+    }
+
+    @Test
+    fun draggingTheRecentPlacesHidesTheKeyboard() {
+        showRecent(*(1..RecentPlaceRules.MAX).map { Place("최근 $it", "주소 $it", GeoPoint(35.0 + it / 100.0, 129.0), null) }.toTypedArray())
+        composeRule.onNodeWithTag(SearchTags.QUERY).performClick()
+        composeRule.waitUntil(10_000) { imeHeight() > 0 }
+        val keyboardTop = keyboardTop()
+        val area = composeRule.onNodeWithTag(SearchTags.RESULTS_AREA).fetchSemanticsNode().boundsInWindow
+        assertTrue("recent list bottom ${area.bottom} must be above keyboard top $keyboardTop", area.bottom <= keyboardTop + 1)
+
+        composeRule.onNodeWithTag(SearchTags.recent(0)).performTouchInput { swipeUp() }
+        composeRule.waitUntil(5_000) { imeHeight() == 0 }
+        composeRule.onNodeWithTag(SearchTags.QUERY).assertIsNotFocused()
     }
 }

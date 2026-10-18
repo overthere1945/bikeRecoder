@@ -9,6 +9,7 @@ import com.cowork.bikerecoder.core.trip.TripManager
 import com.cowork.bikerecoder.core.trip.TripStore
 import com.cowork.bikerecoder.data.AppDatabase
 import com.cowork.bikerecoder.data.DataStoreDayDistances
+import com.cowork.bikerecoder.data.DataStoreRecentPlaces
 import com.cowork.bikerecoder.data.DayDistances
 import com.cowork.bikerecoder.data.RoomFavoriteStore
 import com.cowork.bikerecoder.data.RoomRideStore
@@ -34,6 +35,7 @@ import com.cowork.bikerecoder.routing.BRouterRouter
 import com.cowork.bikerecoder.routing.ProfileInstaller
 import com.cowork.bikerecoder.search.KakaoLocalClient
 import com.cowork.bikerecoder.search.PlaceSearch
+import com.cowork.bikerecoder.search.RecentPlaceStore
 import com.cowork.bikerecoder.tts.AndroidTtsVoiceOutput
 import com.cowork.bikerecoder.tts.VoiceOutput
 import com.cowork.bikerecoder.core.model.LocationFix
@@ -85,6 +87,7 @@ class AppContainer(context: Context) {
     }
 
     val placeSearch: PlaceSearch = KakaoLocalClient(okHttp, BuildConfig.KAKAO_REST_API_KEY)
+    val recentPlaces: RecentPlaceStore = DataStoreRecentPlaces(appContext)
     /** The style survives restarts in filesDir so an offline cold start still shows the corridor maps. */
     val tileSource: TileSource = OpenFreeMapSource(okHttp, File(appContext.filesDir, "map-style/liberty-ko.json"))
     val tripStore: TripStore = RoomTripStore(db)

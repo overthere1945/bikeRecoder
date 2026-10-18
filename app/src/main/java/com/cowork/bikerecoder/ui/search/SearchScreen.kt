@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
@@ -20,6 +21,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -50,6 +52,10 @@ object SearchTags {
     const val QUERY = "search-query"
     const val RESULTS = "search-results"
     const val RESULTS_AREA = "search-results-area"
+    const val RECENT_HEADER = "search-recent-header"
+    const val RECENT_CLEAR = "search-recent-clear"
+    fun recent(index: Int) = "search-recent-$index"
+    fun recentRemove(index: Int) = "search-recent-remove-$index"
 }
 
 /** Hides the keyboard and releases focus when the user starts dragging the list (code-driven scrolls leave it up). */
@@ -83,6 +89,8 @@ fun SearchScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val focus = remember { FocusRequester() }
+    // One path for a tapped search result or recent place.
+    val onPlaceTap: (Place) -> Unit = viewModel::select
     LaunchedEffect(Unit) { focus.requestFocus() }
 
     Surface(modifier = Modifier.fillMaxSize()) {
@@ -103,7 +111,14 @@ fun SearchScreen(
                 favoriteChips()
             }
             Box(modifier = Modifier.weight(1f).fillMaxWidth().imePadding().testTag(SearchTags.RESULTS_AREA)) {
-                when (val result = state.result) {
+                if (state.query.isEmpty()) {
+                    RecentPlaces(
+                        places = state.recent,
+                        onTap = onPlaceTap,
+                        onRemove = viewModel::removeRecent,
+                        onClear = viewModel::clearRecent,
+                    )
+                } else when (val result = state.result) {
                     SearchUiState.Idle -> Unit
                     SearchUiState.Loading -> CircularProgressIndicator(Modifier.align(Alignment.TopCenter).padding(24.dp))
                     is SearchUiState.Error -> Text(
@@ -118,7 +133,7 @@ fun SearchScreen(
                             modifier = Modifier.fillMaxSize().nestedScroll(rememberHideKeyboardOnDrag()).testTag(SearchTags.RESULTS),
                         ) {
                             items(result.places) { place ->
-                                PlaceRow(place, onClick = { viewModel.select(place) })
+                                PlaceRow(place, onClick = { onPlaceTap(place) })
                                 HorizontalDivider()
                             }
                         }
@@ -151,10 +166,45 @@ fun SearchScreen(
     }
 }
 
+/** "최근 검색" (spec §7.3): nothing at all while the list is empty. Rows show no distance (it was measured then). */
 @Composable
-private fun PlaceRow(place: Place, onClick: () -> Unit) {
+private fun RecentPlaces(places: List<Place>, onTap: (Place) -> Unit, onRemove: (Place) -> Unit, onClear: () -> Unit) {
+    if (places.isEmpty()) return
+    LazyColumn(modifier = Modifier.fillMaxSize().nestedScroll(rememberHideKeyboardOnDrag())) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp).testTag(SearchTags.RECENT_HEADER),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("최근 검색", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                TextButton(onClick = onClear, modifier = Modifier.testTag(SearchTags.RECENT_CLEAR)) { Text("전체 삭제") }
+            }
+        }
+        itemsIndexed(places) { index, place ->
+            PlaceRow(
+                place.copy(distanceM = null),
+                onClick = { onTap(place) },
+                modifier = Modifier.testTag(SearchTags.recent(index)),
+                trailing = {
+                    IconButton(onClick = { onRemove(place) }, modifier = Modifier.testTag(SearchTags.recentRemove(index))) {
+                        GlyphIcon("✕", "지우기")
+                    }
+                },
+            )
+            HorizontalDivider()
+        }
+    }
+}
+
+@Composable
+private fun PlaceRow(
+    place: Place,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    trailing: (@Composable () -> Unit)? = null,
+) {
     Row(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
+        modifier = modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -165,5 +215,6 @@ private fun PlaceRow(place: Place, onClick: () -> Unit) {
             }
         }
         place.distanceM?.let { Text(SummaryFormatter.distance(it.toDouble()), style = MaterialTheme.typography.labelLarge) }
+        trailing?.invoke()
     }
 }
