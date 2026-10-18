@@ -13,6 +13,7 @@ import com.cowork.bikerecoder.search.Place
 import com.cowork.bikerecoder.search.PlaceSearch
 import com.cowork.bikerecoder.search.RecentPlaceStore
 import com.cowork.bikerecoder.search.SearchResult
+import com.cowork.bikerecoder.ui.pick.PickedPoint
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -94,6 +95,12 @@ class SearchViewModel(
         _state.update { if (it.register != null) it else it.copy(selected = place) }
         writeRecent { recent.add(place) }
     }
+
+    /**
+     * [이 위치로 설정] on "지도에서 선택" (spec §8.5): the point becomes a place like a tapped result (see [select]),
+     * named by its address. Returns that place.
+     */
+    fun onMapPicked(picked: PickedPoint): Place = picked.toPlace().also(::select)
 
     fun removeRecent(place: Place) = writeRecent { recent.remove(place) }
 

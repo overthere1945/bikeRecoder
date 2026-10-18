@@ -3,6 +3,8 @@ package com.cowork.bikerecoder.ui.search
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -38,6 +40,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -56,6 +59,9 @@ object SearchTags {
     const val RESULTS_AREA = "search-results-area"
     const val RECENT_HEADER = "search-recent-header"
     const val RECENT_CLEAR = "search-recent-clear"
+
+    /** [🗺 지도에서 선택], the first line of the results area. */
+    const val MAP_PICK = "search-map-pick"
     fun recent(index: Int) = "search-recent-$index"
     fun recentRemove(index: Int) = "search-recent-remove-$index"
 }
@@ -96,6 +102,11 @@ fun SearchScreen(
      * custom favorite, with no sheet.
      */
     onRegister: (FavoritePlace, FavoriteKind) -> Unit = { _, _ -> },
+    /**
+     * [🗺 지도에서 선택] (spec §8.5): opens the pick screen; its result comes back through [SearchViewModel.onMapPicked].
+     * Null hides the line.
+     */
+    onPickOnMap: (() -> Unit)? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val focus = remember { FocusRequester() }
@@ -133,35 +144,22 @@ fun SearchScreen(
             if (state.query.isEmpty() && state.register == null) {
                 favoriteChips()
             }
-            Box(modifier = Modifier.weight(1f).fillMaxWidth().imePadding().testTag(SearchTags.RESULTS_AREA)) {
-                if (state.query.isEmpty()) {
-                    RecentPlaces(
-                        places = state.recent,
-                        onTap = onPlaceTap,
-                        onRemove = viewModel::removeRecent,
-                        onClear = viewModel::clearRecent,
+            Column(modifier = Modifier.weight(1f).fillMaxWidth().imePadding().testTag(SearchTags.RESULTS_AREA)) {
+                // Under the chips, above the recent places or the results; shown with a query too.
+                if (onPickOnMap != null) {
+                    Text(
+                        "🗺 지도에서 선택",
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag(SearchTags.MAP_PICK)
+                            .clickable(role = Role.Button, onClick = onPickOnMap)
+                            .heightIn(min = 48.dp)
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
                     )
-                } else when (val result = state.result) {
-                    SearchUiState.Idle -> Unit
-                    SearchUiState.Loading -> CircularProgressIndicator(Modifier.align(Alignment.TopCenter).padding(24.dp))
-                    is SearchUiState.Error -> Text(
-                        result.message,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(16.dp),
-                    )
-                    is SearchUiState.Results -> if (result.places.isEmpty()) {
-                        Text("검색 결과가 없습니다", modifier = Modifier.padding(16.dp))
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize().nestedScroll(rememberHideKeyboardOnDrag()).testTag(SearchTags.RESULTS),
-                        ) {
-                            items(result.places) { place ->
-                                PlaceRow(place, onClick = { onPlaceTap(place) })
-                                HorizontalDivider()
-                            }
-                        }
-                    }
+                    HorizontalDivider()
                 }
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) { SearchResultsArea(state, onPlaceTap, viewModel) }
             }
         }
     }
@@ -169,7 +167,8 @@ fun SearchScreen(
     state.selected?.let { place ->
         PlaceActionSheet(
             title = place.name,
-            subtitle = place.address.ifBlank { null },
+            // A place picked on the map is named by its address: not shown twice.
+            subtitle = place.address.ifBlank { null }?.takeIf { it != place.name },
             onSetDestination = {
                 viewModel.dismissSelection()
                 onSetDestination(place.name, place.point)
@@ -186,6 +185,39 @@ fun SearchScreen(
                 }
             },
         )
+    }
+}
+
+/** The recent places while the query is empty, else the search state for it. */
+@Composable
+private fun BoxScope.SearchResultsArea(state: SearchScreenState, onPlaceTap: (Place) -> Unit, viewModel: SearchViewModel) {
+    if (state.query.isEmpty()) {
+        RecentPlaces(
+            places = state.recent,
+            onTap = onPlaceTap,
+            onRemove = viewModel::removeRecent,
+            onClear = viewModel::clearRecent,
+        )
+    } else when (val result = state.result) {
+        SearchUiState.Idle -> Unit
+        SearchUiState.Loading -> CircularProgressIndicator(Modifier.align(Alignment.TopCenter).padding(24.dp))
+        is SearchUiState.Error -> Text(
+            result.message,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.padding(16.dp),
+        )
+        is SearchUiState.Results -> if (result.places.isEmpty()) {
+            Text("검색 결과가 없습니다", modifier = Modifier.padding(16.dp))
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().nestedScroll(rememberHideKeyboardOnDrag()).testTag(SearchTags.RESULTS),
+            ) {
+                items(result.places) { place ->
+                    PlaceRow(place, onClick = { onPlaceTap(place) })
+                    HorizontalDivider()
+                }
+            }
+        }
     }
 }
 
@@ -238,7 +270,7 @@ private fun PlaceRow(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(place.name, style = MaterialTheme.typography.bodyLarge)
-            if (place.address.isNotBlank()) {
+            if (place.address.isNotBlank() && place.address != place.name) {
                 Text(place.address, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }

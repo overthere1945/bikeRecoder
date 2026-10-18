@@ -52,6 +52,11 @@ import com.cowork.bikerecoder.ui.main.MainViewModel
 import com.cowork.bikerecoder.ui.plan.PlanMap
 import com.cowork.bikerecoder.ui.plan.PlanScreen
 import com.cowork.bikerecoder.ui.plan.PlanViewModel
+import com.cowork.bikerecoder.ui.pick.MapPick
+import com.cowork.bikerecoder.ui.pick.MapPickMap
+import com.cowork.bikerecoder.ui.pick.MapPickResultEffect
+import com.cowork.bikerecoder.ui.pick.MapPickScreen
+import com.cowork.bikerecoder.ui.pick.MapPickViewModel
 import com.cowork.bikerecoder.ui.search.SearchScreen
 import com.cowork.bikerecoder.ui.settings.SettingsScreen
 import com.cowork.bikerecoder.ui.settings.SettingsViewModel
@@ -74,6 +79,9 @@ object Routes {
     const val SEARCH = "search"
     const val SEARCH_PATTERN = "$SEARCH?${SearchViewModel.ARG_REGISTER}={${SearchViewModel.ARG_REGISTER}}"
     const val FAVORITES = "favorites"
+
+    /** "지도에서 선택" (spec §8.5): its result goes to the screen below through [MapPick]. */
+    const val MAP_PICK = "map-pick"
     const val PLAN = "plan"
     const val NAVIGATE = "navigate"
     const val ARG_FROM_PLAN = "fromPlan"
@@ -320,6 +328,9 @@ fun BikeNavHost(
             val isCurrent = { navController.currentBackStackEntry?.id == entry.id }
             // Keeps the shared location source running while searching (used as the "near" point).
             container.currentLocation.collectAsStateWithLifecycle()
+            val registering = SearchViewModel.registerKind(entry.arguments?.getString(SearchViewModel.ARG_REGISTER)) != null
+            // [이 위치로 설정] on the pick screen: like a tapped result (the sheet; no sheet in the register mode).
+            MapPickResultEffect(entry.savedStateHandle) { picked -> viewModel.onMapPicked(picked) }
             SearchScreen(
                 viewModel = viewModel,
                 onBack = { navController.popBackStack() },
@@ -329,6 +340,38 @@ fun BikeNavHost(
                 onSaveFavorite = favoritesViewModel::startSave,
                 // The replace question and refusals are the shared dialogs below; a save ends in [FavoriteEvent.Registered].
                 onRegister = { place, kind -> if (isCurrent()) favoritesViewModel.saveAs(place, kind) },
+                onPickOnMap = if (registering) null else ({ if (isCurrent()) navController.navigate(Routes.MAP_PICK) }),
+            )
+        }
+        composable(Routes.MAP_PICK) { entry ->
+            val viewModel: MapPickViewModel = viewModel(factory = MapPickViewModel.factory(container))
+            val state by viewModel.state.collectAsStateWithLifecycle()
+            val user by container.currentLocation.collectAsStateWithLifecycle()
+            // Where the map opens: the view model's first center (the current location, else Seoul City Hall), then
+            // wherever it last stopped (a recreated screen reopens there).
+            val initialCenter = remember { state.center }
+            val isCurrent = { navController.currentBackStackEntry?.id == entry.id }
+            MapPickScreen(
+                state = state,
+                onBack = { if (isCurrent()) navController.popBackStack() },
+                onConfirm = {
+                    val picked = viewModel.result()
+                    val caller = navController.previousBackStackEntry
+                    if (isCurrent() && picked != null && caller != null) {
+                        MapPick.send(caller.savedStateHandle, picked)
+                        navController.popBackStack()
+                    }
+                },
+                map = { modifier ->
+                    MapPickMap(
+                        tileSource = container.tileSource,
+                        user = user,
+                        initialCenter = initialCenter,
+                        onMoveStarted = viewModel::onMoveStarted,
+                        onCameraIdle = viewModel::onCameraIdle,
+                        modifier = modifier,
+                    )
+                },
             )
         }
         composable(Routes.FAVORITES) { entry ->

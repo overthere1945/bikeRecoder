@@ -8,6 +8,7 @@ import com.cowork.bikerecoder.search.RecentPlaceRules
 import com.cowork.bikerecoder.search.RecentPlaceStore
 import com.cowork.bikerecoder.search.SearchError
 import com.cowork.bikerecoder.search.SearchResult
+import com.cowork.bikerecoder.ui.pick.PickedPoint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -168,6 +169,23 @@ class SearchViewModelTest {
         assertNull(vm.state.value.selected)
         assertEquals(listOf(place), recent.added)
         assertEquals(listOf(place.copy(distanceM = null)), vm.state.value.recent)
+    }
+
+    @Test
+    fun `a point picked on the map opens the sheet like a tapped result and is remembered`() = runTest {
+        val vm = SearchViewModel(search, recent) { here }
+        runCurrent()
+        val point = GeoPoint(35.12, 129.05)
+        vm.onMapPicked(PickedPoint(point, "부산 동구 중앙대로 206"))
+        runCurrent()
+        val picked = Place("부산 동구 중앙대로 206", "부산 동구 중앙대로 206", point, null)
+        assertEquals(picked, vm.state.value.selected)
+        assertEquals(listOf(picked), recent.added)
+
+        vm.dismissSelection()
+        vm.onMapPicked(PickedPoint(point, null))
+        runCurrent()
+        assertEquals(Place("지도에서 선택한 위치", "", point, null), vm.state.value.selected)
     }
 
     @Test

@@ -9,12 +9,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextClearance
@@ -25,6 +27,7 @@ import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.lifecycle.SavedStateHandle
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.search.Place
 import com.cowork.bikerecoder.search.PlaceSearch
@@ -34,8 +37,12 @@ import com.cowork.bikerecoder.search.SearchResult
 import com.cowork.bikerecoder.favorite.FavoriteKind
 import com.cowork.bikerecoder.ui.favorite.FavoriteChips
 import com.cowork.bikerecoder.ui.favorite.FavoriteTags
+import com.cowork.bikerecoder.ui.pick.MapPick
+import com.cowork.bikerecoder.ui.pick.MapPickResultEffect
+import com.cowork.bikerecoder.ui.pick.PickedPoint
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -76,6 +83,10 @@ class SearchScreenTest {
     private val station = Place("부산역", "부산 동구 중앙대로 206", GeoPoint(35.115, 129.041), null)
     private val beach = Place("해운대해수욕장", "부산 해운대구 우동", GeoPoint(35.158, 129.160), null)
 
+    /** The search entry's own result handle, as BikeNavHost wires it ([MapPickResultEffect]). */
+    private val handle = SavedStateHandle()
+    private var pickTaps = 0
+
     private fun showRecent(vararg places: Place) {
         recent.places.value = places.toList()
         composeRule.waitForIdle()
@@ -89,10 +100,12 @@ class SearchScreenTest {
             @Suppress("DEPRECATION")
             composeRule.activity.window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         }
+        val viewModel = SearchViewModel(fake, recent) { null }
         composeRule.setContent {
             MaterialTheme {
+                MapPickResultEffect(handle) { picked -> viewModel.onMapPicked(picked) }
                 SearchScreen(
-                    viewModel = SearchViewModel(fake, recent) { null },
+                    viewModel = viewModel,
                     onBack = {},
                     onSetDestination = { _, _ -> },
                     onAddWaypoint = { _, _ -> },
@@ -106,6 +119,7 @@ class SearchScreenTest {
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                         )
                     },
+                    onPickOnMap = { pickTaps++ },
                 )
             }
         }
@@ -253,4 +267,42 @@ class SearchScreenTest {
         composeRule.waitUntil(5_000) { imeHeight() == 0 }
         composeRule.onNodeWithTag(SearchTags.QUERY).assertIsNotFocused()
     }
+
+    @Test
+    fun theMapPickLineSitsUnderTheChipsAboveTheRecentPlacesAndStaysWithAQuery() {
+        showRecent(station)
+        val chips = composeRule.onNodeWithTag(FavoriteTags.ROW).fetchSemanticsNode().boundsInWindow
+        val pick = composeRule.onNodeWithTag(SearchTags.MAP_PICK).assertIsDisplayed()
+            .assertTextEquals("🗺 지도에서 선택").fetchSemanticsNode().boundsInWindow
+        val header = composeRule.onNodeWithTag(SearchTags.RECENT_HEADER).fetchSemanticsNode().boundsInWindow
+        assertTrue("map pick must sit under the chips", pick.top >= chips.bottom)
+        assertTrue("map pick must sit above the recent places", pick.bottom <= header.top)
+
+        composeRule.onNodeWithTag(SearchTags.QUERY).performTextInput("카페")
+        composeRule.onNodeWithTag(SearchTags.MAP_PICK).assertIsDisplayed()
+        composeRule.onNodeWithTag(SearchTags.MAP_PICK).performClick()
+        assertEquals(1, pickTaps)
+    }
+
+    @Test
+    fun aPickedPointOpensThePlaceSheetNamedByItsAddressOnce() {
+        val point = GeoPoint(35.12, 129.05)
+        composeRule.runOnUiThread { MapPick.send(handle, PickedPoint(point, "부산 동구 중앙대로 206")) }
+        composeRule.onNodeWithText("목적지로 설정").assertIsDisplayed()
+        composeRule.onNodeWithText("경유지로 추가").assertIsDisplayed()
+        // The sheet title (its address subtitle is not repeated) and the new recent row behind it.
+        composeRule.waitUntil(5_000) { textCount("부산 동구 중앙대로 206") == 2 }
+        assertEquals(listOf(Place("부산 동구 중앙대로 206", "부산 동구 중앙대로 206", point, null)), recent.places.value)
+        // Read once: the handle is cleared.
+        assertNull(MapPick.take(handle))
+    }
+
+    @Test
+    fun aPickedPointWithoutAnAddressIsTheFallbackName() {
+        composeRule.runOnUiThread { MapPick.send(handle, PickedPoint(GeoPoint(35.12, 129.05), null)) }
+        composeRule.onNodeWithText("목적지로 설정").assertIsDisplayed()
+        composeRule.waitUntil(5_000) { textCount("지도에서 선택한 위치") == 2 }
+    }
+
+    private fun textCount(text: String) = composeRule.onAllNodesWithText(text).fetchSemanticsNodes().size
 }

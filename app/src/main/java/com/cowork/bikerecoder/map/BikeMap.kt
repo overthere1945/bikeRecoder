@@ -101,6 +101,10 @@ fun BikeMap(
     initialCenter: GeoPoint? = null,
     initialZoom: Double = 13.0,
     fit: CameraFit? = null,
+    /** The camera stopped (after a gesture or an animation), with the point at the map's center. */
+    onCameraIdle: ((GeoPoint) -> Unit)? = null,
+    /** The camera started moving, for any reason (gesture, animation, or a programmatic move). */
+    onCameraMoveStarted: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -110,6 +114,8 @@ fun BikeMap(
 
     val currentOnLongPress by rememberUpdatedState(onLongPress)
     val currentOnUserGesture by rememberUpdatedState(onUserGesture)
+    val currentOnCameraIdle by rememberUpdatedState(onCameraIdle)
+    val currentOnCameraMoveStarted by rememberUpdatedState(onCameraMoveStarted)
 
     var styleAttempt by remember { mutableIntStateOf(0) }
     val styleResult by produceState<Result<String>?>(initialValue = null, tileSource, styleAttempt) {
@@ -197,6 +203,14 @@ fun BikeMap(
                 override fun onShove(detector: ShoveGestureDetector) = Unit
                 override fun onShoveEnd(detector: ShoveGestureDetector) = Unit
             })
+            // MapLibre calls these on the main thread; registered before the first camera move so its stop is seen too.
+            m.addOnCameraMoveStartedListener { currentOnCameraMoveStarted?.invoke() }
+            m.addOnCameraIdleListener {
+                currentOnCameraIdle?.let { idle ->
+                    val target = m.cameraPosition.target ?: return@let
+                    idle(GeoPoint(target.latitude, target.longitude))
+                }
+            }
             if (initialCenter != null) {
                 m.moveCamera(
                     CameraUpdateFactory.newLatLngZoom(LatLng(initialCenter.lat, initialCenter.lon), initialZoom),
