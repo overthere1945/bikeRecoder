@@ -5,6 +5,7 @@ import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
 import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.model.Stop
+import com.cowork.bikerecoder.core.navigation.KmAnnouncementSource
 import com.cowork.bikerecoder.core.navigation.NavEvent
 import com.cowork.bikerecoder.core.navigation.NavState
 import com.cowork.bikerecoder.core.navigation.NavUpdate
@@ -83,6 +84,14 @@ sealed interface NavUiState {
 
 enum class FinishReason { ARRIVED, STOPPED_TODAY, COMPLETED }
 
+/** 시작 중이거나 안내 중인 여행; 아니면 null. */
+val NavUiState.guidingTripId: Long?
+    get() = when (this) {
+        is NavUiState.Starting -> tripId
+        is NavUiState.Active -> tripId
+        else -> null
+    }
+
 /**
  * Runs one [NavigationSession] at a time, outside any UI lifecycle: the app-wide singleton lives in
  * [AppContainer.navigation] and the location foreground service keeps the process alive while it runs.
@@ -94,8 +103,13 @@ enum class FinishReason { ARRIVED, STOPPED_TODAY, COMPLETED }
  * trip every [touchIntervalMs]. Today's distance of the trip ([dayDistances], by [zone]'s calendar date at the
  * start) seeds the session, so a same-day resume continues the kilometre announcements; it is saved at
  * every new kilometre and when the session ends. Session updates are spoken (unless [voiceEnabled] is off), reached stops are
- * marked visited, and reaching the destination completes the trip. Every way out of a session (arrival,
- * [stopToday], [completeTrip], [close], a new start) stops the location source and the ticks.
+ * marked visited, and reaching the destination completes the trip — except (ruling U1) for a guidance started while a
+ * recording already ran ([kmSource] set at [begin]) that still runs at the arrival: then only the guidance ends
+ * ([onArrivedKeepingRecording]), the trip stays active. Every way out of a session (arrival,
+ * [stopToday], [completeTrip], [close], a new start) stops the location source and the ticks. A location stream
+ * that fails after the start point was taken is subscribed again every [LOCATION_RETRY_MS] until it works.
+ * While [kmSource] is set (a recording runs), the 1 km announcements count its distance and speak its combined
+ * sentence instead.
  *
  * Threading: every public method must be called on [scope]'s single thread (Main in the app); the session
  * runs on the same [scope]. Trip writes run in [scope], so they finish even if the caller goes away.
@@ -124,7 +138,7 @@ class NavigationController(
         tripStore = container.tripStore,
         offline = container.offline,
         voice = container.voice,
-        locationSource = { container.locationSourceFactory() },
+        locationSource = { container.rideLocation },
         voiceEnabled = container.settings.settings.map { it.voiceEnabled },
         scope = scope,
         dayDistances = container.dayDistances,
@@ -135,8 +149,30 @@ class NavigationController(
 
     private var muted = false
 
-    /** Everything belonging to one start of one trip. */
-    private class Run(val tripId: Long) {
+    /**
+     * Where the 1 km announcements take their distance and sentence from (the recording, while one runs); null: the
+     * session's own odometer and sentence. Applies to the running session and every session started later. Setting
+     * it re-bases the running session's km count (and drops a deferred km report), so set it only when the source
+     * really changes — or, with the same source, when its distance fell (a new day). Main thread only.
+     */
+    var kmSource: KmAnnouncementSource? = null
+        set(value) {
+            field = value
+            run?.session?.setKmSource(value)
+        }
+
+    /**
+     * Ruling U1: when a guidance started while a recording was already running ([kmSource] != null at [begin]) reaches
+     * its destination and [kmSource] is still set, the destination is only marked visited — the trip is not completed —
+     * and the state goes to Idle without Finished; then this gets the arrival phrase. Main thread only.
+     */
+    var onArrivedKeepingRecording: ((String) -> Unit)? = null
+
+    /**
+     * Everything belonging to one start of one trip. [attachedToRecording]: a recording was already running at the
+     * start (ruling U1).
+     */
+    private class Run(val tripId: Long, val attachedToRecording: Boolean) {
         var trip: Trip? = null
         var session: NavigationSession? = null
         var stops: List<Stop> = emptyList()
@@ -169,7 +205,7 @@ class NavigationController(
             return null
         }
         endRun()
-        val r = Run(tripId)
+        val r = Run(tripId, attachedToRecording = kmSource != null)
         run = r
         _ui.value = NavUiState.Starting(tripId)
         val job = scope.launch {
@@ -219,6 +255,7 @@ class NavigationController(
         }.join()
     }
 
+    /** Mutes this guidance run's speech (and, while it runs, the recording's — they share [voice]); see [unmute]. */
     fun setMuted(m: Boolean) {
         muted = m
         voice.muted = m
@@ -233,10 +270,20 @@ class NavigationController(
     }
 
     private fun endRun() {
+        unmute() // Also when nothing runs any more (e.g. [close] after a finished guidance).
         val r = run ?: return
         r.cancelJobs()
         run = null
         scope.launch { saveDayDistance(r) }
+    }
+
+    /**
+     * Ruling F1: mute is a control of one guidance run. Whenever a run ends the shared [voice] speaks again, so a
+     * recording that goes on (or starts later) without guidance is never silent.
+     */
+    private fun unmute() {
+        muted = false
+        voice.muted = false
     }
 
     private suspend fun prepare(r: Run) {
@@ -251,26 +298,34 @@ class NavigationController(
         val firstFix = CompletableDeferred<LocationFix>()
         var bestFix: LocationFix? = null
         r.jobs += scope.launch {
-            try {
-                locationSource().fixes().collect { fix ->
-                    r.lastFix = fix
-                    val session = r.session
-                    if (session != null) {
-                        session.onFix(fix)
-                    } else {
-                        if (bestFix.let { it == null || fix.accuracyM < it.accuracyM }) bestFix = fix
-                        if (fix.accuracyM <= START_ACCURACY_M) firstFix.complete(fix)
+            while (true) {
+                try {
+                    locationSource().fixes().collect { fix ->
+                        r.lastFix = fix
+                        val session = r.session
+                        if (session != null) {
+                            session.onFix(fix)
+                        } else {
+                            if (bestFix.let { it == null || fix.accuracyM < it.accuracyM }) bestFix = fix
+                            if (fix.accuracyM <= START_ACCURACY_M) firstFix.complete(fix)
+                        }
+                    }
+                    bestFix?.let { firstFix.complete(it) }
+                    if (!firstFix.isCompleted) log.warn("Location source ended without a fix", null)
+                    firstFix.completeExceptionally(IllegalStateException("location source ended without a fix"))
+                    return@launch
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // Before a start point this fails the start. Once there is one, the session's GPS watchdog
+                    // reports the gap and the stream is subscribed again (it recovers when the shared stream does).
+                    log.warn("Location source failed", e)
+                    if (!firstFix.isCompleted) {
+                        firstFix.completeExceptionally(e)
+                        return@launch
                     }
                 }
-                bestFix?.let { firstFix.complete(it) }
-                if (!firstFix.isCompleted) log.warn("Location source ended without a fix", null)
-                firstFix.completeExceptionally(IllegalStateException("location source ended without a fix"))
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                // Before the start this fails the start; later the session's GPS watchdog reports it.
-                log.warn("Location source failed", e)
-                firstFix.completeExceptionally(e)
+                delay(LOCATION_RETRY_MS)
             }
         }
         val start = try {
@@ -327,6 +382,7 @@ class NavigationController(
         r.savedKm = floor(ridden / 1_000.0).toInt()
 
         val session = NavigationSession(route, stops, trip.profile, router, phrases, scope, initialDistanceM = ridden)
+        kmSource?.let(session::setKmSource)
         r.stops = stops
         r.session = session
         // Subscribed before anything can emit (the shared flow has no replay).
@@ -373,7 +429,7 @@ class NavigationController(
             if (event.stop.isDestination) arrived = true
         }
         if (arrived) {
-            finish(r, FinishReason.ARRIVED)
+            if (r.attachedToRecording && kmSource != null) arriveKeepingRecording(r) else finish(r, FinishReason.ARRIVED)
             return
         }
         if (run !== r) return
@@ -387,6 +443,7 @@ class NavigationController(
         val trip = r.trip ?: return@withContext
         run = null
         r.cancelJobs()
+        unmute()
         saveDayDistance(r)
         val saved = when (reason) {
             FinishReason.ARRIVED, FinishReason.COMPLETED -> saving("complete trip ${trip.id}") {
@@ -398,6 +455,21 @@ class NavigationController(
         if (run == null) {
             _ui.value = NavUiState.Finished(trip.id, trip.type, reason, error = if (saved) null else MSG_SAVE_FAILED)
         }
+    }
+
+    /**
+     * Ruling U1: [r] arrived while the recording it was started into goes on — the guidance ends (Idle, no Finished),
+     * the trip stays active. The arrival was already spoken by the session. May be called from [r]'s own update collector.
+     */
+    private suspend fun arriveKeepingRecording(r: Run) = withContext(NonCancellable) {
+        if (run !== r) return@withContext
+        run = null
+        r.cancelJobs()
+        unmute()
+        saveDayDistance(r)
+        // A new start during the write wins.
+        if (run == null) _ui.value = NavUiState.Idle
+        onArrivedKeepingRecording?.invoke(phrases.arrivedDestination)
     }
 
     /** Best effort: today's distance of [r]'s session so far (nothing before the session started). */
@@ -454,6 +526,9 @@ class NavigationController(
          * seen, and without any fix it fails (and can be retried).
          */
         const val FIRST_FIX_TIMEOUT_MS = 30_000L
+
+        /** After the start, a failed location stream is subscribed again after this long. */
+        const val LOCATION_RETRY_MS = 5_000L
 
         /** A start point this accurate is taken at once (the session's accuracy limit, spec §6). */
         const val START_ACCURACY_M = 30f

@@ -8,6 +8,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.data.AppSettings
+import com.cowork.bikerecoder.data.GuidanceRecording
 import com.cowork.bikerecoder.offline.OfflineMapStorage
 import com.cowork.bikerecoder.offline.SegmentInfo
 import com.cowork.bikerecoder.offline.SegmentRepository
@@ -80,6 +81,9 @@ class SettingsViewModel(
     fun setVoiceEnabled(enabled: Boolean) = edit { it.copy(voiceEnabled = enabled) }
     fun setKeepScreenOn(enabled: Boolean) = edit { it.copy(keepScreenOn = enabled) }
     fun setWifiOnlyOfflineMaps(enabled: Boolean) = edit { it.copy(wifiOnlyOfflineMaps = enabled) }
+    fun setAutoStartRecording(enabled: Boolean) = edit { it.copy(autoStartRecordingWithNavigation = enabled) }
+    fun setAutoPause(enabled: Boolean) = edit { it.copy(autoPauseEnabled = enabled) }
+    fun setRecordingOnNewGuidance(mode: GuidanceRecording) = edit { it.copy(recordingOnNewGuidance = mode) }
 
     private fun edit(transform: (AppSettings) -> AppSettings) {
         viewModelScope.launch { updateSettings(transform) }

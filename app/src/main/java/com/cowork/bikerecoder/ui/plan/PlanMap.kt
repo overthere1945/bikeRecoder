@@ -3,6 +3,7 @@ package com.cowork.bikerecoder.ui.plan
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.model.Stop
 import com.cowork.bikerecoder.map.BikeMap
@@ -13,7 +14,7 @@ import com.cowork.bikerecoder.map.TileSource
 
 /** The plan screen's map: route and stops, FREE camera that frames the route when a new one arrives. */
 @Composable
-fun PlanMap(state: PlanUiState, user: LocationFix?, tileSource: TileSource, modifier: Modifier) {
+fun PlanMap(state: PlanUiState, user: LocationFix?, tileSource: TileSource, modifier: Modifier, onLongPress: (GeoPoint) -> Unit = {}) {
     val route = (state.route as? RouteUiState.Ready)?.route
     val stops = remember(state.stops) {
         state.stops.mapIndexed { i, s -> Stop(s.key, s.name, s.point, isDestination = i == state.stops.lastIndex) }
@@ -27,7 +28,7 @@ fun PlanMap(state: PlanUiState, user: LocationFix?, tileSource: TileSource, modi
         tileSource = tileSource,
         overlay = MapOverlay(route = route, stops = stops, user = user),
         cameraMode = CameraMode.FREE,
-        onLongPress = {},
+        onLongPress = onLongPress,
         onUserGesture = {},
         modifier = modifier,
         initialCenter = user?.point,

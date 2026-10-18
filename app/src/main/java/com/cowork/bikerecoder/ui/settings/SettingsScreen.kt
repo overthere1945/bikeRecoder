@@ -37,6 +37,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cowork.bikerecoder.AppVersion
 import com.cowork.bikerecoder.BuildConfig
 import com.cowork.bikerecoder.core.model.RouteProfile
+import com.cowork.bikerecoder.data.GuidanceRecording
 import com.cowork.bikerecoder.offline.SegmentInfo
 import com.cowork.bikerecoder.ui.common.GlyphIcon
 import com.cowork.bikerecoder.ui.plan.labelKo
@@ -46,11 +47,14 @@ object SettingsTags {
     const val VOICE = "settings_voice"
     const val KEEP_SCREEN_ON = "settings_keep_screen_on"
     const val WIFI_ONLY = "settings_wifi_only"
+    const val AUTO_START_RECORDING = "settings_auto_start_recording"
+    const val AUTO_PAUSE = "settings_auto_pause"
     const val DELETE_ALL_MAPS = "settings_delete_all_maps"
     const val MAP_SIZE = "settings_map_size"
     const val CONFIRM = "settings_confirm"
     const val CANCEL = "settings_cancel"
     fun profile(profile: RouteProfile) = "settings_profile_${profile.name}"
+    fun guidanceRecording(mode: GuidanceRecording) = "settings_guidance_recording_${mode.name}"
     fun segmentCheck(name: String) = "settings_segment_check_$name"
     fun segmentDelete(name: String) = "settings_segment_delete_$name"
     fun segmentDownload(name: String) = "settings_segment_download_$name"
@@ -74,10 +78,13 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
         onSetVoice = viewModel::setVoiceEnabled,
         onSetKeepScreenOn = viewModel::setKeepScreenOn,
         onSetWifiOnly = viewModel::setWifiOnlyOfflineMaps,
+        onSetAutoStartRecording = viewModel::setAutoStartRecording,
+        onSetAutoPause = viewModel::setAutoPause,
         onCheckUpdate = viewModel::checkUpdate,
         onDownload = viewModel::download,
         onDeleteSegment = viewModel::delete,
         onDeleteAllMaps = viewModel::deleteAllMaps,
+        onSetRecordingOnNewGuidance = viewModel::setRecordingOnNewGuidance,
     )
 }
 
@@ -90,10 +97,13 @@ internal fun SettingsContent(
     onSetVoice: (Boolean) -> Unit,
     onSetKeepScreenOn: (Boolean) -> Unit,
     onSetWifiOnly: (Boolean) -> Unit,
+    onSetAutoStartRecording: (Boolean) -> Unit,
+    onSetAutoPause: (Boolean) -> Unit,
     onCheckUpdate: (String) -> Unit,
     onDownload: (String) -> Unit,
     onDeleteSegment: (String) -> Unit,
     onDeleteAllMaps: () -> Unit,
+    onSetRecordingOnNewGuidance: (GuidanceRecording) -> Unit = {},
 ) {
     var confirmDeleteSegment by remember { mutableStateOf<SegmentInfo?>(null) }
     var confirmDeleteMaps by remember { mutableStateOf(false) }
@@ -112,19 +122,12 @@ internal fun SettingsContent(
                 SectionTitle("기본 경로 성향")
                 Column(modifier = Modifier.selectableGroup()) {
                     RouteProfile.entries.forEach { profile ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                                .testTag(SettingsTags.profile(profile))
-                                .selectable(
-                                    selected = state.settings.defaultProfile == profile,
-                                    role = Role.RadioButton,
-                                    onClick = { onSetProfile(profile) },
-                                ),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            RadioButton(selected = state.settings.defaultProfile == profile, onClick = null)
-                            Text(profile.labelKo(), modifier = Modifier.padding(start = 12.dp))
-                        }
+                        RadioRow(
+                            label = profile.labelKo(),
+                            selected = state.settings.defaultProfile == profile,
+                            tag = SettingsTags.profile(profile),
+                            onClick = { onSetProfile(profile) },
+                        )
                     }
                 }
                 HorizontalDivider()
@@ -138,6 +141,34 @@ internal fun SettingsContent(
                     SettingsTags.WIFI_ONLY,
                     onSetWifiOnly,
                 )
+                HorizontalDivider()
+
+                SectionTitle("기록")
+                SwitchRow(
+                    "안내 시작 시 기록 자동 시작",
+                    null,
+                    state.settings.autoStartRecordingWithNavigation,
+                    SettingsTags.AUTO_START_RECORDING,
+                    onSetAutoStartRecording,
+                )
+                SwitchRow(
+                    "자동 일시정지(기본값)",
+                    "멈춰 있으면 기록을 잠시 멈춥니다. 기록 화면에서 기록마다 바꿀 수 있습니다",
+                    state.settings.autoPauseEnabled,
+                    SettingsTags.AUTO_PAUSE,
+                    onSetAutoPause,
+                )
+                Text("안내를 새로 시작할 때 기록", style = MaterialTheme.typography.bodyLarge)
+                Column(modifier = Modifier.selectableGroup()) {
+                    GuidanceRecording.entries.forEach { mode ->
+                        RadioRow(
+                            label = mode.label,
+                            selected = state.settings.recordingOnNewGuidance == mode,
+                            tag = SettingsTags.guidanceRecording(mode),
+                            onClick = { onSetRecordingOnNewGuidance(mode) },
+                        )
+                    }
+                }
                 HorizontalDivider()
 
                 SectionTitle("경로 데이터")
@@ -239,6 +270,18 @@ internal fun SettingsContent(
 @Composable
 private fun SectionTitle(text: String) {
     Text(text, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+}
+
+@Composable
+private fun RadioRow(label: String, selected: Boolean, tag: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag(tag)
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = null)
+        Text(label, modifier = Modifier.padding(start = 12.dp))
+    }
 }
 
 @Composable

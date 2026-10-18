@@ -5,31 +5,23 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.cowork.bikerecoder.core.gpx.GpxParser
 import com.cowork.bikerecoder.core.model.GeoPoint
-import com.cowork.bikerecoder.core.model.LocationFix
-import com.cowork.bikerecoder.core.model.Route
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.routing.Router
-import com.cowork.bikerecoder.core.trip.OfflineMapController
 import com.cowork.bikerecoder.core.trip.TripManager
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripStop
 import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.data.AppDatabase
 import com.cowork.bikerecoder.data.RoomTripStore
-import com.cowork.bikerecoder.location.GpxLocationSource
 import com.cowork.bikerecoder.location.LocationSource
 import com.cowork.bikerecoder.routing.BRouterGeoJsonParser
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -51,18 +43,6 @@ import org.junit.runner.RunWith
  */
 @RunWith(AndroidJUnit4::class)
 class NavigationScenarioTest {
-
-    /** GpxLocationSource(speedup = 20) that reports when its replay has ended. */
-    private class Replay(fixes: List<LocationFix>) : LocationSource {
-        private val gpx = GpxLocationSource(fixes, speedup = 20.0)
-        val done = CompletableDeferred<Unit>()
-        override fun fixes(): Flow<LocationFix> = gpx.fixes().onCompletion { done.complete(Unit) }
-    }
-
-    private object NoOffline : OfflineMapController {
-        override suspend fun deleteForTrip(tripId: Long) = Unit
-        override suspend fun downloadForTrip(tripId: Long, route: Route, fromDistanceAlongM: Double) = Unit
-    }
 
     private lateinit var db: AppDatabase
     private lateinit var store: RoomTripStore
@@ -89,10 +69,11 @@ class NavigationScenarioTest {
         db.close()
     }
 
-    private fun asset(name: String): String =
-        InstrumentationRegistry.getInstrumentation().context.assets.open(name).use { it.readBytes().decodeToString() }
+    private val assetContext: Context get() = InstrumentationRegistry.getInstrumentation().context
 
-    private fun gpx(name: String) = GpxParser.parse(asset(name))
+    private fun asset(name: String): String = scenarioAsset(assetContext, name)
+
+    private fun gpx(name: String) = scenarioGpx(assetContext, name)
 
     private fun controller(router: Router, source: LocationSource): NavigationController {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).also { scopes += it }

@@ -48,7 +48,9 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cowork.bikerecoder.core.format.SummaryFormatter
 import com.cowork.bikerecoder.core.model.RouteProfile
+import com.cowork.bikerecoder.favorite.FavoritePlace
 import com.cowork.bikerecoder.ui.common.GlyphIcon
+import com.cowork.bikerecoder.ui.common.PressedPlaceSheet
 
 /** Test tags used by the Compose test. */
 object PlanTags {
@@ -75,8 +77,10 @@ fun PlanScreen(
     onBack: () -> Unit,
     onAddStop: () -> Unit,
     onStartNavigation: () -> Unit,
+    onSaveFavorite: ((FavoritePlace) -> Unit)? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val pressed by viewModel.pressed.collectAsStateWithLifecycle()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.onResume() }
     PlanContent(
         state = state,
@@ -88,6 +92,26 @@ fun PlanScreen(
         onMove = viewModel::move,
         onSetProfile = viewModel::setProfile,
     )
+    pressed?.let { place ->
+        PressedPlaceSheet(
+            pressed = place,
+            onSetDestination = { name, point ->
+                viewModel.dismissPressed()
+                viewModel.setDestination(name, point)
+            },
+            onAddWaypoint = { name, point ->
+                viewModel.dismissPressed()
+                viewModel.addWaypoint(name, point)
+            },
+            onSaveFavorite = onSaveFavorite?.let { save ->
+                { favorite ->
+                    viewModel.dismissPressed()
+                    save(favorite)
+                }
+            },
+            onDismiss = viewModel::dismissPressed,
+        )
+    }
 }
 
 @Composable

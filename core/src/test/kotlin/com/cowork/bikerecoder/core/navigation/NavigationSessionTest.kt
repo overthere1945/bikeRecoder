@@ -168,6 +168,113 @@ class NavigationSessionTest {
         assertEquals(3_400.0 + GeoMath.distanceM(pointAt(0.0, 0.0), pointAt(650.0, 0.0)), session.sessionDistanceM, 1.0)
     }
 
+    /** 테스트용 [KmAnnouncementSource]: 거리는 테스트가 정하고 문장은 "SRC $km". */
+    private class FakeKmSource : KmAnnouncementSource {
+        var d = 0.0
+        override fun distanceM(): Double = d
+        override fun phrase(km: Int, remainingM: Double, etaMillis: Long): String = "SRC $km"
+    }
+
+    private fun List<NavUpdate>.periodic(): List<String> =
+        flatMap { u -> u.utterances.filter { it.priority == Priority.PERIODIC }.map { it.text } }
+
+    @Test
+    fun `km source replaces distance and phrase`() = runTest {
+        val route = straightRoute(5_000.0)
+        val dest = Stop(1, "목적지", pointAt(5_000.0, 0.0), isDestination = true)
+        val session = session(route, listOf(dest), FakeRouter { error("no reroute expected") })
+        val updates = collect(session)
+        val source = FakeKmSource()
+        session.setKmSource(source)
+
+        // 오도미터는 1.5km를 지나지만 소스 거리는 999m: 안내가 없다.
+        source.d = 999.0
+        for (s in 0..300) feed(session, fixAt(5.0 * s, 0.0, s))
+        assertTrue(session.sessionDistanceM > 1_400.0)
+        assertEquals(emptyList(), updates.periodic())
+
+        source.d = 1_000.0
+        feed(session, fixAt(1_505.0, 0.0, 301))
+        feed(session, fixAt(1_510.0, 0.0, 302))
+        assertEquals(listOf("SRC 1"), updates.periodic())
+    }
+
+    @Test
+    fun `setting a source does not announce past km`() = runTest {
+        val route = straightRoute(5_000.0)
+        val dest = Stop(1, "목적지", pointAt(5_000.0, 0.0), isDestination = true)
+        val session = session(route, listOf(dest), FakeRouter { error("no reroute expected") })
+        val updates = collect(session)
+
+        for (s in 0..500) feed(session, fixAt(5.0 * s, 0.0, s)) // 약 2.5km
+        val before = updates.size
+
+        val source = FakeKmSource().apply { d = 1_700.0 }
+        session.setKmSource(source)
+        feed(session, fixAt(2_505.0, 0.0, 501))
+        feed(session, fixAt(2_510.0, 0.0, 502))
+        assertEquals(emptyList(), updates.drop(before).periodic())
+
+        source.d = 2_000.0
+        feed(session, fixAt(2_515.0, 0.0, 503))
+        feed(session, fixAt(2_520.0, 0.0, 504))
+        assertEquals(listOf("SRC 2"), updates.drop(before).periodic())
+    }
+
+    @Test
+    fun `clearing the source resumes odometer km without repeats`() = runTest {
+        val route = straightRoute(5_000.0)
+        val dest = Stop(1, "목적지", pointAt(5_000.0, 0.0), isDestination = true)
+        val session = session(route, listOf(dest), FakeRouter { error("no reroute expected") })
+        val updates = collect(session)
+        val source = FakeKmSource().apply { d = 100.0 }
+        session.setKmSource(source)
+
+        for (s in 0..500) feed(session, fixAt(5.0 * s, 0.0, s)) // 약 2.5km, 소스 거리는 100m
+        assertEquals(emptyList(), updates.periodic())
+        val before = updates.size
+
+        session.setKmSource(null)
+        for (s in 501..620) feed(session, fixAt(5.0 * s, 0.0, s)) // 약 3.1km
+        val after = updates.drop(before)
+        val kmUpdates = after.filter { u -> u.utterances.any { it.priority == Priority.PERIODIC } }
+        assertEquals(1, kmUpdates.size)
+        val u = kmUpdates.single()
+        assertEquals(
+            listOf(phrases.kmReport(3, u.state.progress.remainingM, u.state.etaMillis)),
+            u.utterances.filter { it.priority == Priority.PERIODIC }.map { it.text },
+        )
+        assertTrue(u.utterances.single { it.priority == Priority.PERIODIC }.text.startsWith("3킬로미터 이동."))
+    }
+
+    @Test
+    fun `source km waits for an imminent turn`() = runTest {
+        val route = straightRoute(5_000.0, listOf(Instruction(1, TurnType.LEFT, 0, 1_000.0)))
+        val dest = Stop(1, "목적지", pointAt(5_000.0, 0.0), isDestination = true)
+        val session = session(route, listOf(dest), FakeRouter { error("no reroute expected") })
+        val updates = collect(session)
+        val source = FakeKmSource()
+        session.setKmSource(source)
+
+        for (s in 0..140) feed(session, fixAt(5.0 * s, 0.0, s)) // 700m, 아직 임박하지 않음
+        assertEquals(emptyList(), updates.periodic())
+
+        // 회전까지 약 250m, 5m/s: far 안내 15초 이내라 임박. 이때 소스 거리가 1km를 통과한다.
+        source.d = 1_000.0
+        feed(session, fixAt(750.0, 0.0, 150))
+        assertEquals(emptyList(), updates.periodic())
+
+        // near 안내가 나가는 업데이트에도 km 안내는 없다.
+        feed(session, fixAt(975.0, 0.0, 195))
+        assertEquals(emptyList(), updates.periodic())
+        assertEquals("좌회전입니다", updates.last().utterances.single().text)
+
+        // near 안내 다음 업데이트에 비로소 소스 문장이 나간다.
+        feed(session, fixAt(990.0, 0.0, 198))
+        assertEquals(listOf("SRC 1"), updates.periodic())
+        assertEquals(listOf("SRC 1"), updates.last().utterances.map { it.text })
+    }
+
     @Test
     fun `waypoint reached announces and continues to destination`() = runTest {
         val vertices = listOf(pointAt(0.0, 0.0), pointAt(500.0, 0.0), pointAt(1_000.0, 0.0))

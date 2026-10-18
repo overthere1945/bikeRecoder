@@ -24,6 +24,31 @@ class TripChoicesTest {
     }
 
     @Test
+    fun `end choices while recording`() {
+        assertEquals(
+            listOf(
+                EndChoice("안내만 끝내기 (기록 계속)", EndAction.END_GUIDANCE_ONLY),
+                EndChoice("모두 끝내기", EndAction.COMPLETE_TRIP),
+            ),
+            endChoices(TripType.SINGLE_DAY, recording = true),
+        )
+        assertEquals(
+            listOf(
+                EndChoice("안내만 끝내기", EndAction.END_GUIDANCE_ONLY),
+                EndChoice("오늘은 여기까지", EndAction.STOP_TODAY),
+                EndChoice("여행 완료", EndAction.COMPLETE_TRIP),
+            ),
+            endChoices(TripType.MULTI_DAY, recording = true),
+        )
+        // Not recording: the V1.0.0 choices.
+        assertEquals(listOf(EndChoice("끝내기", EndAction.COMPLETE_TRIP)), endChoices(TripType.SINGLE_DAY, recording = false))
+        assertEquals(
+            listOf(EndChoice("오늘은 여기까지", EndAction.STOP_TODAY), EndChoice("여행 완료", EndAction.COMPLETE_TRIP)),
+            endChoices(TripType.MULTI_DAY, recording = false),
+        )
+    }
+
+    @Test
     fun onlyACompletedSingleDayTripCanBecomeMultiDay() {
         assertTrue(canConvertToMultiDay(NavUiState.Finished(1, TripType.SINGLE_DAY, FinishReason.ARRIVED)))
         assertTrue(canConvertToMultiDay(NavUiState.Finished(1, TripType.SINGLE_DAY, FinishReason.COMPLETED)))

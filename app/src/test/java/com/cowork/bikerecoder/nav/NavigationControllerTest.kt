@@ -3,6 +3,7 @@ package com.cowork.bikerecoder.nav
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.model.RouteProfile
+import com.cowork.bikerecoder.core.navigation.KmAnnouncementSource
 import com.cowork.bikerecoder.core.routing.RouteFailure
 import com.cowork.bikerecoder.core.routing.RouteResult
 import com.cowork.bikerecoder.core.trip.TripManager
@@ -14,12 +15,16 @@ import com.cowork.bikerecoder.location.GpxLocationSource
 import com.cowork.bikerecoder.location.LocationSource
 import com.cowork.bikerecoder.ui.common.routeFailureText
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -485,6 +490,153 @@ class NavigationControllerTest {
         assertEquals(finished.copy(error = NavigationController.MSG_SAVE_FAILED), h.controller.ui.value)
         assertEquals(TripStatus.COMPLETED, store.trips.getValue(tripId).status)
         assertTrue(log.messages.isNotEmpty(), "the failure is logged")
+    }
+
+    @Test
+    fun kmSourceAppliesToTheRunningAndNextSession() = runTest {
+        val h = harness("scenario_follow.gpx") // 20×: 10 m every 100 ms
+        val tripId = h.trip(TripType.SINGLE_DAY, stop("도착", destination, isDestination = true))
+        var d = 0.0
+        val source = object : KmAnnouncementSource {
+            override fun distanceM() = d
+            override fun phrase(km: Int, remainingM: Double, etaMillis: Long) = "SRC $km"
+        }
+        fun sourced() = voice.spoken.filter { it.startsWith("SRC") }
+        fun guidanceKm() = voice.spoken.filter { "킬로미터 이동. 남은 거리" in it }
+
+        h.controller.kmSource = source
+        h.controller.start(tripId)
+        h.awaitActive()
+        d = 1_000.0
+        advanceTimeBy(200)
+        runCurrent()
+        assertEquals(listOf("SRC 1"), sourced(), voice.spoken.toString())
+
+        h.controller.ui.first { it is NavUiState.Active && it.state.progress.distanceAlongM > 1_500.0 }
+        runCurrent()
+        assertEquals(listOf("SRC 1"), sourced(), voice.spoken.toString())
+        assertTrue(guidanceKm().isEmpty(), "the session's own km report is replaced: ${voice.spoken}")
+
+        h.controller.close()
+        h.controller.start(tripId)
+        h.awaitActive()
+        d = 2_000.0
+        advanceTimeBy(200)
+        runCurrent()
+        assertEquals(listOf("SRC 1", "SRC 2"), sourced(), voice.spoken.toString())
+
+        h.controller.kmSource = null
+        h.awaitFinished()
+        assertEquals(listOf("SRC 1", "SRC 2"), sourced(), voice.spoken.toString())
+        assertTrue(guidanceKm().isNotEmpty(), "back to the session's own km report: ${voice.spoken}")
+        assertNull(h.controller.kmSource)
+    }
+
+    /** A running recording as the km source: a fixed distance, so it never announces a kilometre here. */
+    private val recordingKm = object : KmAnnouncementSource {
+        override fun distanceM() = 0.0
+        override fun phrase(km: Int, remainingM: Double, etaMillis: Long) = "SRC $km"
+    }
+
+    @Test
+    fun arrivalOfAGuidanceStartedWhileRecordingEndsOnlyTheGuidance() = runTest {
+        // Ruling U1.
+        val h = harness("scenario_follow.gpx")
+        val tripId = h.trip(TripType.SINGLE_DAY, stop("도착", destination, isDestination = true))
+        val arrived = mutableListOf<String>()
+        h.controller.onArrivedKeepingRecording = { arrived += it }
+        val states = mutableListOf<NavUiState>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { h.controller.ui.toList(states) }
+
+        h.controller.kmSource = recordingKm
+        h.controller.begin(tripId)
+        h.awaitActive()
+        // Muted: the arrival is not heard, so its screen text is what tells the rider (ruling F1: the mute ends with it).
+        h.controller.setMuted(true)
+        assertTrue(voice.muted)
+        h.controller.ui.first { it is NavUiState.Idle || it is NavUiState.Finished }
+        runCurrent()
+
+        assertTrue(states.none { it is NavUiState.Finished }, states.toString())
+        assertEquals(NavUiState.Idle, states.last())
+        assertEquals(TripStatus.ACTIVE, store.trips.getValue(tripId).status)
+        assertNotNull(store.stops(tripId).single().visitedAt)
+        assertEquals(listOf("목적지에 도착했습니다"), arrived)
+        assertEquals(0, voice.spoken.count { it == "목적지에 도착했습니다" }, voice.spoken.toString())
+        assertFalse(voice.muted)
+        assertFalse(h.source.collecting, "location source stopped at arrival")
+        assertTrue(offline.deleted.isEmpty(), "the trip is not completed, its offline maps stay")
+    }
+
+    @Test
+    fun arrivalCompletesWhenTheRecordingCameAfterTheStart() = runTest {
+        val h = harness("scenario_follow.gpx")
+        val tripId = h.trip(TripType.SINGLE_DAY, stop("도착", destination, isDestination = true))
+        val arrived = mutableListOf<String>()
+        h.controller.onArrivedKeepingRecording = { arrived += it }
+
+        h.controller.start(tripId)
+        h.awaitActive()
+        h.controller.kmSource = recordingKm
+        val finished = h.awaitFinished()
+
+        assertEquals(NavUiState.Finished(tripId, TripType.SINGLE_DAY, FinishReason.ARRIVED), finished)
+        assertEquals(TripStatus.COMPLETED, store.trips.getValue(tripId).status)
+        assertTrue(arrived.isEmpty(), arrived.toString())
+    }
+
+    @Test
+    fun arrivalCompletesWhenTheRecordingEndedBeforeArrival() = runTest {
+        val h = harness("scenario_follow.gpx")
+        val tripId = h.trip(TripType.SINGLE_DAY, stop("도착", destination, isDestination = true))
+        val arrived = mutableListOf<String>()
+        h.controller.onArrivedKeepingRecording = { arrived += it }
+
+        h.controller.kmSource = recordingKm
+        h.controller.start(tripId)
+        h.awaitActive()
+        h.controller.kmSource = null
+        val finished = h.awaitFinished()
+
+        assertEquals(NavUiState.Finished(tripId, TripType.SINGLE_DAY, FinishReason.ARRIVED), finished)
+        assertEquals(TripStatus.COMPLETED, store.trips.getValue(tripId).status)
+        assertTrue(arrived.isEmpty(), arrived.toString())
+    }
+
+    @Test
+    fun guidanceSubscribesAgainAfterTheLocationStreamFailed() = runTest {
+        // The stream fails 20 fixes in (e.g. the shared GPS stream broke) and works again when subscribed anew.
+        val track = gpxFixture("scenario_follow.gpx")
+        var subscriptions = 0
+        val flaky = object : LocationSource {
+            override fun fixes(): Flow<LocationFix> = flow {
+                subscriptions++
+                val first = subscriptions == 1
+                var previous: LocationFix? = null
+                for (fix in if (first) track.take(20) else track.drop(20)) {
+                    previous?.let { delay((fix.timeMillis - it.timeMillis) / 20) }
+                    emit(fix)
+                    previous = fix
+                }
+                if (first) throw java.io.IOException("GPS lost")
+                awaitCancellation()
+            }
+        }
+        val tripManager = TripManager(store, offline, clock = { testScheduler.currentTime })
+        val tripId = tripManager.startTrip(
+            TripType.SINGLE_DAY, RouteProfile.CYCLEWAY_FIRST, listOf(stop("도착", destination, isDestination = true)),
+        ).id
+        val controller = NavigationController(
+            AssetRouter(listOf(follow)), tripManager, store, offline, voice, { flaky }, flowOf(true), backgroundScope,
+            clock = { testScheduler.currentTime }, log = log,
+        )
+
+        controller.start(tripId)
+        val finished = controller.ui.first { it is NavUiState.Finished }
+
+        assertEquals(NavUiState.Finished(tripId, TripType.SINGLE_DAY, FinishReason.ARRIVED), finished)
+        assertEquals(2, subscriptions)
+        assertTrue(log.messages.any { it.startsWith("Location source failed") }, log.messages.toString())
     }
 }
 

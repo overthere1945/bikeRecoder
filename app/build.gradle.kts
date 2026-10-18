@@ -7,7 +7,7 @@ plugins {
 }
 
 val verMajor = 1
-val verMinor = 0
+val verMinor = 1
 val verPatch = 0
 
 val secretsFile = rootProject.file("secrets.json")
@@ -113,4 +113,5 @@ dependencies {
     androidTestImplementation(libs.androidx.test.rules)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.kotlinx.coroutines.test)
+    androidTestImplementation(libs.androidx.room.testing)
 }

@@ -19,6 +19,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -33,6 +34,8 @@ import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.model.Route
 import com.cowork.bikerecoder.core.model.Stop
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
@@ -51,8 +54,13 @@ import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.sources.GeoJsonSource
 
-/** What BikeMap draws on top of the base map. */
-data class MapOverlay(val route: Route?, val stops: List<Stop>, val user: LocationFix?)
+/** What BikeMap draws on top of the base map. [track]: the recorded path so far (a red line under the user dot). */
+data class MapOverlay(
+    val route: Route?,
+    val stops: List<Stop>,
+    val user: LocationFix?,
+    val track: List<GeoPoint> = emptyList(),
+)
 
 /**
  * One-shot request to frame [points] (a single point just centres on it, at most [maxZoom]).
@@ -71,12 +79,15 @@ enum class CameraMode {
 private const val ROUTE_SOURCE = "bike-route"
 private const val STOPS_SOURCE = "bike-stops"
 private const val USER_SOURCE = "bike-user"
+private const val TRACK_SOURCE = "bike-track"
 private const val ROUTE_COLOR = "#1E88E5"
+private const val TRACK_COLOR = "#E53935"
 private const val FOLLOW_ZOOM = 17.0
 private const val FOLLOW_TILT = 50.0
 private const val FOLLOW_ANIMATION_MS = 800
 private const val FIT_ANIMATION_MS = 600
 private const val FIT_PADDING_PX = 120
+private const val TRACK_UPDATE_MS = 5_000L
 private const val EMPTY_COLLECTION = """{"type":"FeatureCollection","features":[]}"""
 
 @Composable
@@ -90,6 +101,10 @@ fun BikeMap(
     initialCenter: GeoPoint? = null,
     initialZoom: Double = 13.0,
     fit: CameraFit? = null,
+    /** The camera stopped (after a gesture or an animation), with the point at the map's center. */
+    onCameraIdle: ((GeoPoint) -> Unit)? = null,
+    /** The camera started moving, for any reason (gesture, animation, or a programmatic move). */
+    onCameraMoveStarted: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -99,6 +114,8 @@ fun BikeMap(
 
     val currentOnLongPress by rememberUpdatedState(onLongPress)
     val currentOnUserGesture by rememberUpdatedState(onUserGesture)
+    val currentOnCameraIdle by rememberUpdatedState(onCameraIdle)
+    val currentOnCameraMoveStarted by rememberUpdatedState(onCameraMoveStarted)
 
     var styleAttempt by remember { mutableIntStateOf(0) }
     val styleResult by produceState<Result<String>?>(initialValue = null, tileSource, styleAttempt) {
@@ -186,6 +203,14 @@ fun BikeMap(
                 override fun onShove(detector: ShoveGestureDetector) = Unit
                 override fun onShoveEnd(detector: ShoveGestureDetector) = Unit
             })
+            // MapLibre calls these on the main thread; registered before the first camera move so its stop is seen too.
+            m.addOnCameraMoveStartedListener { currentOnCameraMoveStarted?.invoke() }
+            m.addOnCameraIdleListener {
+                currentOnCameraIdle?.let { idle ->
+                    val target = m.cameraPosition.target ?: return@let
+                    idle(GeoPoint(target.latitude, target.longitude))
+                }
+            }
             if (initialCenter != null) {
                 m.moveCamera(
                     CameraUpdateFactory.newLatLngZoom(LatLng(initialCenter.lat, initialCenter.lon), initialZoom),
@@ -214,6 +239,15 @@ fun BikeMap(
     }
     LaunchedEffect(style, overlay.stops) {
         style?.getSourceAs<GeoJsonSource>(STOPS_SOURCE)?.setGeoJson(stopsGeoJson(overlay.stops))
+    }
+    // The recorded track grows with every ride point: it is redrawn at most every TRACK_UPDATE_MS (always ending with
+    // the latest track), its GeoJSON built off the main thread (the track lists are immutable snapshots).
+    val currentTrack by rememberUpdatedState(overlay.track)
+    LaunchedEffect(style) {
+        val source = style?.getSourceAs<GeoJsonSource>(TRACK_SOURCE) ?: return@LaunchedEffect
+        snapshotFlow { currentTrack }
+            .atMostEvery(TRACK_UPDATE_MS)
+            .collect { track -> source.setGeoJson(withContext(Dispatchers.Default) { trackGeoJson(track) }) }
     }
     LaunchedEffect(style, overlay.user) {
         style?.getSourceAs<GeoJsonSource>(USER_SOURCE)?.setGeoJson(userGeoJson(overlay.user))
@@ -290,11 +324,21 @@ private fun installOverlayLayers(style: Style) {
     style.addSource(GeoJsonSource(ROUTE_SOURCE, EMPTY_COLLECTION))
     style.addSource(GeoJsonSource(STOPS_SOURCE, EMPTY_COLLECTION))
     style.addSource(GeoJsonSource(USER_SOURCE, EMPTY_COLLECTION))
+    style.addSource(GeoJsonSource(TRACK_SOURCE, EMPTY_COLLECTION))
 
     style.addLayer(
         LineLayer("$ROUTE_SOURCE-line", ROUTE_SOURCE).withProperties(
             PropertyFactory.lineColor(Color.parseColor(ROUTE_COLOR)),
             PropertyFactory.lineWidth(6f),
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+        ),
+    )
+    // The recorded path: above the planned route, below the stops and the user dot.
+    style.addLayer(
+        LineLayer("$TRACK_SOURCE-line", TRACK_SOURCE).withProperties(
+            PropertyFactory.lineColor(Color.parseColor(TRACK_COLOR)),
+            PropertyFactory.lineWidth(5f),
             PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
             PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
         ),
@@ -326,9 +370,13 @@ private fun installOverlayLayers(style: Style) {
 
 private fun coordinate(p: GeoPoint) = "[${p.lon},${p.lat}]"
 
-private fun routeGeoJson(route: Route?): String {
-    val points = route?.points
-    if (points == null || points.size < 2) return EMPTY_COLLECTION
+private fun routeGeoJson(route: Route?): String = lineGeoJson(route?.points.orEmpty())
+
+/** The recorded path as a LineString ([lon,lat] pairs); fewer than 2 points draw nothing. */
+internal fun trackGeoJson(points: List<GeoPoint>): String = lineGeoJson(points)
+
+private fun lineGeoJson(points: List<GeoPoint>): String {
+    if (points.size < 2) return EMPTY_COLLECTION
     val coords = points.joinToString(",", transform = ::coordinate)
     return """{"type":"Feature","properties":{},"geometry":{"type":"LineString","coordinates":[$coords]}}"""
 }

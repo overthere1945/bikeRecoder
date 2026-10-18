@@ -4,7 +4,7 @@ Bicycle navigation, route tracking, and photo video generator app based on trave
 
 자전거 주행을 기록하고, 자전거도로를 우선하는 길안내를 하며, 주행 경로를 사진과 MP4 영상으로 만들어 주는 개인용 안드로이드 앱입니다. 서버 없이 모든 처리를 휴대폰 안에서 합니다.
 
-- 현재 버전: **V1.0.0 (개발 중)** — 버전 규칙: [docs/VERSIONING.md](docs/VERSIONING.md), 변경 이력: [CHANGELOG.md](CHANGELOG.md)
+- 현재 버전: **V1.1.0 (개발 중)** · V1.0.0 실주행 검증 대기(아직 출시 전) — 버전 규칙: [docs/VERSIONING.md](docs/VERSIONING.md), 변경 이력: [CHANGELOG.md](CHANGELOG.md)
 - 대상 기기: Samsung Galaxy S26 (Android 17), Galaxy Watch7 (심박, Health Connect 경유)
 
 ## 로드맵
@@ -12,7 +12,7 @@ Bicycle navigation, route tracking, and photo video generator app based on trave
 | 버전 | 단계 | 주요 기능 | 상태 |
 |---|---|---|---|
 | V1.0.0 | 내비게이션 | 자전거도로 우선 오프라인 경로 탐색, 경유지, 음성 안내, 이탈 재탐색, 여러 날 여행 유지, 경로 주변 지도 오프라인 저장 | 설계 완료 |
-| V1.1.0 | 기록 코어 | GPS 기록, 속도·고도·평균·최고 속도, 자동/수동 일시정지, 음성 안내(시작·1km·일시정지·재개) | 예정 |
+| V1.1.0 | 기록 코어 | GPS 기록, 속도·고도·평균·최고 속도, 자동/수동 일시정지, 음성 안내(시작·1km·일시정지·재개) | 구현 완료, 실주행 검증 대기 |
 | V1.2.0 | 여행과 후처리 | 여러 날 기록 묶기, 갤러리 사진 자동 매칭, Watch7 심박, 누적 경로 지도 | 예정 |
 | V1.3.0 | 영상과 이미지 | 요약 이미지, Relive 스타일 3D 영상(속도 비례, 사진 삽입), 기기 내 인코딩 | 예정 |
 
@@ -67,6 +67,8 @@ docs/                 설계 스펙, 버전 규칙, 검증 기록
 
 기기 테스트는 실제 기기 또는 에뮬레이터가 필요합니다. 둘 중 하나를 고르세요.
 
+> **경고**: `connectedDebugAndroidTest`는 끝나면 앱을 지워 그 휴대폰의 기록이 사라집니다. 실제 주행 기록이 있는 휴대폰에서는 돌리지 말고(`installDebug`만 사용), 테스트용 기기나 에뮬레이터에서 `ANDROID_SERIAL`로 지정해 실행합니다.
+
 **방법 1: USB로 연결한 휴대폰 (기본)** — 개발자 옵션에서 USB 디버깅을 켜고 연결한 뒤 `adb devices`에 `device`로 표시되는지 확인합니다. 기기가 둘 이상이면 시리얼을 지정합니다.
 
 ```bash
@@ -100,6 +102,8 @@ $ANDROID_HOME/emulator/emulator -avd bike37 -no-snapshot &
 - [내비게이션 설계 스펙](docs/superpowers/specs/2026-10-05-navigation-design.md)
 - [버전 관리 규칙](docs/VERSIONING.md)
 - [내비게이션 검증·실주행 체크리스트](docs/verification/navigation-field-test.md)
+- [기록 코어 설계 스펙](docs/superpowers/specs/2026-10-12-recording-core-design.md)
+- [기록 코어 검증·실주행 체크리스트](docs/verification/recording-field-test.md)
 - [변경 이력](CHANGELOG.md)
 
 ## 라이선스와 출처 표기

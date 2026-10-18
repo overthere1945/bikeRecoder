@@ -116,6 +116,30 @@ class VoiceSchedulerTest {
     }
 
     @Test
+    fun `reset km base drops a pending report`() {
+        val route = straightRoute(1_200.0, listOf(Instruction(1, LEFT, 0, 1_000.0)))
+        val scheduler = VoiceScheduler(route, phrases)
+        val eta = 1_700_000_000_000L
+
+        // 회전 임박(250m, 5m/s)에서 1km를 넘어 km 1 안내가 보류된다.
+        assertEquals(emptyList(), scheduler.onUpdate(progressAt(route, 750.0), 5.0, 1_000.0, eta))
+
+        scheduler.resetKmBase(1_500.0)
+
+        // near 안내 뒤 업데이트에서도 버려진 km 1 안내는 나오지 않는다.
+        val at975 = scheduler.onUpdate(progressAt(route, 975.0), 5.0, 1_100.0, eta)
+        assertEquals(listOf(Utterance("좌회전입니다", Priority.TURN)), at975)
+        assertEquals(emptyList(), scheduler.onUpdate(progressAt(route, 990.0), 5.0, 1_200.0, eta))
+
+        // 새 기준 다음 km(2)는 한 번 안내한다.
+        val progressAt995 = progressAt(route, 995.0)
+        assertEquals(
+            listOf(Utterance(phrases.kmReport(2, progressAt995.remainingM, eta), Priority.PERIODIC)),
+            scheduler.onUpdate(progressAt995, 5.0, 2_000.0, eta),
+        )
+    }
+
+    @Test
     fun `event outranks periodic and turn outranks event`() {
         val route = straightRoute(1_200.0, listOf(Instruction(1, LEFT, 0, 1_000.0)))
         val scheduler = VoiceScheduler(route, phrases)

@@ -21,6 +21,8 @@ fun TripStartDialogs(
     onContinue: () -> Unit,
     onStartNew: () -> Unit,
     onDismiss: () -> Unit,
+    onKeepRecording: () -> Unit = {},
+    onSplitRecording: () -> Unit = {},
 ) {
     when (state) {
         TripStartState.AskType -> AlertDialog(
@@ -36,24 +38,35 @@ fun TripStartDialogs(
             confirmButton = { Button(onClick = onContinue) { Text("이어서") } },
             dismissButton = { TextButton(onClick = onStartNew) { Text("새로 시작") } },
         )
+        TripStartState.AskRecording -> AlertDialog(
+            onDismissRequest = onDismiss,
+            text = { Text(RECORDING_QUESTION) },
+            confirmButton = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onKeepRecording, modifier = Modifier.fillMaxWidth()) { Text("이어서 기록") }
+                    Button(onClick = onSplitRecording, modifier = Modifier.fillMaxWidth()) { Text("새 구간으로 나누기") }
+                    OutlinedButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("취소") }
+                }
+            },
+        )
         is TripStartState.Error -> AlertDialog(
             onDismissRequest = onDismiss,
             text = { Text(state.message) },
             confirmButton = { TextButton(onClick = onDismiss) { Text("확인") } },
         )
-        TripStartState.Idle, TripStartState.Working, is TripStartState.Ready -> Unit
+        TripStartState.Idle, TripStartState.Working, is TripStartState.Ready, TripStartState.ShowSummary -> Unit
     }
 }
 
-/** [종료] on the guidance screen: "안내를 끝낼까요?" with the trip type's choices (see [endChoices]). */
+/** [종료] on the guidance screen: "안내를 끝낼까요?" with the trip type's choices, which depend on [recording] ([endChoices]). */
 @Composable
-fun EndNavigationDialog(type: TripType, onChoose: (EndAction) -> Unit, onDismiss: () -> Unit) {
+fun EndNavigationDialog(type: TripType, recording: Boolean, onChoose: (EndAction) -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         text = { Text(END_QUESTION) },
         confirmButton = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                endChoices(type).forEach { choice ->
+                endChoices(type, recording).forEach { choice ->
                     Button(onClick = { onChoose(choice.action) }, modifier = Modifier.fillMaxWidth()) { Text(choice.label) }
                 }
                 OutlinedButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("취소") }

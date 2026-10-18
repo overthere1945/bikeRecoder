@@ -3,6 +3,8 @@ package com.cowork.bikerecoder.core.trip
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.Route
 import com.cowork.bikerecoder.core.model.RouteProfile
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import java.time.ZoneId
@@ -21,9 +23,16 @@ private class FakeTripStore : TripStore {
     val trips = mutableMapOf<Long, Trip>()
     val stopsByTrip = mutableMapOf<Long, MutableList<TripStop>>()
 
+    /** Every read of one trip answers this long (virtual time) after it read the row, so concurrent writers interleave. */
+    var readDelayMs = 0L
+
     override suspend fun activeTrip(): Trip? = trips.values.firstOrNull { it.status == TripStatus.ACTIVE }
 
-    override suspend fun trip(id: Long): Trip? = trips[id]
+    override suspend fun trip(id: Long): Trip? {
+        val row = trips[id]
+        if (readDelayMs > 0) delay(readDelayMs)
+        return row
+    }
 
     override suspend fun insertTrip(trip: Trip): Long {
         val id = if (trip.id == 0L) (trips.keys.maxOrNull() ?: 0L) + 1 else trip.id
@@ -350,5 +359,41 @@ class TripManagerTest {
         val remaining = manager.remainingStops(1)
 
         assertEquals(listOf("목적지"), remaining.map { it.name })
+    }
+
+    @Test
+    fun `touch leaves a completed trip completed`() = runTest {
+        val store = FakeTripStore()
+        store.trips[1] = Trip(
+            id = 1, type = TripType.MULTI_DAY, status = TripStatus.COMPLETED, profile = RouteProfile.BALANCED,
+            createdAt = 0L, lastActiveAt = 0L, completedAt = 500L,
+        )
+        val manager = TripManager(store, FakeOfflineMapController(), clock = { 1_000L })
+
+        manager.touch(1)
+
+        assertEquals(TripStatus.COMPLETED, store.trips.getValue(1).status)
+        assertEquals(0L, store.trips.getValue(1).lastActiveAt, "a finished trip is not active any more")
+    }
+
+    @Test
+    fun `a touch running with a completion never revives the trip`() = runTest {
+        // The recording touches the trip while the guidance completes it (arrival): the touch must not write back
+        // the ACTIVE copy it read before the completion landed.
+        val store = FakeTripStore()
+        store.trips[1] = Trip(
+            id = 1, type = TripType.SINGLE_DAY, status = TripStatus.ACTIVE, profile = RouteProfile.BALANCED,
+            createdAt = 0L, lastActiveAt = 0L, completedAt = null,
+        )
+        store.readDelayMs = 10
+        val manager = TripManager(store, FakeOfflineMapController(), clock = { 1_000L })
+
+        val complete = launch { manager.complete(1) }
+        val touch = launch { manager.touch(1) }
+        complete.join()
+        touch.join()
+
+        assertEquals(TripStatus.COMPLETED, store.trips.getValue(1).status)
+        assertEquals(1_000L, store.trips.getValue(1).completedAt)
     }
 }

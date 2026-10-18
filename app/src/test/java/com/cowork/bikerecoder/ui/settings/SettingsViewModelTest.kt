@@ -2,6 +2,7 @@ package com.cowork.bikerecoder.ui.settings
 
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.data.AppSettings
+import com.cowork.bikerecoder.data.GuidanceRecording
 import com.cowork.bikerecoder.offline.OfflineMapStorage
 import com.cowork.bikerecoder.offline.SegmentRepository
 import kotlinx.coroutines.CompletableDeferred
@@ -94,6 +95,40 @@ class SettingsViewModelTest {
 
         viewModel.setVoiceEnabled(true)
         assertTrue(settings.value.voiceEnabled)
+    }
+
+    @Test
+    fun `recording settings default on and toggle`() {
+        assertTrue(viewModel.state.value.settings.autoStartRecordingWithNavigation)
+        assertTrue(viewModel.state.value.settings.autoPauseEnabled)
+
+        viewModel.setAutoStartRecording(false)
+        assertFalse(settings.value.autoStartRecordingWithNavigation)
+        assertTrue(settings.value.autoPauseEnabled)
+
+        viewModel.setAutoPause(false)
+        assertFalse(settings.value.autoPauseEnabled)
+        assertFalse(viewModel.state.value.settings.autoStartRecordingWithNavigation)
+        assertFalse(viewModel.state.value.settings.autoPauseEnabled)
+
+        viewModel.setAutoStartRecording(true)
+        viewModel.setAutoPause(true)
+        assertTrue(settings.value.autoStartRecordingWithNavigation)
+        assertTrue(settings.value.autoPauseEnabled)
+    }
+
+    @Test
+    fun recordingOnNewGuidanceDefaultsToAskAndIsSaved() {
+        assertEquals(GuidanceRecording.ASK, viewModel.state.value.settings.recordingOnNewGuidance)
+
+        viewModel.setRecordingOnNewGuidance(GuidanceRecording.SPLIT)
+
+        assertEquals(GuidanceRecording.SPLIT, settings.value.recordingOnNewGuidance)
+        assertEquals(GuidanceRecording.SPLIT, viewModel.state.value.settings.recordingOnNewGuidance)
+        assertEquals(
+            listOf("자동으로 이어서 기록", "자동으로 새 구간 나누기", "매번 물어보기"),
+            GuidanceRecording.entries.map { it.label },
+        )
     }
 
     @Test

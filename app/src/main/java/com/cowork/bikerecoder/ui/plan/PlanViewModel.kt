@@ -14,6 +14,10 @@ import com.cowork.bikerecoder.core.routing.RouteFailure
 import com.cowork.bikerecoder.core.routing.RouteRequest
 import com.cowork.bikerecoder.core.routing.RouteResult
 import com.cowork.bikerecoder.core.routing.Router
+import com.cowork.bikerecoder.favorite.Favorite
+import com.cowork.bikerecoder.ui.common.PlaceLookup
+import com.cowork.bikerecoder.ui.common.PressedPlace
+import com.cowork.bikerecoder.ui.common.addressOrNull
 import com.cowork.bikerecoder.ui.common.routeFailureText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -45,7 +49,14 @@ class PlanViewModel(
     private val locations: StateFlow<LocationFix?>,
     private val segmentsReady: () -> Boolean,
     private val clock: () -> Long = System::currentTimeMillis,
+    /** Address of a long-pressed point, null when unknown. */
+    addressOf: suspend (GeoPoint) -> String? = { null },
 ) : ViewModel() {
+
+    private val lookup = PlaceLookup(addressOf, viewModelScope)
+
+    /** The long-pressed map point whose sheet is open. */
+    val pressed: StateFlow<PressedPlace?> = lookup.pressed
 
     private val _state = MutableStateFlow(
         PlanUiState(stops = emptyList(), profile = RouteProfile.CYCLEWAY_FIRST, route = RouteUiState.Idle, canStart = false),
@@ -76,10 +87,17 @@ class PlanViewModel(
         }
     }
 
+    fun onLongPress(point: GeoPoint) = lookup.onLongPress(point)
+
+    fun dismissPressed() = lookup.dismiss()
+
     fun setDestination(name: String, p: GeoPoint) {
         val stop = PlannedStop(nextKey++, name, p)
         edit { s -> s.withInputs(stops = if (s.stops.isEmpty()) listOf(stop) else s.stops.dropLast(1) + stop) }
     }
+
+    /** A favorite chip was tapped: the destination only, named after the favorite (waypoints stay). */
+    fun setDestination(favorite: Favorite) = setDestination(favorite.name, favorite.point)
 
     fun addWaypoint(name: String, p: GeoPoint) {
         val stop = PlannedStop(nextKey++, name, p)
@@ -210,6 +228,7 @@ class PlanViewModel(
                     defaultProfile = container.settings.settings.map { it.defaultProfile },
                     locations = container.currentLocation,
                     segmentsReady = { container.segments.hasRequired() },
+                    addressOf = { container.placeSearch.addressOrNull(it) },
                 )
             }
         }

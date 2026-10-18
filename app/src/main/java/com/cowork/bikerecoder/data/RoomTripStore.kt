@@ -37,7 +37,7 @@ private fun Trip.toEntity() = TripEntity(
     completedAt = completedAt,
 )
 
-private fun TripEntity.toTrip() = Trip(
+internal fun TripEntity.toTrip() = Trip(
     id = id,
     type = TripType.valueOf(type),
     status = TripStatus.valueOf(status),

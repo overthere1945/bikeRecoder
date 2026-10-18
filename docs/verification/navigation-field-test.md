@@ -29,8 +29,13 @@
 명령:
 
 ```bash
-ANDROID_SERIAL=R3CY903ZYQV ./gradlew :app:connectedDebugAndroidTest
+ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest
 ```
+
+> **경고**: `connectedDebugAndroidTest`는 끝나면 앱을 지워 그 휴대폰의 기록이 사라집니다.
+> connected 테스트는 `R5CT43TFS9A`에서만, 실제 기록이 있는 `R3CY903ZYQV`에는 `installDebug`만 씁니다.
+
+아래 결과 표는 판정 U3(2026-10-18) 이전에 S25 Ultra(`R3CY903ZYQV`)에서 기록한 것입니다. 지금은 위 명령처럼 `R5CT43TFS9A`에서만 connected 테스트를 실행합니다.
 
 결과: BUILD SUCCESSFUL (1분 47초, 전체 androidTest). 최종 리뷰 수정 후 재실행한 결과이며, 첫 재실행은 실행 도중 기기의 USB 연결 끊김(logcat `USB_STATE=DISCONNECTED`)으로 중단되어 같은 명령으로 다시 실행했습니다.
 

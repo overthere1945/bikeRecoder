@@ -19,6 +19,7 @@ import com.cowork.bikerecoder.core.model.RouteSummary
 import com.cowork.bikerecoder.core.routing.RouteRequest
 import com.cowork.bikerecoder.core.routing.RouteResult
 import com.cowork.bikerecoder.core.routing.Router
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
@@ -51,11 +52,13 @@ class PlanScreenTest {
     }
 
     private val router = FakeRouter()
+    private val addressGate = CompletableDeferred<String?>()
     private val viewModel = PlanViewModel(
         router = router,
         defaultProfile = flowOf(RouteProfile.CYCLEWAY_FIRST),
         locations = MutableStateFlow(LocationFix(GeoPoint(35.10, 129.00), 5f, null, null, System.currentTimeMillis())),
         segmentsReady = { true },
+        addressOf = { addressGate.await() },
     )
 
     private fun stopNames(): List<String> {
@@ -131,5 +134,60 @@ class PlanScreenTest {
         }
         composeRule.onNodeWithTag(PlanTags.START).assertIsNotEnabled()
         composeRule.onNodeWithText("목적지를 정해 주세요").assertExists()
+    }
+
+    private fun planWithLongPress(): GeoPoint {
+        composeRule.setContent {
+            MaterialTheme {
+                PlanScreen(
+                    viewModel = viewModel,
+                    map = { _, _ -> },
+                    onBack = {},
+                    onAddStop = {},
+                    onStartNavigation = {},
+                    onSaveFavorite = {},
+                )
+            }
+        }
+        composeRule.runOnIdle {
+            viewModel.setDestination("B", GeoPoint(35.115, 129.04))
+            viewModel.addWaypoint("A", GeoPoint(35.157, 129.06))
+        }
+        composeRule.waitForIdle()
+        assertEquals(listOf("A", "B"), stopNames())
+        val pressedPoint = GeoPoint(35.2, 129.1)
+        composeRule.runOnIdle { viewModel.onLongPress(pressedPoint) }
+        return pressedPoint
+    }
+
+    @Test
+    fun longPressSheetAddsAWaypointBeforeTheDestination() {
+        planWithLongPress()
+        composeRule.onNodeWithText("주소를 확인하는 중…").assertExists()
+        composeRule.onNodeWithText("즐겨찾기에 저장").assertIsNotEnabled()
+
+        addressGate.complete("부산 해운대구 우동")
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText("부산 해운대구 우동").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText("즐겨찾기에 저장").assertIsEnabled()
+        composeRule.onNodeWithText("경유지로 추가").performClick()
+        composeRule.waitForIdle()
+
+        assertEquals(listOf("A", "부산 해운대구 우동", "B"), stopNames())
+        composeRule.onNodeWithText("경유지로 추가").assertDoesNotExist()
+    }
+
+    @Test
+    fun longPressSetDestinationKeepsWaypoints() {
+        planWithLongPress()
+        addressGate.complete("부산 해운대구 우동")
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText("부산 해운대구 우동").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText("목적지로 설정").performClick()
+        composeRule.waitForIdle()
+
+        assertEquals(listOf("A", "부산 해운대구 우동"), stopNames())
     }
 }

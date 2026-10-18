@@ -2,18 +2,24 @@ package com.cowork.bikerecoder.ui.search
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.core.model.GeoPoint
+import com.cowork.bikerecoder.favorite.FavoriteKind
 import com.cowork.bikerecoder.search.Place
 import com.cowork.bikerecoder.search.PlaceSearch
+import com.cowork.bikerecoder.search.RecentPlaceStore
 import com.cowork.bikerecoder.search.SearchResult
+import com.cowork.bikerecoder.ui.pick.PickedPoint
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -30,19 +36,34 @@ data class SearchScreenState(
     val result: SearchUiState = SearchUiState.Idle,
     /** The result the user tapped; shown in the destination/waypoint sheet. */
     val selected: Place? = null,
+    /** "최근 검색", newest first; the screen shows it while the query is empty. */
+    val recent: List<Place> = emptyList(),
+    /**
+     * The register mode (spec §7.4, §8.2): a tap saves the place as this home or work, or names it as a custom
+     * favorite, with no sheet.
+     */
+    val register: FavoriteKind? = null,
 )
 
 class SearchViewModel(
     private val placeSearch: PlaceSearch,
+    private val recent: RecentPlaceStore,
+    register: FavoriteKind? = null,
     private val currentLocation: () -> GeoPoint?,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(SearchScreenState())
+    private val _state = MutableStateFlow(SearchScreenState(register = register))
     val state: StateFlow<SearchScreenState> = _state.asStateFlow()
 
     private val trimmedQuery = MutableStateFlow("")
 
     init {
+        viewModelScope.launch {
+            // The store already recovers from failed reads; anything else only hides the list, searching keeps working.
+            recent.places
+                .catch { emit(emptyList()) }
+                .collect { places -> _state.update { it.copy(recent = places) } }
+        }
         viewModelScope.launch {
             // collectLatest cancels the pending/in-flight search on every change; the delay is the debounce.
             trimmedQuery.collectLatest { query ->
@@ -66,8 +87,36 @@ class SearchViewModel(
         trimmedQuery.value = query.trim()
     }
 
+    /**
+     * A search result or a recent place was tapped: remember it and open its sheet (in the register mode the screen
+     * saves it instead, with no sheet).
+     */
     fun select(place: Place) {
-        _state.update { it.copy(selected = place) }
+        _state.update { if (it.register != null) it else it.copy(selected = place) }
+        writeRecent { recent.add(place) }
+    }
+
+    /**
+     * [이 위치로 설정] on "지도에서 선택" (spec §8.5): the point becomes a place like a tapped result (see [select]),
+     * named by its address. Returns that place.
+     */
+    fun onMapPicked(picked: PickedPoint): Place = picked.toPlace().also(::select)
+
+    fun removeRecent(place: Place) = writeRecent { recent.remove(place) }
+
+    fun clearRecent() = writeRecent { recent.clear() }
+
+    /** Failures are ignored: the recent list must never block searching. */
+    private fun writeRecent(write: suspend () -> Unit) {
+        viewModelScope.launch {
+            try {
+                write()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Not saved this time.
+            }
+        }
     }
 
     fun dismissSelection() {
@@ -77,9 +126,18 @@ class SearchViewModel(
     companion object {
         const val DEBOUNCE_MS = 400L
 
+        /** The search route's register-mode argument: a [FavoriteKind] name (HOME, WORK or CUSTOM). */
+        const val ARG_REGISTER = "register"
+
+        /** [ARG_REGISTER] → the kind being registered; anything else (absent, unknown) is the normal search. */
+        fun registerKind(arg: String?): FavoriteKind? = FavoriteKind.entries.firstOrNull { it.name == arg }
+
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer {
-                SearchViewModel(container.placeSearch) { container.currentLocation.value?.point }
+                val register = registerKind(createSavedStateHandle().get<String>(ARG_REGISTER))
+                SearchViewModel(container.placeSearch, container.recentPlaces, register) {
+                    container.currentLocation.value?.point
+                }
             }
         }
     }

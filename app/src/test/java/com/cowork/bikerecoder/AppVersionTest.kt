@@ -6,14 +6,15 @@ import java.io.File
 
 class AppVersionTest {
     @Test
-    fun `debug version name is 1_0_0-dev`() = assertEquals("1.0.0-dev", BuildConfig.VERSION_NAME)
+    fun `debug version name is 1_1_0-dev`() = assertEquals("1.1.0-dev", BuildConfig.VERSION_NAME)
 
     @Test
-    fun `version code follows rule`() = assertEquals(10000, BuildConfig.VERSION_CODE)
+    fun `version code follows rule`() = assertEquals(10100, BuildConfig.VERSION_CODE)
 
     @Test
     fun `display strips dev suffix and prefixes V`() {
         assertEquals("V1.0.0", AppVersion.display("1.0.0-dev"))
+        assertEquals("V1.1.0", AppVersion.display("1.1.0-dev"))
         assertEquals("V1.2.3", AppVersion.display("1.2.3"))
     }
 

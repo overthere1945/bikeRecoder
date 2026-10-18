@@ -15,6 +15,8 @@ data class LocationFix(
     val speedMps: Float?,
     val bearingDeg: Float?,
     val timeMillis: Long,
+    val altitudeM: Double? = null, // 해발(MSL) 고도. 변환 실패 시 기기 고도, 없으면 null
+    val verticalAccuracyM: Float? = null,
 )
 
 /** 선분 ab 위에서 p에 가장 가까운 점의 투영 결과. fraction ∈ [0,1]. */
