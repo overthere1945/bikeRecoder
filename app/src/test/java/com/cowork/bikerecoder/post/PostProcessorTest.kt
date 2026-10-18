@@ -7,6 +7,7 @@ import com.cowork.bikerecoder.core.post.HrRetryPolicy
 import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.post.PhotoCandidate
 import com.cowork.bikerecoder.core.post.PhotoPositionSource
+import com.cowork.bikerecoder.core.post.PlacedPhoto
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
@@ -242,11 +243,11 @@ class PostProcessorTest {
 
         p.runOnce()
 
-        // R8: not read without permission, and not FAILED either — only the attempt is noted
+        // R8: not read without permission, and not FAILED either; nothing changed, so nothing is noted (I4)
         assertEquals(emptyList<Pair<Long, Long>>(), heartRate.calls)
         var e = extras(segment)!!
         assertEquals(HrStatus.PENDING, e.hrStatus)
-        assertEquals(now, e.hrLastTriedAt)
+        assertNull(e.hrLastTriedAt)
         assertNull(e.hrFirstTriedAt)
 
         heartRate.permitted = true
@@ -257,7 +258,7 @@ class PostProcessorTest {
         // nor while Health Connect is unavailable
         assertEquals(emptyList<Pair<Long, Long>>(), heartRate.calls)
         assertEquals(HrStatus.PENDING, extras(segment)!!.hrStatus)
-        assertEquals(now, extras(segment)!!.hrLastTriedAt)
+        assertNull(extras(segment)!!.hrLastTriedAt)
 
         heartRate.availability = HealthAvailability.AVAILABLE
         heartRate.reads = { _, _ -> HrRead.Samples(samples(), null) }
@@ -286,7 +287,7 @@ class PostProcessorTest {
         assertEquals(emptyList<Pair<Long, Long>>(), heartRate.calls)
         for (segment in listOf(withHeartRate, without)) {
             assertEquals(HrStatus.PENDING, extras(segment)!!.hrStatus)
-            assertEquals(now, extras(segment)!!.hrLastTriedAt)
+            assertNull(extras(segment)!!.hrLastTriedAt)
         }
 
         heartRate.permitted = true
@@ -325,7 +326,7 @@ class PostProcessorTest {
         assertEquals(HrStatus.FAILED, extras(segment)!!.hrStatus)
 
         heartRate.reads = { _, _ -> HrRead.Samples(samples(), null) }
-        now = END + DAY + 1
+        now = END + 60_000L + DAY + 1 // R14: a day from the first read (the later of the ride's end and that read)
         p.runOnce() // still listed (photo scan not done yet), but FAILED is past its retries
 
         assertEquals(1, heartRate.calls.size)
@@ -806,6 +807,283 @@ class PostProcessorTest {
 
         assertEquals(listOf(1L), photosOf(a).map { it.mediaId })
         assertEquals(listOf(3L), photosOf(b).map { it.mediaId }) // only the screen's segments are checked
+    }
+
+    // ---- Final fix wave: I1 / R13 — one owning segment per photo within a trip ----
+
+    @Test
+    fun aPhotoNearASplitGoesOnlyToTheSegmentItWasTakenIn() = runTest {
+        // "새 구간으로 나누기" at END: both photo windows cover END ± 5 min
+        val a = ride(START, END)
+        val b = ride(END, END + TEN_MIN)
+        photos.photos = listOf(
+            PhotoCandidate(1, END - 2 * 60_000L, exif = null),
+            PhotoCandidate(2, END + 2 * 60_000L, exif = null),
+        )
+        now = END + TEN_MIN + 60_000L
+
+        processor().runOnce()
+
+        assertEquals(listOf(1L), photosOf(a).map { it.mediaId })
+        assertEquals(listOf(2L), photosOf(b).map { it.mediaId })
+        assertEquals(2, store.photos.value.size)
+    }
+
+    @Test
+    fun aPhotoInTheGapGoesToTheNearestSegmentAndATieToTheEarlierOne() = runTest {
+        val a = ride(START, END)
+        val b = ride(END + 6 * 60_000L, END + 16 * 60_000L) // a 6-minute stop between them
+        photos.photos = listOf(
+            PhotoCandidate(1, END + 2 * 60_000L, exif = null), // 2 min after A, 4 min before B
+            PhotoCandidate(2, END + 3 * 60_000L, exif = null), // 3 and 3: the earlier segment
+            PhotoCandidate(3, END + 4 * 60_000L, exif = null), // 4 min after A, 2 min before B
+        )
+        now = END + 17 * 60_000L
+
+        processor().runOnce()
+
+        assertEquals(listOf(1L, 2L), photosOf(a).map { it.mediaId })
+        assertEquals(listOf(3L), photosOf(b).map { it.mediaId })
+    }
+
+    @Test
+    fun aPhotoInsideAnOpenSegmentIsNotPutUnderTheOneBefore() = runTest {
+        val a = ride(START, END)
+        val b = ride(END + 60_000L, endedAt = null) // still recording
+        photos.photos = listOf(
+            PhotoCandidate(1, END + 20_000L, exif = null), // nearer A's end
+            PhotoCandidate(2, END + 3 * 60_000L, exif = null), // inside B
+        )
+        now = END + 4 * 60_000L
+
+        processor().runOnce()
+
+        assertEquals(listOf(1L), photosOf(a).map { it.mediaId })
+        assertTrue(photosOf(b).isEmpty())
+        assertNull(extras(b))
+    }
+
+    /** Rows stored before R13 (or before a sibling began) are dropped from a segment that no longer owns them. */
+    @Test
+    fun aScanDropsItsRowsForPhotosASiblingOwns() = runTest {
+        val a = ride(START, END)
+        val inA = PhotoCandidate(1, END - 60_000L, exif = null)
+        val nearB = PhotoCandidate(2, END + 3 * 60_000L, exif = null)
+        photos.photos = listOf(inA, nearB)
+        val p = processor()
+        now = END + 4 * 60_000L
+        p.runOnce()
+        assertEquals(listOf(1L, 2L), photosOf(a).map { it.mediaId }) // no sibling yet: A owns both
+
+        // B starts 4 min after A's end: the photo 3 min after A's end is now nearer B's start
+        val b = ride(END + 4 * 60_000L, END + 14 * 60_000L)
+        // and an earlier build had also stored A's photo under B
+        store.upsertPhotos(b.id, listOf(PlacedPhoto(1, inA.takenAt, GeoPoint(37.5, 127.0), PhotoPositionSource.TRACK)))
+        now = END + 15 * 60_000L
+        p.runOnce()
+
+        assertEquals(listOf(1L), photosOf(a).map { it.mediaId })
+        assertEquals(listOf(2L), photosOf(b).map { it.mediaId })
+        assertEquals(2, store.photos.value.size)
+    }
+
+    // ---- I2 / R15: only FULL access finishes a photo scan ----
+
+    @Test
+    fun selectedPhotosOnlyNeverFinishesTheScan() = runTest {
+        val segment = ride()
+        val selected = PhotoCandidate(1, START + 60_000L, exif = null)
+        val notSelected = PhotoCandidate(2, START + 120_000L, exif = null)
+        photos.access = PhotoAccess.PARTIAL
+        photos.photos = listOf(selected) // all that "선택한 사진만" lets the app see
+        val p = processor()
+        now = END + DAY + 1
+
+        p.runOnce()
+
+        assertEquals(listOf(1L), photosOf(segment).map { it.mediaId })
+        assertFalse(extras(segment)!!.photoScanDone, "PARTIAL past 24 h is not done")
+        assertEquals(now, extras(segment)!!.photosScannedAt)
+        assertEquals(listOf(segment.id), store.segmentsNeedingWork(now).map { it.id })
+
+        // The rider allows all photos: the rest turn up, and only now is the scan done.
+        photos.access = PhotoAccess.FULL
+        photos.photos = listOf(selected, notSelected)
+        now += 60_000L
+        p.runOnce()
+
+        assertEquals(listOf(1L, 2L), photosOf(segment).map { it.mediaId })
+        assertTrue(extras(segment)!!.photoScanDone)
+    }
+
+    // ---- I3 / R14: FAILED is retried for 24 h from max(endedAt, hrFirstTriedAt) ----
+
+    @Test
+    fun aBacklogRideThatFailsOnItsFirstReadIsRetriedForADay() = runTest {
+        val segment = ride()
+        heartRate.reads = { _, _ -> HrRead.Failed }
+        val p = processor()
+        val firstTry = END + 3 * DAY // a V1.1.0 ride read for the first time after the upgrade
+        now = firstTry
+        p.runOnce()
+        assertEquals(HrStatus.FAILED, extras(segment)!!.hrStatus)
+        assertEquals(firstTry, extras(segment)!!.hrFirstTriedAt)
+        assertTrue(extras(segment)!!.photoScanDone && extras(segment)!!.simplifiedDone) // only heart rate is left
+
+        now = firstTry + DAY // the limit itself included
+        p.runOnce()
+        assertEquals(2, heartRate.calls.size)
+        assertEquals(HrStatus.FAILED, extras(segment)!!.hrStatus)
+        assertEquals(firstTry, extras(segment)!!.hrFirstTriedAt, "the window does not slide with each retry")
+
+        heartRate.reads = { _, _ -> HrRead.Samples(samples(), null) }
+        now = firstTry + DAY + 1 // given up
+        p.runOnce()
+        assertEquals(2, heartRate.calls.size)
+        assertEquals(HrStatus.FAILED, extras(segment)!!.hrStatus)
+        assertEquals(emptyList<RideSegment>(), store.segmentsNeedingWork(now))
+    }
+
+    @Test
+    fun aBacklogRideThatFailsOnceBecomesReadyOnTheNextPass() = runTest {
+        val segment = ride()
+        heartRate.reads = { _, _ -> HrRead.Failed }
+        val p = processor()
+        now = END + 3 * DAY
+        p.runOnce()
+
+        heartRate.reads = { _, _ -> HrRead.Samples(samples(), 30.0) }
+        now += 60_000L
+        p.runOnce()
+
+        assertEquals(HrStatus.READY, extras(segment)!!.hrStatus)
+        assertEquals(samples(), store.samples(segment.id))
+    }
+
+    // ---- I4: heart-rate access is checked once per pass; nothing is written when it cannot be read ----
+
+    /** Counts the access checks; [failWith] makes them throw. */
+    private inner class CountingHeartRate(var failWith: Exception? = null) : HeartRateSource by heartRate {
+        var availabilityChecks = 0
+        var permissionChecks = 0
+        override fun availability(): HealthAvailability {
+            availabilityChecks++
+            failWith?.let { throw it }
+            return heartRate.availability()
+        }
+        override suspend fun hasPermissions(): Boolean {
+            permissionChecks++
+            failWith?.let { throw it }
+            return heartRate.hasPermissions()
+        }
+    }
+
+    /** Store wrapper counting [saveExtras]. */
+    private inner class CountingStore : PostStore by store {
+        var extrasWrites = 0
+        override suspend fun saveExtras(extras: SegmentExtras) {
+            extrasWrites++
+            store.saveExtras(extras)
+        }
+    }
+
+    /** Three ended rides whose photos and route are done, so only their (PENDING) heart rate is left. */
+    private suspend fun threePendingRides(): List<RideSegment> = (0 until 3).map { i ->
+        ride(START + i * DAY, END + i * DAY).also {
+            store.saveExtras(SegmentExtras(it.id, photosScannedAt = 1L, photoScanDone = true, simplifiedDone = true))
+        }
+    }
+
+    @Test
+    fun withoutPermissionAPassChecksOnceAndWritesNothing() = runTest {
+        val rides = threePendingRides()
+        heartRate.permitted = false
+        val hr = CountingHeartRate()
+        val counting = CountingStore()
+        val before = store.extrasById.value
+        now = END + 5 * DAY
+
+        processor(postStore = counting, hrSource = hr).runOnce()
+
+        assertEquals(3, store.segmentsNeedingWork(now).size, "all three still need their heart rate")
+        assertEquals(1, hr.availabilityChecks)
+        assertEquals(1, hr.permissionChecks)
+        assertEquals(0, counting.extrasWrites)
+        assertEquals(emptyList<Pair<Long, Long>>(), heartRate.calls)
+        assertEquals(before, store.extrasById.value)
+        rides.forEach { assertEquals(HrStatus.PENDING, extras(it)!!.hrStatus) }
+
+        // Health Connect missing: checked once too (availability first, no permission IPC)
+        heartRate.permitted = true
+        heartRate.availability = HealthAvailability.NOT_INSTALLED
+        processor(postStore = counting, hrSource = hr).runOnce()
+        assertEquals(2, hr.availabilityChecks)
+        assertEquals(1, hr.permissionChecks)
+        assertEquals(0, counting.extrasWrites)
+    }
+
+    @Test
+    fun withPermissionAPassChecksOnceAndReadsEveryRide() = runTest {
+        val rides = threePendingRides()
+        heartRate.reads = { from, _ -> HrRead.Samples(samples(from), null) }
+        val hr = CountingHeartRate()
+        now = END + 5 * DAY
+
+        processor(hrSource = hr).runOnce()
+
+        assertEquals(1, hr.availabilityChecks)
+        assertEquals(1, hr.permissionChecks)
+        assertEquals(3, heartRate.calls.size)
+        rides.forEach { assertEquals(HrStatus.READY, extras(it)!!.hrStatus) }
+    }
+
+    @Test
+    fun aPassWithNothingToReadDoesNotCheckHeartRateAccess() = runTest {
+        val segment = ride()
+        store.saveExtras(SegmentExtras(segment.id, hrStatus = HrStatus.NONE)) // photos and route still to do
+        val hr = CountingHeartRate()
+        now = END + 60_000L
+
+        processor(hrSource = hr).runOnce()
+
+        assertTrue(extras(segment)!!.simplifiedDone)
+        assertEquals(0, hr.availabilityChecks + hr.permissionChecks)
+    }
+
+    @Test
+    fun anAccessCheckThatThrowsSkipsThePassNotFailed() = runTest {
+        val rides = threePendingRides()
+        val counting = CountingStore()
+        now = END + 5 * DAY
+
+        for (thrown in listOf(SecurityException("no binder"), IllegalStateException("HC died"))) {
+            val hr = CountingHeartRate(failWith = thrown)
+            processor(postStore = counting, hrSource = hr).runOnce()
+            assertEquals(1, hr.availabilityChecks)
+        }
+
+        // R8: an unreadable source is not a failed read: still PENDING, nothing written, read once allowed
+        rides.forEach { assertEquals(HrStatus.PENDING, extras(it)!!.hrStatus) }
+        assertEquals(0, counting.extrasWrites)
+        assertEquals(emptyList<Pair<Long, Long>>(), heartRate.calls)
+        assertEquals(2, warnings.size, "one warning per pass, not per ride")
+
+        heartRate.reads = { from, _ -> HrRead.Samples(samples(from), null) }
+        processor().runOnce()
+        rides.forEach { assertEquals(HrStatus.READY, extras(it)!!.hrStatus) }
+    }
+
+    @Test
+    fun aRefetchWhoseAccessCheckThrowsKeepsTheStatus() = runTest {
+        val segment = ride()
+        now = END + 60_000L
+        processor().runOnce()
+        assertEquals(HrStatus.PENDING, extras(segment)!!.hrStatus)
+
+        processor(hrSource = CountingHeartRate(failWith = SecurityException("no binder"))).refetchHeartRate(segment.id)
+
+        assertEquals(HrStatus.PENDING, extras(segment)!!.hrStatus)
+        assertEquals(1, heartRate.calls.size)
     }
 
     private companion object {

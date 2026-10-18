@@ -46,7 +46,8 @@ class SegmentGone(val segmentId: Long, cause: Throwable? = null) :
 interface PostStore {
     /**
      * 끝난 구간 중 할 일이 남은 것(최근 시작 순 — 업그레이드 뒤 첫 실행도 마지막 주행부터): extras 없음, !photoScanDone, !simplifiedDone,
-     * hrStatus == PENDING, 또는 hrStatus == FAILED이고 [now] <= endedAt + HrRetryPolicy.GIVE_UP_MS.
+     * hrStatus == PENDING, 또는 hrStatus == FAILED이고 [now] <= HrRetryPolicy.failedRetryUntil(endedAt, hrFirstTriedAt)
+     * (= max(endedAt, hrFirstTriedAt) + GIVE_UP_MS, 판정 R14).
      */
     suspend fun segmentsNeedingWork(now: Long): List<RideSegment>
     suspend fun extras(segmentId: Long): SegmentExtras?
@@ -60,6 +61,9 @@ interface PostStore {
     suspend fun upsertPhotos(segmentId: Long, photos: List<PlacedPhoto>)
     suspend fun setHidden(photoId: Long, hidden: Boolean)
     suspend fun deletePhotosByMediaId(mediaIds: Collection<Long>)
+
+    /** 그 구간의 사진 중 [mediaIds]만 지운다(다른 구간의 같은 사진은 그대로 — 판정 R13 정리). */
+    suspend fun deletePhotos(segmentId: Long, mediaIds: Collection<Long>)
 
     /** 그 구간의 심박 샘플을 모두 [samples]로 바꾼다. */
     suspend fun replaceSamples(segmentId: Long, samples: List<HeartRateSample>)

@@ -177,6 +177,47 @@ class RoomPostStoreTest {
         assertEquals(endedAt, store.segmentsNeedingWork(now = 11_000L).first().endedAt)
     }
 
+    /** 판정 R14: FAILED는 max(구간 끝, 처음 읽은 시각) + 24시간까지 목록에 남는다. */
+    @Test
+    fun failedIsListedForADayFromItsFirstRead() = runTest {
+        val trip = newTrip()
+        val endedAt = 10_000L
+        val day = HrRetryPolicy.GIVE_UP_MS
+        val backlog = segment(trip, 1_000L, endedAt) // 업그레이드 뒤 처음 읽다 실패한 오래된 구간
+        val recent = segment(trip, 2_000L, endedAt) // 끝나고 1분 뒤 처음 읽다 실패
+        val early = segment(trip, 3_000L, endedAt) // 처음 읽은 시각이 끝보다 앞(있을 수 없지만 끝이 기준)
+        val firstTry = endedAt + 3 * day
+        store.saveExtras(done(backlog, HrStatus.FAILED).copy(hrFirstTriedAt = firstTry, hrLastTriedAt = firstTry))
+        store.saveExtras(done(recent, HrStatus.FAILED).copy(hrFirstTriedAt = endedAt + 60_000L))
+        store.saveExtras(done(early, HrStatus.FAILED).copy(hrFirstTriedAt = endedAt - 5_000L))
+
+        assertEquals(listOf(early, recent, backlog), store.segmentsNeedingWork(now = endedAt + day).map { it.id })
+        assertEquals(listOf(recent, backlog), store.segmentsNeedingWork(now = endedAt + day + 1).map { it.id })
+        assertEquals(listOf(recent, backlog), store.segmentsNeedingWork(now = endedAt + 60_000L + day).map { it.id })
+        assertEquals(listOf(backlog), store.segmentsNeedingWork(now = endedAt + 60_000L + day + 1).map { it.id })
+        assertEquals(listOf(backlog), store.segmentsNeedingWork(now = firstTry + day).map { it.id }) // 한도 포함
+        assertEquals(emptyList<Long>(), store.segmentsNeedingWork(now = firstTry + day + 1).map { it.id })
+    }
+
+    /** 판정 R13 정리: 한 구간의 사진만 지우고, 다른 구간의 같은 사진은 남긴다. */
+    @Test
+    fun deletePhotosRemovesOnlyThatSegmentsRows() = runTest {
+        val trip = newTrip()
+        val a = segment(trip, 1_000L, 2_000L)
+        val b = segment(trip, 2_000L, 3_000L)
+        store.upsertPhotos(a, listOf(photo(1, 1_900L), photo(2, 2_100L)))
+        store.upsertPhotos(b, listOf(photo(1, 1_900L), photo(2, 2_100L), photo(3, 2_500L)))
+
+        store.deletePhotos(b, listOf(1L))
+        store.deletePhotos(a, listOf(2L))
+        store.deletePhotos(a, emptyList())
+        // 바인드 변수 한도(999)를 넘는 목록도
+        store.deletePhotos(b, (100L..2_100L).toList())
+
+        assertEquals(listOf(1L), store.observePhotos(listOf(a)).first().map { it.mediaId })
+        assertEquals(listOf(2L, 3L), store.observePhotos(listOf(b)).first().map { it.mediaId })
+    }
+
     @Test
     fun extrasSaveReplacesAndObserves() = runTest {
         val trip = newTrip()

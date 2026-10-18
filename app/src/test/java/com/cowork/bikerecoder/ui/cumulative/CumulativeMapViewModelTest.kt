@@ -109,11 +109,12 @@ class CumulativeMapViewModelTest {
     @Test
     fun drawsTheStoredSimplifiedRoutesNotTheTracks() = runTest(dispatcher) {
         // Each ride's track (4 points at 37.6°N) differs from its stored simplified route (2 points at 35/36°N): a
-        // map drawn from the tracks, or totals taken from the segments (2 km each), would not match.
+        // map drawn from the tracks would not match. The stored distances (1.5 + 3 = 4.5 km) differ from the
+        // segments' (2 + 2 = 4 km), so totals taken from the segments would not match either.
         val a = ride(startedAt = 1_000L, done = true)
         val b = ride(startedAt = 10_000L, done = true)
         val simplifiedA = entry(a, LocalDate.of(2026, 10, 17), distanceM = 1_500.0, lat = 35.0)
-        val simplifiedB = entry(b, LocalDate.of(2026, 10, 18), distanceM = 2_500.0, lat = 36.0)
+        val simplifiedB = entry(b, LocalDate.of(2026, 10, 18), distanceM = 3_000.0, lat = 36.0)
         val tracks = listOf(rides.points(a), rides.points(b)).map { track -> track.map { it.point } }
 
         val vm = viewModel()
@@ -123,7 +124,7 @@ class CumulativeMapViewModelTest {
         assertEquals(listOf(simplifiedA, simplifiedB), state.entries)
         assertEquals(listOf(simplifiedA.points, simplifiedB.points), state.lines)
         assertTrue(state.lines.flatten().none { p -> tracks.flatten().contains(p) }, "no track point is drawn")
-        assertEquals(4_000.0, state.totals.distanceM)
+        assertEquals(4_500.0, state.totals.distanceM)
         assertTrue(entryReads >= 1)
         // The view model has no RideStore; the pass it asked for had nothing to do, so no track was read at all.
         assertEquals(0, pointReads)

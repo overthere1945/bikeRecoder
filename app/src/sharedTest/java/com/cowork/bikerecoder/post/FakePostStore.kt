@@ -36,7 +36,7 @@ class FakePostStore(private val segments: suspend () -> List<RideSegment>) : Pos
             val endedAt = s.endedAt ?: return@filter false
             val e = extras[s.id] ?: return@filter true
             !e.photoScanDone || !e.simplifiedDone || e.hrStatus == HrStatus.PENDING ||
-                (e.hrStatus == HrStatus.FAILED && now <= endedAt + HrRetryPolicy.GIVE_UP_MS)
+                (e.hrStatus == HrStatus.FAILED && now <= HrRetryPolicy.failedRetryUntil(endedAt, e.hrFirstTriedAt))
         }.sortedWith(compareByDescending<RideSegment> { it.startedAt }.thenByDescending { it.id })
     }
 
@@ -70,6 +70,10 @@ class FakePostStore(private val segments: suspend () -> List<RideSegment>) : Pos
 
     override suspend fun deletePhotosByMediaId(mediaIds: Collection<Long>) {
         photos.update { all -> all.filterNot { it.mediaId in mediaIds } }
+    }
+
+    override suspend fun deletePhotos(segmentId: Long, mediaIds: Collection<Long>) {
+        photos.update { all -> all.filterNot { it.segmentId == segmentId && it.mediaId in mediaIds } }
     }
 
     override suspend fun replaceSamples(segmentId: Long, samples: List<HeartRateSample>) {

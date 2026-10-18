@@ -7,6 +7,7 @@ import com.cowork.bikerecoder.core.post.HeartRateSummary
 import com.cowork.bikerecoder.core.post.HrRead
 import com.cowork.bikerecoder.core.post.HrRetryPolicy
 import com.cowork.bikerecoder.core.post.HrStatus
+import com.cowork.bikerecoder.core.post.PhotoOwnership
 import com.cowork.bikerecoder.core.post.PhotoPlacement
 import com.cowork.bikerecoder.core.post.RouteSimplifier
 import com.cowork.bikerecoder.core.recording.RideSegment
@@ -110,7 +111,8 @@ class PostProcessor(
         try {
             val segment = rideStore.segment(segmentId) ?: return
             val endedAt = segment.endedAt ?: return
-            readHeartRate(segment, endedAt, clock())
+            val now = clock()
+            saveHeartRate(segment, endedAt, now, if (heartRateReadable()) readSource(segment, endedAt) else null)
         } catch (gone: SegmentGone) {
             // deleted meanwhile
         } catch (e: Exception) {
@@ -141,10 +143,13 @@ class PostProcessor(
         _running.value = true
         _busy.value = true
         try {
+            // Health Connect access, checked once per pass and only if some segment needs its heart rate (I4).
+            var readable: Boolean? = null
+            val canReadHeartRate: suspend () -> Boolean = { readable ?: heartRateReadable().also { readable = it } }
             for (segment in store.segmentsNeedingWork(clock())) {
                 val endedAt = segment.endedAt ?: continue
                 try {
-                    process(segment, endedAt)
+                    process(segment, endedAt, canReadHeartRate)
                 } catch (gone: SegmentGone) {
                     // deleted during the run: nothing left to do for it
                 } catch (e: Exception) {
@@ -162,8 +167,11 @@ class PostProcessor(
         }
     }
 
-    /** ①②③을 따로 한다. [SegmentGone]은 그 구간을 그만두게 위로 보낸다. */
-    private suspend fun process(segment: RideSegment, endedAt: Long) {
+    /**
+     * ①②③을 따로 한다. [SegmentGone]은 그 구간을 그만두게 위로 보낸다. [canReadHeartRate]가 false면(판정 R8) 심박은
+     * 읽지도 쓰지도 않는다 — 상태는 PENDING 그대로, 바뀐 것이 없으니 쓸 것도 없다.
+     */
+    private suspend fun process(segment: RideSegment, endedAt: Long, canReadHeartRate: suspend () -> Boolean) {
         val now = clock()
         val extras = store.extras(segment.id) ?: SegmentExtras(segment.id)
         var track: List<TrackPoint>? = null
@@ -171,11 +179,12 @@ class PostProcessor(
 
         if (!extras.photoScanDone) {
             step("Photo scan", segment) {
-                if (photos.access() != PhotoAccess.NONE) scanPhotos(segment, endedAt, now, points)
+                val access = photos.access()
+                if (access != PhotoAccess.NONE) scanPhotos(segment, endedAt, now, access, points)
             }
         }
-        if (HrRetryPolicy.shouldTry(extras.hrStatus, endedAt, now)) {
-            step("Heart rate read", segment) { readHeartRate(segment, endedAt, now) }
+        if (HrRetryPolicy.shouldTry(extras.hrStatus, endedAt, extras.hrFirstTriedAt, now) && canReadHeartRate()) {
+            step("Heart rate read", segment) { saveHeartRate(segment, endedAt, now, readSource(segment, endedAt)) }
         }
         if (!extras.simplifiedDone) {
             step("Route simplification", segment) { simplify(segment, points()) }
@@ -193,34 +202,65 @@ class PostProcessor(
         }
     }
 
-    /** 실패하면 [SegmentExtras.photoScanDone]은 그대로(다음 실행 때 조용히 다시 찾는다 — 판정 P2). */
-    private suspend fun scanPhotos(segment: RideSegment, endedAt: Long, now: Long, points: suspend () -> List<TrackPoint>) {
+    /**
+     * 실패하면 [SegmentExtras.photoScanDone]은 그대로(다음 실행 때 조용히 다시 찾는다 — 판정 P2). 끝내는 것은 모든 사진을
+     * 볼 수 있을 때([PhotoAccess.FULL])뿐(판정 R15): "선택한 사진만"이면 나중에 모두 허용했을 때 나머지도 찾는다.
+     *
+     * 한 여행 안에서 사진은 주인 구간 하나에만 붙는다(판정 R13, [PhotoOwnership]): 형제 구간이 주인인 사진은 건너뛰고,
+     * 전에 이 구간에 저장했지만 이제 형제가 주인인 사진(R13 이전 빌드의 중복, 또는 그 뒤에 시작한 구간)은 지운다.
+     */
+    private suspend fun scanPhotos(
+        segment: RideSegment,
+        endedAt: Long,
+        now: Long,
+        access: PhotoAccess,
+        points: suspend () -> List<TrackPoint>,
+    ) {
+        val trip = rideStore.segments(segment.tripId)
+        if (trip.none { it.id == segment.id }) throw SegmentGone(segment.id)
+        val owns = { takenAt: Long -> PhotoOwnership.ownerOf(takenAt, trip) == segment.id }
+
+        val disowned = store.observePhotos(listOf(segment.id)).first().filterNot { owns(it.takenAt) }
+        store.deletePhotos(segment.id, disowned.map { it.mediaId })
+
         val candidates = photos.photos(PhotoPlacement.windowStart(segment.startedAt), PhotoPlacement.windowEnd(endedAt))
+            .filter { owns(it.takenAt) }
         if (candidates.isNotEmpty()) {
             val track = points()
             store.upsertPhotos(segment.id, candidates.mapNotNull { PhotoPlacement.place(it, track) })
         }
         updateExtras(segment.id) {
-            it.copy(photosScannedAt = now, photoScanDone = now > endedAt + PHOTO_RESCAN_MS)
+            it.copy(photosScannedAt = now, photoScanDone = access == PhotoAccess.FULL && now > endedAt + PHOTO_RESCAN_MS)
         }
     }
 
     /**
-     * Health Connect를 쓸 수 없거나 심박 권한이 없으면 읽지 않고 상태를 그대로 둔다(hrLastTriedAt만 — 판정 R8):
-     * 권한을 나중에 주면 오래된 PENDING 구간도 그때 READY·NONE이 된다. FAILED는 쓸 수 있고 허용된 출처의 실제 읽기 실패뿐.
+     * 심박을 읽을 수 있는가: Health Connect를 쓸 수 있고 심박 권한이 있다. 확인이 예외를 던지면 읽을 수 없는 것으로
+     * 본다(판정 R8 — FAILED가 아니라 이번에는 건너뜀).
      */
-    private suspend fun readHeartRate(segment: RideSegment, endedAt: Long, now: Long) {
-        val read: HrRead? = try {
-            if (heartRate.availability() != HealthAvailability.AVAILABLE || !heartRate.hasPermissions()) {
-                null
-            } else {
-                heartRate.read(segment.startedAt, endedAt)
-            }
-        } catch (e: Exception) {
-            currentCoroutineContext().ensureActive()
-            warnLog.warn("Heart rate read failed for segment ${segment.id}", e)
-            HrRead.Failed
-        }
+    private suspend fun heartRateReadable(): Boolean = try {
+        heartRate.availability() == HealthAvailability.AVAILABLE && heartRate.hasPermissions()
+    } catch (e: Exception) {
+        currentCoroutineContext().ensureActive()
+        warnLog.warn("Could not check Health Connect access", e)
+        false
+    }
+
+    /** 허용된 출처에서 한 번 읽는다. 예외는 실제 읽기 실패([HrRead.Failed]). */
+    private suspend fun readSource(segment: RideSegment, endedAt: Long): HrRead = try {
+        heartRate.read(segment.startedAt, endedAt)
+    } catch (e: Exception) {
+        currentCoroutineContext().ensureActive()
+        warnLog.warn("Heart rate read failed for segment ${segment.id}", e)
+        HrRead.Failed
+    }
+
+    /**
+     * [read]를 저장한다. null은 읽을 수 없었다는 뜻([다시 가져오기]에서만): 상태는 그대로 두고 hrLastTriedAt만 —
+     * 판정 R8. 권한을 나중에 주면 오래된 PENDING 구간도 그때 READY·NONE이 된다. FAILED는 쓸 수 있고 허용된 출처의
+     * 실제 읽기 실패뿐.
+     */
+    private suspend fun saveHeartRate(segment: RideSegment, endedAt: Long, now: Long, read: HrRead?) {
         // Not cancellable once begun: new samples are never left stored under the old summary and state.
         writeLock.withLock {
             withContext(NonCancellable) {

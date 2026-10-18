@@ -175,14 +175,18 @@ interface FavoriteDao {
 
 @Dao
 abstract class PostDao {
-    /** extras가 없거나 할 일이 남은 끝난 구간, 최근 시작 순. FAILED는 [failedUntil] 한도(구간 끝 + 이 값) 안일 때만. */
+    /**
+     * extras가 없거나 할 일이 남은 끝난 구간, 최근 시작 순. FAILED는 max(구간 끝, 처음 읽은 시각) + [giveUpMs] 안일 때만
+     * (판정 R14, `HrRetryPolicy.failedRetryUntil`과 같은 식).
+     */
     @Query(
         "SELECT s.* FROM ride_segment s LEFT JOIN segment_extras e ON e.segmentId = s.id " +
             "WHERE s.endedAt IS NOT NULL AND (e.segmentId IS NULL OR e.photoScanDone = 0 OR e.simplifiedDone = 0 " +
-            "OR e.hrStatus = 'PENDING' OR (e.hrStatus = 'FAILED' AND :now <= s.endedAt + :failedUntil)) " +
+            "OR e.hrStatus = 'PENDING' OR (e.hrStatus = 'FAILED' " +
+            "AND :now <= MAX(s.endedAt, COALESCE(e.hrFirstTriedAt, s.endedAt)) + :giveUpMs)) " +
             "ORDER BY s.startedAt DESC, s.id DESC",
     )
-    abstract suspend fun segmentsNeedingWork(now: Long, failedUntil: Long): List<RideSegmentEntity>
+    abstract suspend fun segmentsNeedingWork(now: Long, giveUpMs: Long): List<RideSegmentEntity>
 
     @Query("SELECT * FROM segment_extras WHERE segmentId = :segmentId")
     abstract suspend fun extras(segmentId: Long): SegmentExtrasEntity?
@@ -205,6 +209,9 @@ abstract class PostDao {
 
     @Query("DELETE FROM ride_photo WHERE mediaId IN (:mediaIds)")
     abstract suspend fun deletePhotosByMediaId(mediaIds: List<Long>)
+
+    @Query("DELETE FROM ride_photo WHERE segmentId = :segmentId AND mediaId IN (:mediaIds)")
+    abstract suspend fun deletePhotos(segmentId: Long, mediaIds: List<Long>)
 
     @Query("DELETE FROM heart_rate_sample WHERE segmentId = :segmentId")
     abstract suspend fun deleteSamples(segmentId: Long)

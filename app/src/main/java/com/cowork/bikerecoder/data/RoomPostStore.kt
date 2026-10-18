@@ -62,6 +62,13 @@ class RoomPostStore(
         }
     }
 
+    override suspend fun deletePhotos(segmentId: Long, mediaIds: Collection<Long>) {
+        if (mediaIds.isEmpty()) return
+        db.withTransaction {
+            mediaIds.distinct().chunked(MAX_BIND_ARGS).forEach { dao.deletePhotos(segmentId, it) }
+        }
+    }
+
     override suspend fun replaceSamples(segmentId: Long, samples: List<HeartRateSample>) =
         writing(segmentId) { dao.replaceSamples(segmentId, samples.map { it.toEntity(segmentId) }) }
 

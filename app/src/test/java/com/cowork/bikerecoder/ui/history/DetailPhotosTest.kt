@@ -83,13 +83,15 @@ class DetailPhotosTest {
     }
 
     /**
-     * Puts photos [mediaIds] on [segmentId], taken in that order, and keeps them in the gallery. The gallery copies are
-     * dated far from every ride, so a post-processing pass never places them again.
+     * Puts photos [mediaIds] on [segmentId], taken in that order inside it (so the segment owns them, ruling R13, and a
+     * pass keeps them there), and keeps them in the gallery. The gallery copies are dated far from every ride, so a
+     * post-processing pass never places them again.
      */
     private suspend fun photos(segmentId: Long, vararg mediaIds: Long) {
+        val start = rides.segment(segmentId)!!.startedAt
         store.upsertPhotos(
             segmentId,
-            mediaIds.mapIndexed { i, m -> PlacedPhoto(m, 1_000L * m + i, GeoPoint(37.5, 127.0), PhotoPositionSource.TRACK) },
+            mediaIds.map { m -> PlacedPhoto(m, start + 10L * m, GeoPoint(37.5, 127.0), PhotoPositionSource.TRACK) },
         )
         gallery.photos = gallery.photos + mediaIds.map { PhotoCandidate(it, FAR_AWAY + it, exif = null) }
     }
@@ -149,7 +151,7 @@ class DetailPhotosTest {
     @Test
     fun tripDetailShowsThePhotosOfEveryDay() = runTest(dispatcher) {
         val a = segment(startedAt = 100, date = day1)
-        val b = segment(startedAt = 200, date = day2)
+        val b = segment(startedAt = 10_000, date = day2)
         photos(a, 1)
         photos(b, 2, 3)
 
@@ -166,7 +168,7 @@ class DetailPhotosTest {
     @Test
     fun tripDetailPrunesAndRequestsOnceEvenWhenRefreshed() = runTest(dispatcher) {
         val a = segment(startedAt = 100, date = day1)
-        val b = segment(startedAt = 200, date = day2)
+        val b = segment(startedAt = 10_000, date = day2)
         photos(a, 1)
         photos(b, 2)
         gallery.photos = gallery.photos.filter { it.mediaId == 2L }
@@ -186,7 +188,7 @@ class DetailPhotosTest {
     @Test
     fun tripDetailMapHasTheSegmentsInOrderAsSeparateLines() = runTest(dispatcher) {
         val a = segment(startedAt = 100, date = day1, lat = 37.0)
-        val b = segment(startedAt = 200, date = day2, lat = 38.0)
+        val b = segment(startedAt = 10_000, date = day2, lat = 38.0)
 
         val vm = tripDetail()
         advanceUntilIdle()

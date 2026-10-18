@@ -45,7 +45,7 @@ data class SummaryExtrasState(
  * pass (spec §1.1 ①), so its photos and heart rate come in while the summary shows.
  *
  * While the summary is also really on screen ([onScreen]), its heart rate is read again every minute, at most
- * [REFETCH_TIMES] times per segment (spec §3.2: "1분마다(최대 15분)"), until it is READY. Closing the summary or
+ * [REFETCH_TIMES] times per segment (spec §3.2: "1분마다(최대 15분)"), until it is READY and detailed. Closing the summary or
  * leaving the screen stops that; coming back goes on with the reads left, at the time the next one was due.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -105,15 +105,20 @@ class SummaryExtras(
             val due = nextDue.getOrPut(id) { postProcessor.clock() + REFETCH_EVERY_MS }
             // A clock set back or forward never waits longer than one period.
             delay((due - postProcessor.clock()).coerceIn(0L, REFETCH_EVERY_MS))
-            if (isReady(id)) return
+            if (isDetailedReady(id)) return
             refetched[id] = (refetched[id] ?: 0) + 1
             nextDue[id] = postProcessor.clock() + REFETCH_EVERY_MS
             postProcessor.refetchHeartRate(id)
         }
     }
 
-    private suspend fun isReady(id: Long): Boolean = try {
-        postStore.extras(id)?.hrStatus == HrStatus.READY
+    /**
+     * READY from a few all-day samples (not [SegmentExtras.hrDetailed]) is not the end: the watch workout's detailed
+     * heart rate can still arrive minutes later (I5), and [PostProcessor.refetchHeartRate] keeps the stored heart rate
+     * when a read brings nothing (R7).
+     */
+    private suspend fun isDetailedReady(id: Long): Boolean = try {
+        postStore.extras(id)?.let { it.hrStatus == HrStatus.READY && it.hrDetailed } == true
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
