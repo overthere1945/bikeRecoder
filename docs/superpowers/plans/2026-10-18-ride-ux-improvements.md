@@ -4,7 +4,7 @@
 
 **Goal:** 기록 코어 V1.1.0 위에 즐겨찾기(집·회사·직접 입력 칩), 검색 결과 키보드 여백, 기록 중 안내 화면 버튼([안내 취소 · 기록 계속]), 기록 중 새 목적지 안내(같은 여행에 붙이기, 이어서/나누기/묻기 설정), 경로 계획 화면 길게 누르기를 더한다.
 
-**Architecture:** 즐겨찾기 규칙은 새 패키지 `favorite`의 `FavoriteRepository`(저장소 인터페이스 위, JVM 테스트)에 두고 Room v3 `favorite_place`로 저장한다. 길게 누르기·주소 조회는 `ui.common.PlaceLookup` 하나를 지도 메인(`MainViewModel`)과 경로 계획(`PlanViewModel`)이 함께 쓴다. 기록 중 새 안내는 `TripStartViewModel`이 기록 중인 여행에 `changeStops` 후 그 여행으로 안내를 시작하고, "새 구간"은 `RideController.splitSegment()`가 같은 위치 흐름 위에서 구간을 닫고 바로 새 구간을 연다. 음성과 같은 문구의 화면 표시는 `RideController.notice`(한 번 보이는 알림) 하나로 기록·안내 화면이 나눠 받는다.
+**Architecture:** 즐겨찾기 규칙은 새 패키지 `favorite`의 `FavoriteRepository`(저장소 인터페이스 위, JVM 테스트)에 두고 Room v3 `favorite_place`로 저장한다. 길게 누르기·주소 조회는 `ui.common.PlaceLookup` 하나를 지도 메인(`MainViewModel`)과 경로 계획(`PlanViewModel`)이 함께 쓴다. 기록 중 새 안내는 `TripStartViewModel`이 기록 중인 여행에 `changeStops` 후 그 여행으로 안내를 시작하고, "새 구간"은 `RideController.splitSegment()`가 같은 위치 흐름 위에서 구간을 닫고 바로 새 구간을 연다. 기록 중에 시작한 안내가 목적지에 도착하면 `NavigationController`가 안내만 끝낸다(판정 U1). 음성과 같은 문구의 화면 표시는 `RideController.notice`(`ScreenNotice`, 한 번 보이는 알림) 하나로 기록·안내 화면이 나눠 받는다.
 
 **Tech Stack:** 기존과 동일 — Kotlin 2.4.20, AGP 9.4.1, Compose(BOM 2026.09.00), MapLibre 13.6.1, Room 2.8.5(+ room-testing), DataStore 1.2.1, coroutines 1.11.0, JUnit 5(JVM) / AndroidX Test + Compose UI test(기기, JUnit4). 새 외부 라이브러리 없음.
 
@@ -15,16 +15,18 @@
 - 버전은 그대로 `1.1.0`(versionCode 10100, debug `1.1.0-dev`, 화면 `V1.1.0`). 이 작업은 V1.1.0에 포함된다
 - 패키지: 신규 `com.cowork.bikerecoder.favorite`(모델·규칙·저장소 인터페이스), `ui.favorite`(칩·대화상자·뷰모델). 공통 부품은 `ui.common`. 기존 패키지 구조 유지
 - minSdk 30, targetSdk/compileSdk 37, JVM 17, MapLibre는 `AndroidView`로만·메인 스레드에서만, 의존성 주입 라이브러리 금지(`AppContainer` 수동 구성), 차트 라이브러리 금지
-- 모든 사용자 노출 문구는 한국어, 스펙 문구 그대로: "🏠 집" / "🏢 회사" / "★ {이름}" / "즐겨찾기에 저장" / "즐겨찾기에서 삭제할까요?" / "기존 집을 이 장소로 바꿀까요?" / "같은 이름의 즐겨찾기가 있습니다" / "즐겨찾기는 20개까지 저장할 수 있습니다" / "이름 바꾸기" / "삭제" / "직접 입력" / "안내 취소 · 기록 계속" / "주행 종료" / "안내를 마칩니다. 기록은 계속됩니다" / "목적지 정하기" / "안내를 새로 시작할 때 기록" / "자동으로 이어서 기록" / "자동으로 새 구간 나누기" / "매번 물어보기" / "기록을 어떻게 할까요?" / "이어서 기록" / "새 구간으로 나누기" / "취소" / "새 구간으로 기록을 시작합니다" / "경유지로 추가" / "목적지로 설정" / "주소를 확인하는 중…"
+- 모든 사용자 노출 문구는 한국어, 스펙 문구 그대로: "🏠 집" / "🏢 회사" / "★ {이름}" / "즐겨찾기에 저장" / "즐겨찾기에서 삭제할까요?" / "기존 집을 이 장소로 바꿀까요?" / "같은 이름의 즐겨찾기가 있습니다" / "즐겨찾기는 20개까지 저장할 수 있습니다" / "이름 바꾸기" / "삭제" / "직접 입력" / "안내 취소 · 기록 계속" / "주행 종료" / "안내를 마칩니다. 기록은 계속됩니다" / "목적지 정하기" / "안내를 새로 시작할 때 기록" / "자동으로 이어서 기록" / "자동으로 새 구간 나누기" / "매번 물어보기" / "기록을 어떻게 할까요?" / "이어서 기록" / "새 구간으로 나누기" / "취소" / "새 구간으로 기록을 시작합니다" / "경유지로 추가" / "목적지로 설정" / "주소를 확인하는 중…" / "목적지에 도착했습니다"(U1 화면 문구, 기존 `KoreanPhrases.arrivedDestination`)
 - 수치(스펙 §1): 직접 입력 이름 1~20자(앞뒤 공백 제외), 즐겨찾기 최대 20개(집·회사 포함), 집·회사 각 1개, 정렬 집 → 회사 → 직접 입력(생성 순). 스낵바 약 4초 = `SnackbarDuration.Short`
 - 스레드(V1.0.0 R12, 기록 코어): `RideController`·`NavigationController`의 공개 메서드와 세션은 `AppContainer.rideScope`(`Dispatchers.Main.immediate`) 한 스레드에서만. 구간 나누기의 위치 다리(bridge) 수집도 그 스코프에서. GPS 감시는 tick 시각만(R11)
 - 기록 코어 판정 유지: P1~P4(재기준·터널·배너, closeInterrupted, 자정 구간, `replay = 1`), F1(음소거는 안내 실행 하나의 것 — 안내가 끝나면 풀림), F2(안내 숫자 쪽의 기록 조작)
+- 이번 판정(사전 점검 후 확정): **U1** 기록 중에 시작한 안내(시작할 때 이미 기록이 돌고 있던 안내)가 목적지에 도착하면 안내만 끝난다 — 기록은 계속, 여행은 ACTIVE 그대로, 음성과 화면 문구 "목적지에 도착했습니다". 안내가 먼저 시작해 기록이 따라 시작한 경우는 V1.1 규칙 그대로(도착하면 둘 다 끝나고 여행 완료). **U2** `endForAnotherTrip`은 질문 대화상자가 열린 사이에 시작된 기록에만 쓰이는 안전망. **U3** connected 테스트는 `R5CT43TFS9A`에서만, `R3CY903ZYQV`에는 절대 돌리지 않는다. **U4** 집·회사 칩 메뉴는 [삭제]만, 직접 입력 칩은 [이름 바꾸기] [삭제](스펙 §1.1 수정됨)
+- 새 화면 알림 클래스 이름은 `ScreenNotice`(기존 `nav.RideNotice(title, text)` 알림 내용과 헷갈리지 않게)
 - Room: DB 버전 3, `exportSchema = true`, `autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)]`(2→3은 테이블 추가만), 빌드가 만드는 `app/schemas/com.cowork.bikerecoder.data.AppDatabase/3.json`을 커밋한다
 - 설정 기본값: `recordingOnNewGuidance = GuidanceRecording.ASK`("매번 물어보기"). 기존 `autoStartRecordingWithNavigation = true`, `autoPauseEnabled = true` 그대로
 - 테스트: JVM은 JUnit5(`org.junit.jupiter`), 기기는 JUnit4 + `androidx.compose.ui.test.junit4.v2.createComposeRule`(IME 테스트만 `createAndroidComposeRule<ComponentActivity>()`). core `./gradlew :core:test --tests '<FQCN>'`, app JVM `./gradlew :app:testDebugUnitTest --tests '<FQCN>'`
-- 기기 테스트(사용자 허락, 2026-10-18): 먼저 `adb devices`. **`connectedDebugAndroidTest`는 끝나면 앱을 지워 그 휴대폰의 주행 기록이 사라지므로 S22 Ultra `R5CT43TFS9A`에서만 실행한다**: `ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=<FQCN>`(한 번에 클래스 하나 — 쉼표 목록은 첫 클래스만 돈다). S25 Ultra `R3CY903ZYQV`(사용자의 실제 기록)에는 `ANDROID_SERIAL=R3CY903ZYQV ./gradlew :app:installDebug`만 허용. `R5CT43TFS9A`가 없으면 `./gradlew :app:assembleDebug :app:assembleDebugAndroidTest`로 컴파일만 확인하고 기기 실행을 "기기 검증 대기"로 남긴다. Compose UI 테스트는 휴대폰 잠금을 푼 상태에서, 화면 밖일 수 있는 항목은 `performScrollTo()` 뒤에 확인한다. AVD를 만들지 않는다
+- 기기 테스트(사용자 허락, 2026-10-18): 먼저 `adb devices`. **`connectedDebugAndroidTest`는 끝나면 앱을 지워 그 휴대폰의 주행 기록이 사라지므로 S22 Ultra `R5CT43TFS9A`에서만 실행한다**: `ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=<FQCN>`(한 번에 클래스 하나 — 쉼표 목록은 첫 클래스만 돈다). S25 Ultra `R3CY903ZYQV`(사용자의 실제 기록)에는 `ANDROID_SERIAL=R3CY903ZYQV ./gradlew :app:installDebug`만 허용. 각 Task의 기기 단계는 `ANDROID_SERIAL=R5CT43TFS9A`를 붙인 전체 명령을 그대로 쓴다(시리얼 없이 돌리면 연결된 모든 휴대폰에서 돌고 앱을 지운다). `R5CT43TFS9A`가 없으면 `./gradlew :app:assembleDebug :app:assembleDebugAndroidTest`로 컴파일만 확인하고 기기 실행을 "기기 검증 대기"로 남긴다. Compose UI 테스트는 휴대폰 잠금을 푼 상태에서, 화면 밖일 수 있는 항목은 `performScrollTo()` 뒤에 확인한다. AVD를 만들지 않는다
 - 기존 테스트는 모두 그대로 통과해야 한다. 동작이 의도적으로 바뀌어 고치는 테스트는 그 Task가 이름을 밝힌다(Task 7의 `TripStartViewModelTest` 6개뿐)
-- 커밋 끝에 `Co-Authored-By:` 트레일러로 커밋을 쓴 모델을 밝힌다(R10)
+- 커밋 끝에 `Co-Authored-By:` 트레일러로 커밋을 쓴 모델을 밝힌다(R10). 각 Task의 Commit 단계는 `git commit -m "<제목>" -m "Co-Authored-By: <커밋을 쓴 모델> <noreply@anthropic.com>"` 형식이다
 
 ## Review Focus
 
@@ -32,7 +34,9 @@
 2. **나누는 동안 위치를 잃거나 GPS를 다시 켬** — 공유 위치 흐름은 구독자가 0이 되면 위쪽을 멈추고 마지막 위치도 버린다(`replayExpirationMillis = 0`). 구간을 닫고 새로 여는 동안(DB 쓰기) 받은 위치는 새 구간에 들어가야 하고 위쪽 구독은 한 번뿐이어야 한다. → Task 6 `splitKeepsTheFixesThatArriveWhileTheSegmentsChange`, `splitKeepsTheLocationStreamSubscribed`.
 3. **나누는 동안 잠깐 Idle/Finished가 보임** — 주행 서비스는 "아무것도 안 달림"이면 바로 멈추고, 메인 화면은 Finished를 보면 요약 화면을 연다. 나누기는 Active → Starting → Active로만 바뀌어야 한다. → Task 6 `splitNeverShowsASummaryOrIdle`.
 4. **[안내 취소 · 기록 계속]의 화면 문구를 안내 화면이 먼저 삼킴** — 안내가 Idle이 된 뒤 기록 화면으로 넘어가기 전에 안내 화면이 알림을 "보였음"으로 처리하면 문구가 사라진다. 안내 화면은 안내가 Starting/Active일 때만 알림을 받는다. → Task 8 `guidanceScreenTakesNoticesOnlyWhileGuiding`.
-5. **같은 여행을 안내하는 중에 다시 [안내 시작]** — `NavigationController.begin`은 같은 여행이 이미 안내 중이면 아무것도 하지 않아 새 목적지가 조용히 무시된다. 붙이기 전에 그 여행의 안내를 닫아야 한다. → Task 7 `attachingClosesAGuidanceOfThatTripFirst`.
+5. **기록 중에 붙인 안내가 목적지에 도착(U1)** — 지금은 도착하면 여행을 완료하고 `Finished`를 내보내, 기록 컨트롤러가 그 여행의 기록을 멈추거나 안내 화면이 "기록을 저장하는 중…"에 머문다. 시작할 때 이미 기록이 돌던 안내는 도착해도 경유지만 방문 처리하고 완료하지 않고 `Finished` 없이 Idle로 가며, 기록은 Active·여행은 ACTIVE·화면 문구 "목적지에 도착했습니다". → Task 6 `arrivalOfAGuidanceStartedWhileRecordingEndsOnlyTheGuidance`(NavigationControllerTest), `reGuideArrivalEndsOnlyTheGuidanceAndKeepsRecording`(RideNavigationTest).
+
+(같은 여행을 안내하는 중에 다시 [안내 시작]하면 `begin`이 아무것도 하지 않아 새 목적지가 무시되는 문제는 Task 7 `attachingClosesAGuidanceOfThatTripFirst`가 막는다.)
 
 ---
 
@@ -46,8 +50,10 @@ app/src/main/java/com/cowork/bikerecoder/
   data/Entities.kt, Daos.kt, AppDatabase.kt (수정)  data/RoomFavoriteStore.kt (신규)
   data/SettingsRepository.kt         (수정) GuidanceRecording, recordingOnNewGuidance
   AppContainer.kt                    (수정) favorites
-  ride/RideNotice.kt (신규), ride/RideControls.kt, ride/RideController.kt (수정)
+  ride/ScreenNotice.kt (신규), ride/RideControls.kt, ride/RideController.kt (수정)
+  nav/NavigationController.kt        (수정) U1 도착, guidingTripId
   ui/common/PlaceLookup.kt (신규)    PressedPlace(ui.main에서 옮김), PlaceLookup, PlaceSearch.addressOrNull, PressedPlaceSheet
+  ui/common/NoticeSnackbarHost.kt (신규)
   ui/common/PlaceActionSheet.kt      (수정) [즐겨찾기에 저장]
   ui/favorite/{FavoritesViewModel,FavoriteChips,FavoriteDialogs}.kt (신규)
   ui/main/{MainScreen,MainViewModel}.kt, ui/search/SearchScreen.kt, ui/plan/{PlanMap,PlanScreen,PlanViewModel}.kt (수정)
@@ -58,7 +64,9 @@ app/schemas/com.cowork.bikerecoder.data.AppDatabase/3.json (빌드가 생성, �
 app/src/test/.../favorite/{FakeFavoriteStore,FavoriteRepositoryTest}.kt, data/FavoriteMappingsTest.kt,
   ui/common/PlaceLookupTest.kt, ui/favorite/FavoritesViewModelTest.kt, ui/navigate/GuidanceButtonsTest.kt (신규)
 app/src/androidTest/.../data/RoomFavoriteStoreTest.kt, ui/favorite/{FavoriteChipsTest,FavoriteDialogsTest}.kt,
-  ui/search/SearchScreenTest.kt, ui/navigate/GuidanceButtonRowTest.kt, ui/trip/TripStartDialogsTest.kt (신규)
+  ui/search/SearchScreenTest.kt, ui/navigate/GuidanceButtonRowTest.kt, ui/trip/TripStartDialogsTest.kt,
+  ui/common/NoticeSnackbarHostTest.kt (신규)
+app/src/test/.../nav/NavigationControllerTest.kt, ride/{RideControllerTest,RideNavigationTest,RideTestDoubles}.kt (수정)
 docs/verification/recording-field-test.md, CHANGELOG.md (수정)
 ```
 
@@ -128,7 +136,8 @@ class FavoriteRepository(private val store: FavoriteStore, private val clock: ()
   - CUSTOM: 이름은 `trim()`. 길이가 1..20이 아니면 `Rejected(MSG_NAME_LENGTH)`(결정: 스펙에 문구 없음) → 다른 CUSTOM과 같은 이름이면 `Rejected(MSG_DUPLICATE)`(중복 검사는 직접 입력끼리만 — 스펙 그대로) → 개수 ≥ 20이면 `Rejected(MSG_LIMIT)` → 넣는다. 검사 순서는 이대로.
   - rename: 같은 규칙(자기 자신은 중복 검사에서 뺀다). 이름이 그대로면 쓰지 않고 Saved.
   - save·rename·delete는 `Mutex` 하나로 차례로 실행한다(두 번 누른 집 저장이 집 두 개를 만들지 않게).
-- `FakeFavoriteStore`: `MutableStateFlow<List<Favorite>>` 기반, `var failWrites = false`(true면 insert/update/delete가 `IOException`).
+- `FakeFavoriteStore`: `MutableStateFlow<List<Favorite>>` 기반, `var failWrites = false`(true면 insert/update/delete가 `IOException`). `all()`과 `insert()`는 값을 읽거나 쓰기 전에 `yield()`로 한 번 양보한다 — 그래야 잠금 없는 구현에서 동시 저장 테스트가 실제로 집 두 개를 만든다(잠금을 지우면 `concurrentHomeSavesKeepOneHome`이 실패하는지 한 번 확인한다).
+- rename은 CUSTOM 전용이다(판정 U4: 집·회사 메뉴에는 [이름 바꾸기]가 없다).
 
 - [ ] **Step 1: 실패하는 테스트** (`p = FavoritePlace("스타벅스 역삼점", GeoPoint(37.50, 127.03), "서울 강남구 역삼동")`, clock은 호출마다 1씩 증가)
 
@@ -142,13 +151,13 @@ class FavoriteRepository(private val store: FavoriteStore, private val clock: ()
 @Test fun chipLabels()                     // "🏠 집", "🏢 회사", "★ 카페"
 @Test fun renameKeepsTheRules()            // "A","B" 있을 때 B→"A" Rejected(MSG_DUPLICATE); B→"B" Saved(쓰기 없음); B→"C" 이름 C
 @Test fun deleteRemoves()
-@Test fun concurrentHomeSavesKeepOneHome() // 같은 테스트 스코프에서 save(HOME) 두 개를 launch → 하나 Saved, 하나 ConfirmReplace, HOME 1개
+@Test fun concurrentHomeSavesKeepOneHome() // 같은 테스트 스코프에서 save(HOME) 두 개를 launch(가짜가 yield로 끼어들게 함) → 하나 Saved, 하나 ConfirmReplace, HOME 1개
 ```
 
 - [ ] **Step 2: 실패 확인** — `./gradlew :app:testDebugUnitTest --tests 'com.cowork.bikerecoder.favorite.FavoriteRepositoryTest'` → FAIL(미정의)
 - [ ] **Step 3: 구현** — 위 시그니처와 규칙대로 `favorite/Favorite.kt`.
 - [ ] **Step 4: 통과 확인** — 같은 명령 → PASS
-- [ ] **Step 5: Commit** — `git commit -m "app: favorite place rules"`
+- [ ] **Step 5: Commit** — `git commit -m "app: favorite place rules" -m "Co-Authored-By: <모델> <noreply@anthropic.com>"`
 
 ---
 
@@ -198,8 +207,11 @@ val favorites: FavoriteRepository = FavoriteRepository(RoomFavoriteStore(db), cl
 
 - [ ] **Step 2: 실패 확인** — `./gradlew :app:testDebugUnitTest --tests 'com.cowork.bikerecoder.data.FavoriteMappingsTest'` → FAIL
 - [ ] **Step 3: 구현** — 엔티티·DAO·매핑·저장소, DB v3. `./gradlew :app:assembleDebug`로 `3.json` 생성 확인(`git status`에 새 파일).
-- [ ] **Step 4: 통과 확인** — `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest` → BUILD SUCCESSFUL(기존 테스트 그대로); 기기(R5CT43TFS9A만) `…class=com.cowork.bikerecoder.data.RideDatabaseMigrationTest`, `…class=com.cowork.bikerecoder.data.RoomFavoriteStoreTest` → PASS(또는 기기 검증 대기)
-- [ ] **Step 5: Commit** — `git add app/schemas/com.cowork.bikerecoder.data.AppDatabase/3.json …` 후 `git commit -m "data: favorite_place table, database v3"`
+- [ ] **Step 4: 통과 확인** — `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest` → BUILD SUCCESSFUL(기존 테스트 그대로); 기기(`adb devices`에 `R5CT43TFS9A`가 있을 때만, 한 클래스씩):
+  `ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.cowork.bikerecoder.data.RideDatabaseMigrationTest`
+  `ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.cowork.bikerecoder.data.RoomFavoriteStoreTest`
+  → PASS(없으면 기기 검증 대기)
+- [ ] **Step 5: Commit** — `git add app/schemas/com.cowork.bikerecoder.data.AppDatabase/3.json …` 후 `git commit -m "data: favorite_place table, database v3" -m "Co-Authored-By: <모델> <noreply@anthropic.com>"`
 
 ---
 
@@ -230,10 +242,11 @@ suspend fun PlaceSearch.addressOrNull(point: GeoPoint): String?
     pressed: PressedPlace,
     onSetDestination: (name: String, point: GeoPoint) -> Unit,
     onAddWaypoint: (name: String, point: GeoPoint) -> Unit,
-    onSaveFavorite: ((FavoritePlace) -> Unit)?,   // FavoritePlace(pressed.title, point, pressed.address)
+    onSaveFavorite: ((FavoritePlace) -> Unit)?,   // FavoritePlace(pressed.title, point, pressed.address); 주소 조회 중에는 비활성
     onDismiss: () -> Unit,
 )
-// PlaceActionSheet: 끝에 onSaveFavorite: (() -> Unit)? = null 추가 → null이 아니면 두 버튼 아래 전체 폭 OutlinedButton "즐겨찾기에 저장"
+// PlaceActionSheet: 끝에 onSaveFavorite: (() -> Unit)? = null, saveEnabled: Boolean = true 추가 → onSaveFavorite가 null이 아니면 두 버튼 아래 전체 폭 OutlinedButton "즐겨찾기에 저장"(enabled = saveEnabled)
+// (결정: 조회 중에 저장하면 좌표가 이름이 되므로 PressedPlaceSheet는 saveEnabled = !pressed.loading)
 // (결정: 세 곳 모두 같은 시트·같은 버튼 배치 [목적지로 설정][경유지로 추가] / [즐겨찾기에 저장])
 // PlanViewModel: 생성자 끝에 addressOf: suspend (GeoPoint) -> String? = { null }
 val pressed: StateFlow<PressedPlace?>
@@ -258,14 +271,14 @@ fun dismissPressed()
 @Test fun `long press then set destination keeps the waypoints`()               // [남산, 여의도] → setDestination → [남산, title]
 @Test fun `long press looks the address up`()                                   // addressOf 가짜 "부산 해운대구 우동" → pressed.address
 // PlanScreenTest (기기)
-@Test fun longPressSheetAddsAWaypointBeforeTheDestination() // 계획 [A, B]; runOnIdle { viewModel.onLongPress(p) } → "주소를 확인하는 중…" 표시(조회를 막아 둠) → 주소 도착 → "경유지로 추가" 클릭 → stopNames() == [A, 주소, B], 시트 사라짐; "즐겨찾기에 저장" 표시(onSaveFavorite 주었을 때)
+@Test fun longPressSheetAddsAWaypointBeforeTheDestination() // 계획 [A, B]; runOnIdle { viewModel.onLongPress(p) } → "주소를 확인하는 중…" 표시(조회를 막아 둠), "즐겨찾기에 저장" assertIsNotEnabled(onSaveFavorite 주었을 때) → 주소 도착 → "즐겨찾기에 저장" assertIsEnabled → "경유지로 추가" 클릭 → stopNames() == [A, 주소, B], 시트 사라짐
 @Test fun longPressSetDestinationKeepsWaypoints()           // [A, B] → "목적지로 설정" → [A, 주소]
 ```
 
 - [ ] **Step 2: 실패 확인** — `./gradlew :app:testDebugUnitTest --tests 'com.cowork.bikerecoder.ui.common.PlaceLookupTest' --tests 'com.cowork.bikerecoder.ui.plan.PlanViewModelTest'` → FAIL
 - [ ] **Step 3: 구현** — 위 인터페이스대로. `PlanViewModel`은 `PlaceLookup(addressOf, viewModelScope)`를 가진다.
-- [ ] **Step 4: 통과 확인** — `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest` → BUILD SUCCESSFUL(`MainViewModelTest` 그대로); 기기 `…class=com.cowork.bikerecoder.ui.plan.PlanScreenTest` → PASS(또는 기기 검증 대기)
-- [ ] **Step 5: Commit** — `git commit -m "app: shared long-press place lookup; long-press on the plan map"`
+- [ ] **Step 4: 통과 확인** — `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest` → BUILD SUCCESSFUL(`MainViewModelTest` 그대로); 기기(`R5CT43TFS9A`가 있을 때만, 잠금 해제) `ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.cowork.bikerecoder.ui.plan.PlanScreenTest` → PASS(없으면 기기 검증 대기)
+- [ ] **Step 5: Commit** — `git commit -m "app: shared long-press place lookup; long-press on the plan map" -m "Co-Authored-By: <모델> <noreply@anthropic.com>"`
 
 ---
 
@@ -273,15 +286,15 @@ fun dismissPressed()
 
 **Files:**
 - Create: `app/src/main/java/com/cowork/bikerecoder/ui/favorite/FavoritesViewModel.kt`, `ui/favorite/FavoriteChips.kt`, `ui/favorite/FavoriteDialogs.kt`
-- Modify: `ui/main/MainScreen.kt`, `ui/search/SearchScreen.kt`, `ui/plan/PlanScreen.kt`(이미 매개변수 있음), `ui/BikeNavHost.kt`
-- Test: `app/src/test/java/com/cowork/bikerecoder/ui/favorite/FavoritesViewModelTest.kt`, `app/src/androidTest/java/com/cowork/bikerecoder/ui/favorite/FavoriteChipsTest.kt`, `app/src/androidTest/java/com/cowork/bikerecoder/ui/favorite/FavoriteDialogsTest.kt`
+- Modify: `ui/main/MainScreen.kt`, `ui/search/SearchScreen.kt`, `ui/plan/PlanViewModel.kt`(`setDestination(favorite)`), `ui/BikeNavHost.kt`
+- Test: `app/src/test/java/com/cowork/bikerecoder/ui/favorite/FavoritesViewModelTest.kt`, `app/src/test/java/com/cowork/bikerecoder/ui/plan/PlanViewModelTest.kt`(추가), `app/src/androidTest/java/com/cowork/bikerecoder/ui/favorite/FavoriteChipsTest.kt`, `app/src/androidTest/java/com/cowork/bikerecoder/ui/favorite/FavoriteDialogsTest.kt`
 
 **Interfaces:**
 - Consumes: Task 1 `FavoriteRepository`·`FavoriteResult`·`Favorite`·`FavoritePlace`, Task 2 `AppContainer.favorites`, Task 3 `PressedPlaceSheet`·`PlaceActionSheet(onSaveFavorite)`·`PlanScreen(onSaveFavorite)`
 - Produces:
 ```kotlin
 sealed interface FavoriteDialog {
-    /** "즐겨찾기에 저장": [집] [회사] / "직접 입력" 칸(place.name.take(20)로 채움) [저장] [취소]. [error]는 마지막 거절 문구(대화상자는 열린 채). */
+    /** "즐겨찾기에 저장": [집] [회사] / "직접 입력" 칸(place.name.take(FavoriteRepository.MAX_NAME_LENGTH)로 채움, 입력도 그 길이까지) [저장] [취소]. [error]는 마지막 거절 문구(대화상자는 열린 채). */
     data class ChooseName(val place: FavoritePlace, val error: String? = null) : FavoriteDialog
     data class ConfirmReplace(val place: FavoritePlace, val kind: FavoriteKind, val question: String) : FavoriteDialog
     data class Rename(val favorite: Favorite, val error: String? = null) : FavoriteDialog
@@ -315,10 +328,14 @@ object FavoriteTags { const val ROW = "favorite-row"; fun chip(id: Long) = "favo
 )
 // MainScreen 끝에: favoriteChips: @Composable () -> Unit = {}, onSaveFavorite: ((FavoritePlace) -> Unit)? = null
 // SearchScreen 끝에: favoriteChips: @Composable () -> Unit = {}, onSaveFavorite: ((FavoritePlace) -> Unit)? = null
+//   칩 줄은 검색칸 줄과 결과 Box 사이(결과 LazyColumn 밖)에, 검색어가 비어 있을 때만
+// PlanViewModel
+/** 칩 탭: 즐겨찾기 이름으로 목적지만 바꾼다(= setDestination(favorite.name, favorite.point)). */
+fun setDestination(favorite: Favorite)
 ```
-- 결정: 집·회사 칩의 메뉴는 [삭제]만(이름이 곧 역할). 칩 탭의 경유지 이름은 즐겨찾기 이름("집"/"회사"/직접 입력). 즐겨찾기 칩은 검색 화면에도 검색어가 비어 있을 때 보인다(스펙 §4.1 "검색 화면으로 가며, 즐겨찾기 칩·지도 길게 누르기도 사용할 수 있다"). 검색 결과 시트의 저장 장소는 `FavoritePlace(place.name, place.point, place.address.ifBlank { null })`.
+- 판정 U4: 집·회사 칩의 메뉴는 [삭제]만, 직접 입력 칩은 [이름 바꾸기] [삭제](스펙 §1.1 수정됨). 결정: 칩 탭의 경유지 이름은 즐겨찾기 이름("집"/"회사"/직접 입력). 즐겨찾기 칩은 검색 화면에도 검색어가 비어 있을 때 보인다(스펙 §4.1 "검색 화면으로 가며, 즐겨찾기 칩·지도 길게 누르기도 사용할 수 있다"). 검색 결과 시트의 저장 장소는 `FavoritePlace(place.name, place.point, place.address.ifBlank { null })`.
 - 흐름: `save` → `Saved`면 닫힘, `ConfirmReplace`면 `ConfirmReplace` 대화상자, `Rejected`면 `ChooseName(error = message)`. `confirmReplace` → `save(kind, null, place, replace = true)`. `rename` 거절 → `Rename(error = message)`. 저장소 예외 → 같은 대화상자에 `MSG_SAVE_FAILED`.
-- 연결(BikeNavHost): 활동 범위 `val favoritesViewModel: FavoritesViewModel`(PlanViewModel처럼 `viewModelStoreOwner = context.findActivity()`), `FavoriteDialogs`는 `NavHost` 뒤에 한 번. 칩 탭 → `setDestinationAndOpenPlan(favorite.name, favorite.point)`, 메뉴 → `favoritesViewModel::startRename`/`::askDelete`. 지도 메인 칩 줄은 검색창 줄 바로 아래(배너 위). 세 시트(지도 메인·검색 결과·경로 계획)의 `onSaveFavorite = favoritesViewModel::startSave`.
+- 연결(BikeNavHost): 활동 범위 `val favoritesViewModel: FavoritesViewModel`(PlanViewModel처럼 `viewModelStoreOwner = context.findActivity()`), `FavoriteDialogs`는 `NavHost` 뒤에 한 번. 칩 탭 → `planViewModel.setDestination(favorite)` + `navController.openPlan()`(지도 메인·검색 화면 모두), 메뉴 → `favoritesViewModel::startRename`/`::askDelete`. 지도 메인 칩 줄은 검색창 줄 바로 아래(배너 위). 세 시트(지도 메인·검색 결과·경로 계획)의 `onSaveFavorite = favoritesViewModel::startSave`.
 
 - [ ] **Step 1: 실패하는 테스트**
 
@@ -331,6 +348,8 @@ object FavoriteTags { const val ROW = "favorite-row"; fun chip(id: Long) = "favo
 @Test fun renameRefusalKeepsTheDialog()             // Rename에서 중복 이름 → Rename(error = MSG_DUPLICATE); 새 이름 → null, 이름 바뀜
 @Test fun storeFailureShowsSaveFailed()             // failWrites → ChooseName(error = "즐겨찾기를 저장하지 못했습니다")
 @Test fun favoritesAreSortedForTheChips()           // favorites.value 이름 순서 집 → 회사 → 직접 입력(생성 순)
+// PlanViewModelTest (스펙 §6.1 "칩 → 목적지 설정"; 화면 연결은 한 줄이라 함수 단위로 확인)
+@Test fun `a favorite chip sets the destination by its name and keeps the waypoints`() // [남산, 여의도] → setDestination(Favorite(1, HOME, "집", p, null, 0)) → 이름 [남산, 집], 마지막 point == p
 // FavoriteChipsTest (기기)
 @Test fun noFavoritesHidesTheRow()                  // 빈 목록 → onNodeWithTag(FavoriteTags.ROW).assertDoesNotExist()
 @Test fun chipsShowInOrderAndATapSelects()          // "🏠 집", "🏢 회사", "★ 카페" 표시(performScrollTo 후); "★ 카페" 클릭 → onSelect(카페)
@@ -341,10 +360,13 @@ object FavoriteTags { const val ROW = "favorite-row"; fun chip(id: Long) = "favo
 @Test fun errorAndDeleteTexts()                     // ChooseName(error) → 문구 표시; ConfirmDelete → "즐겨찾기에서 삭제할까요?"
 ```
 
-- [ ] **Step 2: 실패 확인** — `./gradlew :app:testDebugUnitTest --tests 'com.cowork.bikerecoder.ui.favorite.FavoritesViewModelTest'` → FAIL
+- [ ] **Step 2: 실패 확인** — `./gradlew :app:testDebugUnitTest --tests 'com.cowork.bikerecoder.ui.favorite.FavoritesViewModelTest' --tests 'com.cowork.bikerecoder.ui.plan.PlanViewModelTest'` → FAIL
 - [ ] **Step 3: 구현** — 칩은 `Surface` + `combinedClickable(onClick, onLongClick)` + `DropdownMenu`(FilterChip은 길게 누르기를 받지 않음).
-- [ ] **Step 4: 통과 확인** — `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest`; 기기 `…class=com.cowork.bikerecoder.ui.favorite.FavoriteChipsTest`, `…class=com.cowork.bikerecoder.ui.favorite.FavoriteDialogsTest` → PASS(또는 기기 검증 대기)
-- [ ] **Step 5: Commit** — `git commit -m "app: favorite chips, save dialog and chip menu"`
+- [ ] **Step 4: 통과 확인** — `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest`; 기기(`R5CT43TFS9A`가 있을 때만, 잠금 해제, 한 클래스씩):
+  `ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.cowork.bikerecoder.ui.favorite.FavoriteChipsTest`
+  `ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.cowork.bikerecoder.ui.favorite.FavoriteDialogsTest`
+  → PASS(없으면 기기 검증 대기)
+- [ ] **Step 5: Commit** — `git commit -m "app: favorite chips, save dialog and chip menu" -m "Co-Authored-By: <모델> <noreply@anthropic.com>"`
 
 ---
 
@@ -373,19 +395,19 @@ object SearchTags { const val QUERY = "search-query"; const val RESULTS = "searc
 @Test fun draggingTheResultsHidesTheKeyboard() // 위와 같이 연 뒤 RESULTS performTouchInput { swipeUp() } → waitUntil(5_000){ ime == 0 }, QUERY assertIsNotFocused
 ```
 
-- [ ] **Step 2: 실패 확인** — `./gradlew :app:assembleDebugAndroidTest` 성공 후 기기 `…class=com.cowork.bikerecoder.ui.search.SearchScreenTest` → FAIL(첫 테스트: 결과 아래가 키보드 뒤). 기기가 없으면 이 단계는 컴파일 확인으로 대신하고 "기기 검증 대기"
-- [ ] **Step 3: 구현** — 위대로.
-- [ ] **Step 4: 통과 확인** — `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest`(`SearchViewModelTest` 그대로); 기기 같은 클래스 → PASS(휴대폰 잠금 해제, 화면 키보드 사용 중이어야 함)
-- [ ] **Step 5: Commit** — `git commit -m "app: search results clear the keyboard; drag hides it"`
+- [ ] **Step 2: 실패 확인** — `./gradlew :app:assembleDebugAndroidTest` 성공 후 기기(`R5CT43TFS9A`가 있을 때만, 잠금 해제) `ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.cowork.bikerecoder.ui.search.SearchScreenTest` → FAIL(첫 테스트: 결과 아래가 키보드 뒤). 기기가 없으면 이 단계는 컴파일 확인으로 대신하고 "기기 검증 대기"
+- [ ] **Step 3: 구현** — 위대로(Task 4의 칩 줄은 결과 Box 밖에 그대로 둔다).
+- [ ] **Step 4: 통과 확인** — `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest`(`SearchViewModelTest` 그대로); 기기 `ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.cowork.bikerecoder.ui.search.SearchScreenTest` → PASS(휴대폰 잠금 해제, 화면 키보드 사용 중이어야 함)
+- [ ] **Step 5: Commit** — `git commit -m "app: search results clear the keyboard; drag hides it" -m "Co-Authored-By: <모델> <noreply@anthropic.com>"`
 
 ---
 
-### Task 6: 기록 알림 문구와 구간 나누기 — RideController (스펙 §3, §4.3의 JVM판)
+### Task 6: 화면 알림, 구간 나누기, 기록 중 붙인 안내의 도착 — RideController·NavigationController (스펙 §3, §4.3, 판정 U1의 JVM판)
 
 **Files:**
-- Modify: `core/src/main/kotlin/com/cowork/bikerecoder/core/voice/KoreanPhrases.kt`, `app/src/main/java/com/cowork/bikerecoder/ride/RideControls.kt`, `ride/RideController.kt`
-- Create: `app/src/main/java/com/cowork/bikerecoder/ride/RideNotice.kt`
-- Test: `core/src/test/kotlin/com/cowork/bikerecoder/core/voice/KoreanPhrasesTest.kt`, `app/src/test/java/com/cowork/bikerecoder/ride/RideControllerTest.kt`, `app/src/test/java/com/cowork/bikerecoder/ride/RideNavigationTest.kt`, `app/src/test/java/com/cowork/bikerecoder/ride/RideTestDoubles.kt`(`FakeRideStore.openGate` 추가)
+- Modify: `core/src/main/kotlin/com/cowork/bikerecoder/core/voice/KoreanPhrases.kt`, `app/src/main/java/com/cowork/bikerecoder/ride/RideControls.kt`, `ride/RideController.kt`, `nav/NavigationController.kt`
+- Create: `app/src/main/java/com/cowork/bikerecoder/ride/ScreenNotice.kt`
+- Test: `core/src/test/kotlin/com/cowork/bikerecoder/core/voice/KoreanPhrasesTest.kt`, `app/src/test/java/com/cowork/bikerecoder/ride/RideControllerTest.kt`, `app/src/test/java/com/cowork/bikerecoder/ride/RideNavigationTest.kt`, `app/src/test/java/com/cowork/bikerecoder/nav/NavigationControllerTest.kt`, `app/src/test/java/com/cowork/bikerecoder/ride/RideTestDoubles.kt`(`FakeRideStore.openGate`·`closeGate` 추가)
 
 **Interfaces:**
 - Produces:
@@ -393,36 +415,51 @@ object SearchTags { const val QUERY = "search-query"; const val RESULTS = "searc
 // KoreanPhrases
 val guidanceEndedRecordingGoesOn: String = "안내를 마칩니다. 기록은 계속됩니다"
 val newSegmentStarted: String = "새 구간으로 기록을 시작합니다"
-// ride/RideNotice.kt
+// (도착 문구는 기존 arrivedDestination = "목적지에 도착했습니다")
+// ride/ScreenNotice.kt
 /** 음성과 같은 문구를 화면에 한 번 보인다(스낵바). [id]는 알림마다 새 값. */
-data class RideNotice(val id: Long, val text: String)
+data class ScreenNotice(val id: Long, val text: String)
 // RideControls (기본 구현이 있어 기존 구현·테스트 가짜는 그대로 컴파일된다)
 fun announce(text: String) = Unit
 fun noticeShown(id: Long) = Unit
 // RideController
-val notice: StateFlow<RideNotice?>
-/** 기록 중이고 그 기록의 음성 설정이 켜져 있으면 말하고, 음성과 상관없이 [notice]에 올린다. */
+val notice: StateFlow<ScreenNotice?>
+/** 기록이 시작 중이거나 도는 동안만: 그 기록의 음성 설정이 켜져 있으면 말하고, 음성과 상관없이 [notice]에 올린다. 기록이 없으면 아무것도 하지 않는다. */
 override fun announce(text: String)
 /** [notice]가 그 [id]일 때만 지운다. */
 override fun noticeShown(id: Long)
 /**
  * "새 구간으로 나누기": 기록 중인 구간을 SEGMENT_ONLY로 닫고(요약 없음) 같은 여행에 새 구간을 열어 바로 기록한다.
- * 시작 음성은 "기록을 시작합니다" 대신 [KoreanPhrases.newSegmentStarted]이고 같은 문구를 [notice]에 올린다.
+ * 시작 음성은 "기록을 시작합니다" 대신 [KoreanPhrases.newSegmentStarted]이고 같은 문구를 [notice]에 올린다(음성이 꺼져 있어도).
  * 닫은 구간의 저장 문제면 [MSG_SAVE_PROBLEM]. 기록이 없거나 이미 멈추는 중이면 아무것도 하지 않고 null.
+ * 닫는 사이에 [stopRecording]이 들어오면 새 구간을 열지 않고 닫은 구간의 요약을 보인다.
  */
 suspend fun splitSegment(): String?
+// NavigationController
+/**
+ * 판정 U1: 시작할 때(begin) 이미 기록이 돌던([kmSource] != null) 안내가 목적지에 도착하고 그때도 [kmSource]가 있으면,
+ * 목적지를 방문 처리만 하고 여행을 완료하지 않으며 Finished 없이 Idle로 간 뒤 이 콜백에 도착 문구를 넘긴다. Main thread only.
+ */
+var onArrivedKeepingRecording: ((String) -> Unit)? = null
+/** 시작 중이거나 안내 중인 여행; 아니면 null. */
+val NavUiState.guidingTripId: Long?   // 최상위 확장, 같은 파일
 ```
-- `FakeRideStore`: `var openGate: CompletableDeferred<Unit>? = null` — 설정되어 있으면 `openSegment`가 그것을 기다린다.
-- 내부 변경(가장 작은 범위):
+- `FakeRideStore`: `var openGate: CompletableDeferred<Unit>? = null`, `var closeGate: CompletableDeferred<Unit>? = null` — 설정되어 있으면 `openSegment`/`closeSegment`가 그것을 기다린다.
+- U1 구현(`NavigationController`): `Run`에 `val attachedToRecording: Boolean`(`begin`에서 `kmSource != null`로 정한다 — 안내가 먼저 시작해 기록이 따라 시작하면 Active 뒤에 kmSource가 걸리므로 false; [안내 취소 · 기록 계속] 뒤 살아남은 기록에 다시 붙인 안내는 true). `handle()`의 도착에서 `r.attachedToRecording && kmSource != null`이면 `finish(r, ARRIVED)` 대신 `arriveKeepingRecording(r)`: `run = null`, `cancelJobs`, `unmute()`(F1), `saveDayDistance`, `_ui = Idle`, `onArrivedKeepingRecording?.invoke(phrases.arrivedDestination)`. 경유지·목적지 방문 처리는 기존 루프 그대로, `tripManager.complete`는 부르지 않는다. 음성 "목적지에 도착했습니다"는 세션 발화로 이미 나간다. 그 밖의 도착은 V1.1 그대로.
+- `RideController`: `init`에서 `navigation.onArrivedKeepingRecording = { text -> post(text) }`(화면 문구만 — 음성은 안내가 이미 말함). Idle은 `followNavigation`에서 아무것도 하지 않으므로 기록은 계속된다. 안내 화면은 Idle + 기록 중 → 기록 화면으로(기존 `onGuidanceEndedWhileRecording`), 기록 화면이 문구를 보인다.
+- 기록 쪽 내부 변경(가장 작은 범위):
+  - `post(text)`: `_notice.value = ScreenNotice(++noticeIds, text)` — 음성 판단과 따로, 항상 `voiceOn` 검사 **밖**에서 부른다. `handle()`의 `if (r.voiceOn) …speech…` 안에 넣지 않는다.
   - `startRecording`의 본문을 `private fun launchRun(tripId: Long, startPhrase: String? = null, bridge: Bridge? = null): Job`로 옮긴다(`startRecording` = 기존 거부 검사 + `launchRun(tripId)`).
-  - `Run`에 `startPhrase`, `bridge`, `skipUpTo: Long`(이미 넣은 마지막 위치 시각). `speech(Started)` → `r.startPhrase ?: phrases.recordingStarted`, `startPhrase`가 있으면 그 문구로 `notice`도 올린다(음성 꺼짐이어도).
-  - `finish(r, end, publishSummary: Boolean = true): RideUiState.Finished?` — 만든 Finished를 돌려주고 `publishSummary`일 때만 `_ui`에 둔다. `stopRecording`은 그대로 `publishSummary = true`.
-  - 알고리즘(시그니처가 정하지 않는 부분):
-    1. `splitSegment`: `r = run ?: return null`; `r.startJob?.join()`; `run !== r || r.session == null || r.stopping`이면 null.
+  - `Run`에 `startPhrase`, `bridge`, `skipUpTo: Long`(이미 넣은 마지막 위치 시각), `stopRequested: Boolean`. `speech(Started)` → `r.startPhrase ?: phrases.recordingStarted`. `startPhrase`가 있으면 `handle()`이 Started 사건을 볼 때 음성 검사 밖에서 `post(startPhrase)`.
+  - `stopRecording`: 기존 동작 + 진행 중인 `finishJob`을 기다리기 전에 `r.stopRequested = true`.
+  - `finish(r, end, publishSummary: Boolean = true): RideUiState.Finished?` — 만든 Finished를 돌려주고 `publishSummary`일 때만 `_ui`에 두며 그때 남은 `notice`도 지운다(끝난 기록의 문구가 다음 기록 화면에 나오지 않게). `stopRecording`은 그대로 `publishSummary = true`.
+  - 나누기 알고리즘(시그니처가 정하지 않는 부분):
+    1. `r = run ?: return null`; `r.startJob?.join()`; `run !== r || r.session == null || r.stopping`이면 null.
     2. 다리: `Bridge(fixes = mutableListOf(), job)`를 먼저 띄운다 — `scope.launch { location.fixes().collect { … } }`(실패는 로그만), 이전 구간이 이미 받은 위치(시간 ≤ `r.lastFix?.timeMillis`)는 넣지 않는다. 이렇게 공유 흐름의 구독자가 0이 되지 않는다.
     3. 닫기: `r.finishJob = scope.launch { finished = finish(r, SEGMENT_ONLY, publishSummary = false) }`를 기다린다(그사이 `_ui`는 이전 Active 그대로 — Idle/Finished를 거치지 않는다).
-    4. 열기: `launchRun(r.tripId, phrases.newSegmentStarted, bridge).join()`; `finished?.error`를 돌려준다.
-    5. 새 run의 `prepare`: 세션 시작·km 원천 설정 뒤 `bridge.fixes`를 시간순으로 `session.onFix`에 넣고 `skipUpTo`를 기록, 다리 job은 새 run의 `jobs`에 넣는다(시작 실패·정지 시 함께 취소). `collectLocation`은 첫 위치를 받으면 다리에 더 쌓인 위치(시간 > `skipUpTo`)를 먼저 넣고 다리를 멈춘 뒤, 시간이 `skipUpTo` 이하인 위치는 버린다.
+    4. 다시 확인: `r.stopRequested`이면(닫는 사이 [정지]) 다리를 멈추고 `finished`를 `_ui`에 두고(요약) null을 돌려준다 — 먼저 시작된 끝(SEGMENT_ONLY)이 이기는 기존 규칙 그대로, 여행은 ACTIVE(결정).
+    5. 열기: `launchRun(r.tripId, phrases.newSegmentStarted, bridge).join()`; `finished?.error`를 돌려준다.
+    6. 새 run의 `prepare`: 세션 시작·km 원천 설정 뒤 `bridge.fixes`를 시간순으로 `session.onFix`에 넣고 `skipUpTo`를 기록, 다리 job은 새 run의 `jobs`에 넣는다(시작 실패·정지 시 함께 취소). `collectLocation`은 첫 위치를 받으면 다리에 더 쌓인 위치(시간 > `skipUpTo`)를 먼저 넣고 다리를 멈춘 뒤, 시간이 `skipUpTo` 이하인 위치는 버린다.
   - km: 새 세션은 기존처럼 `rideStore.dayTotals`(닫은 구간 포함)로 시작하므로 km가 이어진다. 이전 run의 km 원천은 `finish`가 풀고 새 run이 다시 건다.
 
 - [ ] **Step 1: 실패하는 테스트**
@@ -430,25 +467,35 @@ suspend fun splitSegment(): String?
 ```kotlin
 // KoreanPhrasesTest
 @Test fun rideUxPhrases()   // p.guidanceEndedRecordingGoesOn == "안내를 마칩니다. 기록은 계속됩니다", p.newSegmentStarted == "새 구간으로 기록을 시작합니다"
-// RideControllerTest (straight(3_000.0) 18km/h, speedup 1; 나누기 테스트의 위치는 SharedLocationSource({ scripted }, backgroundScope)로 앱과 같게)
+// RideControllerTest (straight(3_000.0) 18km/h, speedup 1; 나누기 테스트의 위치는 scripted = ScriptedLocationSource(…, speedup = 1.0)을 SharedLocationSource({ scripted }, backgroundScope)로 감싸 앱과 같게)
 @Test fun splitClosesTheSegmentAndRecordsANewOneOfTheSameTrip() // 100m 뒤 splitSegment() == null → segments(trip) 2개, 첫째 endedAt != null, 둘째 열림, active.segmentId == 둘째, 같은 tripId, 여행 ACTIVE, trips 1개
 @Test fun splitNeverShowsASummaryOrIdle()        // 나누는 동안 ui를 모두 모음 → Idle·Finished 없음, 순서 Active → Starting → Active
 @Test fun splitAnnouncesTheNewSegmentOnceByVoiceAndOnScreen() // spoken: "기록을 시작합니다" 1회(처음), "새 구간으로 기록을 시작합니다" 1회; notice.text == "새 구간으로 기록을 시작합니다"
+@Test fun splitWithVoiceOffStillShowsTheNotice() // settings voiceEnabled=false → spoken에 "새 구간으로 기록을 시작합니다" 없음, notice.text == "새 구간으로 기록을 시작합니다"
 @Test fun splitKeepsTheFixesThatArriveWhileTheSegmentsChange() // openGate 설정 → split launch → play(3_000)(위치 3개) → gate 완료 → play(5_000) → stop: 둘째 구간 points 시각에 그 3개 포함, 두 구간에 같은 시각 점 없음
-@Test fun splitKeepsTheLocationStreamSubscribed() // 위쪽 fixes() 시작 횟수(onStart 세는 가짜로 감쌈) == 1
+@Test fun splitKeepsTheLocationStreamSubscribed() // 기록 시작부터 나누기 뒤까지 scripted.collections == 1
 @Test fun splitContinuesTheDayKmCount()          // 1_200m(1km 1회) → split → 2_100m → kmReports() == [1, 2]
 @Test fun splitReportsASaveProblem()             // failAppend = true → splitSegment() == "기록 저장에 문제가 있습니다", 그래도 새 구간 Active
+@Test fun aStopDuringTheSplitIsNotUndone()       // closeGate 설정 → split launch → stopRecording(COMPLETE_TRIP) launch → gate 완료 → split 결과 null, ui Finished(그 구간), segments 1개(닫힘), 새 구간 없음
 @Test fun splitWithoutARecordingDoesNothing()    // Idle에서 null, 구간 없음
 @Test fun announceSpeaksAndShowsTheSameTextOnce() // 기록 중 announce("안내를 마칩니다. 기록은 계속됩니다") → spoken에 1회, notice.text 같음; noticeShown(다른 id) → 그대로; noticeShown(id) → null
 @Test fun announceWithVoiceOffOnlyShows()        // settings voiceEnabled=false → spoken에 없음, notice 있음
+@Test fun announceWithoutARecordingDoesNothing() // Idle에서 announce → spoken·notice 없음
+@Test fun aStoppedRecordingClearsItsNotice()     // announce 뒤 noticeShown 없이 stopRecording(SEGMENT_ONLY) → notice null
+// NavigationControllerTest (기존 follow 시나리오 fixture로 도착까지; kmSource는 고정 거리 가짜)
+@Test fun arrivalOfAGuidanceStartedWhileRecordingEndsOnlyTheGuidance() // start 전에 kmSource 설정 → 도착: ui 모음에 Finished 없음, 마지막 Idle; 여행 ACTIVE; 목적지 visitedAt != null; onArrivedKeepingRecording 받은 문구 == ["목적지에 도착했습니다"]; spoken에 "목적지에 도착했습니다" 1회; voice.muted == false
+@Test fun arrivalCompletesWhenTheRecordingCameAfterTheStart()        // Active 뒤 kmSource 설정 → Finished(ARRIVED), 여행 COMPLETED, 콜백 없음
+@Test fun arrivalCompletesWhenTheRecordingEndedBeforeArrival()        // start 전 kmSource 설정, 도착 전 null로 → Finished(ARRIVED), COMPLETED
 // RideNavigationTest
 @Test fun recordingFirstThenGuidanceOfTheSameTripKeepsTheSegment() // ride.startRecording(trip) → play → navigation.start(trip) → 구간 1개 그대로(열림), "기록을 시작합니다" 1회, 안내 뒤 km는 combinedKms()로만(guidanceKms() 빈 목록)  ← "이어서 기록"
+@Test fun reGuideArrivalEndsOnlyTheGuidanceAndKeepsRecording()    // 기록 먼저 → navigation.start(trip) → 도착: navigation Idle(Finished 없음), ride Active, 구간 1개 열림, 여행 ACTIVE, ride.notice.text == "목적지에 도착했습니다"
+// (기존 arrivalEndsGuidanceAndRecordingWithSummary — 안내가 먼저 시작한 경우 — 는 바꾸지 않고 그대로 통과해야 한다)
 ```
 
-- [ ] **Step 2: 실패 확인** — `./gradlew :core:test --tests 'com.cowork.bikerecoder.core.voice.KoreanPhrasesTest' :app:testDebugUnitTest --tests 'com.cowork.bikerecoder.ride.*'` → FAIL(미정의)
-- [ ] **Step 3: 구현** — 위대로. `endForAnotherTrip`·`stopRecording`·`closeInterrupted`의 동작은 바꾸지 않는다.
-- [ ] **Step 4: 통과 확인** — `./gradlew :core:test :app:testDebugUnitTest` → PASS(기존 `RideControllerTest`·`RideNavigationTest`·`NavigateViewModelTest` 그대로)
-- [ ] **Step 5: Commit** — `git commit -m "ride: on-screen notices and splitting a recording into a new segment"`
+- [ ] **Step 2: 실패 확인** — `./gradlew :core:test --tests 'com.cowork.bikerecoder.core.voice.KoreanPhrasesTest' :app:testDebugUnitTest --tests 'com.cowork.bikerecoder.ride.*' --tests 'com.cowork.bikerecoder.nav.NavigationControllerTest'` → FAIL(미정의)
+- [ ] **Step 3: 구현** — 위대로. `endForAnotherTrip`·`closeInterrupted`의 동작, 안내가 먼저 시작한 도착의 동작은 바꾸지 않는다.
+- [ ] **Step 4: 통과 확인** — `./gradlew :core:test :app:testDebugUnitTest` → PASS(기존 `RideControllerTest`·`RideNavigationTest`·`NavigationControllerTest`·`NavigateViewModelTest`·`NavNotificationsTest` 그대로 — 기존 도착 테스트는 모두 안내가 먼저 시작하거나(`kmSourceAppliesToTheRunningAndNextSession`처럼) 도착 전에 kmSource를 null로 돌리므로 V1.1 도착 규칙을 그대로 탄다. 기기 `RideScenarioTest`도 안내 먼저라 그대로)
+- [ ] **Step 5: Commit** — `git commit -m "ride: on-screen notices, splitting a recording, re-guide arrival keeps recording" -m "Co-Authored-By: <모델> <noreply@anthropic.com>"`
 
 ---
 
@@ -459,7 +506,7 @@ suspend fun splitSegment(): String?
 - Test: `app/src/test/java/com/cowork/bikerecoder/ui/trip/TripStartViewModelTest.kt`, `app/src/test/java/com/cowork/bikerecoder/ui/settings/SettingsViewModelTest.kt`, `app/src/androidTest/java/com/cowork/bikerecoder/ui/settings/SettingsScreenTest.kt`(추가), `app/src/androidTest/java/com/cowork/bikerecoder/ui/trip/TripStartDialogsTest.kt`(신규)
 
 **Interfaces:**
-- Consumes: Task 6 `RideController.splitSegment(): String?`
+- Consumes: Task 6 `RideController.splitSegment(): String?`, `NavUiState.guidingTripId`
 - Produces:
 ```kotlin
 // data/SettingsRepository.kt
@@ -489,10 +536,11 @@ fun splitRecording()   // AskRecording에서만
 ```
 - 흐름(스펙 §4.2):
   - `onStartPressed(plan)`: 요약 대기 검사 뒤 `recordingTrip()`이 있으면 붙이기 경로 — 일정 유형·이어서 진행을 묻지 않는다. `work { when (recordingMode()) { ASK -> AskRecording; CONTINUE -> attach(id, split = false); SPLIT -> attach(id, split = true) } }`. 없으면 기존 흐름 그대로.
-  - `attach(tripId, split)`: `closeGuidanceOf(tripId)` → `changeProfile(tripId, plan.profile)`(결정: `continueTrip`처럼 계획 화면의 경로 성향을 쓴다) → 남은 경유지가 계획과 다르면 `changeStops(tripId, plan.stops.toTripStops())` → `notice = if (split) splitSegment() else null` → `Ready(tripId, notice)`.
+  - `attach(tripId, split)`: `closeGuidanceOf(tripId)` → `changeProfile(tripId, plan.profile)`(결정: 스펙에 없지만 `continueTrip`처럼 계획 화면의 경로 성향을 쓴다 — 경로는 여행의 성향으로 계산된다) → 남은 경유지가 계획과 다르면 `changeStops(tripId, plan.stops.toTripStops())`(결정: 스펙은 "changeStops 후"라고만 한다. 같으면 건너뛴다 — `changeStops`는 오프라인 지도를 지우므로 `continueTrip`과 같은 조건) → `notice = if (split) splitSegment() else null` → `Ready(tripId, notice)`.
   - `keepRecording`/`splitRecording`: 답할 때 `recordingTrip()`이 물을 때의 여행이 아니면(그사이 기록이 끝남) 기존 흐름(`prompt()`)으로 간다(결정). `dismiss`는 `AskRecording`도 닫는다 — 아무것도 바꾸지 않는다.
-  - `chooseType`/`continueTrip`의 `endRecording` 분기는 그대로 둔다: 이제는 질문 중에 시작된 기록에만 쓰이는 안전망이다(스펙 "endForAnotherTrip 경로는 기록 중이 아닐 때만 쓰인다"의 해석).
-  - factory: `recordingMode = { container.settings.settings.first().recordingOnNewGuidance }`, `splitSegment = { container.ride.splitSegment() }`, `closeGuidanceOf = { id -> if (container.navigationState.let { (it as? NavUiState.Active)?.tripId == id || (it as? NavUiState.Starting)?.tripId == id }) container.navigation.close() }`.
+  - `chooseType`/`continueTrip`의 `endRecording` 분기는 그대로 둔다: 이제는 질문 중에 시작된 기록에만 쓰이는 안전망이다(판정 U2).
+  - U1과의 관계: 붙인 안내는 `begin` 때 기록이 이미 돌고 있으므로 `NavigationController`가 스스로 "기록에 붙은 안내"로 알아본다(Task 6). `Ready`나 경로에 표시를 더하지 않는다 — `Ready(old, null)` 비교는 그대로.
+  - factory: `recordingMode = { container.settings.settings.first().recordingOnNewGuidance }`, `splitSegment = { container.ride.splitSegment() }`, `closeGuidanceOf = { id -> if (container.navigationState.guidingTripId == id) container.navigation.close() }`.
   - BikeNavHost PLAN: `TripStartDialogs(…, onKeepRecording = tripStart::keepRecording, onSplitRecording = tripStart::splitRecording)`. Ready 처리는 그대로(`Routes.navigate(tripId, fromPlan = true, recordNotice = …)`).
 - **의도적으로 바뀌는 기존 테스트**(`TripStartViewModelTest`): 기록이 [안내 시작] 때 이미 있으면 이제 붙이기 경로로 가므로, 아래 6개는 `r.record(old)`를 `vm.onStartPressed(plan); runCurrent()` **뒤**(질문 중)로 옮겨 안전망 경로를 계속 확인한다. 단언은 그대로: `guidingANewTripFirstEndsTheRunningRecordingAsASegmentWithoutSummary`, `startNewOnARecordedMultiDayTripEndsItsRecordingFirst`, `continuingTheRecordedTripKeepsItsRecording`, `aRecordingThatCouldNotBeSavedIsNoticedWithTheStart`, `aCleanStopHasNoNotice`, `withoutAutoStartTheEndedRecordingsSummaryStays`. `Recording` 도우미에 `voice`(필드로 꺼냄)와 `viewModel(recordedTrip, mode = ASK, closed = mutableListOf())`를 더해 `recordingMode`·`splitSegment = { controller.splitSegment() }`·`closeGuidanceOf = { closed += it }`를 넘긴다.
 
@@ -519,20 +567,23 @@ fun splitRecording()   // AskRecording에서만
 
 - [ ] **Step 2: 실패 확인** — `./gradlew :app:testDebugUnitTest --tests 'com.cowork.bikerecoder.ui.trip.TripStartViewModelTest' --tests 'com.cowork.bikerecoder.ui.settings.SettingsViewModelTest'` → FAIL
 - [ ] **Step 3: 구현** — 위대로. `TripStartDialogs`의 `AskRecording`은 `EndNavigationDialog`처럼 세로 버튼 열.
-- [ ] **Step 4: 통과 확인** — `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest`; 기기 `…class=com.cowork.bikerecoder.ui.settings.SettingsScreenTest`, `…class=com.cowork.bikerecoder.ui.trip.TripStartDialogsTest` → PASS(또는 기기 검증 대기)
-- [ ] **Step 5: Commit** — `git commit -m "app: new guidance while recording joins the recorded trip (continue/split/ask)"`
+- [ ] **Step 4: 통과 확인** — `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest`; 기기(`R5CT43TFS9A`가 있을 때만, 잠금 해제, 한 클래스씩):
+  `ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.cowork.bikerecoder.ui.settings.SettingsScreenTest`
+  `ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.cowork.bikerecoder.ui.trip.TripStartDialogsTest`
+  → PASS(없으면 기기 검증 대기)
+- [ ] **Step 5: Commit** — `git commit -m "app: new guidance while recording joins the recorded trip (continue/split/ask)" -m "Co-Authored-By: <모델> <noreply@anthropic.com>"`
 
 ---
 
-### Task 8: 안내 화면 버튼, 기록 화면 [목적지 정하기], 화면 문구 (스펙 §3, §4.1)
+### Task 8: 안내 화면 버튼, 기록 화면 [목적지 정하기], 화면 문구 (스펙 §3, §4.1, 판정 U1의 화면)
 
 **Files:**
-- Create: `app/src/main/java/com/cowork/bikerecoder/ui/navigate/GuidanceButtons.kt`
+- Create: `app/src/main/java/com/cowork/bikerecoder/ui/navigate/GuidanceButtons.kt`, `app/src/main/java/com/cowork/bikerecoder/ui/common/NoticeSnackbarHost.kt`
 - Modify: `ui/navigate/NavigateViewModel.kt`, `ui/navigate/NavigateScreen.kt`, `ui/record/RecordViewModel.kt`, `ui/record/RecordScreen.kt`, `ui/BikeNavHost.kt`
-- Test: `app/src/test/java/com/cowork/bikerecoder/ui/navigate/GuidanceButtonsTest.kt`, `app/src/test/java/com/cowork/bikerecoder/ui/navigate/NavigateViewModelTest.kt`(추가), `app/src/test/java/com/cowork/bikerecoder/ui/record/RecordViewModelTest.kt`(추가), `app/src/androidTest/java/com/cowork/bikerecoder/ui/navigate/GuidanceButtonRowTest.kt`(신규), `app/src/androidTest/java/com/cowork/bikerecoder/ui/record/RecordScreenTest.kt`(추가)
+- Test: `app/src/test/java/com/cowork/bikerecoder/ui/navigate/GuidanceButtonsTest.kt`, `app/src/test/java/com/cowork/bikerecoder/ui/navigate/NavigateViewModelTest.kt`(추가), `app/src/test/java/com/cowork/bikerecoder/ui/record/RecordViewModelTest.kt`(추가), `app/src/androidTest/java/com/cowork/bikerecoder/ui/navigate/GuidanceButtonRowTest.kt`(신규), `app/src/androidTest/java/com/cowork/bikerecoder/ui/common/NoticeSnackbarHostTest.kt`(신규), `app/src/androidTest/java/com/cowork/bikerecoder/ui/record/RecordScreenTest.kt`(추가)
 
 **Interfaces:**
-- Consumes: Task 6 `RideNotice`, `RideControls.announce`/`noticeShown`, `RideController.notice`, `KoreanPhrases.guidanceEndedRecordingGoesOn`
+- Consumes: Task 6 `ScreenNotice`, `RideControls.announce`/`noticeShown`, `RideController.notice`, `KoreanPhrases.guidanceEndedRecordingGoesOn`, U1(도착 문구는 Task 6이 `notice`에 올린다)
 - Produces:
 ```kotlin
 // ui/navigate/GuidanceButtons.kt
@@ -547,24 +598,31 @@ object GuidanceTags { const val OVERVIEW_ON_MAP = "navigate-overview-map"; fun b
     recording: Boolean, muted: Boolean, onMute: (Boolean) -> Unit, onOverview: () -> Unit,
     onEnd: () -> Unit, onCancelGuidance: () -> Unit, modifier: Modifier = Modifier,
 )
+// ui/common/NoticeSnackbarHost.kt — 기록·안내 화면이 함께 쓴다
+/** [notice]가 오면 먼저 onShown(id)을 부르고 그 글자를 SnackbarDuration.Short(≈ 4초)로 한 번 보인다. */
+@Composable fun NoticeSnackbarHost(notice: ScreenNotice?, onShown: (Long) -> Unit, modifier: Modifier = Modifier)
 // NavigateViewModel 생성자 끝에
-val rideNotice: StateFlow<RideNotice?> = MutableStateFlow(null),
+val rideNotice: StateFlow<ScreenNotice?> = MutableStateFlow(null),
+private val phrases: KoreanPhrases = KoreanPhrases(),
 /** 안내 화면이 보일 알림: 안내가 Starting/Active일 때만(그 밖에는 기록 화면 몫). */
-val noticeForScreen: StateFlow<RideNotice?>
+val noticeForScreen: StateFlow<ScreenNotice?>
 fun noticeShown(id: Long)         // → rideControls.noticeShown(id)
 fun cancelGuidance()              // = onEndChoice(EndAction.END_GUIDANCE_ONLY)
-// onEndChoice(END_GUIDANCE_ONLY): controller.close() 뒤 rideControls.announce("안내를 마칩니다. 기록은 계속됩니다")
+// onEndChoice(END_GUIDANCE_ONLY): controller.close() 뒤 rideControls.announce(phrases.guidanceEndedRecordingGoesOn)
 //   (결정: 대화상자의 "안내만 끝내기 (기록 계속)"도 같은 동작이므로 같은 음성·문구)
+// NavigateViewModel.kt 최상위
+/** 안내가 Idle이 됐을 때 기록이 시작 중이거나 돌고 있으면 기록 화면으로(안내 취소, U1 도착), 아니면 메인으로. */
+fun goesToRecordAfterGuidance(ride: RideUiState): Boolean   // = ride.recordingTripId != null; NavigateScreen의 Idle 분기가 쓴다
 // RecordViewModel
 /** 기록 화면이 보일 알림: 기록이 Active일 때만. */
-val noticeForScreen: StateFlow<RideNotice?>
+val noticeForScreen: StateFlow<ScreenNotice?>
 fun noticeShown(id: Long)         // → ride.noticeShown(id)
 // RecordScreen 끝에: onSetDestination: () -> Unit = {}
 // RecordContent 끝에: onSetDestination: (() -> Unit)? = null  → null이 아니고 !navigating이면 지도 쪽 요약 줄 바로 위에 OutlinedButton "목적지 정하기"(전체 폭)
 // RecordTags.SET_DESTINATION = "record-set-destination"
 ```
-- NavigateScreen: `ActiveContent`에 `recording = viewModel.recording`(Starting 포함)과 `onCancelGuidance = viewModel::cancelGuidance`를 넘기고, `BottomPanel`의 버튼 줄을 `GuidanceButtonRow`로 바꾼다. 기록 중이면 [전체 경로]는 지도 쪽 오른쪽 아래의 작은 `FilledTonalButton("전체 경로")`(`GuidanceTags.OVERVIEW_ON_MAP`). [주행 종료]는 기존 `EndNavigationDialog`(recording = true) 그대로. 알림: `noticeForScreen`이 오면 먼저 `noticeShown(id)` 후 `snackbar.showSnackbar(text, duration = SnackbarDuration.Short)`.
-- RecordScreen: 알림 전용 `SnackbarHost`를 `Alignment.BottomCenter`에 `navigationBarsPadding().padding(bottom = 120.dp)`(버튼 위)로 두고 `noticeForScreen`을 같은 방식으로 보인다(Short ≈ 4초). 기존 가운데 저장 경고 스낵바는 그대로. BikeNavHost RECORD: `onSetDestination = { if (isCurrent()) navController.navigate(Routes.SEARCH) }`. 결정: 안내 중에 보이는 기록 화면에는 [목적지 정하기]가 없다(그 여행은 이미 안내 중).
+- NavigateScreen: `ActiveContent`에 새 매개변수 `showRecordingButtons = viewModel.recording`(Starting 포함 — 안의 기존 지역값 `recording = ride != null`(Active만, 페이저용)과 이름을 겹치지 않게)과 `onCancelGuidance = viewModel::cancelGuidance`를 넘기고, `BottomPanel`의 버튼 줄을 `GuidanceButtonRow(recording = showRecordingButtons, …)`로 바꾼다. 기록 중이면 [전체 경로]는 지도 쪽 오른쪽 아래의 작은 `FilledTonalButton("전체 경로")`(`GuidanceTags.OVERVIEW_ON_MAP`). [주행 종료]는 기존 `EndNavigationDialog`(recording = true) 그대로. 알림: 가운데 기존 `SnackbarHost`와 별도로 `NoticeSnackbarHost(notice = noticeForScreen를 collectAsStateWithLifecycle한 값, onShown = viewModel::noticeShown)`. Idle 분기는 `goesToRecordAfterGuidance(viewModel.rideUi.value)`로 고른다(동작 그대로).
+- RecordScreen: `NoticeSnackbarHost(notice = noticeForScreen를 collect한 값, onShown = viewModel::noticeShown, modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 120.dp))`(버튼 위). 기존 가운데 저장 경고 스낵바는 그대로. U1 도착 문구 "목적지에 도착했습니다"와 [안내 취소 · 기록 계속]의 문구는 여기서 보인다. BikeNavHost RECORD: `onSetDestination = { if (isCurrent()) navController.navigate(Routes.SEARCH) }`. 결정: 안내 중에 보이는 기록 화면에는 [목적지 정하기]가 없다(그 여행은 이미 안내 중).
 - factory: NavigateViewModel `rideNotice = container.ride.notice`.
 
 - [ ] **Step 1: 실패하는 테스트**
@@ -576,21 +634,29 @@ fun noticeShown(id: Long)         // → ride.noticeShown(id)
 // NavigateViewModelTest (rideControls 가짜에 announce 기록 추가, rideNotice는 MutableStateFlow)
 @Test fun cancelGuidanceEndsGuidanceOnlyAndAnnouncesOnce() // 기록 중 안내 Active → cancelGuidance() → ui Idle, trip ACTIVE, announce 기록 == ["안내를 마칩니다. 기록은 계속됩니다"], summaryDismissals 0
 @Test fun endGuidanceOnlyFromTheDialogAnnouncesToo()       // onEndChoice(END_GUIDANCE_ONLY) → 같은 announce 1회
-@Test fun guidanceScreenTakesNoticesOnlyWhileGuiding()     // rideNotice = RideNotice(1, …): 안내 Active → noticeForScreen == 그것; close() 뒤(Idle) → null
+@Test fun guidanceScreenTakesNoticesOnlyWhileGuiding()     // rideNotice = ScreenNotice(1, …): 안내 Active → noticeForScreen == 그것; close() 뒤(Idle) → null
+@Test fun afterTheGuidanceEndsARecordingGoesToTheRecordScreen() // goesToRecordAfterGuidance(Active(…)) == true, (Starting(1)) == true, (Idle) == false, (Finished(…)) == false
 // RecordViewModelTest
 @Test fun recordScreenTakesNoticesOnlyWhileRecording()     // 기록 Active에서 ride.announce(…) → noticeForScreen.text 같음; noticeShown(id) → null; Idle에서 announce → noticeForScreen null
 // GuidanceButtonRowTest (기기)
 @Test fun recordingShowsCancelAndEndRide()    // recording=true → "안내 취소 · 기록 계속", "주행 종료" 표시, "전체 경로" 없음; 클릭 → onCancelGuidance 1회, onEnd 1회
 @Test fun notRecordingShowsTheV1Buttons()     // "음소거", "전체 경로", "종료"; muted=true → "음소거 해제"
+// NoticeSnackbarHostTest (기기, 스펙 §6.1 "같은 화면 문구(스낵바) 1회")
+@Test fun showsTheTextOnceAndReportsItShown() // notice = ScreenNotice(1, "안내를 마칩니다. 기록은 계속됩니다") → 그 글자 표시, onShown 기록 == [1]; 같은 notice로 다시 그려도 onShown 1회
+@Test fun aNewNoticeIsShownAgain()            // ScreenNotice(2, "목적지에 도착했습니다")로 바꿈 → 그 글자 표시, onShown == [1, 2]
 // RecordScreenTest (기기)
-@Test fun setDestinationShowsWhenNotGuiding() // onSetDestination 줌, navigating=false → RecordTags.SET_DESTINATION "목적지 정하기" 표시, 클릭 → 1회
+@Test fun setDestinationShowsWhenNotGuiding() // onSetDestination 줌, navigating=false → RecordTags.SET_DESTINATION "목적지 정하기" 표시(performScrollTo 불필요한 고정 위치), 클릭 → 1회
 @Test fun setDestinationHiddenWhileGuiding()  // navigating=true → assertDoesNotExist
 ```
 
 - [ ] **Step 2: 실패 확인** — `./gradlew :app:testDebugUnitTest --tests 'com.cowork.bikerecoder.ui.navigate.*' --tests 'com.cowork.bikerecoder.ui.record.RecordViewModelTest'` → FAIL
 - [ ] **Step 3: 구현** — 위대로.
-- [ ] **Step 4: 통과 확인** — `./gradlew :core:test :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest` → BUILD SUCCESSFUL(기존 `endGuidanceOnlyKeepsTheTripAndGoesIdle`·`EndNavigationDialogTest` 그대로); 기기 `…class=com.cowork.bikerecoder.ui.navigate.GuidanceButtonRowTest`, `…class=com.cowork.bikerecoder.ui.record.RecordScreenTest` → PASS(또는 기기 검증 대기)
-- [ ] **Step 5: Commit** — `git commit -m "app: guidance buttons while recording, set a destination from the record screen, notice snackbars"`
+- [ ] **Step 4: 통과 확인** — `./gradlew :core:test :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest` → BUILD SUCCESSFUL(기존 `endGuidanceOnlyKeepsTheTripAndGoesIdle`·`EndNavigationDialogTest` 그대로); 기기(`R5CT43TFS9A`가 있을 때만, 잠금 해제, 한 클래스씩):
+  `ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.cowork.bikerecoder.ui.navigate.GuidanceButtonRowTest`
+  `ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.cowork.bikerecoder.ui.common.NoticeSnackbarHostTest`
+  `ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.cowork.bikerecoder.ui.record.RecordScreenTest`
+  → PASS(없으면 기기 검증 대기)
+- [ ] **Step 5: Commit** — `git commit -m "app: guidance buttons while recording, set a destination from the record screen, notice snackbars" -m "Co-Authored-By: <모델> <noreply@anthropic.com>"`
 
 ---
 
@@ -603,7 +669,7 @@ fun noticeShown(id: Long)         // → ride.noticeShown(id)
 - Consumes: Task 1–8의 테스트 클래스 이름과 결과
 
 - [ ] **Step 1: 전체 JVM 검증** — `./gradlew :core:test :routing-brouter:test :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest --rerun-tasks` → BUILD SUCCESSFUL; 모음별 클래스·테스트 수를 적는다.
-- [ ] **Step 2: 기기 실행(가능하면)** — `adb devices`에 `R5CT43TFS9A`가 있으면 Task 2·3·4·5·7·8의 기기 클래스를 하나씩(`ANDROID_SERIAL=R5CT43TFS9A … -Pandroid.testInstrumentationRunnerArguments.class=<FQCN>`), 잠금 해제 상태로 실행해 결과를 적는다. 없으면 "기기 검증 대기"로 적는다. `R3CY903ZYQV`에는 connected 테스트를 돌리지 않는다.
-- [ ] **Step 3: `recording-field-test.md`에 「주행 사용성 개선」 절 추가** — (a) 실행일·PC 테스트 표(새 클래스: `FavoriteRepositoryTest`, `FavoriteMappingsTest`, `PlaceLookupTest`, `FavoritesViewModelTest`, `GuidanceButtonsTest` + 추가된 `RideControllerTest`·`RideNavigationTest`·`TripStartViewModelTest`·`PlanViewModelTest`·`NavigateViewModelTest`·`RecordViewModelTest`·`SettingsViewModelTest`·`KoreanPhrasesTest`); (b) 기기 클래스 표(`RideDatabaseMigrationTest`(2→3 포함), `RoomFavoriteStoreTest`, `PlanScreenTest`, `FavoriteChipsTest`, `FavoriteDialogsTest`, `SearchScreenTest`, `SettingsScreenTest`, `TripStartDialogsTest`, `GuidanceButtonRowTest`, `RecordScreenTest`)와 명령; (c) 경고 한 줄 — "`connectedDebugAndroidTest`는 끝나면 앱을 지워 그 휴대폰의 기록이 사라집니다. connected 테스트는 `R5CT43TFS9A`에서만, 실제 기록이 있는 `R3CY903ZYQV`에는 `installDebug`만 씁니다" — 그리고 이 문서의 기존 connected 명령 예시의 시리얼을 `R5CT43TFS9A`로 바꾼다; (d) 설치 확인: `ANDROID_SERIAL=R3CY903ZYQV ./gradlew :app:installDebug` 뒤 기존 기록 목록이 그대로인지(실제 v2 → v3 마이그레이션); (e) 실주행 체크리스트 4항목(스펙 §6.3 그대로) — 1. 집 즐겨찾기로 안내 시작이 바로 되는가 / 2. 안내 중 [안내 취소 · 기록 계속] 후 기록이 끊기지 않는가(음성과 화면 문구) / 3. 기록 중 새 목적지로 안내 시작 시 설정대로(이어서/나누기/묻기) 동작하고, 기록 목록에 같은 여행으로 보이는가 / 4. 경로 계획 화면에서 길게 눌러 경유지 추가 — 결과 칸 `[ ] 미실시` 형식은 기존 표와 같게.
-- [ ] **Step 4: `CHANGELOG.md` 1.1.0 「추가 (예정)」에 항목 추가** — 즐겨찾기(집·회사·직접 입력 칩, 길게 눌러 이름 바꾸기·삭제, 최대 20개) / 검색 결과가 키보드에 가리지 않음, 목록을 끌면 키보드 내림 / 기록 중 안내 화면 [안내 취소 · 기록 계속]·[주행 종료](음성과 화면 문구) / 기록 화면 [목적지 정하기]: 기록 중인 여행에 안내를 붙이고 설정 "안내를 새로 시작할 때 기록"(이어서/새 구간/매번 물어보기) / 경로 계획 화면 길게 눌러 경유지·목적지·즐겨찾기 / 저장소 DB v3(즐겨찾기 테이블 추가, 기존 기록 유지). 「문서」에 스펙·계획 경로 추가.
-- [ ] **Step 5: Commit** — `git commit -m "docs: ride UX improvements verification and changelog"`
+- [ ] **Step 2: 기기 실행(가능하면)** — `adb devices`에 `R5CT43TFS9A`가 있으면 Task 2·3·4·5·7·8의 기기 클래스를 하나씩(각각 `ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=<FQCN>` 전체 명령), 잠금 해제 상태로 실행해 결과를 적는다. 없으면 "기기 검증 대기"로 적는다. `R3CY903ZYQV`에는 connected 테스트를 돌리지 않는다.
+- [ ] **Step 3: `recording-field-test.md`에 「주행 사용성 개선」 절 추가** — (a) 실행일·PC 테스트 표(새 클래스: `FavoriteRepositoryTest`, `FavoriteMappingsTest`, `PlaceLookupTest`, `FavoritesViewModelTest`, `GuidanceButtonsTest` + 추가된 `RideControllerTest`·`RideNavigationTest`·`NavigationControllerTest`(U1)·`TripStartViewModelTest`·`PlanViewModelTest`·`NavigateViewModelTest`·`RecordViewModelTest`·`SettingsViewModelTest`·`KoreanPhrasesTest`); (b) 기기 클래스 표(`RideDatabaseMigrationTest`(2→3 포함), `RoomFavoriteStoreTest`, `PlanScreenTest`, `FavoriteChipsTest`, `FavoriteDialogsTest`, `SearchScreenTest`, `SettingsScreenTest`, `TripStartDialogsTest`, `GuidanceButtonRowTest`, `NoticeSnackbarHostTest`, `RecordScreenTest`)와 명령; (c) 경고 한 줄 — "`connectedDebugAndroidTest`는 끝나면 앱을 지워 그 휴대폰의 기록이 사라집니다. connected 테스트는 `R5CT43TFS9A`에서만, 실제 기록이 있는 `R3CY903ZYQV`에는 `installDebug`만 씁니다" — 그리고 이 문서의 기존 connected 명령 예시의 시리얼을 `R5CT43TFS9A`로 바꾼다; (d) 설치 확인: `ANDROID_SERIAL=R3CY903ZYQV ./gradlew :app:installDebug` 뒤 기존 기록 목록이 그대로인지(실제 v2 → v3 마이그레이션); (e) 실주행 체크리스트 5항목(스펙 §6.3 그대로 4개 + 판정 U1) — 1. 집 즐겨찾기로 안내 시작이 바로 되는가 / 2. 안내 중 [안내 취소 · 기록 계속] 후 기록이 끊기지 않는가(음성과 화면 문구) / 3. 기록 중 새 목적지로 안내 시작 시 설정대로(이어서/나누기/묻기) 동작하고, 기록 목록에 같은 여행으로 보이는가 / 4. 경로 계획 화면에서 길게 눌러 경유지 추가 / 5. 기록 중 붙인 안내로 목적지에 도착하면 안내만 끝나고 기록은 계속되며(음성과 화면 문구 "목적지에 도착했습니다"), 여행은 진행 중으로 남는가(U1) — 결과 칸 `[ ] 미실시` 형식은 기존 표와 같게.
+- [ ] **Step 4: `CHANGELOG.md` 1.1.0 「추가 (예정)」에 항목 추가** — 즐겨찾기(집·회사·직접 입력 칩, 길게 눌러 삭제·직접 입력은 이름 바꾸기, 최대 20개) / 검색 결과가 키보드에 가리지 않음, 목록을 끌면 키보드 내림 / 기록 중 안내 화면 [안내 취소 · 기록 계속]·[주행 종료](음성과 화면 문구) / 기록 화면 [목적지 정하기]: 기록 중인 여행에 안내를 붙이고 설정 "안내를 새로 시작할 때 기록"(이어서/새 구간/매번 물어보기), 그 안내로 도착하면 안내만 끝나고 기록은 계속 / 경로 계획 화면 길게 눌러 경유지·목적지·즐겨찾기 / 저장소 DB v3(즐겨찾기 테이블 추가, 기존 기록 유지). 「문서」에 스펙·계획 경로 추가.
+- [ ] **Step 5: Commit** — `git commit -m "docs: ride UX improvements verification and changelog" -m "Co-Authored-By: <모델> <noreply@anthropic.com>"`
