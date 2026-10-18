@@ -157,10 +157,10 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest
 |---|---|---|---|---|
 | `:core:test` | 21 | 177 | 0 | 0 |
 | `:routing-brouter:test` | 4 | 16 | 0 | 0 |
-| `:app:testDebugUnitTest` | 40 | 378 | 0 | 0 |
-| 합계 | 65 | 571 | 0 | 0 |
+| `:app:testDebugUnitTest` | 40 | 380 | 0 | 0 |
+| 합계 | 65 | 573 | 0 | 0 |
 
-앞선 기록 코어 검증(2026-10-12)의 501개(60클래스)에서 70개(5클래스)가 늘었습니다(`:core` +1, `:app` +69).
+앞선 기록 코어 검증(2026-10-12)의 501개(60클래스)에서 72개(5클래스)가 늘었습니다(`:core` +1, `:app` +71).
 
 새 클래스:
 
@@ -176,9 +176,9 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest
 
 | 클래스 | 테스트 수(이전 → 현재) | 늘어난 내용 |
 |---|---|---|
-| `ride.RideControllerTest` | 20 → 34 (+14) | 구간 나누기, 화면 알림, 기록 중 시작한 안내의 도착 처리(U1) |
+| `ride.RideControllerTest` | 20 → 36 (+16) | 구간 나누기(자동 일시정지 칩 유지 포함), 화면 알림(시작이 실패하면 지움), 기록 중 시작한 안내의 도착 처리(U1) |
 | `ride.RideNavigationTest` | 13 → 15 (+2) | 기록이 먼저 돌던 여행에 안내가 붙어도 같은 구간 유지, 다시 안내한 도착은 안내만 끝내고 기록 계속(U1) |
-| `nav.NavigationControllerTest` | 24 → 27 (+3) | 기록 중 시작한 안내의 도착은 안내만 끝냄, 기록이 뒤에 시작됐거나 먼저 끝났으면 둘 다 완료(U1) |
+| `nav.NavigationControllerTest` | 24 → 27 (+3) | 기록 중 시작한 안내의 도착은 안내만 끝냄(음소거 중에도 화면 문구, 음소거는 풀림), 기록이 뒤에 시작됐거나 먼저 끝났으면 둘 다 완료(U1) |
 | `ui.trip.TripStartViewModelTest` | 23 → 36 (+13) | 새 안내의 기록 선택(이어서/나누기/묻기). 동작이 의도적으로 바뀐 기존 6개를 고침 |
 | `ui.plan.PlanViewModelTest` | 25 → 29 (+4) | 길게 눌러 경유지·목적지·즐겨찾기, 즐겨찾기 칩 선택 |
 | `ui.navigate.NavigateViewModelTest` | 24 → 28 (+4) | 안내 취소 · 기록 계속, 주행 종료, 도착 문구 |
@@ -192,7 +192,8 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest
 
 실행일: 2026-10-18. `adb devices`에 연결된 휴대폰이 없어(목록이 비어 있음) 기기 실행은 **기기 검증 대기**입니다. 아래 표의 결과는 모두 대기이고, 테스트 수는 코드의 `@Test` 개수입니다.
 
-> **경고**: `connectedDebugAndroidTest`는 끝나면 앱을 지워 그 휴대폰의 기록이 사라집니다. connected 테스트는 `R5CT43TFS9A`에서만, 실제 기록이 있는 `R3CY903ZYQV`에는 `installDebug`만 씁니다.
+> **경고**: `connectedDebugAndroidTest`는 끝나면 앱을 지워 그 휴대폰의 기록이 사라집니다.
+> connected 테스트는 `R5CT43TFS9A`에서만, 실제 기록이 있는 `R3CY903ZYQV`에는 `installDebug`만 씁니다.
 
 시리얼 없이 실행하면 연결된 모든 휴대폰에서 돌고 앱을 지우므로 항상 `ANDROID_SERIAL=R5CT43TFS9A`를 붙입니다. 휴대폰 잠금을 푼 상태에서 실행합니다(잠겨 있으면 화면 테스트가 "No compose hierarchies found"로 실패). 한 번에 클래스 하나씩 실행합니다(쉼표 목록은 첫 클래스만 돕니다).
 

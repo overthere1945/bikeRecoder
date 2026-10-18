@@ -21,7 +21,9 @@
 - GPS 감시는 tick 시각만 쓴다(V1.0.0 R11): 위치가 오면 "봤음"만 표시, `onTick(now)`이 마지막 활동 후 10초를 판정. 이동 시간·자동 일시정지는 `fix.timeMillis` 차이, 경과 시간·날짜·고도 보정 창은 컨트롤러 `clock()`(tick 시각)으로 계산한다
 - MapLibre 호출은 메인 스레드에서만
 - 테스트: JUnit5 모듈은 `testRuntimeOnly(junit-platform-launcher)`(이미 있음). core는 `./gradlew :core:test --tests '<FQCN>'`, app JVM은 `./gradlew :app:testDebugUnitTest --tests '<FQCN>'`
-- 기기 테스트: USB 휴대폰 SM-S938N(Android 16, serial R3CY903ZYQV)에서 `ANDROID_SERIAL=R3CY903ZYQV ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=<FQCN>` (`--tests` 없음). AVD를 만들지 않는다. 휴대폰이 빠져 있으면 그 Task는 JVM 테스트 + `./gradlew :app:assembleDebug :app:assembleDebugAndroidTest`로 끝내고 기기 실행을 "기기 검증 대기"로 남긴다(모든 Task는 JVM으로 확인 가능한 부분을 가진다). 기기 테스트는 in-memory DB를 쓰고 만든 파일·DB를 지운다
+- 기기 테스트: USB 휴대폰 S22 Ultra(serial R5CT43TFS9A)에서 `ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=<FQCN>` (`--tests` 없음). AVD를 만들지 않는다. 휴대폰이 빠져 있으면 그 Task는 JVM 테스트 + `./gradlew :app:assembleDebug :app:assembleDebugAndroidTest`로 끝내고 기기 실행을 "기기 검증 대기"로 남긴다(모든 Task는 JVM으로 확인 가능한 부분을 가진다). 기기 테스트는 in-memory DB를 쓰고 만든 파일·DB를 지운다
+  > **경고**: `connectedDebugAndroidTest`는 끝나면 앱을 지워 그 휴대폰의 기록이 사라집니다.
+  > connected 테스트는 `R5CT43TFS9A`에서만, 실제 기록이 있는 `R3CY903ZYQV`에는 `installDebug`만 씁니다. (판정 U3, 2026-10-18 — 이 계획을 처음 실행할 때는 S25 Ultra `R3CY903ZYQV`를 썼으나 지금은 connected 테스트를 돌리지 않는다)
 - 테스트 좌표는 `GeoMath`(R = 6_371_008.8)와 같은 반경으로 만든다: 북쪽 직진 `lat = 37.5 + Math.toDegrees(m / 6_371_008.8)`(경선 위라 haversine 거리 = m, V1.0.0 R9). 기록 테스트는 `TestRoutes.pointAt`을 쓰지 않는다(Task 7은 안내 테스트라 기존 `TestRoutes.straightRoute`를 그대로 쓰며, 거리는 가짜 소스가 정하므로 영향이 없다). 경계값 시험은 부동소수 오차를 피해 경계 ±0.1m로 한다
 - Room: DB 버전 2, `exportSchema = true`, `app/schemas/.../2.json`을 커밋한다. 1→2는 테이블 추가만(`AutoMigration(from = 1, to = 2)`)
 - 설정 기본값: `autoStartRecordingWithNavigation = true`, `autoPauseEnabled = true`
@@ -537,7 +539,7 @@ interface RideStore {
 
 - [ ] **Step 2: 실패 확인** — `./gradlew :app:testDebugUnitTest --tests 'com.cowork.bikerecoder.data.RideMappingsTest'` → FAIL
 - [ ] **Step 3: 구현** — 엔티티·DAO·`RoomRideStore`. `appendPoints`는 DAO의 `@Transaction open suspend fun`에서 점 삽입 + 합계 UPDATE. 빌드 후 `2.json`이 생겼는지 확인. 기기 테스트가 `1.json`을 못 찾으면 `android.sourceSets.getByName("androidTest").assets.directories.add("$projectDir/schemas")`를 추가한다.
-- [ ] **Step 4: 통과 확인** — `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest` → BUILD SUCCESSFUL; 기기: `ANDROID_SERIAL=R3CY903ZYQV ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.cowork.bikerecoder.data.RoomRideStoreTest` 와 `…class=com.cowork.bikerecoder.data.RideDatabaseMigrationTest` → PASS(휴대폰 없으면 기기 검증 대기), 기존 `RoomTripStoreTest`도 다시 PASS
+- [ ] **Step 4: 통과 확인** — `./gradlew :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest` → BUILD SUCCESSFUL; 기기: `ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.cowork.bikerecoder.data.RoomRideStoreTest` 와 `…class=com.cowork.bikerecoder.data.RideDatabaseMigrationTest` → PASS(휴대폰 없으면 기기 검증 대기), 기존 `RoomTripStoreTest`도 다시 PASS
 - [ ] **Step 5: Commit** — `git add app/schemas …` 포함, `git commit -m "data: room v2 with ride segments and track points"`
 
 ---
@@ -1022,10 +1024,10 @@ Routes.HISTORY = "history"; Routes.TRIP_DETAIL = "history/trip/{tripId}"; Routes
 (⑥ 마이그레이션은 Task 8 `RideDatabaseMigrationTest`.)
 
 - [ ] **Step 2: 컴파일 확인** — `./gradlew :app:assembleDebugAndroidTest` → BUILD SUCCESSFUL
-- [ ] **Step 3: 기기 실행** — `ANDROID_SERIAL=R3CY903ZYQV ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.cowork.bikerecoder.ride.RideScenarioTest` → 5/5 PASS. 실패하면 컨트롤러를 고치고(기대값은 스펙 수치이므로 바꾸지 않는다) 그 동작의 JVM 테스트를 먼저 추가해 실패를 재현한다. 휴대폰이 없으면 "기기 검증 대기"로 남기고 문서에 적는다
+- [ ] **Step 3: 기기 실행** — `ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.cowork.bikerecoder.ride.RideScenarioTest` → 5/5 PASS. 실패하면 컨트롤러를 고치고(기대값은 스펙 수치이므로 바꾸지 않는다) 그 동작의 JVM 테스트를 먼저 추가해 실패를 재현한다. 휴대폰이 없으면 "기기 검증 대기"로 남기고 문서에 적는다
 - [ ] **Step 4: 문서**
   - `docs/verification/recording-field-test.md`: `navigation-field-test.md`와 같은 형식 — "자동 검증"(명령, 모음별 클래스·테스트·실패 수 표: `:core:test`, `:app:testDebugUnitTest`, 기기 전체), "기기 검증 대기" 목록(있으면), 스펙 §5.3 체크리스트 10항목을 그대로 표로(항목·합격 기준·결과·메모 빈칸): ① 기록만 30분 — 거리 삼성 헬스(Watch7) 대비 ±3% ② 신호 많은 도심 — 신호마다 일시정지·재개 안내, 이동 시간 실제와 일치 ③ 수동 모드 — 자동 일시정지 없음, 버튼으로만 ④ 오르막 코스 — 누적 상승 삼성 헬스 대비 ±15% ⑤ 최고 속도 — 실제와 비슷, 70km/h 이상 터무니없는 값 없음 ⑥ 화면 꺼짐 1시간 — 1km 안내 모두 들림, 배터리 시간당 12% 이하(안내+기록) ⑦ 안내와 함께 — 1km 안내 한 문장 1회 ⑧ 여러 날 이어서 — 다음 날 같은 여행에 이어짐, 목록에서 날짜별 표시 ⑨ 구간 상세 — 지도·고도·속도 그래프가 실제 코스와 일치 ⑩ 강제 종료 — 재실행 후 [이어서 기록]으로 계속. 아래에 완료 기준(스펙 §5.4: 5.1·5.2 통과 + 5.3 전 항목 합격 → CHANGELOG V1.1.0 확정, 태그 `v1.1.0`)과 "지도 위 끌기는 지도가 받으므로 페이지 넘기기는 하단 요약에서" 확인 메모.
   - `CHANGELOG.md`: `[1.0.0]` 위에 `## [1.1.0] - 개발 중` / `### 추가 (예정)`(GPS 주행 기록·현재/평균/최고 속도·고도·누적 상승/하강, 자동/수동 일시정지, 기록 음성 안내(시작·일시정지·재개·1km, 안내 중에는 한 문장), 안내 시작 시 기록 자동 시작, 기록 화면 2쪽, 기록 목록·여행/구간 상세·고도/속도 그래프·삭제, 강제 종료 복구, DB v2) / `### 문서`(스펙, 이 계획, 검증 문서 경로).
   - `README.md`: "현재 버전" 줄 → **V1.1.0 (개발 중)**, 로드맵 표 V1.1.0 상태 → "개발 중", V1.0.0 상태 → "개발 완료 (실주행 검증 대기)".
-- [ ] **Step 5: 전체 검증** — `./gradlew :core:test :routing-brouter:test :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest` → BUILD SUCCESSFUL; 기기 `ANDROID_SERIAL=R3CY903ZYQV ./gradlew :app:connectedDebugAndroidTest` → 전부 PASS(그동안 "기기 검증 대기"였던 것 포함). 결과 수치를 검증 문서 표에 적는다
+- [ ] **Step 5: 전체 검증** — `./gradlew :core:test :routing-brouter:test :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest` → BUILD SUCCESSFUL; 기기 `ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest` → 전부 PASS(그동안 "기기 검증 대기"였던 것 포함). 결과 수치를 검증 문서 표에 적는다
 - [ ] **Step 6: Commit** — `git commit -m "test: ride gpx scenarios; docs: recording field checklist, changelog 1.1.0"`

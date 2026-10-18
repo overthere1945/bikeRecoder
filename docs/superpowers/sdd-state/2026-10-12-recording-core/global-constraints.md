@@ -9,7 +9,7 @@
 - GPS 감시는 tick 시각만 쓴다(V1.0.0 R11): 위치가 오면 "봤음"만 표시, `onTick(now)`이 마지막 활동 후 10초를 판정. 이동 시간·자동 일시정지는 `fix.timeMillis` 차이, 경과 시간·날짜·고도 보정 창은 컨트롤러 `clock()`(tick 시각)으로 계산한다
 - MapLibre 호출은 메인 스레드에서만
 - 테스트: JUnit5 모듈은 `testRuntimeOnly(junit-platform-launcher)`(이미 있음). core는 `./gradlew :core:test --tests '<FQCN>'`, app JVM은 `./gradlew :app:testDebugUnitTest --tests '<FQCN>'`
-- 기기 테스트: USB 휴대폰 SM-S938N(Android 16, serial R3CY903ZYQV)에서 `ANDROID_SERIAL=R3CY903ZYQV ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=<FQCN>` (`--tests` 없음). AVD를 만들지 않는다. 휴대폰이 빠져 있으면 그 Task는 JVM 테스트 + `./gradlew :app:assembleDebug :app:assembleDebugAndroidTest`로 끝내고 기기 실행을 "기기 검증 대기"로 남긴다(모든 Task는 JVM으로 확인 가능한 부분을 가진다). 기기 테스트는 in-memory DB를 쓰고 만든 파일·DB를 지운다
+- 기기 테스트(판정 U3, 2026-10-18로 바뀜 — 원래는 S25 `SM-S938N`이었다): USB 휴대폰 S22 Ultra(serial R5CT43TFS9A)에서 `ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=<FQCN>` (`--tests` 없음). AVD를 만들지 않는다. 휴대폰이 빠져 있으면 그 Task는 JVM 테스트 + `./gradlew :app:assembleDebug :app:assembleDebugAndroidTest`로 끝내고 기기 실행을 "기기 검증 대기"로 남긴다(모든 Task는 JVM으로 확인 가능한 부분을 가진다). 기기 테스트는 in-memory DB를 쓰고 만든 파일·DB를 지운다
 - 테스트 좌표는 `GeoMath`(R = 6_371_008.8)와 같은 반경으로 만든다: 북쪽 직진 `lat = 37.5 + Math.toDegrees(m / 6_371_008.8)`(경선 위라 haversine 거리 = m, V1.0.0 R9). 기록 테스트는 `TestRoutes.pointAt`을 쓰지 않는다(Task 7은 안내 테스트라 기존 `TestRoutes.straightRoute`를 그대로 쓰며, 거리는 가짜 소스가 정하므로 영향이 없다). 경계값 시험은 부동소수 오차를 피해 경계 ±0.1m로 한다
 - Room: DB 버전 2, `exportSchema = true`, `app/schemas/.../2.json`을 커밋한다. 1→2는 테이블 추가만(`AutoMigration(from = 1, to = 2)`)
 - 설정 기본값: `autoStartRecordingWithNavigation = true`, `autoPauseEnabled = true`
@@ -19,4 +19,4 @@
 # Controller rulings in force
 - P1–P4 are in the Global Constraints above.
 - Commit trailer names the model that wrote the commit (R10 from V1.0.0).
-- R1: never run connected tests on any device other than R3CY903ZYQV; if it is absent, compile androidTest and report device runs as pending (another phone, R5CT43TFS9A, may be attached — do NOT use it).
+- R1 (superseded by ruling U3, 2026-10-18: connected tests only on R5CT43TFS9A, never on R3CY903ZYQV — connected tests uninstall the app and delete the ride data): never run connected tests on any device other than R3CY903ZYQV; if it is absent, compile androidTest and report device runs as pending (another phone, R5CT43TFS9A, may be attached — do NOT use it).
