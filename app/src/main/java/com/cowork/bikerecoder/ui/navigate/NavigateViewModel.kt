@@ -140,7 +140,7 @@ class NavigateViewModel(
         }
     }
 
-    /** [안내 취소 · 기록 계속] (no confirmation): the same as the dialog's [안내만 끝내기 (기록 계속)]. */
+    /** [안내 취소] (no confirmation): the same as the dialog's [안내만 끝내기 (기록 계속)]. */
     fun cancelGuidance() = onEndChoice(EndAction.END_GUIDANCE_ONLY)
 
     /** The screen showed the notice [id]. */

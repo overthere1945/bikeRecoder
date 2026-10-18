@@ -17,7 +17,7 @@ enum class GuidanceButton(val label: String) {
     MUTE("음소거"),
     OVERVIEW("전체 경로"),
     END("종료"),
-    CANCEL_GUIDANCE("안내 취소 · 기록 계속"),
+    CANCEL_GUIDANCE("안내 취소"),
     END_RIDE("주행 종료"),
 }
 
@@ -31,7 +31,7 @@ fun guidanceButtons(recording: Boolean): List<GuidanceButton> =
 
 /** Test tags of the guidance buttons. */
 object GuidanceTags {
-    /** [전체 경로] on the map while recording (its place in the row is taken by [안내 취소 · 기록 계속]). */
+    /** [전체 경로] on the map while recording (its place in the row is taken by [안내 취소]). */
     const val OVERVIEW_ON_MAP = "navigate-overview-map"
 
     fun button(b: GuidanceButton) = "navigate-button-${b.name}"
@@ -62,7 +62,8 @@ internal fun GuidanceButtonRow(
                     Text(button.label, textAlign = TextAlign.Center)
                 }
                 GuidanceButton.CANCEL_GUIDANCE -> OutlinedButton(onClick = onCancelGuidance, modifier = buttonModifier) {
-                    Text(button.label, textAlign = TextAlign.Center)
+                    // One line, like the other two buttons; the recording goes on (the label says only what ends).
+                    Text(button.label, textAlign = TextAlign.Center, maxLines = 1)
                 }
                 GuidanceButton.END, GuidanceButton.END_RIDE -> Button(onClick = onEnd, modifier = buttonModifier) {
                     Text(button.label, textAlign = TextAlign.Center)

@@ -9,7 +9,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 
-/** The guidance buttons (spec §3): [안내 취소 · 기록 계속] [주행 종료] while recording, V1.0.0 otherwise. */
+/** The guidance buttons (spec §3): [안내 취소] [주행 종료] while recording, V1.0.0 otherwise. */
 class GuidanceButtonRowTest {
     @get:Rule
     val composeRule = createComposeRule()
@@ -38,7 +38,7 @@ class GuidanceButtonRowTest {
         composeRule.onNodeWithText("음소거").assertIsDisplayed()
         composeRule.onNodeWithText("전체 경로").assertDoesNotExist()
         composeRule.onNodeWithText("종료").assertDoesNotExist()
-        composeRule.onNodeWithText("안내 취소 · 기록 계속").assertIsDisplayed().performClick()
+        composeRule.onNodeWithText("안내 취소").assertIsDisplayed().performClick()
         composeRule.onNodeWithText("주행 종료").assertIsDisplayed().performClick()
 
         composeRule.waitForIdle()
@@ -52,7 +52,7 @@ class GuidanceButtonRowTest {
         composeRule.onNodeWithText("음소거 해제").assertIsDisplayed().performClick()
         composeRule.onNodeWithText("전체 경로").assertIsDisplayed().performClick()
         composeRule.onNodeWithText("종료").assertIsDisplayed().performClick()
-        composeRule.onNodeWithText("안내 취소 · 기록 계속").assertDoesNotExist()
+        composeRule.onNodeWithText("안내 취소").assertDoesNotExist()
         composeRule.onNodeWithText("주행 종료").assertDoesNotExist()
 
         composeRule.waitForIdle()

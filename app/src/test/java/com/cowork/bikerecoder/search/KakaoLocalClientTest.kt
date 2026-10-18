@@ -71,7 +71,7 @@ class KakaoLocalClientTest {
         assertEquals("/v2/local/search/keyword.json", url.encodedPath)
         assertEquals("127.0", url.queryParameter("x"))
         assertEquals("37.5", url.queryParameter("y"))
-        assertEquals("distance", url.queryParameter("sort"))
+        assertEquals("accuracy", url.queryParameter("sort"))
         assertEquals("15", url.queryParameter("size"))
     }
 

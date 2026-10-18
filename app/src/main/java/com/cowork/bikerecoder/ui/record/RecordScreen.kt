@@ -162,7 +162,7 @@ fun RecordScreen(
             )
         }
         SnackbarHost(snackbar, modifier = Modifier.align(Alignment.Center).padding(16.dp))
-        // Above the buttons: e.g. ruling U1's "목적지에 도착했습니다" and [안내 취소 · 기록 계속]'s sentence.
+        // Above the buttons: e.g. ruling U1's "목적지에 도착했습니다" and [안내 취소]'s sentence.
         NoticeSnackbarHost(
             notice = notice,
             onShown = viewModel::noticeShown,

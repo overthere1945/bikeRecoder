@@ -703,7 +703,7 @@ class TripStartViewModelTest {
 
     @Test
     fun theSamePlanAgainLeavesTheStopsAndTheOfflineMaps() = runTest(dispatcher) {
-        // Re-guiding a trip whose stops already are the plan (e.g. after "안내 취소 · 기록 계속"): no changeStops.
+        // Re-guiding a trip whose stops already are the plan (e.g. after "안내 취소"): no changeStops.
         val r = Recording(this)
         val old = existingTrip(TripType.SINGLE_DAY)
         val idsBefore = store.stops(old).map { it.id }

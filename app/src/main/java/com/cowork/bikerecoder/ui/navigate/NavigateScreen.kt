@@ -125,11 +125,11 @@ private val etaFormat = DateTimeFormatter.ofPattern("a h:mm", Locale.KOREAN)
 /**
  * Turn-by-turn guidance (spec §4.5): turn card on top, the map following the rider, remaining distance /
  * ETA / speed and [음소거] [전체 경로] [종료] below. While a recording starts or runs (spec §3) the buttons are [음소거]
- * [안내 취소 · 기록 계속] [주행 종료] and [전체 경로] moves onto the map; once it runs its line sits under the turn
+ * [안내 취소] [주행 종료] and [전체 경로] moves onto the map; once it runs its line sits under the turn
  * card and a second page shows its numbers. The recording's on-screen notices show on the guidance map while guiding. Also hosts the start
  * progress, start errors and the end-of-trip screens (with the recording's segment summary). Leaving the screen never
  * stops guidance; once the controller is idle (closed, or nothing to show) [onGuidanceEndedWhileRecording] is called if
- * a recording goes on ([goesToRecordAfterGuidance]: [안내 취소 · 기록 계속], ruling U1's arrival), else [onClose].
+ * a recording goes on ([goesToRecordAfterGuidance]: [안내 취소], ruling U1's arrival), else [onClose].
  */
 @Composable
 fun NavigateScreen(
@@ -184,7 +184,7 @@ fun NavigateScreen(
         when (state) {
             NavUiState.Idle -> if (!viewModel.hasPendingStart) {
                 LaunchedEffect(Unit) {
-                    // E.g. [안내 취소 · 기록 계속] or ruling U1's arrival: the recording goes on, on its own screen.
+                    // E.g. [안내 취소] or ruling U1's arrival: the recording goes on, on its own screen.
                     if (goesToRecordAfterGuidance(viewModel.rideUi.value)) onGuidanceEndedWhileRecording() else onClose()
                 }
             }
@@ -340,7 +340,7 @@ private fun ActiveContent(
                             fit = fit,
                         )
                         if (showRecordingButtons) {
-                            // Its place in the button row is taken by [안내 취소 · 기록 계속].
+                            // Its place in the button row is taken by [안내 취소].
                             FilledTonalButton(
                                 onClick = showOverview,
                                 modifier = Modifier

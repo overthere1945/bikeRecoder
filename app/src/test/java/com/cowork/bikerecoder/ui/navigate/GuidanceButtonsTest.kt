@@ -3,7 +3,7 @@ package com.cowork.bikerecoder.ui.navigate
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
-/** The guidance screen's button row (spec §3): V1.0.0 without a recording, [안내 취소 · 기록 계속] [주행 종료] with one. */
+/** The guidance screen's button row (spec §3): V1.0.0 without a recording, [안내 취소] [주행 종료] with one. */
 class GuidanceButtonsTest {
 
     @Test
@@ -13,6 +13,6 @@ class GuidanceButtonsTest {
 
     @Test
     fun whileRecordingCancelAndEndRide() {
-        assertEquals(listOf("음소거", "안내 취소 · 기록 계속", "주행 종료"), guidanceButtons(recording = true).map { it.label })
+        assertEquals(listOf("음소거", "안내 취소", "주행 종료"), guidanceButtons(recording = true).map { it.label })
     }
 }
