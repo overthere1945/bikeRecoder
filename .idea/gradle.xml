@@ -11,6 +11,13 @@
             <option value="$PROJECT_DIR$" />
             <option value="$PROJECT_DIR$/app" />
             <option value="$PROJECT_DIR$/core" />
+            <option value="$PROJECT_DIR$/routing-brouter" />
+            <option value="$PROJECT_DIR$/third_party" />
+            <option value="$PROJECT_DIR$/third_party/brouter/brouter-codec" />
+            <option value="$PROJECT_DIR$/third_party/brouter/brouter-core" />
+            <option value="$PROJECT_DIR$/third_party/brouter/brouter-expressions" />
+            <option value="$PROJECT_DIR$/third_party/brouter/brouter-mapaccess" />
+            <option value="$PROJECT_DIR$/third_party/brouter/brouter-util" />
           </set>
         </option>
       </GradleProjectSettings>
