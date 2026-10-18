@@ -55,7 +55,7 @@ class SearchViewModel(
 
     init {
         viewModelScope.launch {
-            // A broken store only hides the list; searching keeps working.
+            // The store already recovers from failed reads; anything else only hides the list, searching keeps working.
             recent.places
                 .catch { emit(emptyList()) }
                 .collect { places -> _state.update { it.copy(recent = places) } }

@@ -38,6 +38,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -190,7 +191,10 @@ private fun RecentPlaces(places: List<Place>, onTap: (Place) -> Unit, onRemove: 
     LazyColumn(modifier = Modifier.fillMaxSize().nestedScroll(rememberHideKeyboardOnDrag())) {
         item {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp).testTag(SearchTags.RECENT_HEADER),
+                modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp)
+                    // The title text belongs to the tagged node; [전체 삭제] stays its own clickable node.
+                    .semantics(mergeDescendants = true) {}
+                    .testTag(SearchTags.RECENT_HEADER),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("최근 검색", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
