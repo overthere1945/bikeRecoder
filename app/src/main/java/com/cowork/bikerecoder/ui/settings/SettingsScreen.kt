@@ -37,6 +37,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cowork.bikerecoder.AppVersion
 import com.cowork.bikerecoder.BuildConfig
 import com.cowork.bikerecoder.core.model.RouteProfile
+import com.cowork.bikerecoder.data.GuidanceRecording
 import com.cowork.bikerecoder.offline.SegmentInfo
 import com.cowork.bikerecoder.ui.common.GlyphIcon
 import com.cowork.bikerecoder.ui.plan.labelKo
@@ -53,6 +54,7 @@ object SettingsTags {
     const val CONFIRM = "settings_confirm"
     const val CANCEL = "settings_cancel"
     fun profile(profile: RouteProfile) = "settings_profile_${profile.name}"
+    fun guidanceRecording(mode: GuidanceRecording) = "settings_guidance_recording_${mode.name}"
     fun segmentCheck(name: String) = "settings_segment_check_$name"
     fun segmentDelete(name: String) = "settings_segment_delete_$name"
     fun segmentDownload(name: String) = "settings_segment_download_$name"
@@ -82,6 +84,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
         onDownload = viewModel::download,
         onDeleteSegment = viewModel::delete,
         onDeleteAllMaps = viewModel::deleteAllMaps,
+        onSetRecordingOnNewGuidance = viewModel::setRecordingOnNewGuidance,
     )
 }
 
@@ -100,6 +103,7 @@ internal fun SettingsContent(
     onDownload: (String) -> Unit,
     onDeleteSegment: (String) -> Unit,
     onDeleteAllMaps: () -> Unit,
+    onSetRecordingOnNewGuidance: (GuidanceRecording) -> Unit = {},
 ) {
     var confirmDeleteSegment by remember { mutableStateOf<SegmentInfo?>(null) }
     var confirmDeleteMaps by remember { mutableStateOf(false) }
@@ -118,19 +122,12 @@ internal fun SettingsContent(
                 SectionTitle("기본 경로 성향")
                 Column(modifier = Modifier.selectableGroup()) {
                     RouteProfile.entries.forEach { profile ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                                .testTag(SettingsTags.profile(profile))
-                                .selectable(
-                                    selected = state.settings.defaultProfile == profile,
-                                    role = Role.RadioButton,
-                                    onClick = { onSetProfile(profile) },
-                                ),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            RadioButton(selected = state.settings.defaultProfile == profile, onClick = null)
-                            Text(profile.labelKo(), modifier = Modifier.padding(start = 12.dp))
-                        }
+                        RadioRow(
+                            label = profile.labelKo(),
+                            selected = state.settings.defaultProfile == profile,
+                            tag = SettingsTags.profile(profile),
+                            onClick = { onSetProfile(profile) },
+                        )
                     }
                 }
                 HorizontalDivider()
@@ -161,6 +158,17 @@ internal fun SettingsContent(
                     SettingsTags.AUTO_PAUSE,
                     onSetAutoPause,
                 )
+                Text("안내를 새로 시작할 때 기록", style = MaterialTheme.typography.bodyLarge)
+                Column(modifier = Modifier.selectableGroup()) {
+                    GuidanceRecording.entries.forEach { mode ->
+                        RadioRow(
+                            label = mode.label,
+                            selected = state.settings.recordingOnNewGuidance == mode,
+                            tag = SettingsTags.guidanceRecording(mode),
+                            onClick = { onSetRecordingOnNewGuidance(mode) },
+                        )
+                    }
+                }
                 HorizontalDivider()
 
                 SectionTitle("경로 데이터")
@@ -262,6 +270,18 @@ internal fun SettingsContent(
 @Composable
 private fun SectionTitle(text: String) {
     Text(text, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+}
+
+@Composable
+private fun RadioRow(label: String, selected: Boolean, tag: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag(tag)
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = null)
+        Text(label, modifier = Modifier.padding(start = 12.dp))
+    }
 }
 
 @Composable

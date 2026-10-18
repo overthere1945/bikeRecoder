@@ -3,7 +3,9 @@ package com.cowork.bikerecoder.ui.settings
 import android.content.Context
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -13,6 +15,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.data.AppSettings
+import com.cowork.bikerecoder.data.GuidanceRecording
 import com.cowork.bikerecoder.offline.OfflineMapStorage
 import com.cowork.bikerecoder.offline.SegmentRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -98,6 +101,21 @@ class SettingsScreenTest {
         composeRule.onNodeWithTag(SettingsTags.AUTO_PAUSE).performClick()
         composeRule.waitUntil(5_000) { !settings.value.autoPauseEnabled }
         assertEquals(false, settings.value.autoStartRecordingWithNavigation)
+    }
+
+    @Test
+    fun guidanceRecordingChoices() {
+        composeRule.onNodeWithText("안내를 새로 시작할 때 기록").performScrollTo().assertIsDisplayed()
+        listOf("자동으로 이어서 기록", "자동으로 새 구간 나누기", "매번 물어보기").forEach {
+            composeRule.onNodeWithText(it).performScrollTo().assertIsDisplayed()
+        }
+        composeRule.onNodeWithTag(SettingsTags.guidanceRecording(GuidanceRecording.ASK)).assertIsSelected()
+        composeRule.onNodeWithTag(SettingsTags.guidanceRecording(GuidanceRecording.SPLIT)).assertIsNotSelected()
+
+        composeRule.onNodeWithText("자동으로 새 구간 나누기").performClick()
+        composeRule.waitUntil(5_000) { settings.value.recordingOnNewGuidance == GuidanceRecording.SPLIT }
+        composeRule.onNodeWithTag(SettingsTags.guidanceRecording(GuidanceRecording.SPLIT)).assertIsSelected()
+        composeRule.onNodeWithTag(SettingsTags.guidanceRecording(GuidanceRecording.ASK)).assertIsNotSelected()
     }
 
     @Test

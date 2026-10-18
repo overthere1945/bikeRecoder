@@ -21,6 +21,8 @@ fun TripStartDialogs(
     onContinue: () -> Unit,
     onStartNew: () -> Unit,
     onDismiss: () -> Unit,
+    onKeepRecording: () -> Unit = {},
+    onSplitRecording: () -> Unit = {},
 ) {
     when (state) {
         TripStartState.AskType -> AlertDialog(
@@ -35,6 +37,17 @@ fun TripStartDialogs(
             text = { Text(continueQuestion(state.destinationName)) },
             confirmButton = { Button(onClick = onContinue) { Text("이어서") } },
             dismissButton = { TextButton(onClick = onStartNew) { Text("새로 시작") } },
+        )
+        TripStartState.AskRecording -> AlertDialog(
+            onDismissRequest = onDismiss,
+            text = { Text(RECORDING_QUESTION) },
+            confirmButton = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onKeepRecording, modifier = Modifier.fillMaxWidth()) { Text("이어서 기록") }
+                    Button(onClick = onSplitRecording, modifier = Modifier.fillMaxWidth()) { Text("새 구간으로 나누기") }
+                    OutlinedButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("취소") }
+                }
+            },
         )
         is TripStartState.Error -> AlertDialog(
             onDismissRequest = onDismiss,

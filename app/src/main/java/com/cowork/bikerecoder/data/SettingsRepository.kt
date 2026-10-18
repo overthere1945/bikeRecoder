@@ -26,7 +26,16 @@ data class AppSettings(
     val autoStartRecordingWithNavigation: Boolean = true,
     /** 멈춰 있으면 기록을 자동으로 일시정지한다(기본값; 기록마다 따로 바꿀 수 있다). */
     val autoPauseEnabled: Boolean = true,
+    /** 기록 중에 안내를 새로 시작할 때 기록을 어떻게 할지. */
+    val recordingOnNewGuidance: GuidanceRecording = GuidanceRecording.ASK,
 )
+
+/** 기록 중에 안내를 새로 시작할 때 기록을 어떻게 할지(스펙 §4.3). */
+enum class GuidanceRecording(val label: String) {
+    CONTINUE("자동으로 이어서 기록"),
+    SPLIT("자동으로 새 구간 나누기"),
+    ASK("매번 물어보기"),
+}
 
 /** A corrupt settings file is replaced by the defaults instead of crashing every start-up. */
 private val Context.settingsDataStore by preferencesDataStore(
@@ -50,6 +59,7 @@ class SettingsRepository(context: Context) {
             prefs[TTS_NOTICE_SHOWN] = next.ttsNoticeShown
             prefs[AUTO_START_RECORDING] = next.autoStartRecordingWithNavigation
             prefs[AUTO_PAUSE] = next.autoPauseEnabled
+            prefs[RECORDING_ON_NEW_GUIDANCE] = next.recordingOnNewGuidance.name
         }
     }
 
@@ -69,6 +79,9 @@ class SettingsRepository(context: Context) {
             ttsNoticeShown = this[TTS_NOTICE_SHOWN] ?: defaults.ttsNoticeShown,
             autoStartRecordingWithNavigation = this[AUTO_START_RECORDING] ?: defaults.autoStartRecordingWithNavigation,
             autoPauseEnabled = this[AUTO_PAUSE] ?: defaults.autoPauseEnabled,
+            recordingOnNewGuidance = this[RECORDING_ON_NEW_GUIDANCE]
+                ?.let { name -> GuidanceRecording.entries.firstOrNull { it.name == name } }
+                ?: defaults.recordingOnNewGuidance,
         )
     }
 
@@ -81,5 +94,6 @@ class SettingsRepository(context: Context) {
         val TTS_NOTICE_SHOWN = booleanPreferencesKey("tts_notice_shown")
         val AUTO_START_RECORDING = booleanPreferencesKey("auto_start_recording_with_navigation")
         val AUTO_PAUSE = booleanPreferencesKey("auto_pause_enabled")
+        val RECORDING_ON_NEW_GUIDANCE = stringPreferencesKey("recording_on_new_guidance")
     }
 }

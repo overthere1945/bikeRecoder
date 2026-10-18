@@ -12,6 +12,7 @@ data class EndChoice(val label: String, val action: EndAction)
 const val TRIP_TYPE_QUESTION = "오늘 하루 일정인가요, 여러 날 일정인가요?"
 const val END_QUESTION = "안내를 끝낼까요?"
 const val TRIP_COMPLETED = "여행을 완료했습니다"
+const val RECORDING_QUESTION = "기록을 어떻게 할까요?"
 
 /** The name of a trip without stops (started from [● 기록 시작]) where a destination name would be shown. */
 const val RIDE_RECORD_NAME = "주행 기록"

@@ -306,6 +306,8 @@ fun BikeNavHost(
                 onContinue = tripStart::continueTrip,
                 onStartNew = tripStart::startNew,
                 onDismiss = tripStart::dismiss,
+                onKeepRecording = tripStart::keepRecording,
+                onSplitRecording = tripStart::splitRecording,
             )
             LaunchedEffect(startState) {
                 when (val state = startState) {

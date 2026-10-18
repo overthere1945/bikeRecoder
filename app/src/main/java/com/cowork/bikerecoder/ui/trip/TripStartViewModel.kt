@@ -15,6 +15,9 @@ import com.cowork.bikerecoder.core.trip.TripManager
 import com.cowork.bikerecoder.core.trip.TripStop
 import com.cowork.bikerecoder.core.trip.TripStore
 import com.cowork.bikerecoder.core.trip.TripType
+import com.cowork.bikerecoder.data.GuidanceRecording
+import com.cowork.bikerecoder.nav.guidingTripId
+import com.cowork.bikerecoder.ride.RideController
 import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.ride.recordingTripId
 import com.cowork.bikerecoder.ui.plan.PlannedStop
@@ -37,6 +40,9 @@ sealed interface TripStartState {
 
     /** "{destinationName} 여행을 이어서 진행할까요?" */
     data class AskContinue(val trip: Trip, val destinationName: String) : TripStartState
+
+    /** "기록을 어떻게 할까요?" [이어서 기록] [새 구간으로 나누기] [취소] */
+    data object AskRecording : TripStartState
 
     /**
      * The trip to guide; the caller starts navigation and calls [TripStartViewModel.consumeReady]. [recordNotice]: the
@@ -74,12 +80,18 @@ fun List<PlannedStop>.toTripStops(): List<TripStop> = mapIndexed { index, stop -
  * [● 기록 시작] on the map main screen ([onRecordPressed]) asks the same questions for a recording without a plan:
  * a new trip has no stops and [defaultProfile]; [이어서] keeps the trip's stops and profile as they are.
  *
- * A recording of another trip ([recordingTrip]) is ended by [endRecording] (a segment only, no summary) before the
- * new trip starts or another trip is continued: starting a trip completes the active one, which must not happen under
- * a live recording, and the new guidance then records its own trip. Stopping is preferred over refusing the start:
- * the user has already chosen to end that trip, and the segment keeps every point recorded so far. A save problem of
- * that recording comes with [TripStartState.Ready.recordNotice]. A summary not seen yet ([pendingSummary]) is shown
- * first ([TripStartState.ShowSummary]), like [● 기록 시작] does.
+ * [안내 시작] while a recording runs (spec §4.2) asks neither the type nor to continue: the plan joins the recorded
+ * trip ([attach]: a guidance of that trip is closed first, the trip takes the plan's profile and, if they differ, its
+ * stops) and the recording goes on or is split into a new segment as [recordingMode] says (ASK:
+ * [TripStartState.AskRecording]). A split is finished (the new segment records) before [TripStartState.Ready]: the
+ * guidance must begin into the running recording to belong to it (ruling U1).
+ *
+ * A recording of another trip ([recordingTrip]) that started while a question was open is ended by [endRecording] (a
+ * segment only, no summary) before the new trip starts or another trip is continued (ruling U2): starting a trip
+ * completes the active one, which must not happen under a live recording, and the new guidance then records its own
+ * trip. Stopping is preferred over refusing the start: the user has already chosen to end that trip, and the segment
+ * keeps every point recorded so far. A save problem of that recording comes with [TripStartState.Ready.recordNotice].
+ * A summary not seen yet ([pendingSummary]) is shown first ([TripStartState.ShowSummary]), like [● 기록 시작] does.
  */
 class TripStartViewModel(
     private val tripManager: TripManager,
@@ -93,6 +105,14 @@ class TripStartViewModel(
     private val endRecording: suspend () -> String? = { null },
     /** A finished recording's summary waits to be seen: it is shown before anything starts. */
     private val pendingSummary: () -> Boolean = { false },
+    /** The message of a recording whose start failed ([RideUiState.Failed]); null if none. */
+    private val recordingFailure: () -> String? = { null },
+    /** The setting "안내를 새로 시작할 때 기록". */
+    private val recordingMode: suspend () -> GuidanceRecording = { GuidanceRecording.ASK },
+    /** Closes the running segment and records a new one of the same trip ([RideController.splitSegment]); its save error. */
+    private val splitSegment: suspend () -> String? = { null },
+    /** 그 여행을 안내하는 중이면 닫는다(begin이 같은 여행이면 아무것도 하지 않으므로 새 경유지가 반영되도록). */
+    private val closeGuidanceOf: (tripId: Long) -> Unit = {},
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<TripStartState>(TripStartState.Idle)
@@ -103,6 +123,9 @@ class TripStartViewModel(
     /** The flow was started by [onRecordPressed]: the trip's stops and profile are left alone. */
     private var recordOnly = false
 
+    /** The trip that was recording when [TripStartState.AskRecording] was asked. */
+    private var askedRecording: Long? = null
+
     fun onStartPressed(plan: StartPlan) {
         if (_state.value != TripStartState.Idle || plan.stops.isEmpty()) return
         if (pendingSummary()) {
@@ -111,7 +134,62 @@ class TripStartViewModel(
         }
         this.plan = plan
         recordOnly = false
-        work { prompt() }
+        val recording = recordingTrip()
+        if (recording == null) {
+            work { prompt() }
+            return
+        }
+        // The plan joins the trip being recorded: neither its type nor continuing it is asked.
+        askedRecording = recording
+        work {
+            when (recordingMode()) {
+                GuidanceRecording.ASK -> TripStartState.AskRecording
+                GuidanceRecording.CONTINUE -> attach(recording, split = false)
+                GuidanceRecording.SPLIT -> attach(recording, split = true)
+            }
+        }
+    }
+
+    /** [이어서 기록]: the plan joins the recorded trip, the segment goes on. */
+    fun keepRecording() = answerRecording(split = false)
+
+    /** [새 구간으로 나누기]: the plan joins the recorded trip, which records a new segment. */
+    fun splitRecording() = answerRecording(split = true)
+
+    private fun answerRecording(split: Boolean) {
+        if (_state.value != TripStartState.AskRecording) return
+        val asked = askedRecording
+        askedRecording = null
+        work {
+            // The recording ended while asking: the usual questions instead.
+            if (asked == null || recordingTrip() != asked) prompt() else attach(asked, split)
+        }
+    }
+
+    /**
+     * Puts the plan on the recorded trip [tripId] and, if [split], waits for the new segment to record — only then may
+     * the guidance begin (it joins the recording, ruling U1). A split that ends without a running recording starts no
+     * guidance: a stop during the split shows its summary, a new segment that could not start says so.
+     */
+    private suspend fun attach(tripId: Long, split: Boolean): TripStartState {
+        val p = checkNotNull(plan)
+        // A guidance of this trip is closed first: begin() ignores the trip it already guides, so the new stops count.
+        closeGuidanceOf(tripId)
+        changePlan(tripId, p)
+        if (!split) return TripStartState.Ready(tripId)
+        val notice = splitSegment()
+        if (recordingTrip() == tripId) return TripStartState.Ready(tripId, notice)
+        if (pendingSummary()) return TripStartState.ShowSummary
+        return TripStartState.Error(recordingFailure() ?: MSG_FAILED)
+    }
+
+    /** [tripId] takes [p]'s profile and, only if they differ from its unvisited stops, its stops. */
+    private suspend fun changePlan(tripId: Long, p: StartPlan) {
+        // The route is computed from the trip's profile: the one chosen on the plan screen wins.
+        tripManager.changeProfile(tripId, p.profile)
+        // Replacing the stops deletes the trip's offline maps: only when the plan differs.
+        val remaining = tripManager.remainingStops(tripId).map { it.name to it.point }
+        if (remaining != p.stops.map { it.name to it.point }) tripManager.changeStops(tripId, p.stops.toTripStops())
     }
 
     /** [● 기록 시작]: which trip to record (no plan, so the plan-start's empty-stops guard does not apply). */
@@ -147,10 +225,7 @@ class TripStartViewModel(
             val notice = if (recordingTrip().let { it != null && it != tripId }) endRecording() else null
             // Recording only: the trip keeps its stops and profile.
             if (recordOnly) return@work TripStartState.Ready(tripId, notice)
-            // The route is computed from the trip's profile: the one chosen on the plan screen wins.
-            tripManager.changeProfile(tripId, p.profile)
-            val remaining = tripManager.remainingStops(tripId).map { it.name to it.point }
-            if (remaining != p.stops.map { it.name to it.point }) tripManager.changeStops(tripId, p.stops.toTripStops())
+            changePlan(tripId, p)
             TripStartState.Ready(tripId, notice)
         }
     }
@@ -162,8 +237,9 @@ class TripStartViewModel(
 
     fun dismiss() {
         when (_state.value) {
-            TripStartState.AskType, is TripStartState.AskContinue, is TripStartState.Error -> {
+            TripStartState.AskType, is TripStartState.AskContinue, TripStartState.AskRecording, is TripStartState.Error -> {
                 recordOnly = false
+                askedRecording = null
                 _state.value = TripStartState.Idle
             }
             else -> Unit
@@ -218,6 +294,11 @@ class TripStartViewModel(
                     recordingTrip = { container.rideState.recordingTripId },
                     endRecording = { container.ride.endForAnotherTrip() },
                     pendingSummary = { container.rideState is RideUiState.Finished },
+                    recordingFailure = { (container.rideState as? RideUiState.Failed)?.message },
+                    recordingMode = { container.settings.settings.first().recordingOnNewGuidance },
+                    // Only called while a recording runs, so the ride controller exists.
+                    splitSegment = { container.ride.splitSegment() },
+                    closeGuidanceOf = { id -> if (container.navigationState.guidingTripId == id) container.navigation.close() },
                 )
             }
         }
