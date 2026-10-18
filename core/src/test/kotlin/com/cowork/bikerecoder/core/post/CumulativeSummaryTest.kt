@@ -61,6 +61,19 @@ class CumulativeSummaryTest {
     }
 
     @Test
+    fun monthsAreSortedAscendingForUnorderedInput() {
+        val shuffled = listOf(
+            entry(1, LocalDate.of(2026, 3, 2), 1.0, 1),
+            entry(2, LocalDate.of(2026, 1, 5), 1.0, 1),
+            entry(3, LocalDate.of(2026, 3, 9), 1.0, 1),
+            entry(4, LocalDate.of(2026, 2, 1), 1.0, 1),
+            entry(5, LocalDate.of(2025, 11, 1), 1.0, 1),
+        )
+        assertEquals(listOf(1, 2, 3), CumulativeSummary.months(shuffled, 2026))
+        assertEquals(listOf(2026, 2025), CumulativeSummary.years(shuffled))
+    }
+
+    @Test
     fun monthWithoutYearIgnored() {
         assertEquals(
             listOf(1L, 2L, 3L, 4L),

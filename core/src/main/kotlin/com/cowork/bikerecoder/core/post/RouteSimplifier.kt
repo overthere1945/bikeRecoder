@@ -59,34 +59,34 @@ object PolylineCodec {
         return sb.toString()
     }
 
+    /** 잘못되었거나 중간에 잘린 입력이면 [IllegalArgumentException]. */
     fun decode(encoded: String): List<GeoPoint> {
         val out = ArrayList<GeoPoint>()
-        var index = 0
+        val cursor = intArrayOf(0)
         var lat = 0L
         var lon = 0L
-        while (index < encoded.length) {
-            var result = 0L
-            var shift = 0
-            var b: Int
-            do {
-                b = encoded[index++].code - 63
-                result = result or ((b and 0x1f).toLong() shl shift)
-                shift += 5
-            } while (b >= 0x20 && index < encoded.length)
-            lat += if (result and 1L != 0L) (result shr 1).inv() else result shr 1
-
-            result = 0L
-            shift = 0
-            do {
-                b = encoded[index++].code - 63
-                result = result or ((b and 0x1f).toLong() shl shift)
-                shift += 5
-            } while (b >= 0x20 && index < encoded.length)
-            lon += if (result and 1L != 0L) (result shr 1).inv() else result shr 1
-
+        while (cursor[0] < encoded.length) {
+            lat += readDelta(encoded, cursor)
+            require(cursor[0] < encoded.length) { "polyline ends after a latitude value" }
+            lon += readDelta(encoded, cursor)
             out.add(GeoPoint(lat / SCALE, lon / SCALE))
         }
         return out
+    }
+
+    private fun readDelta(encoded: String, cursor: IntArray): Long {
+        var result = 0L
+        var shift = 0
+        var b: Int
+        do {
+            require(cursor[0] < encoded.length) { "polyline is truncated" }
+            b = encoded[cursor[0]++].code - 63
+            require(b in 0..0x3f) { "invalid polyline character at ${cursor[0] - 1}" }
+            require(shift <= 60) { "polyline value too long" }
+            result = result or ((b and 0x1f).toLong() shl shift)
+            shift += 5
+        } while (b >= 0x20)
+        return if (result and 1L != 0L) (result shr 1).inv() else result shr 1
     }
 
     private fun appendValue(sb: StringBuilder, delta: Long) {

@@ -76,12 +76,50 @@ class PhotoPlacementTest {
     }
 
     @Test
-    fun emptyTrackGivesNullEvenWithoutExif() {
-        // EXIF 위치가 있으면 트랙이 비어 있어도 쓸 수 있다.
+    fun emptyTrackGivesNullEvenWithExif() {
+        // 구간에 기록 지점이 없으면 EXIF 위치가 있어도 사진을 넣지 않는다(스펙 §2.2.3).
         val exif = GeoPoint(35.0, 129.0)
-        val placed = PhotoPlacement.place(PhotoCandidate(9, 15_000, exif), emptyList())
+        assertNull(PhotoPlacement.place(PhotoCandidate(9, 15_000, exif), emptyList()))
+    }
+
+    @Test
+    fun gapOfExactlyThirtySecondsInterpolates() {
+        val end = tp(40_000, 37.0003, 127.0006) // a(10 s)와 정확히 30 s 간격
+        val placed = PhotoPlacement.place(PhotoCandidate(10, 20_000, null), listOf(a, end))
         assertNotNull(placed)
-        assertEquals(PhotoPositionSource.EXIF, placed.source)
+        assertEquals(37.0001, placed.point.lat, 1e-9) // 1/3 지점
+        assertEquals(127.0002, placed.point.lon, 1e-9)
+    }
+
+    @Test
+    fun gapOfThirtySecondsPlusOneMillisecondSnaps() {
+        val end = tp(40_001, 37.0003, 127.0006)
+        val placed = PhotoPlacement.place(PhotoCandidate(11, 20_000, null), listOf(a, end))
+        assertNotNull(placed)
+        assertEquals(a.point, placed.point) // 앞점이 더 가깝다
+    }
+
+    @Test
+    fun equidistantPhotoInLongGapSnapsToEarlierPoint() {
+        val far = tp(130_000, 37.01, 127.02)
+        val placed = PhotoPlacement.place(PhotoCandidate(12, 70_000, null), listOf(a, far))
+        assertNotNull(placed)
+        assertEquals(a.point, placed.point)
+    }
+
+    @Test
+    fun duplicateTimestampsDoNotBreakPlacement() {
+        val p0 = tp(0, 37.0, 127.0)
+        val p1 = tp(10_000, 37.0001, 127.0001)
+        val p2 = tp(10_000, 37.0002, 127.0002)
+        val p3 = tp(20_000, 37.0004, 127.0004)
+        val placed = PhotoPlacement.place(PhotoCandidate(13, 10_000, null), listOf(p0, p1, p2, p3))
+        assertNotNull(placed)
+        assertEquals(PhotoPositionSource.TRACK, placed.source)
+        assertEquals(p2.point, placed.point)
+        val mid = PhotoPlacement.place(PhotoCandidate(14, 15_000, null), listOf(p0, p1, p2, p3))
+        assertNotNull(mid)
+        assertEquals(37.0003, mid.point.lat, 1e-9)
     }
 
     @Test

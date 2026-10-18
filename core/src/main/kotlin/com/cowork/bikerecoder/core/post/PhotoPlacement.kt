@@ -28,12 +28,13 @@ object PhotoPlacement {
     fun windowEnd(endedAt: Long): Long = endedAt + WINDOW_MS
 
     /**
-     * EXIF 위치가 있으면 그대로, 없으면 촬영 시각으로 [track] 위의 위치를 정한다.
-     * [track]은 시간순이어야 한다. EXIF도 없고 트랙도 비어 있으면 null.
+     * 구간에 기록 지점이 하나도 없으면([track]이 비면) EXIF 위치가 있어도 null.
+     * 그렇지 않으면 EXIF 위치가 있을 때 그대로, 없으면 촬영 시각으로 [track] 위의 위치를 정한다.
+     * [track]은 시간순이어야 한다.
      */
     fun place(c: PhotoCandidate, track: List<TrackPoint>): PlacedPhoto? {
-        c.exif?.let { return PlacedPhoto(c.mediaId, c.takenAt, it, PhotoPositionSource.EXIF) }
         if (track.isEmpty()) return null
+        c.exif?.let { return PlacedPhoto(c.mediaId, c.takenAt, it, PhotoPositionSource.EXIF) }
         return PlacedPhoto(c.mediaId, c.takenAt, pointAt(c.takenAt, track), PhotoPositionSource.TRACK)
     }
 

@@ -3,6 +3,7 @@ package com.cowork.bikerecoder.core.post
 import com.cowork.bikerecoder.core.model.GeoMath
 import com.cowork.bikerecoder.core.model.GeoPoint
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import kotlin.math.abs
 import kotlin.math.sin
 import kotlin.test.assertEquals
@@ -44,14 +45,47 @@ class RouteSimplifierTest {
     }
 
     @Test
-    fun longRouteDoesNotOverflowStack() {
-        // 재귀 구현이면 깊은 호출이 생길 수 있는 곡선(로그 나선 비슷한 단조 곡률) 20만 점.
-        val pts = (0 until 200_000).map { i ->
-            val t = i * 0.00005
-            GeoPoint(37.0 + 0.2 * sin(t), 127.0 + t * 0.001)
+    fun longZigzagSplitsDeeplyWithoutOverflowingStackAndStaysWithinTolerance() {
+        // 좌우 약 33 m로 번갈아 튀는 1만 점: 매 단계 가장 먼 점이 구간 끝 바로 옆이라
+        // 재귀 구현이면 호출 깊이가 O(n)이 된다. 작은 스택(128 KB) 스레드에서 돌린다.
+        val n = 10_000
+        val pts = (0 until n).map { i ->
+            GeoPoint(37.0 + (if (i % 2 == 0) 0.0003 else -0.0003), 127.0 + i * 0.00001)
         }
-        val out = RouteSimplifier.simplify(pts)
-        assertTrue(out.size in 2 until pts.size)
+        var out: List<GeoPoint>? = null
+        var failure: Throwable? = null
+        val t = Thread(null, {
+            try {
+                out = RouteSimplifier.simplify(pts)
+            } catch (e: Throwable) {
+                failure = e
+            }
+        }, "simplify-small-stack", 128 * 1024L)
+        t.start()
+        t.join()
+        assertEquals(null, failure)
+        val result = out!!
+        assertEquals(pts.first(), result.first())
+        assertEquals(pts.last(), result.last())
+        // 결과는 원본의 부분수열이다. 각 원본 점을 덮는 결과 선분까지의 거리를 확인한다.
+        val indexOf = HashMap<GeoPoint, Int>(n * 2)
+        pts.forEachIndexed { i, p -> indexOf[p] = i }
+        val kept = result.map { indexOf.getValue(it) }
+        var seg = 0
+        var worst = 0.0
+        for (i in pts.indices) {
+            while (seg < kept.size - 2 && kept[seg + 1] < i) seg++
+            worst = maxOf(worst, GeoMath.project(pts[i], result[seg], result[seg + 1]).distanceM)
+        }
+        assertTrue(worst <= RouteSimplifier.TOLERANCE_M + 0.5, "worst deviation $worst m")
+        assertTrue(result.size > 2)
+    }
+
+    @Test
+    fun customToleranceIsHonoured() {
+        val pts = listOf(GeoPoint(37.0, 127.0), GeoPoint(37.0003, 127.0005), GeoPoint(37.0, 127.001)) // 중간 점이 약 33 m 벗어남
+        assertEquals(3, RouteSimplifier.simplify(pts, 10.0).size)
+        assertEquals(2, RouteSimplifier.simplify(pts, 100.0).size)
     }
 
     @Test
@@ -79,6 +113,20 @@ class RouteSimplifierTest {
         assertEquals(3, decoded.size)
         assertEquals(43.252, decoded[2].lat, 1e-9)
         assertEquals(-126.453, decoded[2].lon, 1e-9)
+    }
+
+    @Test
+    fun polylineDecodeRejectsMalformedInput() {
+        val valid = PolylineCodec.encode(listOf(GeoPoint(37.5665, 126.978), GeoPoint(37.5671, 126.9795)))
+        // 위도 값 뒤에서 끝남(경도 없음)
+        val firstLat = valid.takeWhile { it.code - 63 >= 0x20 } + valid[valid.indexOfFirst { it.code - 63 < 0x20 }]
+        assertThrows<IllegalArgumentException> { PolylineCodec.decode(firstLat) }
+        // 값 중간에서 잘림(이어짐 비트가 켜진 문자로 끝남)
+        assertThrows<IllegalArgumentException> { PolylineCodec.decode("~") }
+        assertThrows<IllegalArgumentException> { PolylineCodec.decode(valid.dropLast(1) + "~") }
+        // 범위 밖 문자
+        assertThrows<IllegalArgumentException> { PolylineCodec.decode("\u0020abc") }
+        assertThrows<IllegalArgumentException> { PolylineCodec.decode("한글") }
     }
 
     @Test
