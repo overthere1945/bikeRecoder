@@ -591,6 +591,42 @@ class PostProcessorTest {
     }
 
     @Test
+    fun busyFromRequestUntilNoPassIsLeft() = runTest {
+        ride()
+        now = END + 60_000L
+        val gate = CompletableDeferred<Unit>()
+        store.beforeList = { gate.await() }
+        val p = processor()
+        assertFalse(p.busy.value)
+
+        p.request()
+        assertTrue(p.busy.value, "busy as soon as asked, before the pass starts")
+        assertFalse(p.running.value)
+        runCurrent()
+        p.request() // waits for the running pass
+        gate.complete(Unit)
+        runCurrent()
+
+        assertFalse(p.busy.value)
+        assertEquals(2, p.finishedRuns.value)
+    }
+
+    @Test
+    fun routesSavedCountsEachSimplifiedRoute() = runTest {
+        ride(START, END)
+        ride(START + DAY, END + DAY)
+        now = END + DAY + 60_000L
+        val p = processor()
+        assertEquals(0, p.routesSaved.value)
+
+        p.runOnce()
+        assertEquals(2, p.routesSaved.value)
+
+        p.runOnce() // nothing left to simplify
+        assertEquals(2, p.routesSaved.value)
+    }
+
+    @Test
     fun requestsDoNotOverlap() = runTest {
         ride()
         now = END + 60_000L

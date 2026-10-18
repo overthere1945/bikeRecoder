@@ -26,7 +26,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 끝난 구간의 후처리(스펙 §1.1): 사진 찾기, 심박 읽기, 누적 지도용 단순화 경로. 앱이 화면에 있을 때만 [request]로 돌린다.
@@ -51,8 +50,11 @@ class PostProcessor(
     /** 한 구간 extras의 읽고-고쳐-쓰기(바퀴와 [refetchHeartRate]가 같은 행을 덮어쓰지 않게). */
     private val writeLock = Mutex()
 
-    /** 아직 시작하지 않은 한 바퀴가 이미 기다리고 있다. */
-    private val queued = AtomicBoolean(false)
+    /** [queued]와 [busy]를 함께 바꾼다(한 바퀴가 끝나는 순간의 [request]도 놓치지 않게). */
+    private val requestLock = Any()
+
+    /** 아직 시작하지 않은 한 바퀴가 이미 기다리고 있다. [requestLock] 아래에서만. */
+    private var queued = false
 
     private val _running = MutableStateFlow(false)
 
@@ -67,12 +69,29 @@ class PostProcessor(
      */
     val finishedRuns: StateFlow<Int> = _finishedRuns.asStateFlow()
 
+    private val _busy = MutableStateFlow(false)
+
+    /**
+     * 한 바퀴가 돌거나 차례를 기다리는 중: [request] 하는 순간 true, 기다리는 바퀴 없이 한 바퀴가 끝나면 false.
+     * [finishedRuns]가 늘기 전에 바뀐다.
+     */
+    val busy: StateFlow<Boolean> = _busy.asStateFlow()
+
+    private val _routesSaved = MutableStateFlow(0)
+
+    /** 저장한 단순화 경로 수. 한 바퀴 도중에도 구간마다 늘어 — 누적 지도가 그때그때 다시 읽는 신호. */
+    val routesSaved: StateFlow<Int> = _routesSaved.asStateFlow()
+
     /** 한 바퀴를 [scope]에서 돌린다. 실행 중이면 끝난 뒤 한 번 더(몇 번 불러도 한 번). 겹쳐 돌지 않는다. */
     fun request() {
-        if (!queued.compareAndSet(false, true)) return
+        synchronized(requestLock) {
+            if (queued) return
+            queued = true
+            _busy.value = true
+        }
         scope.launch {
             runLock.withLock {
-                queued.set(false)
+                synchronized(requestLock) { queued = false }
                 cycle()
             }
         }
@@ -120,6 +139,7 @@ class PostProcessor(
      */
     private suspend fun cycle() {
         _running.value = true
+        _busy.value = true
         try {
             for (segment in store.segmentsNeedingWork(clock())) {
                 val endedAt = segment.endedAt ?: continue
@@ -137,6 +157,7 @@ class PostProcessor(
             warnLog.warn("Post-processing run failed", e)
         } finally {
             _running.value = false
+            synchronized(requestLock) { _busy.value = queued }
             _finishedRuns.update { it + 1 }
         }
     }
@@ -237,6 +258,7 @@ class PostProcessor(
             points = RouteSimplifier.simplify(track.map { it.point }),
         )
         store.saveSimplified(segment.id, entry)
+        _routesSaved.update { it + 1 }
         updateExtras(segment.id) { it.copy(simplifiedDone = true) }
     }
 

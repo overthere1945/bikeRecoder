@@ -47,15 +47,14 @@ private val KOREA_CENTER = GeoPoint(36.5, 127.8)
 fun cumulativeSummaryText(totals: CumulativeTotals): String =
     "${RideFormat.distance(totals.distanceM)} · 주행 ${totals.rides}회 · ${RideFormat.duration(totals.movingTimeMs)}"
 
-/** [map]: the map of the routes (replaceable in tests). */
+/** [map]: the map of the routes, told to call onUserGesture when the user moves it (replaceable in tests). */
 @Composable
 fun CumulativeMapScreen(
     viewModel: CumulativeMapViewModel,
     tileSource: TileSource,
     onBack: () -> Unit,
-    map: @Composable (lines: List<List<GeoPoint>>, fit: CameraFit?, modifier: Modifier) -> Unit = { lines, fit, modifier ->
-        CumulativeMap(lines, fit, tileSource, modifier)
-    },
+    map: @Composable (lines: List<List<GeoPoint>>, fit: CameraFit?, onUserGesture: () -> Unit, modifier: Modifier) -> Unit =
+        { lines, fit, onUserGesture, modifier -> CumulativeMap(lines, fit, tileSource, onUserGesture, modifier) },
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val fit by viewModel.fit.collectAsStateWithLifecycle()
@@ -65,13 +64,14 @@ fun CumulativeMapScreen(
         onSelectYear = viewModel::selectYear,
         onSelectMonth = viewModel::selectMonth,
         onBack = onBack,
-        map = { modifier -> map(state.lines, fit, modifier) },
+        map = { modifier -> map(state.lines, fit, viewModel::onMapMoved, modifier) },
     )
 }
 
 /**
  * "누적 지도" (spec §4): the summary of the chosen period, [전체] [연도 ▾] [월 ▾] ([월 ▾] only once a year is chosen; its
- * "전체" is the whole year), then [map]. With no ride at all, only [CUMULATIVE_EMPTY].
+ * "전체" is the whole year), then [map]. With no ride at all ([CumulativeMapState.empty]), only [CUMULATIVE_EMPTY].
+ * No summary while nothing is read yet, nor while there is no route but a pass may still bring some.
  */
 @Composable
 fun CumulativeMapContent(
@@ -89,7 +89,7 @@ fun CumulativeMapContent(
             }
         } else {
             Column(modifier = Modifier.fillMaxSize()) {
-                if (state.loaded) {
+                if (state.loaded && (state.settled || state.years.isNotEmpty())) {
                     Text(
                         cumulativeSummaryText(state.totals),
                         style = MaterialTheme.typography.titleMedium,
@@ -165,13 +165,19 @@ private fun MenuChip(label: String, selected: Boolean, enabled: Boolean, tag: St
 
 /** The routes drawn faint on top of one another ([MapOverlay.faintLines]), framed by [fit]. */
 @Composable
-internal fun CumulativeMap(lines: List<List<GeoPoint>>, fit: CameraFit?, tileSource: TileSource, modifier: Modifier) {
+internal fun CumulativeMap(
+    lines: List<List<GeoPoint>>,
+    fit: CameraFit?,
+    tileSource: TileSource,
+    onUserGesture: () -> Unit,
+    modifier: Modifier,
+) {
     BikeMap(
         tileSource = tileSource,
         overlay = MapOverlay(route = null, stops = emptyList(), user = null, faintLines = lines),
         cameraMode = CameraMode.FREE,
         onLongPress = {},
-        onUserGesture = {},
+        onUserGesture = onUserGesture,
         modifier = modifier,
         initialCenter = KOREA_CENTER,
         initialZoom = 7.0,

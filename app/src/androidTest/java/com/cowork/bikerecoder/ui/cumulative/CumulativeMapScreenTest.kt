@@ -51,6 +51,7 @@ class CumulativeMapScreenTest {
         val entries = CumulativeSummary.filter(all, period)
         return CumulativeMapState(
             loaded = true,
+            settled = true,
             period = period,
             entries = entries,
             lines = entries.map { it.points },
@@ -130,12 +131,23 @@ class CumulativeMapScreenTest {
 
     @Test
     fun emptyText() {
-        show(CumulativeMapState(loaded = true))
+        show(CumulativeMapState(loaded = true, settled = true))
 
         composeRule.onNodeWithText(CUMULATIVE_EMPTY).assertIsDisplayed()
         composeRule.onNodeWithText("아직 기록이 없습니다. 주행을 기록하면 여기에 쌓입니다").assertIsDisplayed()
         composeRule.onNodeWithTag(MAP).assertDoesNotExist()
         composeRule.onNodeWithText("연도 ▾").assertDoesNotExist()
+    }
+
+    @Test
+    fun noEmptyTextWhileAPassMayStillAddRoutes() {
+        // Read, nothing yet, but the first pass after the upgrade is still simplifying the earlier rides.
+        show(CumulativeMapState(loaded = true, settled = false))
+
+        composeRule.onNodeWithText(CUMULATIVE_EMPTY).assertDoesNotExist()
+        composeRule.onNodeWithText("0.00km · 주행 0회 · 0분").assertDoesNotExist()
+        composeRule.onNodeWithTag(MAP).assertIsDisplayed()
+        composeRule.onNodeWithText("연도 ▾").assertIsDisplayed()
     }
 
     @Test

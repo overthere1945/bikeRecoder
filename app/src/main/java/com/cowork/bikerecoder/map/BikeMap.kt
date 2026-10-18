@@ -443,8 +443,9 @@ private fun installOverlayLayers(style: Style) {
             PropertyFactory.lineColor(Color.parseColor(TRACK_COLOR)),
             PropertyFactory.lineWidth(FAINT_LINE_WIDTH),
             PropertyFactory.lineOpacity(FAINT_LINE_OPACITY),
-            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
-            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+            // Butt ends and mitred corners: round ones overlap the line itself and show as darker beads at vertices.
+            PropertyFactory.lineCap(Property.LINE_CAP_BUTT),
+            PropertyFactory.lineJoin(Property.LINE_JOIN_MITER),
         ),
     )
     // The recorded path: above the planned route, below the stops and the user dot; each line its own colour.
