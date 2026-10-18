@@ -29,15 +29,15 @@
 
 실행일: 2026-10-13. S25 Ultra(`R3CY903ZYQV`)가 연결되어 있지 않아, 사용자가 허락한 S22 Ultra(`R5CT43TFS9A`)에서 실행했습니다. 첫 전체 실행에서는 휴대폰이 잠겨 있어 화면 테스트 28개가 "No compose hierarchies found"로 실패했습니다. 잠금을 푼 뒤 화면 테스트만 다시 실행했고, `SettingsScreenTest`의 스크롤 누락(작은 화면에서 버튼이 화면 밖) 1건을 테스트 코드에서 고친 뒤 모두 통과했습니다.
 
-아래 명령의 시리얼은 실행하는 휴대폰에 맞게 바꿉니다.
+아래 명령의 시리얼은 connected 테스트를 허락받은 S22 Ultra(`R5CT43TFS9A`)입니다. 아래 「주행 사용성 개선」 절의 경고를 꼭 읽습니다.
 
 전체 실행:
 
 ```bash
-ANDROID_SERIAL=R3CY903ZYQV ./gradlew :app:connectedDebugAndroidTest
+ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest
 ```
 
-클래스별 실행(전체 대신 하나씩 확인할 때). 모두 `ANDROID_SERIAL=R3CY903ZYQV ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=<클래스>` 형식입니다.
+클래스별 실행(전체 대신 하나씩 확인할 때). 모두 `ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=<클래스>` 형식입니다.
 
 | 클래스 | 테스트 수 | 확인하는 것 | 결과 |
 |---|---|---|---|
@@ -134,3 +134,106 @@ ANDROID_SERIAL=R3CY903ZYQV ./gradlew :app:connectedDebugAndroidTest
 
 - 스펙 §5.4 완료 기준: 5.1(PC 테스트)·5.2(휴대폰 GPX 테스트)가 통과하고 5.3의 전 항목이 합격이면 `CHANGELOG.md`의 V1.1.0을 확정하고(「개발 중」 표기 제거) 태그 `v1.1.0`을 붙입니다.
 - 불합격 항목은 원인 수정과 회귀 테스트 추가 뒤 해당 항목만 다시 확인하고, 여기에 재검증 결과를 덧붙입니다.
+
+## 주행 사용성 개선
+
+설계 스펙 `docs/superpowers/specs/2026-10-18-ride-ux-improvements-design.md` §6(검증)과 §6.3(실주행 확인), 이번 판정 U1에 따른 기록입니다. 즐겨찾기, 검색 화면 키보드, 안내 중 [안내 취소 · 기록 계속]·[주행 종료], 기록 중 새 안내(이어서/나누기/묻기), 경로 계획 길게 누르기를 다룹니다.
+
+### 자동 검증
+
+실행일: 2026-10-18 (브랜치 `feature/recording-v1.1.0`)
+
+#### PC 단위 테스트
+
+명령:
+
+```bash
+./gradlew :core:test :routing-brouter:test :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest --rerun-tasks
+```
+
+결과: BUILD SUCCESSFUL (`--rerun-tasks`로 전부 다시 실행, 101개 작업 모두 실행). 수는 `build/test-results`의 XML에서 모음별로 센 값입니다.
+
+| 모음 | 클래스 수 | 테스트 수 | 실패 | 건너뜀 |
+|---|---|---|---|---|
+| `:core:test` | 21 | 177 | 0 | 0 |
+| `:routing-brouter:test` | 4 | 16 | 0 | 0 |
+| `:app:testDebugUnitTest` | 40 | 378 | 0 | 0 |
+| 합계 | 65 | 571 | 0 | 0 |
+
+앞선 기록 코어 검증(2026-10-12)의 501개(60클래스)에서 70개(5클래스)가 늘었습니다(`:core` +1, `:app` +69).
+
+새 클래스:
+
+| 클래스 | 테스트 수 | 확인하는 것 |
+|---|---|---|
+| `favorite.FavoriteRepositoryTest` | 10 | 즐겨찾기 규칙(집·회사 각 1개, 직접 입력 이름 1~20자, 같은 이름 거절, 최대 20개, 정렬) |
+| `data.FavoriteMappingsTest` | 1 | 즐겨찾기 Room 엔티티 ↔ 모델 변환 |
+| `ui.common.PlaceLookupTest` | 5 | 길게 누른 지점의 주소 찾기("주소를 확인하는 중…") |
+| `ui.favorite.FavoritesViewModelTest` | 8 | 칩 목록, 저장·바꾸기·삭제 흐름과 오류 문구 |
+| `ui.navigate.GuidanceButtonsTest` | 2 | 기록 중 [안내 취소 · 기록 계속]·[주행 종료] 버튼 구성 |
+
+늘어난 클래스(이번 작업에서 테스트를 더한 클래스, 모두 통과):
+
+| 클래스 | 테스트 수(이전 → 현재) | 늘어난 내용 |
+|---|---|---|
+| `ride.RideControllerTest` | 20 → 34 (+14) | 구간 나누기, 화면 알림, 기록 중 시작한 안내의 도착 처리(U1) |
+| `ride.RideNavigationTest` | 13 → 15 (+2) | 기록이 먼저 돌던 여행에 안내가 붙어도 같은 구간 유지, 다시 안내한 도착은 안내만 끝내고 기록 계속(U1) |
+| `nav.NavigationControllerTest` | 24 → 27 (+3) | 기록 중 시작한 안내의 도착은 안내만 끝냄, 기록이 뒤에 시작됐거나 먼저 끝났으면 둘 다 완료(U1) |
+| `ui.trip.TripStartViewModelTest` | 23 → 36 (+13) | 새 안내의 기록 선택(이어서/나누기/묻기). 동작이 의도적으로 바뀐 기존 6개를 고침 |
+| `ui.plan.PlanViewModelTest` | 25 → 29 (+4) | 길게 눌러 경유지·목적지·즐겨찾기, 즐겨찾기 칩 선택 |
+| `ui.navigate.NavigateViewModelTest` | 24 → 28 (+4) | 안내 취소 · 기록 계속, 주행 종료, 도착 문구 |
+| `ui.record.RecordViewModelTest` | 6 → 8 (+2) | 기록 화면은 기록 중에만 알림을 받음, 구간 나누기 알림 표시 |
+| `ui.settings.SettingsViewModelTest` | 12 → 13 (+1) | 「안내를 새로 시작할 때 기록」 설정 |
+| `core.voice.KoreanPhrasesTest` | 9 → 10 (+1) | "안내를 마칩니다. 기록은 계속됩니다"·"목적지에 도착했습니다" 문구 |
+
+빌드 확인: `:app:assembleDebug`, `:app:assembleDebugAndroidTest` 성공(기기 테스트 코드 컴파일 포함). Room 스키마 `app/schemas/com.cowork.bikerecoder.data.AppDatabase/3.json`이 커밋되어 있습니다.
+
+#### 기기 테스트
+
+실행일: 2026-10-18. `adb devices`에 연결된 휴대폰이 없어(목록이 비어 있음) 기기 실행은 **기기 검증 대기**입니다. 아래 표의 결과는 모두 대기이고, 테스트 수는 코드의 `@Test` 개수입니다.
+
+> **경고**: `connectedDebugAndroidTest`는 끝나면 앱을 지워 그 휴대폰의 기록이 사라집니다. connected 테스트는 `R5CT43TFS9A`에서만, 실제 기록이 있는 `R3CY903ZYQV`에는 `installDebug`만 씁니다.
+
+시리얼 없이 실행하면 연결된 모든 휴대폰에서 돌고 앱을 지우므로 항상 `ANDROID_SERIAL=R5CT43TFS9A`를 붙입니다. 휴대폰 잠금을 푼 상태에서 실행합니다(잠겨 있으면 화면 테스트가 "No compose hierarchies found"로 실패). 한 번에 클래스 하나씩 실행합니다(쉼표 목록은 첫 클래스만 돕니다).
+
+```bash
+ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=<클래스>
+```
+
+| 클래스 | 테스트 수 | 확인하는 것 | 결과 |
+|---|---|---|---|
+| `com.cowork.bikerecoder.data.RideDatabaseMigrationTest` | 2 | DB v1 → v2, v2 → v3 후 기존 여행 유지 | 기기 검증 대기 |
+| `com.cowork.bikerecoder.data.RoomFavoriteStoreTest` | 1 | 즐겨찾기 저장소 추가·관찰·수정·삭제 | 기기 검증 대기 |
+| `com.cowork.bikerecoder.ui.plan.PlanScreenTest` | 4 | 경유지 추가·순서·삭제, 길게 눌러 경유지로 추가·목적지로 설정 | 기기 검증 대기 |
+| `com.cowork.bikerecoder.ui.favorite.FavoriteChipsTest` | 4 | 칩 순서·선택, 직접 입력 칩 메뉴(이름 바꾸기·삭제), 집 칩 메뉴(삭제만, U4) | 기기 검증 대기 |
+| `com.cowork.bikerecoder.ui.favorite.FavoriteDialogsTest` | 4 | 이름 고르기(집·회사·직접 입력), 오류 문구, 삭제 확인 | 기기 검증 대기 |
+| `com.cowork.bikerecoder.ui.search.SearchScreenTest` | 3 | 검색 결과가 키보드 위에서 끝남, 목록을 끌면 키보드 내림, 즐겨찾기가 없으면 여백 없음 | 기기 검증 대기 |
+| `com.cowork.bikerecoder.ui.settings.SettingsScreenTest` | 7 | 설정 화면, 「안내를 새로 시작할 때 기록」 선택지 | 기기 검증 대기 |
+| `com.cowork.bikerecoder.ui.trip.TripStartDialogsTest` | 1 | "기록을 어떻게 할까요?" 대화상자(이어서 기록·새 구간으로 나누기·취소) | 기기 검증 대기 |
+| `com.cowork.bikerecoder.ui.navigate.GuidanceButtonRowTest` | 3 | 기록 중 [안내 취소 · 기록 계속]·[주행 종료], 기록 중이 아니면 V1 버튼 | 기기 검증 대기 |
+| `com.cowork.bikerecoder.ui.common.NoticeSnackbarHostTest` | 3 | 알림 문구를 한 번 보이고 표시했다고 알림, 새 알림은 다시 보임 | 기기 검증 대기 |
+| `com.cowork.bikerecoder.ui.record.RecordScreenTest` | 12 | 기록 화면 2쪽·정지 확인·서비스 경고, [목적지 정하기] 표시(안내 중에는 숨김) | 기기 검증 대기 |
+
+위 11개 클래스의 합은 44개입니다. 기기 전체 `@Test` 개수는 86개(20개 클래스)이며 아직 실행하지 않았습니다.
+
+#### 설치 확인 (기기 검증 대기)
+
+DB가 v2에서 v3으로 올라가도 기존 기록이 남는지 실제 휴대폰에서 봅니다. 기록이 있는 `R3CY903ZYQV`에는 설치만 합니다.
+
+```bash
+ANDROID_SERIAL=R3CY903ZYQV ./gradlew :app:installDebug
+```
+
+설치 뒤 앱을 열어 기록 목록이 설치 전과 그대로인지(실제 v2 → v3 마이그레이션) 확인합니다. 결과: 기기 검증 대기.
+
+### 실주행 체크리스트 (주행 사용성 개선)
+
+기기 정보·준비·결과 칸 표기는 아래 「실주행 체크리스트」와 같습니다. 설정 화면의 「안내를 새로 시작할 때 기록」은 항목 3에서 세 가지를 모두 바꿔 가며 확인합니다.
+
+| # | 항목 | 합격 기준 | 결과 (`[ ]` 미실시 / `[x]` 합격 / `[!]` 불합격) | 메모 |
+|---|---|---|---|---|
+| 1 | 집 즐겨찾기로 안내 시작 | 집 칩을 누르면 목적지가 바로 정해지고 안내 시작이 바로 됨 | [ ] 미실시 | |
+| 2 | 안내 취소 · 기록 계속 | 안내 중 [안내 취소 · 기록 계속] 뒤 기록이 끊기지 않음. 음성과 화면 문구 "안내를 마칩니다. 기록은 계속됩니다" | [ ] 미실시 | |
+| 3 | 기록 중 새 목적지로 안내 시작 | 설정대로(이어서/나누기/묻기) 동작하고, 기록 목록에 같은 여행으로 보임 | [ ] 미실시 | 이어서 ___ / 나누기 ___ / 묻기 ___ |
+| 4 | 경로 계획에서 길게 눌러 경유지 추가 | 경로 계획 화면에서 지도를 길게 누르면 [경유지로 추가]로 경유지가 더해짐 | [ ] 미실시 | |
+| 5 | 기록 중 붙인 안내로 도착 (U1) | 안내만 끝나고 기록은 계속됨(음성과 화면 문구 "목적지에 도착했습니다"). 여행은 진행 중으로 남음 | [ ] 미실시 | |
