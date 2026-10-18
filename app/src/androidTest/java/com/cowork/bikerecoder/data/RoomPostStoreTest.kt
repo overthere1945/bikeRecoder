@@ -272,6 +272,23 @@ class RoomPostStoreTest {
     }
 
     @Test
+    fun anUnreadableRouteIsLeftOutNotTheList() = runTest {
+        val trip = newTrip()
+        val good = segment(trip, 1_000L, 2_000L)
+        val broken = segment(trip, 3_000L, 4_000L)
+        val goodEntry = CumulativeEntry(good, day, 1_000.0, 60_000L, listOf(GeoPoint(37.5, 127.0), GeoPoint(37.51, 127.0)))
+        store.saveSimplified(good, goodEntry)
+        store.saveSimplified(broken, goodEntry)
+        val row = db.postDao().simplifiedRoutes().first { it.segmentId == broken }
+        db.postDao().saveSimplified(row.copy(points = "_p~iF~ps|U_")) // cut off inside a value
+        val warnings = mutableListOf<String>()
+        val logging = RoomPostStore(db, log = { message, _ -> warnings += message })
+
+        assertEquals(listOf(goodEntry), logging.cumulativeEntries())
+        assertEquals(1, warnings.size)
+    }
+
+    @Test
     fun writeForMissingSegmentThrowsSegmentGone() = runTest {
         val missing = 999L
         assertSegmentGone(missing) { store.saveExtras(SegmentExtras(missing)) }

@@ -16,6 +16,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -31,7 +32,7 @@ import com.cowork.bikerecoder.core.recording.TripRideSummary
 import com.cowork.bikerecoder.ui.common.GlyphIcon
 
 @Composable
-fun HistoryScreen(viewModel: HistoryViewModel, onOpenTrip: (Long) -> Unit, onBack: () -> Unit) {
+fun HistoryScreen(viewModel: HistoryViewModel, onOpenTrip: (Long) -> Unit, onOpenCumulative: () -> Unit, onBack: () -> Unit) {
     val trips by viewModel.trips.collectAsStateWithLifecycle()
     val dialog by viewModel.dialog.collectAsStateWithLifecycle()
     // Back from a trip whose segments were deleted.
@@ -44,10 +45,11 @@ fun HistoryScreen(viewModel: HistoryViewModel, onOpenTrip: (Long) -> Unit, onBac
         onConfirmDelete = viewModel::confirmDelete,
         onDismiss = viewModel::dismiss,
         onBack = onBack,
+        onOpenCumulative = onOpenCumulative,
     )
 }
 
-/** The trip cards, newest first (spec §3.5); a long press asks to delete the trip. */
+/** [누적 지도] (spec §4), then the trip cards, newest first (spec §3.5); a long press asks to delete the trip. */
 @Composable
 fun HistoryContent(
     trips: List<TripRideSummary>,
@@ -57,30 +59,39 @@ fun HistoryContent(
     onConfirmDelete: () -> Unit,
     onDismiss: () -> Unit,
     onBack: () -> Unit,
+    onOpenCumulative: () -> Unit = {},
 ) {
     HistoryScaffold(title = "기록", onBack = onBack) {
-        if (trips.isEmpty()) {
-            EmptyText()
-        } else {
-            LazyColumn(
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                items(trips, key = { it.trip.id }) { summary ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth().combinedClickable(
-                            onClick = { onOpenTrip(summary.trip.id) },
-                            onLongClick = { onRequestDelete(summary.trip.id) },
-                        ),
-                    ) {
-                        Text(tripCardText(summary), modifier = Modifier.padding(16.dp))
-                    }
-                }
+        Column(modifier = Modifier.fillMaxSize()) {
+            OutlinedButton(onClick = onOpenCumulative, modifier = Modifier.padding(horizontal = 16.dp)) { Text("누적 지도") }
+            if (trips.isEmpty()) {
+                EmptyText()
+            } else {
+                TripCards(trips, onOpenTrip, onRequestDelete)
             }
         }
     }
     HistoryDialogs(dialog, CONFIRM_DELETE_TRIP, onConfirmDelete, onDismiss)
+}
+
+@Composable
+private fun TripCards(trips: List<TripRideSummary>, onOpenTrip: (Long) -> Unit, onRequestDelete: (Long) -> Unit) {
+    LazyColumn(
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        items(trips, key = { it.trip.id }) { summary ->
+            Card(
+                modifier = Modifier.fillMaxWidth().combinedClickable(
+                    onClick = { onOpenTrip(summary.trip.id) },
+                    onLongClick = { onRequestDelete(summary.trip.id) },
+                ),
+            ) {
+                Text(tripCardText(summary), modifier = Modifier.padding(16.dp))
+            }
+        }
+    }
 }
 
 /** The screen frame of the history screens: [←] and [title] above [content]. */

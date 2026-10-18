@@ -8,7 +8,9 @@ import com.cowork.bikerecoder.core.post.PhotoPositionSource
 import com.cowork.bikerecoder.core.post.PlacedPhoto
 import com.cowork.bikerecoder.data.RidePhotoEntity
 import com.cowork.bikerecoder.data.toEntity
+import com.cowork.bikerecoder.data.toEntries
 import com.cowork.bikerecoder.data.toModel
+import com.cowork.bikerecoder.nav.RecordingLog
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
@@ -119,5 +121,23 @@ class PostMappingsTest {
         assertNull(entity.minLat)
         assertNull(entity.maxLon)
         assertEquals(entry, entity.toModel())
+    }
+
+    @Test
+    fun `a simplified route that cannot be read is left out and reported`() {
+        val entry = CumulativeEntry(1, LocalDate.of(2026, 10, 18), 1_000.0, 60_000L, listOf(GeoPoint(37.5, 127.0), GeoPoint(37.51, 127.0)))
+        val rows = listOf(
+            entry.toEntity(segmentId = 1),
+            entry.toEntity(segmentId = 2).copy(points = "_p~iF~ps|U_"), // cut off inside a value
+            entry.toEntity(segmentId = 3).copy(localDate = "2026-13-40"),
+            entry.toEntity(segmentId = 4),
+        )
+        val log = RecordingLog()
+
+        val entries = rows.toEntries(log)
+
+        assertEquals(listOf(1L, 4L), entries.map { it.segmentId })
+        assertEquals(entry.copy(segmentId = 4), entries.last())
+        assertEquals(2, log.messages.size)
     }
 }

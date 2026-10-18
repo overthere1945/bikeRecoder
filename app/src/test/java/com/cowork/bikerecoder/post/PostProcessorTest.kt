@@ -537,6 +537,32 @@ class PostProcessorTest {
     }
 
     @Test
+    fun finishedRunsCountsEveryEndedRun() = runTest {
+        ride()
+        now = END + 60_000L
+        val p = processor()
+        assertEquals(0, p.finishedRuns.value)
+
+        p.runOnce()
+        assertEquals(1, p.finishedRuns.value)
+
+        // A run that fails still ends; a run that is still going has not.
+        val gate = CompletableDeferred<Unit>()
+        store.beforeList = {
+            gate.await()
+            throw IllegalStateException("database closed")
+        }
+        p.request()
+        runCurrent()
+        assertTrue(p.running.value)
+        assertEquals(1, p.finishedRuns.value)
+        gate.complete(Unit)
+        runCurrent()
+        assertFalse(p.running.value)
+        assertEquals(2, p.finishedRuns.value)
+    }
+
+    @Test
     fun requestsDoNotOverlap() = runTest {
         ride()
         now = END + 60_000L

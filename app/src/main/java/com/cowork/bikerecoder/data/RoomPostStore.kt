@@ -2,6 +2,8 @@ package com.cowork.bikerecoder.data
 
 import android.database.sqlite.SQLiteConstraintException
 import androidx.room.withTransaction
+import com.cowork.bikerecoder.WarnLog
+import com.cowork.bikerecoder.androidWarnLog
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.CumulativeEntry
 import com.cowork.bikerecoder.core.post.HeartRateSample
@@ -15,11 +17,20 @@ import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.post.RidePhoto
 import com.cowork.bikerecoder.post.SegmentExtras
 import com.cowork.bikerecoder.post.SegmentGone
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import java.time.format.DateTimeParseException
 
-class RoomPostStore(private val db: AppDatabase) : PostStore {
+/** [log]: simplified routes that cannot be read; [compute]: where they are decoded (off the main thread). */
+class RoomPostStore(
+    private val db: AppDatabase,
+    private val log: WarnLog = androidWarnLog("RoomPostStore"),
+    private val compute: CoroutineDispatcher = Dispatchers.Default,
+) : PostStore {
     private val dao = db.postDao()
 
     override suspend fun segmentsNeedingWork(now: Long): List<RideSegment> =
@@ -59,7 +70,11 @@ class RoomPostStore(private val db: AppDatabase) : PostStore {
     override suspend fun saveSimplified(segmentId: Long, entry: CumulativeEntry) =
         writing(segmentId) { dao.saveSimplified(entry.toEntity(segmentId)) }
 
-    override suspend fun cumulativeEntries(): List<CumulativeEntry> = dao.simplifiedRoutes().map { it.toModel() }
+    /** A route that cannot be read is left out (and reported), not the whole list. */
+    override suspend fun cumulativeEntries(): List<CumulativeEntry> {
+        val rows = dao.simplifiedRoutes()
+        return withContext(compute) { rows.toEntries(log) }
+    }
 
     /** 구간 행이 없어 외래 키가 막으면 [SegmentGone]. */
     private suspend inline fun <T> writing(segmentId: Long, block: () -> T): T =
@@ -139,6 +154,19 @@ internal fun CumulativeEntry.toEntity(segmentId: Long) = SegmentRouteSimplifiedE
     maxLat = points.maxOfOrNull { it.lat },
     maxLon = points.maxOfOrNull { it.lon },
 )
+
+/** The rows as entries, in order; a row whose points or date cannot be read is left out and reported to [log]. */
+internal fun List<SegmentRouteSimplifiedEntity>.toEntries(log: WarnLog): List<CumulativeEntry> = mapNotNull { row ->
+    try {
+        row.toModel()
+    } catch (e: IllegalArgumentException) {
+        log.warn("Skipping the unreadable simplified route of segment ${row.segmentId}", e)
+        null
+    } catch (e: DateTimeParseException) {
+        log.warn("Skipping the simplified route of segment ${row.segmentId} with an unreadable date", e)
+        null
+    }
+}
 
 internal fun SegmentRouteSimplifiedEntity.toModel() = CumulativeEntry(
     segmentId = segmentId,

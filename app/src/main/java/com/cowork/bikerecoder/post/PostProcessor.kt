@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -54,6 +55,14 @@ class PostProcessor(
 
     /** 한 바퀴가 도는 중. [request] 직후 차례를 기다리는 동안은 아직 false. */
     val running: StateFlow<Boolean> = _running.asStateFlow()
+
+    private val _finishedRuns = MutableStateFlow(0)
+
+    /**
+     * 끝난 바퀴 수(실패한 바퀴도). 끝날 때마다 늘어서, 바퀴가 아주 짧아 [running]의 true를 못 보고 지나쳐도 끝난 것은 안다
+     * — 화면이 결과를 다시 읽는 신호.
+     */
+    val finishedRuns: StateFlow<Int> = _finishedRuns.asStateFlow()
 
     /** 한 바퀴를 [scope]에서 돌린다. 실행 중이면 끝난 뒤 한 번 더(몇 번 불러도 한 번). 겹쳐 돌지 않는다. */
     fun request() {
@@ -125,6 +134,7 @@ class PostProcessor(
             warnLog.warn("Post-processing run failed", e)
         } finally {
             _running.value = false
+            _finishedRuns.update { it + 1 }
         }
     }
 

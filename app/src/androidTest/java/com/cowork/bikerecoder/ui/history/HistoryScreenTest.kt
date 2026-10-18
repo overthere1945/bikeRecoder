@@ -95,6 +95,29 @@ class HistoryScreenTest {
     }
 
     @Test
+    fun cumulativeMapButtonOnTop() {
+        var cumulative = 0
+        composeRule.setContent {
+            MaterialTheme {
+                HistoryContent(
+                    trips = emptyList(),
+                    dialog = null,
+                    onOpenTrip = {},
+                    onRequestDelete = {},
+                    onConfirmDelete = {},
+                    onDismiss = {},
+                    onBack = {},
+                    onOpenCumulative = { cumulative++ },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("기록이 없습니다").assertIsDisplayed() // also without any trip
+        composeRule.onNodeWithText("누적 지도").performClick()
+        assertEquals(1, cumulative)
+    }
+
+    @Test
     fun longPressAsksBeforeDeleting() {
         var dialog by mutableStateOf<HistoryDialog?>(null)
         composeRule.setContent {

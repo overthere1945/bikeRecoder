@@ -72,6 +72,9 @@ import org.maplibre.android.style.sources.GeoJsonSource
  * [lines]: more recorded paths drawn like [track], each on its own (nothing joins one to the next), e.g. a trip's
  * segments (ruling R10).
  * [photos]: round previews of ride photos where they were taken (spec §2.3).
+ * [faintLines]: paths drawn thin and see-through (#E53935, width 3, opacity 0.35) under the track, so where many of
+ * them overlap the line shows darker — the cumulative map's routes (spec §4). Unlike the track they are redrawn as
+ * soon as they change. A path of fewer than 2 points is not drawn.
  */
 data class MapOverlay(
     val route: Route?,
@@ -81,6 +84,7 @@ data class MapOverlay(
     val photos: List<MapPhoto> = emptyList(),
     val trackColors: List<String>? = null,
     val lines: List<MapLine> = emptyList(),
+    val faintLines: List<List<GeoPoint>> = emptyList(),
 )
 
 /**
@@ -114,11 +118,14 @@ private const val ROUTE_SOURCE = "bike-route"
 private const val STOPS_SOURCE = "bike-stops"
 private const val USER_SOURCE = "bike-user"
 private const val TRACK_SOURCE = "bike-track"
+private const val FAINT_SOURCE = "bike-faint"
 private const val PHOTOS_SOURCE = "bike-photos"
 private const val PHOTOS_LAYER = "$PHOTOS_SOURCE-symbol"
 private const val PHOTO_PLACEHOLDER_COLOR = "#9E9E9E"
 private const val ROUTE_COLOR = "#1E88E5"
 private const val TRACK_COLOR = "#E53935"
+private const val FAINT_LINE_WIDTH = 3f
+private const val FAINT_LINE_OPACITY = 0.35f
 private const val FOLLOW_ZOOM = 17.0
 private const val FOLLOW_TILT = 50.0
 private const val FOLLOW_ANIMATION_MS = 800
@@ -297,6 +304,12 @@ fun BikeMap(
             .atMostEvery(TRACK_UPDATE_MS)
             .collect { d -> source.setGeoJson(withContext(Dispatchers.Default) { trackGeoJson(d.track, d.colors, d.lines) }) }
     }
+    // Many long paths: built off the main thread; a newer list cancels the one still being built.
+    LaunchedEffect(style, overlay.faintLines) {
+        val source = style?.getSourceAs<GeoJsonSource>(FAINT_SOURCE) ?: return@LaunchedEffect
+        val lines = overlay.faintLines
+        source.setGeoJson(withContext(Dispatchers.Default) { faintLinesGeoJson(lines) })
+    }
     LaunchedEffect(style, overlay.user) {
         style?.getSourceAs<GeoJsonSource>(USER_SOURCE)?.setGeoJson(userGeoJson(overlay.user))
     }
@@ -393,6 +406,7 @@ private fun installOverlayLayers(style: Style) {
     style.addSource(GeoJsonSource(ROUTE_SOURCE, EMPTY_COLLECTION))
     style.addSource(GeoJsonSource(STOPS_SOURCE, EMPTY_COLLECTION))
     style.addSource(GeoJsonSource(USER_SOURCE, EMPTY_COLLECTION))
+    style.addSource(GeoJsonSource(FAINT_SOURCE, EMPTY_COLLECTION))
     style.addSource(GeoJsonSource(TRACK_SOURCE, EMPTY_COLLECTION))
     style.addSource(GeoJsonSource(PHOTOS_SOURCE, EMPTY_COLLECTION))
 
@@ -400,6 +414,17 @@ private fun installOverlayLayers(style: Style) {
         LineLayer("$ROUTE_SOURCE-line", ROUTE_SOURCE).withProperties(
             PropertyFactory.lineColor(Color.parseColor(ROUTE_COLOR)),
             PropertyFactory.lineWidth(6f),
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+        ),
+    )
+    // The faint paths: above the planned route, below the track. One colour and opacity for all of them, so the
+    // overlaps add up.
+    style.addLayer(
+        LineLayer("$FAINT_SOURCE-line", FAINT_SOURCE).withProperties(
+            PropertyFactory.lineColor(Color.parseColor(TRACK_COLOR)),
+            PropertyFactory.lineWidth(FAINT_LINE_WIDTH),
+            PropertyFactory.lineOpacity(FAINT_LINE_OPACITY),
             PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
             PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
         ),
@@ -493,6 +518,23 @@ private fun colorRuns(line: MapLine): List<String> {
 private fun colorFeature(points: List<GeoPoint>, color: String): String {
     val coords = points.joinToString(",", transform = ::coordinate)
     return """{"type":"Feature","properties":{"$LINE_COLOR":"$color"},"geometry":{"type":"LineString","coordinates":[$coords]}}"""
+}
+
+/** [lines] as one MultiLineString ([lon,lat] pairs), leaving out those of fewer than 2 points; empty if none is left. */
+internal fun faintLinesGeoJson(lines: List<List<GeoPoint>>): String {
+    val drawn = lines.filter { it.size >= 2 }
+    if (drawn.isEmpty()) return EMPTY_COLLECTION
+    val coords = StringBuilder()
+    drawn.forEachIndexed { i, line ->
+        if (i > 0) coords.append(',')
+        coords.append('[')
+        line.forEachIndexed { j, p ->
+            if (j > 0) coords.append(',')
+            coords.append(coordinate(p))
+        }
+        coords.append(']')
+    }
+    return """{"type":"Feature","properties":{},"geometry":{"type":"MultiLineString","coordinates":[$coords]}}"""
 }
 
 private fun lineGeoJson(points: List<GeoPoint>): String {

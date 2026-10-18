@@ -37,6 +37,8 @@ import com.cowork.bikerecoder.ui.onboarding.OnboardingStep
 import com.cowork.bikerecoder.ui.onboarding.OnboardingViewModel
 import com.cowork.bikerecoder.ui.onboarding.effectiveOnboardingStep
 import com.cowork.bikerecoder.ui.onboarding.readPermissionState
+import com.cowork.bikerecoder.ui.cumulative.CumulativeMapScreen
+import com.cowork.bikerecoder.ui.cumulative.CumulativeMapViewModel
 import com.cowork.bikerecoder.ui.favorite.FavoriteChips
 import com.cowork.bikerecoder.ui.favorite.FavoriteDialogs
 import com.cowork.bikerecoder.ui.favorite.FavoriteEvent
@@ -94,6 +96,7 @@ object Routes {
     const val RECORD = "record"
     const val RECORD_PATTERN = "$RECORD?${RecordViewModel.ARG_TRIP}={${RecordViewModel.ARG_TRIP}}"
     const val HISTORY = "history"
+    const val CUMULATIVE = "cumulative"
     const val TRIP_DETAIL = "history/trip/{${TripDetailViewModel.ARG_TRIP}}"
     const val SEGMENT_DETAIL = "history/segment/{${SegmentDetailViewModel.ARG_SEGMENT}}"
 
@@ -270,6 +273,7 @@ fun BikeNavHost(
                 currentLocation = container.currentLocation,
                 onOpenSearch = { if (isCurrent()) navController.navigate(Routes.SEARCH) },
                 onOpenHistory = { navController.navigate(Routes.HISTORY) },
+                onOpenCumulative = { navController.navigate(Routes.CUMULATIVE) },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                 onResumeTrip = { tripId -> navController.openOnMain(Routes.navigate(tripId)) },
                 onShowRide = { target ->
@@ -531,8 +535,13 @@ fun BikeNavHost(
             HistoryScreen(
                 viewModel = viewModel,
                 onOpenTrip = { tripId -> navController.navigate(Routes.tripDetail(tripId)) },
+                onOpenCumulative = { navController.navigate(Routes.CUMULATIVE) },
                 onBack = { navController.popBackStack() },
             )
+        }
+        composable(Routes.CUMULATIVE) {
+            val viewModel: CumulativeMapViewModel = viewModel(factory = CumulativeMapViewModel.factory(container))
+            CumulativeMapScreen(viewModel = viewModel, tileSource = container.tileSource, onBack = { navController.popBackStack() })
         }
         composable(
             Routes.TRIP_DETAIL,

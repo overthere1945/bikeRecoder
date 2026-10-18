@@ -81,6 +81,8 @@ fun MainScreen(
     onAddWaypoint: (name: String, point: GeoPoint) -> Unit,
     /** The favorite chips, drawn right under the search row. */
     favoriteChips: @Composable () -> Unit = {},
+    /** ☰ → [누적 지도]. */
+    onOpenCumulative: () -> Unit = {},
     /** [즐겨찾기에 저장] on the long-press sheet; null hides it. */
     onSaveFavorite: ((FavoritePlace) -> Unit)? = null,
 ) {
@@ -160,6 +162,10 @@ fun MainScreen(
                         DropdownMenuItem(text = { Text("기록") }, onClick = {
                             menuOpen = false
                             onOpenHistory()
+                        })
+                        DropdownMenuItem(text = { Text("누적 지도") }, onClick = {
+                            menuOpen = false
+                            onOpenCumulative()
                         })
                         DropdownMenuItem(text = { Text("설정") }, onClick = {
                             menuOpen = false

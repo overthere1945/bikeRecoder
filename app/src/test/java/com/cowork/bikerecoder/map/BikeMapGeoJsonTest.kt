@@ -66,6 +66,22 @@ class BikeMapGeoJsonTest {
     }
 
     @Test
+    fun `faint lines are one MultiLineString without the lines too short to draw`() {
+        val a = GeoPoint(37.5, 127.0)
+        val b = GeoPoint(37.51, 127.0)
+        val c = GeoPoint(38.0, 127.0)
+        val d = GeoPoint(38.01, 127.0)
+        val e = GeoPoint(38.02, 127.0)
+        assertEquals(
+            """{"type":"Feature","properties":{},"geometry":{"type":"MultiLineString","coordinates":[""" +
+                "[[127.0,37.5],[127.0,37.51]],[[127.0,38.0],[127.0,38.01],[127.0,38.02]]]}}",
+            faintLinesGeoJson(listOf(listOf(a, b), listOf(c), emptyList(), listOf(c, d, e))),
+        )
+        assertEquals(empty, faintLinesGeoJson(emptyList()))
+        assertEquals(empty, faintLinesGeoJson(listOf(listOf(a), emptyList())))
+    }
+
+    @Test
     fun `photos geojson`() {
         assertEquals(empty, photosGeoJson(emptyList()))
 
