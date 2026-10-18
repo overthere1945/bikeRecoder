@@ -103,7 +103,12 @@ fun PlanScreen(
                 viewModel.dismissPressed()
                 viewModel.addWaypoint(name, point)
             },
-            onSaveFavorite = onSaveFavorite,
+            onSaveFavorite = onSaveFavorite?.let { save ->
+                { favorite ->
+                    viewModel.dismissPressed()
+                    save(favorite)
+                }
+            },
             onDismiss = viewModel::dismissPressed,
         )
     }

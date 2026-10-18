@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cowork.bikerecoder.core.format.SummaryFormatter
 import com.cowork.bikerecoder.core.model.GeoPoint
+import com.cowork.bikerecoder.favorite.FavoritePlace
 import com.cowork.bikerecoder.search.Place
 import com.cowork.bikerecoder.ui.common.GlyphIcon
 import com.cowork.bikerecoder.ui.common.PlaceActionSheet
@@ -43,6 +44,10 @@ fun SearchScreen(
     onBack: () -> Unit,
     onSetDestination: (name: String, point: GeoPoint) -> Unit,
     onAddWaypoint: (name: String, point: GeoPoint) -> Unit,
+    /** The favorite chips, shown under the search row while the query is empty. */
+    favoriteChips: @Composable () -> Unit = {},
+    /** [즐겨찾기에 저장] on the result sheet; null hides it. */
+    onSaveFavorite: ((FavoritePlace) -> Unit)? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val focus = remember { FocusRequester() }
@@ -61,6 +66,9 @@ fun SearchScreen(
                     keyboardActions = KeyboardActions(onSearch = { /* results follow typing */ }),
                     modifier = Modifier.weight(1f).focusRequester(focus),
                 )
+            }
+            if (state.query.isEmpty()) {
+                Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) { favoriteChips() }
             }
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 when (val result = state.result) {
@@ -99,6 +107,12 @@ fun SearchScreen(
                 onAddWaypoint(place.name, place.point)
             },
             onDismiss = viewModel::dismissSelection,
+            onSaveFavorite = onSaveFavorite?.let { save ->
+                {
+                    viewModel.dismissSelection()
+                    save(FavoritePlace(place.name, place.point, place.address.ifBlank { null }))
+                }
+            },
         )
     }
 }

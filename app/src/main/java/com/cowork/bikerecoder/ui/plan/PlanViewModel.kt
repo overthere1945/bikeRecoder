@@ -14,6 +14,7 @@ import com.cowork.bikerecoder.core.routing.RouteFailure
 import com.cowork.bikerecoder.core.routing.RouteRequest
 import com.cowork.bikerecoder.core.routing.RouteResult
 import com.cowork.bikerecoder.core.routing.Router
+import com.cowork.bikerecoder.favorite.Favorite
 import com.cowork.bikerecoder.ui.common.PlaceLookup
 import com.cowork.bikerecoder.ui.common.PressedPlace
 import com.cowork.bikerecoder.ui.common.addressOrNull
@@ -94,6 +95,9 @@ class PlanViewModel(
         val stop = PlannedStop(nextKey++, name, p)
         edit { s -> s.withInputs(stops = if (s.stops.isEmpty()) listOf(stop) else s.stops.dropLast(1) + stop) }
     }
+
+    /** A favorite chip was tapped: the destination only, named after the favorite (waypoints stay). */
+    fun setDestination(favorite: Favorite) = setDestination(favorite.name, favorite.point)
 
     fun addWaypoint(name: String, p: GeoPoint) {
         val stop = PlannedStop(nextKey++, name, p)

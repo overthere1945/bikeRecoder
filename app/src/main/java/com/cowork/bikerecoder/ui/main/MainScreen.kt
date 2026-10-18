@@ -47,6 +47,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.LocationFix
+import com.cowork.bikerecoder.favorite.FavoritePlace
 import com.cowork.bikerecoder.map.BikeMap
 import com.cowork.bikerecoder.map.CameraFit
 import com.cowork.bikerecoder.map.CameraMode
@@ -78,6 +79,10 @@ fun MainScreen(
     onContinueRecording: (tripId: Long) -> Unit,
     onSetDestination: (name: String, point: GeoPoint) -> Unit,
     onAddWaypoint: (name: String, point: GeoPoint) -> Unit,
+    /** The favorite chips, drawn right under the search row. */
+    favoriteChips: @Composable () -> Unit = {},
+    /** [즐겨찾기에 저장] on the long-press sheet; null hides it. */
+    onSaveFavorite: ((FavoritePlace) -> Unit)? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val fix by currentLocation.collectAsStateWithLifecycle()
@@ -163,6 +168,7 @@ fun MainScreen(
                     }
                 }
             }
+            favoriteChips()
             state.riding?.let { riding ->
                 BannerCard(text = riding.text, action = "보기") { onShowRide(riding.target) }
             }
@@ -260,7 +266,12 @@ fun MainScreen(
                 viewModel.dismissPressed()
                 onAddWaypoint(name, point)
             },
-            onSaveFavorite = null, // Task 4
+            onSaveFavorite = onSaveFavorite?.let { save ->
+                { place ->
+                    viewModel.dismissPressed()
+                    save(place)
+                }
+            },
             onDismiss = viewModel::dismissPressed,
         )
     }

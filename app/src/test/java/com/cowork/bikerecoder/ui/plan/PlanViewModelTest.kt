@@ -9,6 +9,8 @@ import com.cowork.bikerecoder.core.routing.RouteFailure
 import com.cowork.bikerecoder.core.routing.RouteRequest
 import com.cowork.bikerecoder.core.routing.RouteResult
 import com.cowork.bikerecoder.core.routing.Router
+import com.cowork.bikerecoder.favorite.Favorite
+import com.cowork.bikerecoder.favorite.FavoriteKind
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -471,5 +473,15 @@ class PlanViewModelTest {
         runCurrent()
         assertEquals("부산 해운대구 우동", vm.pressed.value!!.address)
         assertEquals(false, vm.pressed.value!!.loading)
+    }
+
+    @Test
+    fun `a favorite chip sets the destination by its name and keeps the waypoints`() = runTest {
+        val vm = viewModel()
+        vm.setDestination("여의도", c)
+        vm.addWaypoint("남산", a)
+        vm.setDestination(Favorite(1, FavoriteKind.HOME, "집", b, null, 0))
+        assertEquals(listOf("남산", "집"), vm.state.value.stops.map { it.name })
+        assertEquals(b, vm.state.value.stops.last().point)
     }
 }

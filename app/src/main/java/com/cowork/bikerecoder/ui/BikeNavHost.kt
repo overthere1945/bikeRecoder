@@ -31,6 +31,9 @@ import com.cowork.bikerecoder.ui.onboarding.OnboardingStep
 import com.cowork.bikerecoder.ui.onboarding.OnboardingViewModel
 import com.cowork.bikerecoder.ui.onboarding.effectiveOnboardingStep
 import com.cowork.bikerecoder.ui.onboarding.readPermissionState
+import com.cowork.bikerecoder.ui.favorite.FavoriteChips
+import com.cowork.bikerecoder.ui.favorite.FavoriteDialogs
+import com.cowork.bikerecoder.ui.favorite.FavoritesViewModel
 import com.cowork.bikerecoder.ui.history.HistoryScreen
 import com.cowork.bikerecoder.ui.history.HistoryViewModel
 import com.cowork.bikerecoder.ui.history.SegmentDetailScreen
@@ -155,6 +158,25 @@ fun BikeNavHost(
         initial.drop(1).forEach { navController.openOnMain(it) }
     }
 
+    // Activity-scoped too: the chips and the place sheets of every screen share one save/rename/delete dialog.
+    val favoritesViewModel: FavoritesViewModel = viewModel(
+        viewModelStoreOwner = context.findActivity(),
+        factory = FavoritesViewModel.factory(container),
+    )
+    val favorites by favoritesViewModel.favorites.collectAsStateWithLifecycle()
+    val favoriteDialog by favoritesViewModel.dialog.collectAsStateWithLifecycle()
+    val favoriteChips: @Composable () -> Unit = {
+        FavoriteChips(
+            favorites = favorites,
+            onSelect = { favorite ->
+                planViewModel.setDestination(favorite)
+                navController.openPlan()
+            },
+            onRename = favoritesViewModel::startRename,
+            onDelete = favoritesViewModel::askDelete,
+        )
+    }
+
     val setDestinationAndOpenPlan: (String, GeoPoint) -> Unit = { name, point ->
         planViewModel.setDestination(name, point)
         navController.openPlan()
@@ -221,6 +243,8 @@ fun BikeNavHost(
                 onContinueRecording = { tripId -> navController.openOnMain(Routes.record(tripId)) },
                 onSetDestination = setDestinationAndOpenPlan,
                 onAddWaypoint = addWaypointAndOpenPlan,
+                favoriteChips = favoriteChips,
+                onSaveFavorite = favoritesViewModel::startSave,
             )
             TripStartDialogs(
                 state = startState,
@@ -253,6 +277,8 @@ fun BikeNavHost(
                 onBack = { navController.popBackStack() },
                 onSetDestination = setDestinationAndOpenPlan,
                 onAddWaypoint = addWaypointAndOpenPlan,
+                favoriteChips = favoriteChips,
+                onSaveFavorite = favoritesViewModel::startSave,
             )
         }
         composable(Routes.PLAN) {
@@ -268,6 +294,7 @@ fun BikeNavHost(
                     val plan = planViewModel.state.value
                     tripStart.onStartPressed(StartPlan(plan.profile, plan.stops))
                 },
+                onSaveFavorite = favoritesViewModel::startSave,
             )
             TripStartDialogs(
                 state = startState,
@@ -388,6 +415,14 @@ fun BikeNavHost(
             SettingsScreen(viewModel = viewModel, onBack = { navController.popBackStack() })
         }
     }
+    FavoriteDialogs(
+        dialog = favoriteDialog,
+        onSave = favoritesViewModel::save,
+        onConfirmReplace = favoritesViewModel::confirmReplace,
+        onRename = favoritesViewModel::rename,
+        onConfirmDelete = favoritesViewModel::confirmDelete,
+        onDismiss = favoritesViewModel::dismiss,
+    )
 }
 
 /** The guidance or record screen on top of main (plan/search/ride entries are dropped). */
