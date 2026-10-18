@@ -9,7 +9,7 @@
 
 ### PC 단위 테스트
 
-실행일: 2026-10-18 (브랜치 `feature/trips-v1.2.0`, Task 9 커밋 직전)
+실행일: 2026-10-18 (브랜치 `feature/trips-v1.2.0`, 설정 「사진·심박 연결」의 [허용] 보완 뒤)
 
 명령:
 
@@ -17,14 +17,14 @@
 ./gradlew :core:test :routing-brouter:test :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest --rerun-tasks
 ```
 
-결과: BUILD SUCCESSFUL in 2m 34s (`--rerun-tasks`로 전부 다시 실행)
+결과: BUILD SUCCESSFUL in 1m 58s (`--rerun-tasks`로 전부 다시 실행)
 
 | 모음 | 클래스 수 | 테스트 수 | 실패 | 건너뜀 |
 |---|---|---|---|---|
 | `:core:test` | 26 | 233 | 0 | 0 |
 | `:routing-brouter:test` | 4 | 16 | 0 | 0 |
-| `:app:testDebugUnitTest` | 60 | 599 | 0 | 0 |
-| 합계 | 90 | 848 | 0 | 0 |
+| `:app:testDebugUnitTest` | 61 | 604 | 0 | 0 |
+| 합계 | 91 | 853 | 0 | 0 |
 
 수는 이 실행이 만든 JUnit XML(`*/build/test-results/*/TEST-*.xml`)에서 셌습니다. 빌드 확인: `:app:assembleDebug`, `:app:assembleDebugAndroidTest` 성공(기기 테스트 코드 컴파일 포함).
 
@@ -40,30 +40,30 @@ adb -s R5CT43TFS9A shell input keyevent KEYCODE_WAKEUP
 ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=<클래스> </dev/null
 ```
 
-결과는 V1.2.0 작업(Task 3~9) 중 그 클래스를 마지막으로 실행한 결과입니다. 「실행」 칸이 그 과제입니다. 클래스 이름은 `com.cowork.bikerecoder.` 뒤부터 적었습니다.
+결과는 2026-10-18 V1.2.0 개발 중 그 클래스를 마지막으로 실행한 결과입니다. 「마지막 실행」 칸은 그때 만들던 기능입니다. 그 뒤에 다른 기능이 들어왔으므로 출시 전에 한 번 더 돌려 보는 것이 좋습니다. 클래스 이름은 `com.cowork.bikerecoder.` 뒤부터 적었습니다.
 
-| 클래스 | 테스트 수 | 확인하는 것 | 실행 | 결과 |
+| 클래스 | 테스트 수 | 확인하는 것 | 마지막 실행 | 결과 |
 |---|---|---|---|---|
-| `data.RideDatabaseMigrationTest` | 3 | DB v1→v2, v2→v3, v3→v4(표 추가만) 뒤 기존 기록 유지 | Task 3 | 3/3 통과 |
-| `data.RoomPostStoreTest` | 9 | 후처리 저장소: 사진 저장(숨김 유지·중복 건너뜀)·관찰·지운 사진 삭제, 처리할 구간 목록(기록 중·끝난 구간 건너뜀, 최신순), 부가 정보 저장·관찰, 심박 샘플 시간순, 구간 삭제 CASCADE, 누적 경로 읽기(읽을 수 없는 경로는 그 줄만 뺌), 없는 구간에 쓰기 거절 | Task 8 | 9/9 통과 |
-| `data.RoomRideStoreTest` | 7 | 구간·위치 저장, 삭제가 새 표까지 CASCADE | Task 3 | 7/7 통과 |
-| `data.RoomTripStoreTest` | 6 | 여행 저장소(DB v4에서 재확인) | Task 3 | 6/6 통과 |
-| `data.RoomFavoriteStoreTest` | 1 | 즐겨찾기 저장소(DB v4에서 재확인) | Task 3 | 1/1 통과 |
-| `post.MediaStorePhotoSourceTest` | 5 | 카메라 폴더 사진만 창 안에서(양끝 포함, 찍은 시각 순), 사진 위치 권한으로 EXIF 위치, 갤러리에서 지운 사진, 커서 null은 빈 갤러리가 아니라 실패 | Task 4 | 5/5 통과 |
-| `ui.photo.PhotoStripTest` | 4 | "사진 N장" 줄, "숨긴 사진 N장", 숨긴 사진만 있을 때 | Task 6 | 4/4 통과 |
-| `ui.photo.PhotoViewerTest` | 6 | 전체 화면 보기: 찍은 시각 "10월 18일 오후 2:31", [숨기기]/[다시 보이기], 좌우 넘기기, [뒤로] | Task 6 | 6/6 통과 |
-| `ui.post.PermissionCardsTest` | 4 | 사진 카드(허용 안 함 / 선택한 사진만 / 모든 사진), 심박 카드 | Task 9 | 4/4 통과 |
-| `ui.history.DetailMapPhotosTest` | 2 | 상세 지도에는 보이는 사진만 | Task 7 | 2/2 통과 |
-| `ui.history.HistoryScreenTest` | 4 | 목록 → 여행 → 구간, 목록 위 누적 지도 버튼, 길게 눌러 삭제 | Task 8 | 4/4 통과 |
-| `ui.health.HeartRateRowTest` | 4 | 심박 줄 상태 문구, "– kcal", 자세하지 않을 때 안내, 권한 없음·Health Connect 없음(R8) | Task 9 | 4/4 통과 |
-| `ui.health.HeartRateLegendTest` | 2 | 색 설명 여섯 줄, [기본]/[심박] 선택 | Task 7 | 2/2 통과 |
-| `ui.history.SegmentDetailScreenTest` | 7 | 구간 상세: [심박] 색·색 설명·심박 그래프, 권한 카드와 [나중에], Health Connect 없음, [다시 가져오기] | Task 9 | 7/7 통과 |
-| `ui.record.RecordScreenTest` | 14 | 기록 화면과 구간 요약(사진 수, 심박 줄) | Task 7 | 14/14 통과 |
-| `ui.cumulative.CumulativeMapScreenTest` | 5 | 누적 지도 요약, 기간 거르기, 빈 화면 문구, 후처리가 경로를 더할 수 있는 동안·읽는 동안에는 빈 문구 없음 | Task 8 | 5/5 통과 |
-| `ui.settings.SettingsScreenTest` | 10 | 설정 화면, 「사진·심박 연결」(허용 안 함 + [허용] / 모든 사진 허용·허용됨 / 선택한 사진만 + [설정 열기]·Health Connect를 사용할 수 없습니다, 스크롤 뒤 확인) | Task 9 | 10/10 통과 |
-| `ui.settings.SettingsSegmentActionsTest` | 4 | 경로 데이터 버튼(설정 화면 구조가 바뀌어 다시 확인) | Task 9 | 4/4 통과 |
+| `data.RideDatabaseMigrationTest` | 3 | DB v1→v2, v2→v3, v3→v4(표 추가만) 뒤 기존 기록 유지 | DB v4 저장소 | 3/3 통과 |
+| `data.RoomPostStoreTest` | 9 | 후처리 저장소: 사진 저장(숨김 유지·중복 건너뜀)·관찰·지운 사진 삭제, 처리할 구간 목록(기록 중·끝난 구간 건너뜀, 최신순), 부가 정보 저장·관찰, 심박 샘플 시간순, 구간 삭제 CASCADE, 누적 경로 읽기(읽을 수 없는 경로는 그 줄만 뺌), 없는 구간에 쓰기 거절 | 누적 지도 | 9/9 통과 |
+| `data.RoomRideStoreTest` | 7 | 구간·위치 저장, 삭제가 새 표까지 CASCADE | DB v4 저장소 | 7/7 통과 |
+| `data.RoomTripStoreTest` | 6 | 여행 저장소(DB v4에서 재확인) | DB v4 저장소 | 6/6 통과 |
+| `data.RoomFavoriteStoreTest` | 1 | 즐겨찾기 저장소(DB v4에서 재확인) | DB v4 저장소 | 1/1 통과 |
+| `post.MediaStorePhotoSourceTest` | 5 | 카메라 폴더 사진만 창 안에서(양끝 포함, 찍은 시각 순), 사진 위치 권한으로 EXIF 위치, 갤러리에서 지운 사진, 커서 null은 빈 갤러리가 아니라 실패 | 사진·심박 출처 | 5/5 통과 |
+| `ui.photo.PhotoStripTest` | 4 | "사진 N장" 줄, "숨긴 사진 N장", 숨긴 사진만 있을 때 | 사진 화면 | 4/4 통과 |
+| `ui.photo.PhotoViewerTest` | 6 | 전체 화면 보기: 찍은 시각 "10월 18일 오후 2:31", [숨기기]/[다시 보이기], 좌우 넘기기, [뒤로] | 사진 화면 | 6/6 통과 |
+| `ui.post.PermissionCardsTest` | 4 | 사진 카드(허용 안 함 / 선택한 사진만 / 모든 사진), 심박 카드 | 설정 「사진·심박 연결」 | 4/4 통과 |
+| `ui.history.DetailMapPhotosTest` | 2 | 상세 지도에는 보이는 사진만 | 심박 화면 | 2/2 통과 |
+| `ui.history.HistoryScreenTest` | 4 | 목록 → 여행 → 구간, 목록 위 누적 지도 버튼, 길게 눌러 삭제 | 누적 지도 | 4/4 통과 |
+| `ui.health.HeartRateRowTest` | 4 | 심박 줄 상태 문구, "– kcal", 자세하지 않을 때 안내, 권한 없음·Health Connect 없음(R8) | 설정 「사진·심박 연결」 | 4/4 통과 |
+| `ui.health.HeartRateLegendTest` | 2 | 색 설명 여섯 줄, [기본]/[심박] 선택 | 심박 화면 | 2/2 통과 |
+| `ui.history.SegmentDetailScreenTest` | 7 | 구간 상세: [심박] 색·색 설명·심박 그래프, 권한 카드와 [나중에], Health Connect 없음, [다시 가져오기] | 설정 「사진·심박 연결」 | 7/7 통과 |
+| `ui.record.RecordScreenTest` | 14 | 기록 화면과 구간 요약(사진 수, 심박 줄) | 심박 화면 | 14/14 통과 |
+| `ui.cumulative.CumulativeMapScreenTest` | 5 | 누적 지도 요약, 기간 거르기, 빈 화면 문구, 후처리가 경로를 더할 수 있는 동안·읽는 동안에는 빈 문구 없음 | 누적 지도 | 5/5 통과 |
+| `ui.settings.SettingsScreenTest` | 11 | 설정 화면, 「사진·심박 연결」(허용 안 함 + [허용] / 모든 사진 허용·허용됨 / 선택한 사진만 + [설정 열기]·Health Connect를 사용할 수 없습니다, 스크롤 뒤 확인), 버튼마다 맞는 동작(가짜 동작으로, 실제 시스템 화면은 열지 않음) | 설정 「사진·심박 연결」 | 11/11 통과 |
+| `ui.settings.SettingsSegmentActionsTest` | 4 | 경로 데이터 버튼(설정 화면 구조가 바뀌어 다시 확인) | 설정 「사진·심박 연결」 | 4/4 통과 |
 
-위 18개 클래스 97개가 통과했습니다. 기기 전체 `@Test`는 183개(33개 클래스)이고, 나머지 15개 클래스 86개는 V1.2.0에서 바뀌지 않았으며 **기기 검증 대기**입니다:
+위 18개 클래스 98개가 통과했습니다. 기기 전체 `@Test`는 184개(33개 클래스)이고, 나머지 15개 클래스 86개는 V1.2.0 개발 중 휴대폰에서 실행하지 않아 **기기 검증 대기**입니다. 이 가운데 `ride.RideScenarioTest`와 `nav.NavigationScenarioTest`는 Room 저장소를 쓰므로 DB v4(표 추가)의 영향을 받을 수 있어 먼저 확인합니다:
 `location.GpxLocationSourceTest` 1, `nav.NavigationScenarioTest` 6, `offline.MapLibreOfflineControllerTest` 7, `ride.RideScenarioTest` 5, `ui.common.NoticeSnackbarHostTest` 4, `ui.favorite.FavoriteChipsTest` 7, `ui.favorite.FavoriteDialogsTest` 10, `ui.favorite.FavoritesScreenTest` 6, `ui.navigate.GuidanceButtonRowTest` 3, `ui.pick.MapPickScreenTest` 6, `ui.plan.PlanScreenTest` 4, `ui.search.SearchRegisterModeTest` 10, `ui.search.SearchScreenTest` 13, `ui.trip.EndNavigationDialogTest` 3, `ui.trip.TripStartDialogsTest` 1.
 
 ### 수동 확인 (기기 검증 대기)
@@ -71,7 +71,7 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.te
 | 확인 | 방법 | 결과 |
 |---|---|---|
 | 권한 카드의 실제 시스템 창 | 사진 카드 [허용] → 사진 권한 창 → (허용하면) 사진 위치 권한 창. 심박 카드 [허용] → Health Connect 권한 창(심박·운동·총 칼로리 세 가지). 거절하면 카드가 다시 뜨지 않는지 | [ ] 미실시 |
-| 설정 「사진·심박 연결」 | 상태 문구가 실제 권한과 맞는지("모든 사진 허용"/"선택한 사진만"/"허용 안 함", "허용됨"/"허용 안 함"/"Health Connect를 사용할 수 없습니다"). [허용]은 시스템 창을 띄우고, 허용하면 상태가 바뀌고 카드도 다시 판단됨. "선택한 사진만"의 [설정 열기]는 앱 정보 화면으로 감 | [ ] 미실시 |
+| 설정 「사진·심박 연결」 | 상태 문구가 실제 권한과 맞는지("모든 사진 허용"/"선택한 사진만"/"허용 안 함", "허용됨"/"허용 안 함"/"Health Connect를 사용할 수 없습니다"). [허용]은 시스템 창을 띄우고, 허용하면 상태가 바뀌고 카드도 다시 판단됨. "선택한 사진만"의 [설정 열기]는 앱 정보 화면으로 감. 두 번 거절해 Android가 사진 창을 더 띄우지 않으면 [허용]이 앱 정보 화면을 엶. 심박 [허용]에서 허용하지 않고 돌아오면 Health Connect 설정 화면이 열림(앱 권한에서 허용) | [ ] 미실시 |
 | Health Connect 권한 이유 화면 | Health Connect 앱의 이 앱 권한 화면에서 이유 보기 → "심박은 주행 기록에만 쓰고 휴대폰 밖으로 보내지 않습니다" | [ ] 미실시 |
 
 ## 사용자에게 보이는 동작을 바꾼 판정

@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -144,6 +145,20 @@ fun openAppDetailsSettings(context: Context) {
         context.startActivity(intent)
     } catch (e: ActivityNotFoundException) {
         Log.w("PermissionCards", "No app details screen", e)
+    }
+}
+
+/**
+ * Health Connect's own settings, where this app's permissions can be given when Health Connect no longer shows its
+ * permission screen. (Its per-app permission page needs `GRANT_RUNTIME_PERMISSIONS`, so this opens the settings home.)
+ */
+fun openHealthConnectSettings(context: Context) {
+    try {
+        context.startActivity(Intent(HealthConnectClient.ACTION_HEALTH_CONNECT_SETTINGS))
+    } catch (e: ActivityNotFoundException) {
+        Log.w("PermissionCards", "No Health Connect settings screen", e)
+    } catch (e: SecurityException) {
+        Log.w("PermissionCards", "Health Connect settings screen refused", e)
     }
 }
 

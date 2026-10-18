@@ -1,5 +1,7 @@
 package com.cowork.bikerecoder.ui.settings
 
+import android.os.Build
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -49,6 +51,8 @@ import com.cowork.bikerecoder.ui.health.HeartRateGate
 import com.cowork.bikerecoder.ui.health.rememberHeartRateAccess
 import com.cowork.bikerecoder.ui.plan.labelKo
 import com.cowork.bikerecoder.ui.post.openAppDetailsSettings
+import com.cowork.bikerecoder.ui.post.openHealthConnectSettings
+import com.cowork.bikerecoder.ui.post.photoPermissionsFor
 import com.cowork.bikerecoder.ui.post.rememberHeartRatePermissionRequest
 import com.cowork.bikerecoder.ui.post.rememberPhotoAccess
 import com.cowork.bikerecoder.ui.post.rememberPhotoPermissionRequest
@@ -86,7 +90,10 @@ internal val ATTRIBUTIONS = listOf(
 /**
  * The settings. "사진·심박 연결" reads the access from [photoSource] and [heartRateGate] whenever the screen comes back;
  * its [허용] lets the card show again and runs the cards' flow (a refusal dismisses it again); photos gained →
- * [onPhotoAccessGained], heart rate allowed → [HeartRateGate.onGranted] (post-processing passes).
+ * [onPhotoAccessGained], heart rate allowed → [HeartRateGate.onGranted] (post-processing passes). When the system no
+ * longer shows its permission screen, [허용] opens the settings instead ([opensAppSettingsAfterPhotoRequest],
+ * [opensHealthConnectSettingsAfterRequest]); [onOpenAppSettings] / [onOpenHealthConnectSettings] replace those screens
+ * (tests), null = the real ones.
  */
 @Composable
 fun SettingsScreen(
@@ -95,20 +102,33 @@ fun SettingsScreen(
     photoSource: PhotoSource,
     heartRateGate: HeartRateGate,
     onPhotoAccessGained: () -> Unit,
+    onOpenAppSettings: (() -> Unit)? = null,
+    onOpenHealthConnectSettings: (() -> Unit)? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val activity = LocalActivity.current
+    val openApp = onOpenAppSettings ?: { openAppDetailsSettings(context) }
+    val openHealthConnect = onOpenHealthConnectSettings ?: { openHealthConnectSettings(context) }
     val photoAccess = rememberPhotoAccess(photoSource, onPhotoAccessGained)
     val heartRateAccess = rememberHeartRateAccess(heartRateGate)
     val askPhotos = rememberPhotoPermissionRequest(
         photoAccess,
         onPhotoAccessGained,
-        onRefused = { viewModel.setPhotoPromptDismissed(true) },
+        onRefused = {
+            viewModel.setPhotoPromptDismissed(true)
+            val asked = photoPermissionsFor(Build.VERSION.SDK_INT).first()
+            val mayAskAgain = activity?.shouldShowRequestPermissionRationale(asked) ?: true
+            if (opensAppSettingsAfterPhotoRequest(photoAccess.value, mayAskAgain)) openApp()
+        },
     )
     val askHeartRate = rememberHeartRatePermissionRequest(
         heartRateGate,
         heartRateAccess,
-        onRefused = { viewModel.setHeartRatePromptDismissed(true) },
+        onRefused = {
+            viewModel.setHeartRatePromptDismissed(true)
+            if (opensHealthConnectSettingsAfterRequest(heartRateAccess.value)) openHealthConnect()
+        },
     )
     SettingsContent(
         state = state,
@@ -133,7 +153,7 @@ fun SettingsScreen(
                     viewModel.setPhotoPromptDismissed(false)
                     askPhotos()
                 },
-                onOpenPhotoSettings = { openAppDetailsSettings(context) },
+                onOpenPhotoSettings = openApp,
                 onAllowHeartRate = {
                     viewModel.setHeartRatePromptDismissed(false)
                     askHeartRate()
@@ -327,7 +347,7 @@ internal fun SettingsContent(
 
 /** "사진·심박 연결" (spec §5.1): each access with [허용] (or [설정 열기] for "선택한 사진만"), then a divider. */
 @Composable
-private fun ConnectionSection(
+internal fun ConnectionSection(
     photo: PhotoAccess,
     heartRate: HeartRateAccess,
     onAllowPhotos: () -> Unit,

@@ -1,7 +1,11 @@
 package com.cowork.bikerecoder.ui.settings
 
 import android.content.Context
+import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsOn
@@ -24,6 +28,7 @@ import com.cowork.bikerecoder.post.FakeHeartRateSource
 import com.cowork.bikerecoder.post.FakePhotoSource
 import com.cowork.bikerecoder.post.HealthAvailability
 import com.cowork.bikerecoder.post.PhotoAccess
+import com.cowork.bikerecoder.ui.health.HeartRateAccess
 import com.cowork.bikerecoder.ui.health.HeartRateGate
 import kotlinx.coroutines.flow.MutableStateFlow
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -55,6 +60,7 @@ class SettingsScreenTest {
     // Fakes instead of the gallery and Health Connect (no permission is asked: nothing taps [허용] or [설정 열기]).
     private val photos = FakePhotoSource(access = PhotoAccess.NONE)
     private val heartRate = FakeHeartRateSource(permitted = false)
+    private val opened = mutableListOf<String>()
 
     @Before
     fun setUp() {
@@ -84,6 +90,9 @@ class SettingsScreenTest {
                     photoSource = photos,
                     heartRateGate = gate,
                     onPhotoAccessGained = {},
+                    // Never the real system screens.
+                    onOpenAppSettings = { opened += "app" },
+                    onOpenHealthConnectSettings = { opened += "healthConnect" },
                 )
             }
         }
@@ -233,5 +242,32 @@ class SettingsScreenTest {
         composeRule.onNodeWithTag(SettingsTags.HEART_RATE_STATUS).performScrollTo()
             .assertTextEquals("Health Connect를 사용할 수 없습니다")
         composeRule.onNodeWithTag(SettingsTags.HEART_RATE_ALLOW).assertDoesNotExist()
+    }
+
+    @Test
+    fun connectionButtonsCallTheirActions() {
+        val calls = mutableListOf<String>()
+        var photo by mutableStateOf(PhotoAccess.NONE)
+        composeRule.setContent {
+            MaterialTheme {
+                Column {
+                    ConnectionSection(
+                        photo = photo,
+                        heartRate = HeartRateAccess.NO_PERMISSION,
+                        onAllowPhotos = { calls += "allowPhotos" },
+                        onOpenPhotoSettings = { calls += "openPhotoSettings" },
+                        onAllowHeartRate = { calls += "allowHeartRate" },
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag(SettingsTags.PHOTO_ALLOW).performClick()
+        composeRule.onNodeWithTag(SettingsTags.HEART_RATE_ALLOW).performClick()
+        photo = PhotoAccess.PARTIAL
+        composeRule.onNodeWithTag(SettingsTags.PHOTO_OPEN_SETTINGS).performClick()
+
+        assertEquals(listOf("allowPhotos", "allowHeartRate", "openPhotoSettings"), calls)
+        assertEquals(emptyList<String>(), opened)
     }
 }
