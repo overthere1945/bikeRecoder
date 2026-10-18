@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -70,11 +71,22 @@ class FavoritesViewModel(
     private val log: WarnLog = androidWarnLog(TAG),
 ) : ViewModel() {
 
+    // Declared before [favorites]: its eager collection may set this while the view model is still being built.
+    private val _favoritesLoaded = MutableStateFlow(false)
+
+    /**
+     * False until the store has answered once (a list, or a failure). Until then [favorites] is a placeholder empty
+     * list, so "no home, no work" is not known yet: the register chips wait for this.
+     */
+    val favoritesLoaded: StateFlow<Boolean> = _favoritesLoaded.asStateFlow()
+
     /** Home, work, then custom ones in creation order. A failing flow is logged and shows an empty list. */
     val favorites: StateFlow<List<Favorite>> = repository.favorites
+        .onEach { _favoritesLoaded.value = true }
         .catch { e ->
             if (e is CancellationException) throw e
             log.warn("favorites flow failed", e)
+            _favoritesLoaded.value = true
             emit(emptyList())
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())

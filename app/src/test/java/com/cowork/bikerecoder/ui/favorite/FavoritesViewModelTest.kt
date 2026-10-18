@@ -6,9 +6,14 @@ import com.cowork.bikerecoder.favorite.Favorite
 import com.cowork.bikerecoder.favorite.FavoriteKind
 import com.cowork.bikerecoder.favorite.FavoritePlace
 import com.cowork.bikerecoder.favorite.FavoriteRepository
+import com.cowork.bikerecoder.favorite.FavoriteStore
 import com.cowork.bikerecoder.nav.RecordingLog
+import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -219,6 +224,76 @@ class FavoritesViewModelTest {
         settle()
         assertEquals(FavoriteDialog.Message("즐겨찾기를 저장하지 못했습니다"), vm.dialog.value)
         assertEquals(emptyList<FavoriteEvent>(), events)
+    }
+
+    @Test
+    fun saveAsReplaceStoreFailureShowsSaveFailedWithoutAnEvent() = runTest {
+        val store = FakeFavoriteStore(listOf(Favorite(1, FavoriteKind.HOME, "집", p1, null, 0)))
+        val vm = viewModel(store)
+        val events = events(vm)
+        vm.saveAs(place2, FavoriteKind.HOME)
+        settle()
+        assertEquals(
+            FavoriteDialog.ConfirmReplace(place2, FavoriteKind.HOME, "기존 집을 이 장소로 바꿀까요?", register = true),
+            vm.dialog.value,
+        )
+
+        store.failWrites = true
+        vm.confirmReplace()
+        settle()
+        assertEquals(FavoriteDialog.Message("즐겨찾기를 저장하지 못했습니다"), vm.dialog.value)
+        assertEquals(emptyList<FavoriteEvent>(), events)
+        assertEquals(p1, store.current.single().point)
+        assertEquals(1, log.messages.size)
+    }
+
+    @Test
+    fun saveAsReplaceDismissedTellsNothing() = runTest {
+        val store = FakeFavoriteStore(listOf(Favorite(1, FavoriteKind.HOME, "집", p1, null, 0)))
+        val vm = viewModel(store)
+        val events = events(vm)
+        vm.saveAs(place2, FavoriteKind.HOME)
+        settle()
+        assertEquals(true, (vm.dialog.value as FavoriteDialog.ConfirmReplace).register)
+
+        vm.dismiss()
+        settle()
+        assertNull(vm.dialog.value)
+        assertEquals(emptyList<FavoriteEvent>(), events)
+        assertEquals(p1, store.current.single().point)
+    }
+
+    /** A store whose list has not arrived yet: [observeAll] emits only when [send] is called. */
+    private class SlowFavoriteStore(private val fake: FakeFavoriteStore = FakeFavoriteStore()) : FavoriteStore by fake {
+        private val gate = MutableSharedFlow<List<Favorite>>()
+        override fun observeAll(): Flow<List<Favorite>> = gate
+        suspend fun send(list: List<Favorite>) = gate.emit(list)
+    }
+
+    @Test
+    fun favoritesAreNotLoadedUntilTheFirstList() = runTest {
+        val store = SlowFavoriteStore()
+        val vm = FavoritesViewModel(FavoriteRepository(store) { now++ }, log)
+        settle()
+        assertEquals(false, vm.favoritesLoaded.value)
+
+        store.send(listOf(Favorite(1, FavoriteKind.HOME, "집", p1, null, 0)))
+        settle()
+        assertEquals(true, vm.favoritesLoaded.value)
+        assertEquals(listOf("집"), vm.favorites.value.map { it.name })
+    }
+
+    @Test
+    fun aFailingFavoritesFlowCountsAsLoaded() = runTest {
+        val failing = object : FavoriteStore by FakeFavoriteStore() {
+            override fun observeAll(): Flow<List<Favorite>> = flow { throw IOException("read failed") }
+        }
+        val vm = FavoritesViewModel(FavoriteRepository(failing) { now++ }, log)
+        assertEquals(false, vm.favoritesLoaded.value)
+        settle()
+        assertEquals(true, vm.favoritesLoaded.value)
+        assertEquals(emptyList<Favorite>(), vm.favorites.value)
+        assertEquals(1, log.messages.size)
     }
 
     @Test

@@ -60,7 +60,10 @@ object SearchTags {
     fun recentRemove(index: Int) = "search-recent-remove-$index"
 }
 
-/** Hides the keyboard and releases focus when the user starts dragging the list (code-driven scrolls leave it up). */
+/**
+ * Hides the keyboard and releases focus when the user starts dragging the list. State-driven scrolls (scrollToItem)
+ * leave it up; semantics scrolls (accessibility, and the test API's performScrollTo*) arrive as user input and hide it.
+ */
 @Composable
 internal fun rememberHideKeyboardOnDrag(): NestedScrollConnection {
     val keyboard = LocalSoftwareKeyboardController.current

@@ -18,7 +18,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextClearance
-import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
@@ -145,7 +145,12 @@ class SearchScreenTest {
             results.fetchSemanticsNode().boundsInWindow.bottom <= keyboardTop + 1,
         )
 
-        results.performScrollToNode(hasText("장소 30"))
+        // performScrollToIndex moves the list state directly (scrollToItem), so the keyboard stays up. Not
+        // performScrollToNode: it scrolls through the semantics ScrollBy action, which Compose dispatches as
+        // NestedScrollSource.UserInput (like an accessibility scroll), so the hide-on-drag connection treats it as a
+        // drag and drops the keyboard; the list then spans the whole screen and keyboardTop above is stale.
+        results.performScrollToIndex(29)
+        composeRule.waitForIdle()
         composeRule.onNodeWithText("장소 30").assertIsDisplayed()
         val last = composeRule.onNodeWithText("장소 30").fetchSemanticsNode().boundsInWindow
         assertTrue("last result bottom ${last.bottom} must be above keyboard top $keyboardTop", last.bottom <= keyboardTop + 1)

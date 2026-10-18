@@ -121,7 +121,7 @@ class SettingsScreenTest {
     @Test
     fun showsSegmentsMapSizeAndAttribution() {
         composeRule.onNodeWithText("E125_N35  ·  필수").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("설치됨 · 2 KB").assertIsDisplayed()
+        composeRule.onNodeWithText("설치됨 · 2 KB").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("E130_N35  ·  선택").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag(SettingsTags.segmentDownload("E130_N35")).performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag(SettingsTags.segmentCheck("E125_N35")).performScrollTo().assertIsDisplayed()

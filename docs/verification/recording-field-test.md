@@ -151,16 +151,16 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest
 ./gradlew :core:test :routing-brouter:test :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest --rerun-tasks
 ```
 
-결과: BUILD SUCCESSFUL (`--rerun-tasks`로 전부 다시 실행, 101개 작업 모두 실행, 2026-10-18 「검색·즐겨찾기 보완」 뒤 다시 실행). 수는 `build/test-results`의 XML에서 모음별로 센 값입니다.
+결과: BUILD SUCCESSFUL (`--rerun-tasks`로 전부 다시 실행, 101개 작업 모두 실행, 2026-10-18 「검색·즐겨찾기 보완」 뒤 다시 실행). 수는 `build/test-results`의 XML에서 모음별로 센 값입니다. 최종 수정(2026-10-18, 즐겨찾기 불러오기 전 등록 칩 숨김·등록 경로 테스트) 뒤 `./gradlew :app:testDebugUnitTest :app:assembleDebugAndroidTest`를 다시 실행해 `:app`이 406개(42클래스, 실패 0)가 됐습니다. `:core`·`:routing-brouter`는 바뀌지 않았습니다.
 
 | 모음 | 클래스 수 | 테스트 수 | 실패 | 건너뜀 |
 |---|---|---|---|---|
 | `:core:test` | 21 | 177 | 0 | 0 |
 | `:routing-brouter:test` | 4 | 16 | 0 | 0 |
-| `:app:testDebugUnitTest` | 42 | 402 | 0 | 0 |
-| 합계 | 67 | 595 | 0 | 0 |
+| `:app:testDebugUnitTest` | 42 | 406 | 0 | 0 |
+| 합계 | 67 | 599 | 0 | 0 |
 
-앞선 기록 코어 검증(2026-10-12)의 501개(60클래스)에서 94개(7클래스)가 늘었습니다(`:core` +1, `:app` +93). 「검색·즐겨찾기 보완」까지 포함한 값이며, 그 앞(주행 사용성 개선만)은 573개(65클래스)였습니다.
+앞선 기록 코어 검증(2026-10-12)의 501개(60클래스)에서 98개(7클래스)가 늘었습니다(`:core` +1, `:app` +97). 「검색·즐겨찾기 보완」까지 포함한 값이며, 그 앞(주행 사용성 개선만)은 573개(65클래스)였습니다.
 
 새 클래스:
 
@@ -169,7 +169,7 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest
 | `favorite.FavoriteRepositoryTest` | 10 | 즐겨찾기 규칙(집·회사 각 1개, 직접 입력 이름 1~20자, 같은 이름 거절, 최대 20개, 정렬) |
 | `data.FavoriteMappingsTest` | 1 | 즐겨찾기 Room 엔티티 ↔ 모델 변환 |
 | `ui.common.PlaceLookupTest` | 5 | 길게 누른 지점의 주소 찾기("주소를 확인하는 중…") |
-| `ui.favorite.FavoritesViewModelTest` | 14 (8 → 14, 보완 +6) | 칩 목록, 저장·바꾸기·삭제 흐름과 오류 문구, 집·회사 등록(`saveAs`: 저장 알림 한 번, 바꾸기 확인, 가득 참·저장 실패 메시지) |
+| `ui.favorite.FavoritesViewModelTest` | 18 (8 → 18, 보완 +6, 최종 수정 +4) | 칩 목록, 저장·바꾸기·삭제 흐름과 오류 문구, 집·회사 등록(`saveAs`: 저장 알림 한 번, 바꾸기 확인, 가득 참·저장 실패 메시지, 바꾸기 저장 실패 메시지·바꾸기 취소는 알림 없음), 즐겨찾기를 불러오기 전(`favoritesLoaded` false)과 불러온 뒤·읽기 실패 뒤(true) |
 | `ui.navigate.GuidanceButtonsTest` | 2 | 기록 중 [안내 취소]·[주행 종료] 버튼 구성 |
 
 「검색·즐겨찾기 보완」에서 새로 생긴 클래스:
@@ -194,13 +194,18 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest
 | `core.voice.KoreanPhrasesTest` | 9 → 10 (+1) | "안내를 마칩니다. 기록은 계속됩니다"·"목적지에 도착했습니다" 문구 |
 | `ui.search.SearchViewModelTest` | 3 → 8 (+5) | 고른 장소를 최근 검색에 더하고 시트를 엶, 최근 목록이 저장소를 따르고 지울 수 있음, 저장소가 실패해도 시트가 열림, 집·회사 등록 모드의 탭은 기억만 하고 시트를 열지 않음, 등록 인자는 HOME·WORK만 |
 
-고쳐서 그대로 통과하는 기존 클래스(수 변화 없음): `search.KakaoLocalClientTest` 18(정확도 순 정렬 인자, 현재 위치 근처 우선 유지), `ui.navigate.GuidanceButtonsTest` 2([안내 취소] 문구), `ui.trip.TripStartViewModelTest` 36(주석의 옛 문구만 고침).
+고쳐서 그대로 통과하는 기존 클래스(수 변화 없음): `search.KakaoLocalClientTest` 18(정확도 순 정렬 인자, 거리 표시용 현재 위치 x·y는 계속 보냄), `ui.navigate.GuidanceButtonsTest` 2([안내 취소] 문구), `ui.trip.TripStartViewModelTest` 36(주석의 옛 문구만 고침).
 
 빌드 확인: `:app:assembleDebug`, `:app:assembleDebugAndroidTest` 성공(기기 테스트 코드 컴파일 포함). Room 스키마 `app/schemas/com.cowork.bikerecoder.data.AppDatabase/3.json`이 커밋되어 있습니다.
 
 #### 기기 테스트
 
-실행일: 2026-10-18. `adb devices`에 연결된 휴대폰이 없어(목록이 비어 있음) 기기 실행은 **기기 검증 대기**입니다. 아래 표의 결과는 모두 대기이고, 테스트 수는 코드의 `@Test` 개수입니다.
+실행일: 2026-10-18. Galaxy S22 Ultra(`R5CT43TFS9A`, SM-S908N, Android 16)에서 아래 12개 클래스를 한 번에 하나씩 실행했습니다(사용자 실행). 59개 중 57개가 통과했고, 실패 2건은 둘 다 테스트 코드 문제여서 테스트를 고친 뒤 그 클래스와 바뀐 클래스(`SearchScreenTest`, `SettingsScreenTest`, `FavoriteChipsTest`, `SearchRegisterModeTest`)를 같은 휴대폰에서 다시 실행해 모두 통과했습니다.
+
+- `SettingsScreenTest.showsSegmentsMapSizeAndAttribution`: 설정 화면이 길어져(「안내를 새로 시작할 때 기록」 선택지) 「설치됨 · 2 KB」가 화면 밖에 있었습니다. `performScrollTo()` 뒤에 확인하도록 고쳤습니다.
+- `SearchScreenTest.resultsEndAboveTheKeyboard`: 테스트의 `performScrollToNode`가 semantics `ScrollBy`로 스크롤하는데, Compose는 이것을 사용자 입력(`NestedScrollSource.UserInput`, 접근성 스크롤과 같음)으로 보냅니다. 그래서 「목록을 끌면 키보드 내림」이 동작해 키보드가 내려가고(기기 측정: 키보드 1008px → 0, 목록 아래 끝 1308 → 2181), 미리 잰 키보드 위치와 비교한 단언이 틀렸습니다. 앱 동작은 맞습니다(키보드가 올라와 있는 동안 목록은 키보드 위에서 끝나고, 끌면 키보드가 내려감). 목록 상태를 바로 옮기는 `performScrollToIndex(29)`로 바꿔 키보드가 올라온 채 마지막 결과가 키보드 위에 보이는지 확인합니다.
+
+이 실행에 들지 않은 9개 클래스(`RoomRideStoreTest` 7, `RoomTripStoreTest` 6, `GpxLocationSourceTest` 1, `NavigationScenarioTest` 6, `MapLibreOfflineControllerTest` 7, `RideScenarioTest` 5, `HistoryScreenTest` 3, `SettingsSegmentActionsTest` 4, `EndNavigationDialogTest` 3, 합 42개)는 이번 작업에서 바뀌지 않았고 기기 검증 대기입니다.
 
 > **경고**: `connectedDebugAndroidTest`는 끝나면 앱을 지워 그 휴대폰의 기록이 사라집니다.
 > connected 테스트는 `R5CT43TFS9A`에서만, 실제 기록이 있는 `R3CY903ZYQV`에는 `installDebug`만 씁니다.
@@ -213,20 +218,22 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.te
 
 | 클래스 | 테스트 수 | 확인하는 것 | 결과 |
 |---|---|---|---|
-| `com.cowork.bikerecoder.data.RideDatabaseMigrationTest` | 2 | DB v1 → v2, v2 → v3 후 기존 여행 유지 | 기기 검증 대기 |
-| `com.cowork.bikerecoder.data.RoomFavoriteStoreTest` | 1 | 즐겨찾기 저장소 추가·관찰·수정·삭제 | 기기 검증 대기 |
-| `com.cowork.bikerecoder.ui.plan.PlanScreenTest` | 4 | 경유지 추가·순서·삭제, 길게 눌러 경유지로 추가·목적지로 설정 | 기기 검증 대기 |
-| `com.cowork.bikerecoder.ui.favorite.FavoriteChipsTest` | 7 (4 → 7) | 칩 순서·선택, 직접 입력 칩 메뉴(이름 바꾸기·삭제), 집 칩 메뉴(삭제만, U4), 등록 칩([🏠 집 등록]·[🏢 회사 등록]) 표시·순서·선택, 등록 칩은 메뉴 없음, 등록 칩이 없으면 줄 없음 | 기기 검증 대기 |
-| `com.cowork.bikerecoder.ui.favorite.FavoriteDialogsTest` | 4 | 이름 고르기(집·회사·직접 입력), 오류 문구, 삭제 확인 | 기기 검증 대기 |
-| `com.cowork.bikerecoder.ui.search.SearchScreenTest` | 10 (3 → 10) | 검색 결과가 키보드 위에서 끝남, 목록을 끌면 키보드 내림, 즐겨찾기가 없으면 여백 없음, 최근 검색(없으면 아무것도 안 보임, 최신순·거리 없음·「최근 검색」 머리글, 글자를 치면 숨김, [X]로 한 개 지움, [전체 삭제], 고르면 시트가 열리고 맨 위로, 목록을 끌면 키보드 내림) | 기기 검증 대기 |
-| `com.cowork.bikerecoder.ui.search.SearchRegisterModeTest` | 4 (새 클래스) | 집·회사 등록 모드: 「집 검색」·「회사 검색」 안내 문구와 칩 없음, 결과를 누르면 시트 없이 바로 저장하고 최근 검색에 남김, 최근 검색 줄을 눌러도 저장 | 기기 검증 대기 |
-| `com.cowork.bikerecoder.ui.settings.SettingsScreenTest` | 7 | 설정 화면, 「안내를 새로 시작할 때 기록」 선택지 | 기기 검증 대기 |
-| `com.cowork.bikerecoder.ui.trip.TripStartDialogsTest` | 1 | "기록을 어떻게 할까요?" 대화상자(이어서 기록·새 구간으로 나누기·취소) | 기기 검증 대기 |
-| `com.cowork.bikerecoder.ui.navigate.GuidanceButtonRowTest` | 3 | 기록 중 [안내 취소]·[주행 종료](문구 「안내 취소」로 바뀜), 기록 중이 아니면 V1 버튼 | 기기 검증 대기 |
-| `com.cowork.bikerecoder.ui.common.NoticeSnackbarHostTest` | 4 | 알림 문구를 한 번 보이고 표시했다고 알림, 새 알림은 다시 보임, 보이지 않는 동안(안내 화면 숫자 쪽)에는 알림이 기다림 | 기기 검증 대기 |
-| `com.cowork.bikerecoder.ui.record.RecordScreenTest` | 12 | 기록 화면 2쪽·정지 확인·서비스 경고, [목적지 정하기] 표시(안내 중에는 숨김) | 기기 검증 대기 |
+| `com.cowork.bikerecoder.data.RideDatabaseMigrationTest` | 2 | DB v1 → v2, v2 → v3 후 기존 여행 유지 | 2/2 통과 |
+| `com.cowork.bikerecoder.data.RoomFavoriteStoreTest` | 1 | 즐겨찾기 저장소 추가·관찰·수정·삭제 | 1/1 통과 |
+| `com.cowork.bikerecoder.ui.plan.PlanScreenTest` | 4 | 경유지 추가·순서·삭제, 길게 눌러 경유지로 추가·목적지로 설정 | 4/4 통과 |
+| `com.cowork.bikerecoder.ui.favorite.FavoriteChipsTest` | 7 (4 → 7) | 칩 순서·선택, 직접 입력 칩 메뉴(이름 바꾸기·삭제), 집 칩 메뉴(삭제만, U4), 등록 칩([🏠 집 등록]·[🏢 회사 등록]) 표시·순서·선택, 등록 칩은 메뉴 없음, 등록 칩이 없으면 줄 없음 | 7/7 통과 (최종 수정 뒤 다시 실행 7/7) |
+| `com.cowork.bikerecoder.ui.favorite.FavoriteDialogsTest` | 4 | 이름 고르기(집·회사·직접 입력), 오류 문구, 삭제 확인 | 4/4 통과 |
+| `com.cowork.bikerecoder.ui.search.SearchScreenTest` | 10 (3 → 10) | 검색 결과가 키보드 위에서 끝남, 목록을 끌면 키보드 내림, 즐겨찾기가 없으면 여백 없음, 최근 검색(없으면 아무것도 안 보임, 최신순·거리 없음·「최근 검색」 머리글, 글자를 치면 숨김, [X]로 한 개 지움, [전체 삭제], 고르면 시트가 열리고 맨 위로, 목록을 끌면 키보드 내림) | 9/10 → 테스트 수정 뒤 10/10 통과 |
+| `com.cowork.bikerecoder.ui.search.SearchRegisterModeTest` | 4 (새 클래스) | 집·회사 등록 모드: 「집 검색」·「회사 검색」 안내 문구와 칩 없음, 결과를 누르면 시트 없이 바로 저장하고 최근 검색에 남김, 최근 검색 줄을 눌러도 저장 | 4/4 통과 (최종 수정 뒤 다시 실행 4/4) |
+| `com.cowork.bikerecoder.ui.settings.SettingsScreenTest` | 7 | 설정 화면, 「안내를 새로 시작할 때 기록」 선택지 | 6/7 → 테스트 수정 뒤 7/7 통과 |
+| `com.cowork.bikerecoder.ui.trip.TripStartDialogsTest` | 1 | "기록을 어떻게 할까요?" 대화상자(이어서 기록·새 구간으로 나누기·취소) | 1/1 통과 |
+| `com.cowork.bikerecoder.ui.navigate.GuidanceButtonRowTest` | 3 | 기록 중 [안내 취소]·[주행 종료](문구 「안내 취소」로 바뀜), 기록 중이 아니면 V1 버튼 | 3/3 통과 |
+| `com.cowork.bikerecoder.ui.common.NoticeSnackbarHostTest` | 4 | 알림 문구를 한 번 보이고 표시했다고 알림, 새 알림은 다시 보임, 보이지 않는 동안(안내 화면 숫자 쪽)에는 알림이 기다림 | 4/4 통과 |
+| `com.cowork.bikerecoder.ui.record.RecordScreenTest` | 12 | 기록 화면 2쪽·정지 확인·서비스 경고, [목적지 정하기] 표시(안내 중에는 숨김) | 12/12 통과 |
 
-위 12개 클래스의 합은 59개입니다. 기기 전체 `@Test` 개수는 101개(21개 클래스)이며 아직 실행하지 않았습니다. 「검색·즐겨찾기 보완」에서 바뀐 클래스는 `SearchScreenTest`(+7), `SearchRegisterModeTest`(새로, 4), `FavoriteChipsTest`(+3), `GuidanceButtonRowTest`(문구)이고, 전부 기기 검증 대기입니다. 컴파일은 `:app:assembleDebugAndroidTest`로 확인했습니다.
+위 12개 클래스의 합은 59개이고, 테스트를 고친 뒤 59/59가 통과합니다. 기기 전체 `@Test` 개수는 101개(21개 클래스)이며, 나머지 42개(9개 클래스)는 위에 적은 대로 기기 검증 대기입니다. 「검색·즐겨찾기 보완」에서 바뀐 클래스는 `SearchScreenTest`(+7), `SearchRegisterModeTest`(새로, 4), `FavoriteChipsTest`(+3), `GuidanceButtonRowTest`(문구)입니다. 컴파일은 `:app:assembleDebugAndroidTest`로 확인했습니다.
+
+수동 확인(기기 검증 대기): 인자 없는 검색 화면 열기(`navigate("search")`)가 첫 화면 검색창, 경로 계획 [+ 경유지 추가], 기록 화면 [목적지 정하기]에서 보통 검색(결과를 누르면 시트)으로 열리는지, 그리고 등록 칩·검색창·등록 모드 결과를 빠르게 두 번 눌러도 화면이 두 번 열리거나 바꾸기 질문이 다시 뜨지 않는지는 아직 휴대폰에서 직접 확인하지 않았습니다.
 
 #### 설치 확인 (기기 검증 대기)
 
@@ -249,6 +256,6 @@ ANDROID_SERIAL=R3CY903ZYQV ./gradlew :app:installDebug
 | 3 | 기록 중 새 목적지로 안내 시작 | 설정대로(이어서/나누기/묻기) 동작하고, 기록 목록에 같은 여행으로 보임 | [ ] 미실시 | 이어서 ___ / 나누기 ___ / 묻기 ___ |
 | 4 | 경로 계획에서 길게 눌러 경유지 추가 | 경로 계획 화면에서 지도를 길게 누르면 [경유지로 추가]로 경유지가 더해짐 | [ ] 미실시 | |
 | 5 | 기록 중 붙인 안내로 도착 (U1) | 안내만 끝나고 기록은 계속됨(음성과 화면 문구 "목적지에 도착했습니다"). 여행은 진행 중으로 남음 | [ ] 미실시 | |
-| 6 | 장소·역 이름 검색은 정확도 순 | "발산역"처럼 역·장소 이름을 검색하면 그 장소가 결과 맨 위에 나옴(현재 위치 근처 우선은 유지) | [ ] 미실시 | |
+| 6 | 장소·역 이름 검색은 정확도 순 | "발산역"처럼 역·장소 이름을 검색하면 그 장소가 결과 맨 위에 나옴(거리 표시는 그대로. 반경 없이 보내는 현재 위치는 거리 표시용이라 가까운 곳이 앞에 오지 않을 수 있음. 이름이 흔한 장소에서 먼 곳이 위에 오면 메모) | [ ] 미실시 | |
 | 7 | 최근 검색 | 검색창을 비우면 최근 고른 장소가 보이고, [X]로 한 개, [전체 삭제]로 모두 지울 수 있음 | [ ] 미실시 | |
 | 8 | 첫 화면 집·회사 등록 | 첫 화면 [🏠 집 등록]으로 집을 등록하면 「집으로 저장했습니다」 Toast 뒤 [🏠 집] 칩이 됨 | [ ] 미실시 | 회사 ___ |

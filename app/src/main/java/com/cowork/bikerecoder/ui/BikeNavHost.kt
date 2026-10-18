@@ -173,6 +173,7 @@ fun BikeNavHost(
         factory = FavoritesViewModel.factory(container),
     )
     val favorites by favoritesViewModel.favorites.collectAsStateWithLifecycle()
+    val favoritesLoaded by favoritesViewModel.favoritesLoaded.collectAsStateWithLifecycle()
     val favoriteDialog by favoritesViewModel.dialog.collectAsStateWithLifecycle()
     // [chipsModifier] is the caller's outer spacing (outside the sideways scroll). [onRegister] (the map main only) adds
     // the home/work register chips; without it an empty list draws nothing at all.
@@ -222,8 +223,10 @@ fun BikeNavHost(
                 },
             )
         }
-        composable(Routes.MAIN) {
+        composable(Routes.MAIN) { entry ->
             val viewModel: MainViewModel = viewModel(factory = MainViewModel.factory(container))
+            // A double tap must not push a second screen: only the main screen on top navigates.
+            val isCurrent = { navController.currentBackStackEntry?.id == entry.id }
             // The record-only start asks which trip, like [안내 시작] on the plan screen.
             val tripStart: TripStartViewModel = viewModel(factory = TripStartViewModel.factory(container))
             val startState by tripStart.state.collectAsStateWithLifecycle()
@@ -231,7 +234,7 @@ fun BikeNavHost(
                 viewModel = viewModel,
                 tileSource = container.tileSource,
                 currentLocation = container.currentLocation,
-                onOpenSearch = { navController.navigate(Routes.SEARCH) },
+                onOpenSearch = { if (isCurrent()) navController.navigate(Routes.SEARCH) },
                 onOpenHistory = { navController.navigate(Routes.HISTORY) },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                 onResumeTrip = { tripId -> navController.openOnMain(Routes.navigate(tripId)) },
@@ -257,7 +260,15 @@ fun BikeNavHost(
                 onSetDestination = setDestinationAndOpenPlan,
                 onAddWaypoint = addWaypointAndOpenPlan,
                 favoriteChips = {
-                    favoriteChips(Modifier) { kind -> navController.navigate(Routes.searchRegister(kind)) }
+                    // No register chips before the list has loaded: an empty placeholder is not "no home, no work".
+                    favoriteChips(
+                        Modifier,
+                        if (favoritesLoaded) {
+                            { kind -> if (isCurrent()) navController.navigate(Routes.searchRegister(kind)) }
+                        } else {
+                            null
+                        },
+                    )
                 },
                 onSaveFavorite = favoritesViewModel::startSave,
             )
@@ -292,8 +303,10 @@ fun BikeNavHost(
                     defaultValue = null
                 },
             ),
-        ) {
+        ) { entry ->
             val viewModel: SearchViewModel = viewModel(factory = SearchViewModel.factory(container))
+            // A second tap on a result while this screen fades out after a save must not save (and ask) again.
+            val isCurrent = { navController.currentBackStackEntry?.id == entry.id }
             // Keeps the shared location source running while searching (used as the "near" point).
             container.currentLocation.collectAsStateWithLifecycle()
             SearchScreen(
@@ -304,10 +317,11 @@ fun BikeNavHost(
                 favoriteChips = { favoriteChips(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), null) },
                 onSaveFavorite = favoritesViewModel::startSave,
                 // The replace question and refusals are the shared dialogs below; a save ends in [FavoriteEvent.Registered].
-                onRegister = favoritesViewModel::saveAs,
+                onRegister = { place, kind -> if (isCurrent()) favoritesViewModel.saveAs(place, kind) },
             )
         }
-        composable(Routes.PLAN) {
+        composable(Routes.PLAN) { entry ->
+            val isCurrent = { navController.currentBackStackEntry?.id == entry.id }
             val user by container.currentLocation.collectAsStateWithLifecycle()
             val tripStart: TripStartViewModel = viewModel(factory = TripStartViewModel.factory(container))
             val startState by tripStart.state.collectAsStateWithLifecycle()
@@ -315,7 +329,7 @@ fun BikeNavHost(
                 viewModel = planViewModel,
                 map = { state, modifier -> PlanMap(state, user, container.tileSource, modifier, onLongPress = planViewModel::onLongPress) },
                 onBack = { navController.popBackStack() },
-                onAddStop = { navController.navigate(Routes.SEARCH) },
+                onAddStop = { if (isCurrent()) navController.navigate(Routes.SEARCH) },
                 onStartNavigation = {
                     val plan = planViewModel.state.value
                     tripStart.onStartPressed(StartPlan(plan.profile, plan.stops))

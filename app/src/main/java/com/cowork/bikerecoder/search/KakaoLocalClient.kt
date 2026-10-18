@@ -67,6 +67,7 @@ class KakaoLocalClient(
                     addQueryParameter("x", near.lon.toString())
                     addQueryParameter("y", near.lat.toString())
                     // Accuracy, not distance: distance order lets a nearby shop bury the place the rider typed.
+                    // x/y (no radius) only fill each place's distance; they do not favor nearby places.
                     addQueryParameter("sort", "accuracy")
                 }
             }
