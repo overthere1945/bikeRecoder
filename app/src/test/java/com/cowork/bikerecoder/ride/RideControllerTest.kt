@@ -10,6 +10,7 @@ import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.data.AppSettings
 import com.cowork.bikerecoder.location.LocationSource
+import com.cowork.bikerecoder.location.SharedLocationSource
 import com.cowork.bikerecoder.nav.AssetRouter
 import com.cowork.bikerecoder.nav.FakeTripStore
 import com.cowork.bikerecoder.nav.NavigationController
@@ -20,6 +21,7 @@ import com.cowork.bikerecoder.nav.ScriptedLocationSource
 import com.cowork.bikerecoder.ride.RideFixtures.StopAt
 import com.cowork.bikerecoder.ride.RideFixtures.north
 import com.cowork.bikerecoder.ride.RideFixtures.straight
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -36,6 +38,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -112,6 +115,14 @@ class RideControllerTest {
     }
 
     private fun TestScope.harness(fixes: List<LocationFix>) = Harness(this, ScriptedLocationSource(fixes, speedup = 1.0))
+
+    /** The scripted fixes (18 km/h, speedup 1) of a [splitHarness], shared like the app's location stream. */
+    private lateinit var scripted: ScriptedLocationSource
+
+    private fun TestScope.splitHarness(fixes: List<LocationFix> = straight(3_000.0)): Harness {
+        scripted = ScriptedLocationSource(fixes, speedup = 1.0)
+        return Harness(this, SharedLocationSource({ scripted }, backgroundScope))
+    }
 
     private fun TestScope.play(ms: Long) {
         advanceTimeBy(ms)
@@ -497,5 +508,238 @@ class RideControllerTest {
         assertEquals(2, h.store.failedAppends, "tried once more")
         assertEquals(lastGood, h.store.segment(segmentId), "still open at its last good save; recovery closes it there")
         assertEquals(segmentId, h.store.openSegments().single().id)
+    }
+    @Test
+    fun splitClosesTheSegmentAndRecordsANewOneOfTheSameTrip() = runTest {
+        val h = splitHarness()
+        val tripId = h.trip()
+        h.start(tripId)
+        play(20_000) // 100 m
+
+        assertNull(h.controller.splitSegment())
+
+        val segments = h.store.segments(tripId)
+        assertEquals(2, segments.size, segments.toString())
+        assertNotNull(segments[0].endedAt)
+        assertEquals(100.0, segments[0].totals.distanceM, 1.0)
+        assertNull(segments[1].endedAt)
+        assertEquals(segments[1].id, h.active.segmentId)
+        assertEquals(tripId, h.active.tripId)
+        assertEquals(TripStatus.ACTIVE, trips.trips.getValue(tripId).status)
+        assertEquals(1, trips.trips.size)
+
+        // The shared stream replays the closed segment's last fix to the new collector: it is not recorded twice.
+        play(5_000)
+        h.controller.stopRecording(RecordingEnd.SEGMENT_ONLY)
+        val firstTimes = h.store.points(segments[0].id).map { it.timeMillis }
+        val secondTimes = h.store.points(segments[1].id).map { it.timeMillis }
+        assertEquals((0..20).map { it * 1_000L }, firstTimes)
+        assertEquals((21..25).map { it * 1_000L }, secondTimes)
+    }
+
+    @Test
+    fun splitNeverShowsASummaryOrIdle() = runTest {
+        val h = splitHarness()
+        h.start(h.trip())
+        play(20_000)
+        val states = mutableListOf<RideUiState>()
+        val collecting = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { h.controller.ui.toList(states) }
+
+        h.controller.splitSegment()
+        play(5_000)
+        collecting.cancel()
+
+        assertTrue(states.none { it is RideUiState.Idle || it is RideUiState.Finished }, states.toString())
+        val kinds = states.map { it::class }.zipWithNext().filter { (a, b) -> a != b }.map { it.second }
+        assertEquals(
+            listOf(RideUiState.Active::class, RideUiState.Starting::class, RideUiState.Active::class),
+            listOf(states.first()::class) + kinds,
+        )
+    }
+
+    @Test
+    fun splitAnnouncesTheNewSegmentOnceByVoiceAndOnScreen() = runTest {
+        val h = splitHarness()
+        h.start(h.trip())
+        play(20_000)
+
+        h.controller.splitSegment()
+        play(5_000)
+
+        assertEquals(1, voice.spoken.count { it == "기록을 시작합니다" }, voice.spoken.toString())
+        assertEquals("기록을 시작합니다", voice.spoken.first())
+        assertEquals(1, voice.spoken.count { it == "새 구간으로 기록을 시작합니다" }, voice.spoken.toString())
+        assertEquals("새 구간으로 기록을 시작합니다", h.controller.notice.value?.text)
+    }
+
+    @Test
+    fun splitWithVoiceOffStillShowsTheNotice() = runTest {
+        val h = splitHarness()
+        h.settings.value = AppSettings(voiceEnabled = false)
+        h.start(h.trip())
+        play(20_000)
+
+        h.controller.splitSegment()
+
+        assertTrue(voice.spoken.none { it == "새 구간으로 기록을 시작합니다" }, voice.spoken.toString())
+        assertEquals("새 구간으로 기록을 시작합니다", h.controller.notice.value?.text)
+    }
+
+    @Test
+    fun splitKeepsTheFixesThatArriveWhileTheSegmentsChange() = runTest {
+        val h = splitHarness()
+        val tripId = h.trip()
+        h.start(tripId)
+        play(20_000)
+        val gate = CompletableDeferred<Unit>()
+        h.store.openGate = gate
+
+        val split = launch { h.controller.splitSegment() }
+        play(3_000) // the fixes at 21, 22 and 23 s arrive while the new segment is being opened
+        assertInstanceOf(RideUiState.Starting::class.java, h.controller.ui.value)
+        gate.complete(Unit)
+        play(5_000)
+        split.join()
+        h.controller.stopRecording(RecordingEnd.SEGMENT_ONLY)
+
+        val (first, second) = h.store.segments(tripId)
+        val firstTimes = h.store.points(first.id).map { it.timeMillis }
+        val secondTimes = h.store.points(second.id).map { it.timeMillis }
+        assertEquals(20_000L, firstTimes.last())
+        assertTrue(secondTimes.containsAll(listOf(21_000L, 22_000L, 23_000L)), secondTimes.toString())
+        assertTrue(firstTimes.intersect(secondTimes.toSet()).isEmpty(), "$firstTimes / $secondTimes")
+        assertEquals((21..28).map { it * 1_000L }, secondTimes, "every later fix once, in order")
+    }
+
+    @Test
+    fun splitKeepsTheLocationStreamSubscribed() = runTest {
+        val h = splitHarness()
+        h.start(h.trip())
+        play(20_000)
+
+        h.controller.splitSegment()
+        play(10_000)
+
+        assertEquals(1, scripted.collections)
+        assertTrue(scripted.collecting)
+        assertTrue(h.active.stats.distanceM > 40.0, "the new segment records: ${h.active.stats}")
+    }
+
+    @Test
+    fun splitContinuesTheDayKmCount() = runTest {
+        val h = splitHarness()
+        h.start(h.trip())
+        play(240_000) // 1_200 m
+        assertEquals(listOf(1), kmReports(), voice.spoken.toString())
+
+        h.controller.splitSegment()
+        play(180_000) // 2_100 m
+
+        assertEquals(listOf(1, 2), kmReports(), voice.spoken.toString())
+    }
+
+    @Test
+    fun splitReportsASaveProblem() = runTest {
+        val h = splitHarness()
+        val tripId = h.trip()
+        h.start(tripId)
+        play(20_000)
+        h.store.failAppend = true
+
+        assertEquals(RideController.MSG_SAVE_PROBLEM, h.controller.splitSegment())
+
+        assertInstanceOf(RideUiState.Active::class.java, h.controller.ui.value)
+        assertEquals(2, h.store.segments(tripId).size)
+        assertEquals(h.store.segments(tripId).last().id, h.active.segmentId)
+    }
+
+    @Test
+    fun aStopDuringTheSplitIsNotUndone() = runTest {
+        val h = splitHarness()
+        val tripId = h.trip()
+        h.start(tripId)
+        play(20_000)
+        val gate = CompletableDeferred<Unit>()
+        h.store.closeGate = gate
+
+        var result: String? = "not returned"
+        val split = launch { result = h.controller.splitSegment() }
+        runCurrent()
+        val stop = launch { h.controller.stopRecording(RecordingEnd.COMPLETE_TRIP) }
+        runCurrent()
+        gate.complete(Unit)
+        split.join()
+        stop.join()
+        play(5_000)
+
+        assertNull(result)
+        val segment = h.store.segments(tripId).single()
+        assertNotNull(segment.endedAt)
+        assertEquals(segment, (h.controller.ui.value as RideUiState.Finished).segment)
+        assertEquals(TripStatus.ACTIVE, trips.trips.getValue(tripId).status, "the split's segment-only end came first")
+        assertTrue(voice.spoken.none { it == "새 구간으로 기록을 시작합니다" }, voice.spoken.toString())
+        assertFalse(scripted.collecting, "location released")
+    }
+
+    @Test
+    fun splitWithoutARecordingDoesNothing() = runTest {
+        val h = splitHarness()
+        val tripId = h.trip()
+
+        assertNull(h.controller.splitSegment())
+
+        assertEquals(RideUiState.Idle, h.controller.ui.value)
+        assertTrue(h.store.segments(tripId).isEmpty())
+    }
+
+    @Test
+    fun announceSpeaksAndShowsTheSameTextOnce() = runTest {
+        val h = harness(straight(100.0))
+        h.start(h.trip())
+        val text = "안내를 마칩니다. 기록은 계속됩니다"
+
+        h.controller.announce(text)
+
+        assertEquals(1, voice.spoken.count { it == text }, voice.spoken.toString())
+        val notice = h.controller.notice.value!!
+        assertEquals(text, notice.text)
+        h.controller.noticeShown(notice.id + 1)
+        assertEquals(notice, h.controller.notice.value)
+        h.controller.noticeShown(notice.id)
+        assertNull(h.controller.notice.value)
+    }
+
+    @Test
+    fun announceWithVoiceOffOnlyShows() = runTest {
+        val h = harness(straight(100.0))
+        h.settings.value = AppSettings(voiceEnabled = false)
+        h.start(h.trip())
+
+        h.controller.announce("안내를 마칩니다. 기록은 계속됩니다")
+
+        assertTrue(voice.spoken.isEmpty(), voice.spoken.toString())
+        assertEquals("안내를 마칩니다. 기록은 계속됩니다", h.controller.notice.value?.text)
+    }
+
+    @Test
+    fun announceWithoutARecordingDoesNothing() = runTest {
+        val h = harness(straight(100.0))
+
+        h.controller.announce("안내를 마칩니다. 기록은 계속됩니다")
+
+        assertTrue(voice.spoken.isEmpty(), voice.spoken.toString())
+        assertNull(h.controller.notice.value)
+    }
+
+    @Test
+    fun aStoppedRecordingClearsItsNotice() = runTest {
+        val h = harness(straight(100.0))
+        h.start(h.trip())
+        h.controller.announce("안내를 마칩니다. 기록은 계속됩니다")
+
+        h.controller.stopRecording(RecordingEnd.SEGMENT_ONLY)
+
+        assertInstanceOf(RideUiState.Finished::class.java, h.controller.ui.value)
+        assertNull(h.controller.notice.value)
     }
 }

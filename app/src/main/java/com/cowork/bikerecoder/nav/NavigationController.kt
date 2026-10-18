@@ -84,6 +84,14 @@ sealed interface NavUiState {
 
 enum class FinishReason { ARRIVED, STOPPED_TODAY, COMPLETED }
 
+/** 시작 중이거나 안내 중인 여행; 아니면 null. */
+val NavUiState.guidingTripId: Long?
+    get() = when (this) {
+        is NavUiState.Starting -> tripId
+        is NavUiState.Active -> tripId
+        else -> null
+    }
+
 /**
  * Runs one [NavigationSession] at a time, outside any UI lifecycle: the app-wide singleton lives in
  * [AppContainer.navigation] and the location foreground service keeps the process alive while it runs.
@@ -95,7 +103,9 @@ enum class FinishReason { ARRIVED, STOPPED_TODAY, COMPLETED }
  * trip every [touchIntervalMs]. Today's distance of the trip ([dayDistances], by [zone]'s calendar date at the
  * start) seeds the session, so a same-day resume continues the kilometre announcements; it is saved at
  * every new kilometre and when the session ends. Session updates are spoken (unless [voiceEnabled] is off), reached stops are
- * marked visited, and reaching the destination completes the trip. Every way out of a session (arrival,
+ * marked visited, and reaching the destination completes the trip — except (ruling U1) for a guidance started while a
+ * recording already ran ([kmSource] set at [begin]) that still runs at the arrival: then only the guidance ends
+ * ([onArrivedKeepingRecording]), the trip stays active. Every way out of a session (arrival,
  * [stopToday], [completeTrip], [close], a new start) stops the location source and the ticks. A location stream
  * that fails after the start point was taken is subscribed again every [LOCATION_RETRY_MS] until it works.
  * While [kmSource] is set (a recording runs), the 1 km announcements count its distance and speak its combined
@@ -151,8 +161,18 @@ class NavigationController(
             run?.session?.setKmSource(value)
         }
 
-    /** Everything belonging to one start of one trip. */
-    private class Run(val tripId: Long) {
+    /**
+     * Ruling U1: when a guidance started while a recording was already running ([kmSource] != null at [begin]) reaches
+     * its destination and [kmSource] is still set, the destination is only marked visited — the trip is not completed —
+     * and the state goes to Idle without Finished; then this gets the arrival phrase. Main thread only.
+     */
+    var onArrivedKeepingRecording: ((String) -> Unit)? = null
+
+    /**
+     * Everything belonging to one start of one trip. [attachedToRecording]: a recording was already running at the
+     * start (ruling U1).
+     */
+    private class Run(val tripId: Long, val attachedToRecording: Boolean) {
         var trip: Trip? = null
         var session: NavigationSession? = null
         var stops: List<Stop> = emptyList()
@@ -185,7 +205,7 @@ class NavigationController(
             return null
         }
         endRun()
-        val r = Run(tripId)
+        val r = Run(tripId, attachedToRecording = kmSource != null)
         run = r
         _ui.value = NavUiState.Starting(tripId)
         val job = scope.launch {
@@ -409,7 +429,7 @@ class NavigationController(
             if (event.stop.isDestination) arrived = true
         }
         if (arrived) {
-            finish(r, FinishReason.ARRIVED)
+            if (r.attachedToRecording && kmSource != null) arriveKeepingRecording(r) else finish(r, FinishReason.ARRIVED)
             return
         }
         if (run !== r) return
@@ -435,6 +455,21 @@ class NavigationController(
         if (run == null) {
             _ui.value = NavUiState.Finished(trip.id, trip.type, reason, error = if (saved) null else MSG_SAVE_FAILED)
         }
+    }
+
+    /**
+     * Ruling U1: [r] arrived while the recording it was started into goes on — the guidance ends (Idle, no Finished),
+     * the trip stays active. The arrival was already spoken by the session. May be called from [r]'s own update collector.
+     */
+    private suspend fun arriveKeepingRecording(r: Run) = withContext(NonCancellable) {
+        if (run !== r) return@withContext
+        run = null
+        r.cancelJobs()
+        unmute()
+        saveDayDistance(r)
+        // A new start during the write wins.
+        if (run == null) _ui.value = NavUiState.Idle
+        onArrivedKeepingRecording?.invoke(phrases.arrivedDestination)
     }
 
     /** Best effort: today's distance of [r]'s session so far (nothing before the session started). */

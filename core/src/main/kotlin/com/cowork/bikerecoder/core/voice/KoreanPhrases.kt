@@ -30,6 +30,8 @@ class KoreanPhrases(private val zone: ZoneId = ZoneId.of("Asia/Seoul")) {
     val recordingStarted: String = "기록을 시작합니다"
     val recordingPaused: String = "일시정지되었습니다"
     val recordingResumed: String = "기록을 다시 시작합니다"
+    val guidanceEndedRecordingGoesOn: String = "안내를 마칩니다. 기록은 계속됩니다"
+    val newSegmentStarted: String = "새 구간으로 기록을 시작합니다"
 
     /** [m]을 10m 단위로 반올림한다. 결과가 1,000m 이상이면 소수 첫째 자리 킬로미터로 표기한다. */
     fun distance(m: Double): String {

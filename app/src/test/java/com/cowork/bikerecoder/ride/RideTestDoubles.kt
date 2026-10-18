@@ -8,6 +8,7 @@ import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.core.recording.TripRideSummary
 import com.cowork.bikerecoder.location.PressureSource
 import com.cowork.bikerecoder.nav.FakeTripStore
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.onCompletion
@@ -38,7 +39,14 @@ class FakeRideStore(private val trips: FakeTripStore, private val clock: () -> L
     val deletedTrips = mutableListOf<Long>()
     val deletedSegments = mutableListOf<Long>()
 
+    /** While set, [openSegment] waits for it (before opening anything). */
+    var openGate: CompletableDeferred<Unit>? = null
+
+    /** While set, [closeSegment] waits for it (before closing anything). */
+    var closeGate: CompletableDeferred<Unit>? = null
+
     override suspend fun openSegment(tripId: Long, startedAt: Long, localDate: LocalDate): Long {
+        openGate?.await()
         val id = nextId++
         segmentsById[id] = RideSegment(id, tripId, startedAt, endedAt = null, localDate, SegmentTotals.ZERO)
         return id
@@ -57,6 +65,7 @@ class FakeRideStore(private val trips: FakeTripStore, private val clock: () -> L
     }
 
     override suspend fun closeSegment(segmentId: Long, endedAt: Long, totals: SegmentTotals) {
+        closeGate?.await()
         segmentsById[segmentId] = segmentsById.getValue(segmentId).copy(endedAt = endedAt, totals = totals)
     }
 

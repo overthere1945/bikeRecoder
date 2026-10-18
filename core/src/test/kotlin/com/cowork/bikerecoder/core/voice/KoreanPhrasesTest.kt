@@ -65,6 +65,12 @@ class KoreanPhrasesTest {
     }
 
     @Test
+    fun rideUxPhrases() {
+        assertEquals("안내를 마칩니다. 기록은 계속됩니다", p.guidanceEndedRecordingGoesOn)
+        assertEquals("새 구간으로 기록을 시작합니다", p.newSegmentStarted)
+    }
+
+    @Test
     fun `km report while recording only`() =
         assertEquals("3킬로미터 이동. 평균 속도 18.0킬로미터, 이동 시간 10분입니다.", p.rideKmReport(3, 5.0, 600_000))
 

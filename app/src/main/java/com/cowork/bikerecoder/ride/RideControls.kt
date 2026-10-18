@@ -13,6 +13,12 @@ interface RideControls {
     /** Stops the recording and ends the trip as [end] says (see [RideController.stopRecording]). */
     suspend fun stopRecording(end: RecordingEnd)
 
+    /** Speaks (if the recording's voice is on) and shows [text] once (see [RideController.announce]). */
+    fun announce(text: String) = Unit
+
+    /** The screen showed the notice [id] (see [RideController.noticeShown]). */
+    fun noticeShown(id: Long) = Unit
+
     /** No recording to command. */
     object None : RideControls {
         override fun pause() = Unit

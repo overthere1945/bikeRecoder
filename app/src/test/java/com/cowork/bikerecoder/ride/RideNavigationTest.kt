@@ -26,7 +26,10 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -352,5 +355,51 @@ class RideNavigationTest {
 
         assertTrue(!voice.muted, "the shared voice is unmuted when the guidance finished")
         assertEquals(listOf("기록을 시작합니다"), voice.spoken.toList())
+    }
+    @Test
+    fun recordingFirstThenGuidanceOfTheSameTripKeepsTheSegment() = runTest {
+        // "이어서 기록": the guidance joins the recording that already runs.
+        val h = Harness(this)
+        val tripId = h.trip()
+        h.ride.startRecording(tripId)!!.join()
+        play(20_000)
+        val segmentId = h.active.segmentId
+
+        h.navigation.start(tripId)
+        play(280_000) // about 1.5 km
+
+        assertInstanceOf(NavUiState.Active::class.java, h.navigation.ui.value)
+        val segment = h.store.segments(tripId).single()
+        assertEquals(segmentId, segment.id)
+        assertNull(segment.endedAt)
+        assertEquals(segmentId, h.active.segmentId)
+        assertEquals(1, voice.spoken.count { it == "기록을 시작합니다" }, voice.spoken.toString())
+        assertEquals(listOf(1), combinedKms(), voice.spoken.toString())
+        assertTrue(guidanceKms().isEmpty(), voice.spoken.toString())
+        assertTrue(recordingKms().isEmpty(), voice.spoken.toString())
+    }
+
+    @Test
+    fun reGuideArrivalEndsOnlyTheGuidanceAndKeepsRecording() = runTest {
+        // Ruling U1: a guidance started while the recording ran ends alone at the destination.
+        val h = Harness(this)
+        val tripId = h.trip()
+        h.ride.startRecording(tripId)!!.join()
+        play(20_000)
+        val navStates = mutableListOf<NavUiState>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { h.navigation.ui.toList(navStates) }
+
+        h.navigation.start(tripId)
+        val notice = h.ride.notice.first { it != null }!!
+        play(10_000)
+
+        assertEquals("목적지에 도착했습니다", notice.text)
+        assertEquals(NavUiState.Idle, h.navigation.ui.value)
+        assertTrue(navStates.none { it is NavUiState.Finished }, navStates.toString())
+        assertInstanceOf(RideUiState.Active::class.java, h.ride.ui.value)
+        assertNull(h.store.segments(tripId).single().endedAt)
+        assertEquals(TripStatus.ACTIVE, trips.trips.getValue(tripId).status)
+        assertEquals(1, voice.spoken.count { it == "목적지에 도착했습니다" }, voice.spoken.toString())
+        assertNotNull(h.navigation.kmSource, "the recording still supplies the km announcements")
     }
 }

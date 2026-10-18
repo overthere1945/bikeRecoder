@@ -25,9 +25,11 @@ import com.cowork.bikerecoder.location.LocationSource
 import com.cowork.bikerecoder.location.PressureSource
 import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.nav.NavigationController
+import com.cowork.bikerecoder.nav.guidingTripId
 import com.cowork.bikerecoder.tts.VoiceOutput
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
@@ -75,6 +77,11 @@ enum class RecordingEnd { SEGMENT_ONLY, STOP_TODAY, COMPLETE_TRIP }
  * guidance deferred (a turn was imminent) is not spoken if the guidance is closed before it comes due — the recording
  * already counted that km and does not repeat it.
  *
+ * [splitSegment] closes the running segment and opens the next one of the same trip without passing through a summary
+ * or Idle; [announce] and the split's start sentence also go to [notice] (shown once on screen, voice or not). Ruling
+ * U1: a guidance started into this recording that arrives ends alone ([NavigationController.onArrivedKeepingRecording]);
+ * its arrival sentence goes to [notice] and the recording goes on.
+ *
  * Threading: every public method must be called on [scope]'s single thread (Main in the app); the session and all its
  * inputs run there too, and the per-fix handler never suspends (store writes run in their own coroutines). Store and
  * trip writes at the end run [NonCancellable] in [scope], so they finish even if the caller goes away.
@@ -111,8 +118,26 @@ class RideController(
     private val _ui = MutableStateFlow<RideUiState>(RideUiState.Idle)
     val ui: StateFlow<RideUiState> = _ui.asStateFlow()
 
-    /** Everything belonging to one recording (one segment). */
-    private class Run(val tripId: Long) {
+    private val _notice = MutableStateFlow<ScreenNotice?>(null)
+
+    /** The latest on-screen notice until the screen reports it shown ([noticeShown]); null: none. */
+    val notice: StateFlow<ScreenNotice?> = _notice.asStateFlow()
+    private var noticeIds = 0L
+
+    /**
+     * The location stream kept subscribed while [splitSegment] closes one segment and opens the next, so the shared
+     * stream never loses its last subscriber; [fixes] are the ones the closed segment did not take, [takenUpTo] the time
+     * of the last fix it took.
+     */
+    private class Bridge(val fixes: MutableList<LocationFix>, val job: Job) {
+        var takenUpTo = Long.MIN_VALUE
+    }
+
+    /**
+     * Everything belonging to one recording (one segment). [startPhrase] replaces "기록을 시작합니다" (and is shown as a
+     * notice); [bridge] carries the fixes from the segment before (see [splitSegment]).
+     */
+    private class Run(val tripId: Long, val startPhrase: String? = null, var bridge: Bridge? = null) {
         var startJob: Job? = null
         lateinit var trip: Trip
         var session: RecordingSession? = null
@@ -139,6 +164,12 @@ class RideController(
         /** Set once [stopRecording] began: the session no longer takes commands. */
         var stopping = false
 
+        /** [stopRecording] was called (also while a split was closing this segment: then no new segment opens). */
+        var stopRequested = false
+
+        /** Fixes at or before this time were already taken (by this segment from the bridge, or by the one before). */
+        var skipUpTo = Long.MIN_VALUE
+
         /** The one stop of this recording; later [stopRecording] calls wait for it. */
         var finishJob: Job? = null
         val jobs = mutableListOf<Job>()
@@ -152,6 +183,8 @@ class RideController(
     private var run: Run? = null
 
     init {
+        // Screen only: the guidance already spoke the arrival.
+        navigation.onArrivedKeepingRecording = { text -> post(text) }
         scope.launch { followNavigation() }
     }
 
@@ -166,8 +199,18 @@ class RideController(
             if (current != tripId) log.warn("Not recording trip $tripId: trip $current is being recorded", null)
             return null
         }
+        return launchRun(tripId)
+    }
+
+    /** Starts a new [Run] of [tripId] without waiting (the state is [RideUiState.Starting] when this returns). */
+    private fun launchRun(tripId: Long, startPhrase: String? = null, bridge: Bridge? = null): Job {
         run?.cancelJobs()
-        val r = Run(tripId)
+        val r = Run(tripId, startPhrase, bridge)
+        // Cancelled with the run if its start fails or it stops.
+        bridge?.let {
+            r.skipUpTo = it.takenUpTo
+            r.jobs += it.job
+        }
         run = r
         _ui.value = RideUiState.Starting(tripId)
         val job = scope.launch {
@@ -211,8 +254,83 @@ class RideController(
         val r = run ?: return
         r.startJob?.join()
         if (run !== r || r.session == null) return
+        r.stopRequested = true
         val job = r.finishJob ?: scope.launch { finish(r, end) }.also { r.finishJob = it }
         job.join()
+    }
+
+    /**
+     * While a recording starts or runs: speaks [text] if that recording's voice setting is on and, voice or not, posts
+     * it to [notice]. Does nothing without a recording (also while one is stopping).
+     */
+    override fun announce(text: String) {
+        val r = run ?: return
+        if (r.stopping || r.finishJob != null) return
+        if (r.voiceOn) voice.speak(text)
+        post(text)
+    }
+
+    /** Clears [notice] only if it still is [id]. */
+    override fun noticeShown(id: Long) {
+        if (_notice.value?.id == id) _notice.value = null
+    }
+
+    /**
+     * "새 구간으로 나누기": closes the running segment as [RecordingEnd.SEGMENT_ONLY] (no summary) and at once records a
+     * new segment of the same trip. Its start sentence is [KoreanPhrases.newSegmentStarted] instead of "기록을
+     * 시작합니다", also posted to [notice] (even with the voice off). Returns [MSG_SAVE_PROBLEM] if the closed segment
+     * had a save problem. Does nothing (null) without a running recording or while it is stopping. A [stopRecording]
+     * while the segment is being closed opens no new segment and shows the closed segment's summary.
+     *
+     * Meanwhile the state stays Active (old segment) → Starting → Active (new segment); the location stream stays
+     * subscribed (a bridge collects the fixes in between for the new segment) and the day's km count goes on (the new
+     * session starts from the day totals, which include the closed segment).
+     */
+    suspend fun splitSegment(): String? {
+        val r = run ?: return null
+        r.startJob?.join()
+        if (run !== r || r.session == null || r.stopping || r.finishJob != null) return null
+        val bridge = openBridge(r)
+        var next: Job? = null
+        var error: String? = null
+        val job = scope.launch {
+            val finished = finish(r, RecordingEnd.SEGMENT_ONLY, publishSummary = false)
+            if (finished == null || run !== r) {
+                bridge.job.cancel()
+            } else if (r.stopRequested) {
+                // A stop came while closing: the segment-only end that began first wins; nothing new opens.
+                bridge.job.cancel()
+                showSummary(finished)
+            } else {
+                error = finished.error
+                bridge.takenUpTo = r.lastFix?.timeMillis ?: Long.MIN_VALUE
+                next = launchRun(r.tripId, phrases.newSegmentStarted, bridge)
+            }
+        }
+        r.finishJob = job
+        job.join()
+        next?.join() ?: return null
+        return error
+    }
+
+    /**
+     * Subscribes to [location] at once (before [r]'s own collector goes) and keeps the fixes [r] did not take. Failures
+     * are only logged; the new segment's own collector subscribes again anyway.
+     */
+    private fun openBridge(r: Run): Bridge {
+        val fixes = mutableListOf<LocationFix>()
+        val job = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                location.fixes().collect { fix ->
+                    if (fix.timeMillis > (r.lastFix?.timeMillis ?: Long.MIN_VALUE)) fixes += fix
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.warn("Location stream failed while splitting the segment", e)
+            }
+        }
+        return Bridge(fixes, job)
     }
 
     /**
@@ -295,6 +413,7 @@ class RideController(
         r.session = session
         handle(r, session.start())
         becomeKmSource(r, session)
+        takeBridgedFixes(r, session)
 
         r.jobs += scope.launch { collectLocation(r, session) }
         pressure?.let { source ->
@@ -404,11 +523,33 @@ class RideController(
         if (navigation.kmSource === source) navigation.kmSource = null
     }
 
-    /** Feeds every fix to [session]; a stream that fails or ends is subscribed again after [LOCATION_RETRY_MS]. */
+    /** Feeds the fixes the bridge of [r] collected since the segment before ([Run.skipUpTo] and older are dropped). */
+    private fun takeBridgedFixes(r: Run, session: RecordingSession) {
+        val bridge = r.bridge ?: return
+        val fixes = bridge.fixes.sortedBy { it.timeMillis }
+        bridge.fixes.clear()
+        for (fix in fixes) {
+            if (fix.timeMillis <= r.skipUpTo) continue
+            r.skipUpTo = fix.timeMillis
+            r.lastFix = fix
+            handle(r, session.onFix(fix, clock()))
+        }
+    }
+
+    /**
+     * Feeds every fix to [session]; a stream that fails or ends is subscribed again after [LOCATION_RETRY_MS]. After a
+     * split, the first fix ends the bridge (its last fixes first), and fixes already taken are dropped.
+     */
     private suspend fun collectLocation(r: Run, session: RecordingSession) {
         while (true) {
             try {
                 location.fixes().collect { fix ->
+                    r.bridge?.let { bridge ->
+                        takeBridgedFixes(r, session)
+                        bridge.job.cancel()
+                        r.bridge = null
+                    }
+                    if (fix.timeMillis <= r.skipUpTo) return@collect
                     r.lastFix = fix
                     handle(r, session.onFix(fix, clock()))
                 }
@@ -425,7 +566,9 @@ class RideController(
     /** Applies one session update: speech, the point to save, the map track and the state. Never suspends. */
     private fun handle(r: Run, update: RecordingUpdate) {
         if (run !== r || r.stopping) return
-        if (r.voiceOn) update.events.forEach { event -> speech(event)?.let(voice::speak) }
+        if (r.voiceOn) update.events.forEach { event -> speech(r, event)?.let(voice::speak) }
+        // On screen whatever the voice setting.
+        r.startPhrase?.let { phrase -> if (RecordingEvent.Started in update.events) post(phrase) }
         update.point?.let { point ->
             r.buffer += point
             val last = r.track.last
@@ -436,8 +579,8 @@ class RideController(
         publish(r)
     }
 
-    private fun speech(event: RecordingEvent): String? = when (event) {
-        RecordingEvent.Started -> phrases.recordingStarted
+    private fun speech(r: Run, event: RecordingEvent): String? = when (event) {
+        RecordingEvent.Started -> r.startPhrase ?: phrases.recordingStarted
         is RecordingEvent.Paused -> phrases.recordingPaused
         RecordingEvent.Resumed -> phrases.recordingResumed
         // While guiding, the navigation announces the combined sentence instead (Task 11).
@@ -494,9 +637,18 @@ class RideController(
         saving("touch trip ${r.tripId}") { tripManager.touch(r.tripId) }
     }
 
-    private suspend fun finish(r: Run, end: RecordingEnd) = withContext(NonCancellable) {
+    /**
+     * Ends [r] as [end] and returns its summary. With [publishSummary] the summary is shown (and [r] is no longer
+     * current); without it ([splitSegment]) [r] stays current — stopping — and the state unchanged, for the caller to
+     * decide. Null (nothing done) unless [r] is current, running and not stopping.
+     */
+    private suspend fun finish(
+        r: Run,
+        end: RecordingEnd,
+        publishSummary: Boolean = true,
+    ): RideUiState.Finished? = withContext(NonCancellable) {
         val session = r.session
-        if (run !== r || session == null || r.stopping) return@withContext
+        if (run !== r || session == null || r.stopping) return@withContext null
         val now = clock()
         session.stop(now)
         r.stopping = true
@@ -518,12 +670,25 @@ class RideController(
             RecordingEnd.COMPLETE_TRIP -> saving("complete trip $tripId") { tripManager.complete(tripId) } != null ||
                 saving("read trip $tripId") { tripStore.trip(tripId) }?.status == TripStatus.COMPLETED
         } && ok
-        run = null
-        _ui.value = RideUiState.Finished(
+        val finished = RideUiState.Finished(
             segment = RideSegment(r.segmentId, tripId, r.startedAt, now, r.localDate, totals),
             track = r.track.snapshot(),
             error = if (ok) null else MSG_SAVE_PROBLEM,
         )
+        if (publishSummary) showSummary(finished)
+        finished
+    }
+
+    /** The current (stopping) run is over: shows its summary; its notice must not reach the next recording's screen. */
+    private fun showSummary(finished: RideUiState.Finished) {
+        run = null
+        _notice.value = null
+        _ui.value = finished
+    }
+
+    /** Posts [text] to [notice] (a new id each time), apart from any voice decision. */
+    private fun post(text: String) {
+        _notice.value = ScreenNotice(++noticeIds, text)
     }
 
     /** Closes every open segment at its last save (startedAt + saved elapsed time, saved totals); returns them. */
@@ -535,11 +700,7 @@ class RideController(
         return open
     }
 
-    private fun isGuiding(tripId: Long): Boolean = when (val nav = navigation.ui.value) {
-        is NavUiState.Active -> nav.tripId == tripId
-        is NavUiState.Starting -> nav.tripId == tripId
-        else -> false
-    }
+    private fun isGuiding(tripId: Long): Boolean = navigation.ui.value.guidingTripId == tripId
 
     /** The running recording and its session, unless it is starting or stopping. */
     private fun recording(): Pair<Run, RecordingSession>? {

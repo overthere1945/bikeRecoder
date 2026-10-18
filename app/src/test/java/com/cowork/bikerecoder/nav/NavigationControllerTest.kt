@@ -21,7 +21,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -527,6 +530,73 @@ class NavigationControllerTest {
         assertEquals(listOf("SRC 1", "SRC 2"), sourced(), voice.spoken.toString())
         assertTrue(guidanceKm().isNotEmpty(), "back to the session's own km report: ${voice.spoken}")
         assertNull(h.controller.kmSource)
+    }
+
+    /** A running recording as the km source: a fixed distance, so it never announces a kilometre here. */
+    private val recordingKm = object : KmAnnouncementSource {
+        override fun distanceM() = 0.0
+        override fun phrase(km: Int, remainingM: Double, etaMillis: Long) = "SRC $km"
+    }
+
+    @Test
+    fun arrivalOfAGuidanceStartedWhileRecordingEndsOnlyTheGuidance() = runTest {
+        // Ruling U1.
+        val h = harness("scenario_follow.gpx")
+        val tripId = h.trip(TripType.SINGLE_DAY, stop("도착", destination, isDestination = true))
+        val arrived = mutableListOf<String>()
+        h.controller.onArrivedKeepingRecording = { arrived += it }
+        val states = mutableListOf<NavUiState>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { h.controller.ui.toList(states) }
+
+        h.controller.kmSource = recordingKm
+        h.controller.start(tripId)
+        h.controller.ui.first { it is NavUiState.Idle || it is NavUiState.Finished }
+        runCurrent()
+
+        assertTrue(states.none { it is NavUiState.Finished }, states.toString())
+        assertEquals(NavUiState.Idle, states.last())
+        assertEquals(TripStatus.ACTIVE, store.trips.getValue(tripId).status)
+        assertNotNull(store.stops(tripId).single().visitedAt)
+        assertEquals(listOf("목적지에 도착했습니다"), arrived)
+        assertEquals(1, voice.spoken.count { it == "목적지에 도착했습니다" }, voice.spoken.toString())
+        assertFalse(voice.muted)
+        assertFalse(h.source.collecting, "location source stopped at arrival")
+        assertTrue(offline.deleted.isEmpty(), "the trip is not completed, its offline maps stay")
+    }
+
+    @Test
+    fun arrivalCompletesWhenTheRecordingCameAfterTheStart() = runTest {
+        val h = harness("scenario_follow.gpx")
+        val tripId = h.trip(TripType.SINGLE_DAY, stop("도착", destination, isDestination = true))
+        val arrived = mutableListOf<String>()
+        h.controller.onArrivedKeepingRecording = { arrived += it }
+
+        h.controller.start(tripId)
+        h.awaitActive()
+        h.controller.kmSource = recordingKm
+        val finished = h.awaitFinished()
+
+        assertEquals(NavUiState.Finished(tripId, TripType.SINGLE_DAY, FinishReason.ARRIVED), finished)
+        assertEquals(TripStatus.COMPLETED, store.trips.getValue(tripId).status)
+        assertTrue(arrived.isEmpty(), arrived.toString())
+    }
+
+    @Test
+    fun arrivalCompletesWhenTheRecordingEndedBeforeArrival() = runTest {
+        val h = harness("scenario_follow.gpx")
+        val tripId = h.trip(TripType.SINGLE_DAY, stop("도착", destination, isDestination = true))
+        val arrived = mutableListOf<String>()
+        h.controller.onArrivedKeepingRecording = { arrived += it }
+
+        h.controller.kmSource = recordingKm
+        h.controller.start(tripId)
+        h.awaitActive()
+        h.controller.kmSource = null
+        val finished = h.awaitFinished()
+
+        assertEquals(NavUiState.Finished(tripId, TripType.SINGLE_DAY, FinishReason.ARRIVED), finished)
+        assertEquals(TripStatus.COMPLETED, store.trips.getValue(tripId).status)
+        assertTrue(arrived.isEmpty(), arrived.toString())
     }
 
     @Test
