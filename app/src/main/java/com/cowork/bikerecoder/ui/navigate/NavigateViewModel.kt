@@ -10,13 +10,16 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.voice.KoreanPhrases
 import com.cowork.bikerecoder.nav.FinishReason
+import com.cowork.bikerecoder.nav.NavNotifications
 import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.nav.NavigationController
 import com.cowork.bikerecoder.offline.OfflineProgress
 import com.cowork.bikerecoder.ride.RecordingEnd
 import com.cowork.bikerecoder.ride.RideControls
 import com.cowork.bikerecoder.ride.RideUiState
+import com.cowork.bikerecoder.ride.ScreenNotice
 import com.cowork.bikerecoder.ride.recordingTripId
 import com.cowork.bikerecoder.tts.VoiceOutput
 import com.cowork.bikerecoder.ui.trip.EndAction
@@ -27,6 +30,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -58,6 +62,9 @@ class NavigateViewModel(
     private val dismissRideSummary: () -> Unit = {},
     /** The recording's commands for the controls on the numbers page (ruling F2). */
     private val rideControls: RideControls = RideControls.None,
+    /** The recording's on-screen notice ([com.cowork.bikerecoder.ride.RideController.notice]). */
+    val rideNotice: StateFlow<ScreenNotice?> = MutableStateFlow(null),
+    private val phrases: KoreanPhrases = KoreanPhrases(),
 ) : ViewModel() {
 
     val ui: StateFlow<NavUiState> = controller.ui
@@ -65,6 +72,10 @@ class NavigateViewModel(
     /** A recording is starting or running: [종료] offers to end the guidance only, and the recording goes on. */
     val recording: StateFlow<Boolean> = rideUi.map(::isRecording)
         .stateIn(viewModelScope, SharingStarted.Eagerly, isRecording(rideUi.value))
+
+    /** 안내 화면이 보일 알림: 안내가 Starting/Active일 때만(그 밖에는 기록 화면 몫). */
+    val noticeForScreen: StateFlow<ScreenNotice?> = combine(controller.ui, rideNotice, ::guidanceNotice)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, guidanceNotice(controller.ui.value, rideNotice.value))
 
     val keepScreenOn: StateFlow<Boolean> = keepScreenOn.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
@@ -120,10 +131,20 @@ class NavigateViewModel(
         when (action) {
             EndAction.STOP_TODAY -> controller.stopToday()
             EndAction.COMPLETE_TRIP -> viewModelScope.launch { controller.completeTrip() }
-            // The trip stays as it is; the recording goes on (the screen then shows the record screen).
-            EndAction.END_GUIDANCE_ONLY -> controller.close()
+            // The trip stays as it is; the recording goes on (the screen then shows the record screen, which shows
+            // the notice).
+            EndAction.END_GUIDANCE_ONLY -> {
+                controller.close()
+                rideControls.announce(phrases.guidanceEndedRecordingGoesOn)
+            }
         }
     }
+
+    /** [안내 취소 · 기록 계속] (no confirmation): the same as the dialog's [안내만 끝내기 (기록 계속)]. */
+    fun cancelGuidance() = onEndChoice(EndAction.END_GUIDANCE_ONLY)
+
+    /** The screen showed the notice [id]. */
+    fun noticeShown(id: Long) = rideControls.noticeShown(id)
 
     fun pauseRecording() = rideControls.pause()
 
@@ -206,6 +227,7 @@ class NavigateViewModel(
                     rideUi = container.ride.ui,
                     dismissRideSummary = container.ride::dismissSummary,
                     rideControls = container.ride,
+                    rideNotice = container.ride.notice,
                 )
             }
         }
@@ -213,6 +235,12 @@ class NavigateViewModel(
 }
 
 private fun isRecording(ride: RideUiState): Boolean = ride.recordingTripId != null
+
+private fun guidanceNotice(nav: NavUiState, notice: ScreenNotice?): ScreenNotice? =
+    notice?.takeIf { NavNotifications.isGuiding(nav) }
+
+/** 안내가 Idle이 됐을 때 기록이 시작 중이거나 돌고 있으면 기록 화면으로(안내 취소, U1 도착), 아니면 메인으로. */
+fun goesToRecordAfterGuidance(ride: RideUiState): Boolean = isRecording(ride)
 
 /** The message of a recording of the guided trip [tripId] that could not start (shown as a banner); else null. */
 fun guidedRideFailure(tripId: Long, ride: RideUiState): String? =

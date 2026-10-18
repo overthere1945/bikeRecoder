@@ -26,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.resetMain
@@ -57,7 +58,12 @@ class RecordViewModelTest {
     @AfterEach
     fun tearDown() = Dispatchers.resetMain()
 
-    private class Setup(val vm: RecordViewModel, val tripManager: TripManager, val navigation: MutableStateFlow<NavUiState>)
+    private class Setup(
+        val vm: RecordViewModel,
+        val tripManager: TripManager,
+        val navigation: MutableStateFlow<NavUiState>,
+        val ride: RideController,
+    )
 
     private fun TestScope.setup(
         args: Map<String, Any?> = emptyMap(),
@@ -93,7 +99,7 @@ class RecordViewModelTest {
         val navState = MutableStateFlow<NavUiState>(NavUiState.Idle)
         val vm = RecordViewModel(ride, navState, flowOf(true), SavedStateHandle(args), serviceStatus.warning)
         runCurrent()
-        return Setup(vm, tripManager, navState)
+        return Setup(vm, tripManager, navState, ride)
     }
 
     @Test
@@ -170,5 +176,43 @@ class RecordViewModelTest {
         status.foregroundFailed()
 
         assertEquals(GuidanceServiceStatus.MSG_SCREEN_OFF_RISK, vm.serviceWarning.value)
+    }
+
+    @Test
+    fun recordScreenTakesNoticesOnlyWhileRecording() = runTest(dispatcher) {
+        val s = setup()
+        s.ride.announce("안내를 마칩니다. 기록은 계속됩니다")
+        runCurrent()
+        assertNull(s.vm.noticeForScreen.value, "nothing is recording")
+
+        val tripId = s.tripManager.startTrip(TripType.SINGLE_DAY, RouteProfile.CYCLEWAY_FIRST, emptyList()).id
+        s.vm.start(tripId)
+        runCurrent()
+        assertInstanceOf(RideUiState.Active::class.java, s.vm.ui.value)
+        s.ride.announce("안내를 마칩니다. 기록은 계속됩니다")
+        runCurrent()
+
+        val notice = s.vm.noticeForScreen.value
+        assertEquals("안내를 마칩니다. 기록은 계속됩니다", notice?.text)
+
+        s.vm.noticeShown(notice!!.id)
+        runCurrent()
+        assertNull(s.vm.noticeForScreen.value)
+    }
+
+    @Test
+    fun aSplitShowsItsNoticeOnTheRecordScreen() = runTest(dispatcher) {
+        val s = setup()
+        val tripId = s.tripManager.startTrip(TripType.SINGLE_DAY, RouteProfile.CYCLEWAY_FIRST, emptyList()).id
+        s.vm.start(tripId)
+        runCurrent()
+        val firstSegment = (s.vm.ui.value as RideUiState.Active).segmentId
+
+        backgroundScope.launch { s.ride.splitSegment() }
+        runCurrent()
+
+        val active = s.vm.ui.value as RideUiState.Active
+        assertTrue(active.segmentId != firstSegment, "a new segment records")
+        assertEquals("새 구간으로 기록을 시작합니다", s.vm.noticeForScreen.value?.text)
     }
 }

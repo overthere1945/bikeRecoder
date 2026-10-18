@@ -57,6 +57,7 @@ import com.cowork.bikerecoder.map.MapOverlay
 import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.nav.NavigationService
 import com.cowork.bikerecoder.ui.common.KeepScreenOn
+import com.cowork.bikerecoder.ui.common.NoticeSnackbarHost
 import com.cowork.bikerecoder.ride.RecordingEnd
 import com.cowork.bikerecoder.ride.RideUiState
 import kotlinx.coroutines.launch
@@ -76,19 +77,30 @@ object RecordTags {
 
     /** The bottom summary line of the map page. */
     const val SUMMARY = "record-summary"
+
+    /** [목적지 정하기] above the summary line (not while guiding). */
+    const val SET_DESTINATION = "record-set-destination"
 }
 
 /**
  * The record screen (spec §3.2–3.4) over the app-wide recording: start progress and errors, the two-page recording
  * view and the segment summary. Leaving the screen never stops the recording. [onClose] goes back to the map main
- * screen; after the summary, [onShowGuidance] is used instead while guidance runs.
+ * screen; after the summary, [onShowGuidance] is used instead while guidance runs. [onSetDestination]: [목적지 정하기]
+ * (spec §4.1), offered while no guidance runs. The recording's on-screen notices show here while it runs.
  */
 @Composable
-fun RecordScreen(viewModel: RecordViewModel, tileSource: TileSource, onClose: () -> Unit, onShowGuidance: () -> Unit) {
+fun RecordScreen(
+    viewModel: RecordViewModel,
+    tileSource: TileSource,
+    onClose: () -> Unit,
+    onShowGuidance: () -> Unit,
+    onSetDestination: () -> Unit = {},
+) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val navigating by viewModel.navigating.collectAsStateWithLifecycle()
     val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
     val serviceWarning by viewModel.serviceWarning.collectAsStateWithLifecycle()
+    val notice by viewModel.noticeForScreen.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
 
@@ -141,6 +153,7 @@ fun RecordScreen(viewModel: RecordViewModel, tileSource: TileSource, onClose: ()
                 onEnd = viewModel::onEndChoice,
                 map = { modifier -> RecordMap(state, tileSource, modifier) },
                 serviceWarning = serviceWarning,
+                onSetDestination = onSetDestination,
             )
             state is RideUiState.Finished -> SegmentSummaryContent(
                 segment = state.segment,
@@ -149,6 +162,12 @@ fun RecordScreen(viewModel: RecordViewModel, tileSource: TileSource, onClose: ()
             )
         }
         SnackbarHost(snackbar, modifier = Modifier.align(Alignment.Center).padding(16.dp))
+        // Above the buttons: e.g. ruling U1's "목적지에 도착했습니다" and [안내 취소 · 기록 계속]'s sentence.
+        NoticeSnackbarHost(
+            notice = notice,
+            onShown = viewModel::noticeShown,
+            modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 120.dp),
+        )
     }
 }
 
@@ -192,6 +211,8 @@ fun RecordContent(
     map: @Composable (Modifier) -> Unit,
     /** The foreground service could not start ("화면이 꺼지면 안내가 멈출 수 있습니다"). */
     serviceWarning: String? = null,
+    /** [목적지 정하기] above the map's summary line; not shown while [navigating] (that trip is guided already). */
+    onSetDestination: (() -> Unit)? = null,
 ) {
     val pager = rememberPagerState { RIDE_PAGE_COUNT }
     val scope = rememberCoroutineScope()
@@ -227,6 +248,15 @@ fun RecordContent(
                     // The summary line sits below the map, not over it, so a swipe on it never reaches the map.
                     Column(modifier = Modifier.fillMaxSize()) {
                         map(Modifier.weight(1f).fillMaxWidth())
+                        if (onSetDestination != null && !navigating) {
+                            OutlinedButton(
+                                onClick = onSetDestination,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                                    .testTag(RecordTags.SET_DESTINATION),
+                            ) { Text("목적지 정하기") }
+                        }
                         Text(
                             rideMapSummaryLine(state.stats),
                             style = MaterialTheme.typography.titleMedium,

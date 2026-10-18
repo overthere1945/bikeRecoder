@@ -24,6 +24,7 @@ import com.cowork.bikerecoder.nav.gpxFixture
 import com.cowork.bikerecoder.ride.RecordingEnd
 import com.cowork.bikerecoder.ride.RideControls
 import com.cowork.bikerecoder.ride.RideUiState
+import com.cowork.bikerecoder.ride.ScreenNotice
 import com.cowork.bikerecoder.tts.VoiceOutput
 import com.cowork.bikerecoder.ui.trip.EndAction
 import kotlinx.coroutines.Dispatchers
@@ -82,7 +83,21 @@ class NavigateViewModelTest {
         override suspend fun stopRecording(end: RecordingEnd) {
             rideCommands += "stop $end"
         }
+
+        override fun announce(text: String) {
+            announced += text
+        }
+
+        override fun noticeShown(id: Long) {
+            rideCommands += "noticeShown $id"
+        }
     }
+
+    /** What the view model announced through the recording (voice and on-screen notice). */
+    private val announced = mutableListOf<String>()
+
+    /** The recording's on-screen notice ([com.cowork.bikerecoder.ride.RideController.notice]). */
+    private val rideNotice = MutableStateFlow<ScreenNotice?>(null)
 
     /** The recording the view model sees, and how often its summary was dismissed. */
     private val rideUi = MutableStateFlow<RideUiState>(RideUiState.Idle)
@@ -109,6 +124,7 @@ class NavigateViewModelTest {
                 rideUi.value = RideUiState.Idle
             },
             rideControls = rideControls,
+            rideNotice = rideNotice,
         )
         return Setup(vm, tripManager, controller)
     }
@@ -262,6 +278,62 @@ class NavigateViewModelTest {
         assertEquals(NavUiState.Idle, s.vm.ui.value)
         assertEquals(TripStatus.ACTIVE, store.trips.getValue(id).status)
         assertEquals(0, summaryDismissals, "the recording goes on")
+    }
+
+    @Test
+    fun cancelGuidanceEndsGuidanceOnlyAndAnnouncesOnce() = runTest(dispatcher) {
+        val s = setup()
+        val id = s.runningTrip(TripType.SINGLE_DAY)
+        rideUi.value = recordingOf(id)
+
+        s.vm.cancelGuidance()
+        runCurrent()
+
+        assertEquals(NavUiState.Idle, s.vm.ui.value)
+        assertEquals(TripStatus.ACTIVE, store.trips.getValue(id).status)
+        assertEquals(listOf("안내를 마칩니다. 기록은 계속됩니다"), announced)
+        assertEquals(0, summaryDismissals, "the recording goes on")
+    }
+
+    @Test
+    fun endGuidanceOnlyFromTheDialogAnnouncesToo() = runTest(dispatcher) {
+        val s = setup()
+        val id = s.runningTrip(TripType.SINGLE_DAY)
+        rideUi.value = recordingOf(id)
+
+        s.vm.onEndChoice(EndAction.END_GUIDANCE_ONLY)
+        runCurrent()
+
+        assertEquals(listOf("안내를 마칩니다. 기록은 계속됩니다"), announced)
+    }
+
+    @Test
+    fun guidanceScreenTakesNoticesOnlyWhileGuiding() = runTest(dispatcher) {
+        val s = setup()
+        val notice = ScreenNotice(1, "새 구간으로 기록을 시작합니다")
+        rideNotice.value = notice
+        runCurrent()
+        assertNull(s.vm.noticeForScreen.value, "no guidance: the record screen's")
+
+        val id = s.runningTrip(TripType.SINGLE_DAY)
+        rideUi.value = recordingOf(id)
+        runCurrent()
+        assertEquals(notice, s.vm.noticeForScreen.value)
+
+        s.vm.noticeShown(1)
+        assertEquals(listOf("noticeShown 1"), rideCommands)
+
+        s.vm.close()
+        runCurrent()
+        assertNull(s.vm.noticeForScreen.value, "the guidance ended: the record screen shows it")
+    }
+
+    @Test
+    fun afterTheGuidanceEndsARecordingGoesToTheRecordScreen() {
+        assertTrue(goesToRecordAfterGuidance(recordingOf(1)))
+        assertTrue(goesToRecordAfterGuidance(RideUiState.Starting(1)))
+        assertFalse(goesToRecordAfterGuidance(RideUiState.Idle))
+        assertFalse(goesToRecordAfterGuidance(summaryOf(1)))
     }
 
     @Test

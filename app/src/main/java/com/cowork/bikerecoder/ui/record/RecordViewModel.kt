@@ -13,10 +13,12 @@ import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.ride.RecordingEnd
 import com.cowork.bikerecoder.ride.RideController
 import com.cowork.bikerecoder.ride.RideUiState
+import com.cowork.bikerecoder.ride.ScreenNotice
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -41,6 +43,10 @@ class RecordViewModel(
     /** Guidance is starting or running: [정지] then ends only the recording. */
     val navigating: StateFlow<Boolean> = navigation.map(NavNotifications::isGuiding)
         .stateIn(viewModelScope, SharingStarted.Eagerly, NavNotifications.isGuiding(navigation.value))
+
+    /** 기록 화면이 보일 알림: 기록이 Active일 때만. */
+    val noticeForScreen: StateFlow<ScreenNotice?> = combine(ride.ui, ride.notice, ::recordNotice)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, recordNotice(ride.ui.value, ride.notice.value))
 
     val keepScreenOn: StateFlow<Boolean> = keepScreenOn.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
@@ -70,6 +76,9 @@ class RecordViewModel(
         viewModelScope.launch { ride.stopRecording(end) }
     }
 
+    /** The screen showed the notice [id]. */
+    fun noticeShown(id: Long) = ride.noticeShown(id)
+
     /** Closes the summary or the start error. */
     fun dismissSummary() = ride.dismissSummary()
 
@@ -90,3 +99,6 @@ class RecordViewModel(
         }
     }
 }
+
+private fun recordNotice(ride: RideUiState, notice: ScreenNotice?): ScreenNotice? =
+    notice?.takeIf { ride is RideUiState.Active }

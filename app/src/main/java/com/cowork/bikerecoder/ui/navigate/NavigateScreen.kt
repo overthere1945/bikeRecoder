@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.UTurnLeft
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -73,8 +74,8 @@ import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.nav.NavigationService
 import com.cowork.bikerecoder.ride.RideUiState
-import com.cowork.bikerecoder.ride.recordingTripId
 import com.cowork.bikerecoder.ui.common.KeepScreenOn
+import com.cowork.bikerecoder.ui.common.NoticeSnackbarHost
 import com.cowork.bikerecoder.ui.record.AutoPauseChip
 import com.cowork.bikerecoder.ui.record.PageDots
 import com.cowork.bikerecoder.ui.record.PauseBand
@@ -113,6 +114,9 @@ object NavigateTags {
 
 private const val PAUSED_ALPHA = 0.4f
 
+/** The recording's notices sit above the bottom panel and the page dots. */
+private val NOTICE_BOTTOM_PADDING = 220.dp
+
 private const val TTS_MISSING =
     "한국어 음성(TTS)을 사용할 수 없습니다. 설정 > 일반 관리 > 텍스트 음성 변환에서 한국어를 설치하세요"
 
@@ -121,10 +125,12 @@ private val etaFormat = DateTimeFormatter.ofPattern("a h:mm", Locale.KOREAN)
 
 /**
  * Turn-by-turn guidance (spec §4.5): turn card on top, the map following the rider, remaining distance /
- * ETA / speed and [음소거] [전체 경로] [종료] below. While a recording runs (spec §3.3) its line sits under the turn
- * card and a second page shows its numbers. Also hosts the start progress, start errors and the end-of-trip
- * screens (with the recording's segment summary). Leaving the screen never stops guidance; once the controller is
- * idle (closed, or nothing to show) [onGuidanceEndedWhileRecording] is called if a recording goes on, else [onClose].
+ * ETA / speed and [음소거] [전체 경로] [종료] below. While a recording starts or runs (spec §3) the buttons are [음소거]
+ * [안내 취소 · 기록 계속] [주행 종료] and [전체 경로] moves onto the map; once it runs its line sits under the turn
+ * card and a second page shows its numbers. The recording's on-screen notices show while guiding. Also hosts the start
+ * progress, start errors and the end-of-trip screens (with the recording's segment summary). Leaving the screen never
+ * stops guidance; once the controller is idle (closed, or nothing to show) [onGuidanceEndedWhileRecording] is called if
+ * a recording goes on ([goesToRecordAfterGuidance]: [안내 취소 · 기록 계속], ruling U1's arrival), else [onClose].
  */
 @Composable
 fun NavigateScreen(
@@ -139,6 +145,7 @@ fun NavigateScreen(
     val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
     val offlineProgress by viewModel.offlineProgress.collectAsStateWithLifecycle()
     val serviceWarning by viewModel.serviceWarning.collectAsStateWithLifecycle()
+    val notice by viewModel.noticeForScreen.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
     var askEnd by rememberSaveable { mutableStateOf(false) }
@@ -178,8 +185,8 @@ fun NavigateScreen(
         when (state) {
             NavUiState.Idle -> if (!viewModel.hasPendingStart) {
                 LaunchedEffect(Unit) {
-                    // E.g. [안내만 끝내기 (기록 계속)]: the recording goes on, on its own screen.
-                    if (viewModel.rideUi.value.recordingTripId != null) onGuidanceEndedWhileRecording() else onClose()
+                    // E.g. [안내 취소 · 기록 계속] or ruling U1's arrival: the recording goes on, on its own screen.
+                    if (goesToRecordAfterGuidance(viewModel.rideUi.value)) onGuidanceEndedWhileRecording() else onClose()
                 }
             }
             is NavUiState.Starting -> StartingContent(onCancel = viewModel::close)
@@ -202,8 +209,10 @@ fun NavigateScreen(
                 tileSource = tileSource,
                 mapDownloadText = offlineProgress?.takeIf { it.tripId == state.tripId }?.chipText,
                 serviceWarning = serviceWarning,
+                showRecordingButtons = recording,
                 onMute = viewModel::setMuted,
                 onEnd = { askEnd = true },
+                onCancelGuidance = viewModel::cancelGuidance,
                 onDismissRideFailure = viewModel::dismissRideFailure,
                 recordControls = RecordControls(
                     onPause = viewModel::pauseRecording,
@@ -244,6 +253,12 @@ fun NavigateScreen(
             }
         }
         SnackbarHost(snackbar, modifier = Modifier.align(Alignment.Center).padding(16.dp))
+        // Above the bottom panel (and the page dots).
+        NoticeSnackbarHost(
+            notice = notice,
+            onShown = viewModel::noticeShown,
+            modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = NOTICE_BOTTOM_PADDING),
+        )
     }
 
     if (askEnd && state is NavUiState.Active) {
@@ -267,6 +282,7 @@ fun NavigateScreen(
  * [기록 끝내기], which ends only the recording). As on the record screen the pager takes no drags (the map keeps its
  * own): pages turn by swiping the record line, the numbers page or the bottom panel, or by the page dots.
  * [rideFailure]: the guided trip's recording could not start (a banner; a tap closes it with [onDismissRideFailure]).
+ * [showRecordingButtons]: a recording starts or runs — [GuidanceButtonRow]'s recording buttons, and [전체 경로] on the map.
  */
 @Composable
 private fun ActiveContent(
@@ -276,8 +292,10 @@ private fun ActiveContent(
     tileSource: TileSource,
     mapDownloadText: String?,
     serviceWarning: String?,
+    showRecordingButtons: Boolean,
     onMute: (Boolean) -> Unit,
     onEnd: () -> Unit,
+    onCancelGuidance: () -> Unit,
     onDismissRideFailure: () -> Unit,
     recordControls: RecordControls,
 ) {
@@ -290,6 +308,10 @@ private fun ActiveContent(
     val pausedState = ride?.state as? RecordingState.Paused
     val paused = pausedState != null
     var askEndRecording by rememberSaveable { mutableStateOf(false) }
+    val showOverview = {
+        cameraMode = CameraMode.FREE
+        fit = CameraFit(nav.route.points)
+    }
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -313,6 +335,16 @@ private fun ActiveContent(
                             initialZoom = 17.0,
                             fit = fit,
                         )
+                        if (showRecordingButtons) {
+                            // Its place in the button row is taken by [안내 취소 · 기록 계속].
+                            FilledTonalButton(
+                                onClick = showOverview,
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(12.dp)
+                                    .testTag(GuidanceTags.OVERVIEW_ON_MAP),
+                            ) { Text(GuidanceButton.OVERVIEW.label) }
+                        }
                         Column(
                             modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -391,13 +423,12 @@ private fun ActiveContent(
                 }
                 BottomPanel(
                     nav = nav,
+                    recording = showRecordingButtons,
                     muted = state.muted,
                     onMute = onMute,
-                    onOverview = {
-                        cameraMode = CameraMode.FREE
-                        fit = CameraFit(nav.route.points)
-                    },
+                    onOverview = showOverview,
                     onEnd = onEnd,
+                    onCancelGuidance = onCancelGuidance,
                     modifier = Modifier.swipeTurnsPages(pager, scope).testTag(NavigateTags.PANEL),
                 )
             }
@@ -507,10 +538,12 @@ private fun Banner(text: String, modifier: Modifier = Modifier) {
 @Composable
 private fun BottomPanel(
     nav: NavState,
+    recording: Boolean,
     muted: Boolean,
     onMute: (Boolean) -> Unit,
     onOverview: () -> Unit,
     onEnd: () -> Unit,
+    onCancelGuidance: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(shape = RoundedCornerShape(16.dp), shadowElevation = 4.dp, modifier = modifier.fillMaxWidth()) {
@@ -520,13 +553,14 @@ private fun BottomPanel(
                 Stat("도착 예정", if (nav.etaMillis > 0) etaText(nav.etaMillis) else "--")
                 Stat("속도", "${(nav.speedMps * 3.6).roundToInt()}km/h")
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = { onMute(!muted) }, modifier = Modifier.weight(1f)) {
-                    Text(if (muted) "음소거 해제" else "음소거")
-                }
-                OutlinedButton(onClick = onOverview, modifier = Modifier.weight(1f)) { Text("전체 경로") }
-                Button(onClick = onEnd, modifier = Modifier.weight(1f)) { Text("종료") }
-            }
+            GuidanceButtonRow(
+                recording = recording,
+                muted = muted,
+                onMute = onMute,
+                onOverview = onOverview,
+                onEnd = onEnd,
+                onCancelGuidance = onCancelGuidance,
+            )
         }
     }
 }

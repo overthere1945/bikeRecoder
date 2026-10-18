@@ -57,12 +57,19 @@ class RecordScreenTest {
         saveWarning = null,
     )
 
-    private fun show(state: RideUiState.Active, serviceWarning: String? = null) {
+    private var setDestinations = 0
+
+    private fun show(
+        state: RideUiState.Active,
+        serviceWarning: String? = null,
+        navigating: Boolean = false,
+        onSetDestination: (() -> Unit)? = null,
+    ) {
         composeRule.setContent {
             MaterialTheme {
                 RecordContent(
                     state = state,
-                    navigating = false,
+                    navigating = navigating,
                     onPause = {},
                     onResume = {},
                     onToggleAutoPause = { autoPauseCalls += it },
@@ -84,6 +91,7 @@ class RecordScreenTest {
                         )
                     },
                     serviceWarning = serviceWarning,
+                    onSetDestination = onSetDestination,
                 )
             }
         }
@@ -198,6 +206,26 @@ class RecordScreenTest {
         composeRule.onNodeWithTag(RecordTags.BAND).assertIsDisplayed().assertTextEquals("일시정지됨 (자동)")
         composeRule.onNodeWithTag(RecordTags.RESUME).assertIsDisplayed()
         composeRule.onNodeWithTag(RecordTags.PAUSE).assertDoesNotExist()
+    }
+
+    @Test
+    fun setDestinationShowsWhenNotGuiding() {
+        show(active(), onSetDestination = { setDestinations++ })
+
+        composeRule.onNodeWithTag(RecordTags.SET_DESTINATION).assertIsDisplayed().assertTextEquals("목적지 정하기")
+            .performClick()
+
+        composeRule.waitForIdle()
+        assertEquals(1, setDestinations)
+        composeRule.onNodeWithTag(RecordTags.SUMMARY).assertIsDisplayed()
+    }
+
+    @Test
+    fun setDestinationHiddenWhileGuiding() {
+        show(active(), navigating = true, onSetDestination = { setDestinations++ })
+
+        composeRule.onNodeWithTag(RecordTags.SET_DESTINATION).assertDoesNotExist()
+        composeRule.onNodeWithText("목적지 정하기").assertDoesNotExist()
     }
 
     private companion object {

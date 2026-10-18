@@ -384,6 +384,7 @@ fun BikeNavHost(
                     }
                 },
                 onShowGuidance = { if (isCurrent()) navController.openOnMain(Routes.navigate()) },
+                onSetDestination = { if (isCurrent()) navController.navigate(Routes.SEARCH) },
             )
         }
         composable(Routes.HISTORY) {
