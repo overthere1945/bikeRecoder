@@ -15,6 +15,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -93,6 +94,15 @@ class MediaStorePhotoSourceTest {
 
         assertEquals(setOf(kept), source.existing(listOf(kept, gone)))
         assertEquals(emptySet<Long>(), source.existing(emptyList()))
+    }
+
+    @Test
+    fun nullCursorIsAFailureNotAnEmptyGallery(): Unit = runBlocking {
+        val unreachable = MediaStorePhotoSource(context, { _, _ -> }, { _, _, _, _ -> null })
+
+        assertEquals(PhotoAccess.FULL, unreachable.access())
+        assertThrows(IllegalStateException::class.java) { runBlocking { unreachable.photos(t0, t0) } }
+        assertThrows(IllegalStateException::class.java) { runBlocking { unreachable.existing(listOf(1L, 2L)) } }
     }
 
     /**

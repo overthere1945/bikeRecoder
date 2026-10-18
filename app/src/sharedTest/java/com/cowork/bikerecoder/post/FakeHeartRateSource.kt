@@ -7,7 +7,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Health Connect in memory. [read] fails like the real source when Health Connect is unavailable or not [permitted];
- * otherwise it returns [reads] normalised to the source contract (no samples → Empty, samples sorted). Records every call.
+ * otherwise it returns [reads] normalised to the source contract (samples clipped to [from, to] and sorted; none left →
+ * Empty). Records every call.
  */
 class FakeHeartRateSource(
     @Volatile var availability: HealthAvailability = HealthAvailability.AVAILABLE,
@@ -30,7 +31,7 @@ class FakeHeartRateSource(
         calls += from to to
         if (!hasPermissions()) return HrRead.Failed
         return when (val r = reads(from, to)) {
-            is HrRead.Samples -> hrReadOf(r.samples, r.calories)
+            is HrRead.Samples -> hrReadOf(r.samples.filter { it.timeMillis in from..to }, r.calories)
             else -> r
         }
     }

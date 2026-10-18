@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.ContentUris
 import android.content.Context
 import android.content.pm.PackageManager
+import android.database.Cursor
 import android.media.ExifInterface
 import android.net.Uri
 import android.os.Build
@@ -15,11 +16,24 @@ import com.cowork.bikerecoder.core.post.PhotoCandidate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** 갤러리(MediaStore)의 카메라 사진. 조회가 실패하면 예외를 그대로 던진다(후처리가 다음 실행 때 다시 찾는다). */
-class MediaStorePhotoSource(
+/**
+ * 갤러리(MediaStore)의 카메라 사진. 조회가 실패하면 예외를 그대로 던진다(후처리가 다음 실행 때 다시 찾는다).
+ * MediaStore가 커서 대신 null을 주어도(공급자에 닿지 못함) [IllegalStateException] — "사진 없음"이나 "모두 지워짐"으로 읽지 않는다.
+ */
+class MediaStorePhotoSource internal constructor(
     context: Context,
-    private val warnLog: WarnLog = androidWarnLog("MediaStorePhotos"),
+    private val warnLog: WarnLog,
+    /** `ContentResolver.query(uri, projection, selection, args, null)`. 테스트가 null 커서를 흉내 내려고 바꾼다. */
+    private val query: (uri: Uri, projection: Array<String>, selection: String, args: Array<String>) -> Cursor?,
 ) : PhotoSource {
+    constructor(context: Context, warnLog: WarnLog = androidWarnLog("MediaStorePhotos")) : this(
+        context,
+        warnLog,
+        { uri, projection, selection, args ->
+            context.applicationContext.contentResolver.query(uri, projection, selection, args, null)
+        },
+    )
+
     private val context = context.applicationContext
     private val collection: Uri = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
 
@@ -45,7 +59,7 @@ class MediaStorePhotoSource(
             Math.floorDiv(to, 1000L).toString(),
         )
         val rows = ArrayList<Pair<Long, Long>>()
-        context.contentResolver.query(collection, projection, selection, args, null)?.use { c ->
+        queryOrThrow(collection, projection, selection, args).use { c ->
             val idCol = c.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
             val takenCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_TAKEN)
             val addedCol = c.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
@@ -68,9 +82,8 @@ class MediaStorePhotoSource(
         for (chunk in mediaIds.distinct().chunked(500)) {
             val selection = "${MediaStore.Images.Media._ID} IN (${chunk.joinToString(",") { "?" }})"
             val args = chunk.map { it.toString() }.toTypedArray()
-            context.contentResolver
-                .query(collection, arrayOf(MediaStore.Images.Media._ID), selection, args, null)
-                ?.use { c -> while (c.moveToNext()) found += c.getLong(0) }
+            queryOrThrow(collection, arrayOf(MediaStore.Images.Media._ID), selection, args)
+                .use { c -> while (c.moveToNext()) found += c.getLong(0) }
         }
         found
     }
@@ -87,6 +100,9 @@ class MediaStorePhotoSource(
         warnLog.warn("EXIF location unreadable for media $mediaId", e)
         null
     }
+
+    private fun queryOrThrow(uri: Uri, projection: Array<String>, selection: String, args: Array<String>): Cursor =
+        query(uri, projection, selection, args) ?: throw IllegalStateException("MediaStore query returned null for $uri")
 
     private fun granted(permission: String): Boolean =
         context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED

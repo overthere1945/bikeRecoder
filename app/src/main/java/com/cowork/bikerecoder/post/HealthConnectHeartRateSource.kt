@@ -18,58 +18,67 @@ import java.time.Instant
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.reflect.KClass
 
-/** 삼성 헬스가 Health Connect에 쓴 심박·자전거 운동·총 칼로리를 읽는다. */
-class HealthConnectHeartRateSource(
-    context: Context,
-    private val warnLog: WarnLog = androidWarnLog("HealthConnectHR"),
+/**
+ * 삼성 헬스가 Health Connect에 쓴 심박·자전거 운동·총 칼로리를 읽는다.
+ * 심박은 `READ_HEART_RATE`만 있으면 읽고, 칼로리는 `READ_EXERCISE`·`READ_TOTAL_CALORIES_BURNED`가 둘 다 있을 때만 읽는다(판정 R6).
+ */
+class HealthConnectHeartRateSource internal constructor(
+    private val sdkStatus: () -> Int,
+    private val reader: () -> HealthRecordReader,
+    private val warnLog: WarnLog,
 ) : HeartRateSource {
-    private val context = context.applicationContext
-
-    override val permissions: Set<String> = setOf(
-        HealthPermission.getReadPermission(HeartRateRecord::class),
-        HealthPermission.getReadPermission(ExerciseSessionRecord::class),
-        HealthPermission.getReadPermission(TotalCaloriesBurnedRecord::class),
+    constructor(context: Context, warnLog: WarnLog = androidWarnLog("HealthConnectHR")) : this(
+        sdkStatus = { HealthConnectClient.getSdkStatus(context.applicationContext) },
+        reader = { ClientRecordReader(HealthConnectClient.getOrCreate(context.applicationContext)) },
+        warnLog = warnLog,
     )
 
-    override fun availability(): HealthAvailability = when (HealthConnectClient.getSdkStatus(context)) {
+    private val heartRatePermission = HealthPermission.getReadPermission(HeartRateRecord::class)
+    private val exercisePermission = HealthPermission.getReadPermission(ExerciseSessionRecord::class)
+    private val caloriesPermission = HealthPermission.getReadPermission(TotalCaloriesBurnedRecord::class)
+
+    override val permissions: Set<String> = setOf(heartRatePermission, exercisePermission, caloriesPermission)
+
+    override fun availability(): HealthAvailability = when (sdkStatus()) {
         HealthConnectClient.SDK_AVAILABLE -> HealthAvailability.AVAILABLE
         HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED -> HealthAvailability.UPDATE_REQUIRED
         else -> HealthAvailability.NOT_INSTALLED
     }
 
-    override suspend fun hasPermissions(): Boolean {
-        if (availability() != HealthAvailability.AVAILABLE) return false
-        return try {
-            client().permissionController.getGrantedPermissions().containsAll(permissions)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            warnLog.warn("Health Connect permission check failed", e)
-            false
-        }
-    }
+    override suspend fun hasPermissions(): Boolean = heartRatePermission in granted()
 
     override suspend fun read(from: Long, to: Long): HrRead {
-        if (!hasPermissions()) return HrRead.Failed
+        val granted = granted()
+        if (heartRatePermission !in granted) return HrRead.Failed
+        // 길이 없는 구간: 읽을 것이 없다(TimeRangeFilter.between은 시작 < 끝이어야 한다).
+        if (to <= from) return HrRead.Empty
         return try {
-            val client = client()
-            val sessions = client.readAll(
-                ExerciseSessionRecord::class,
-                from - HealthConnectMapping.SESSION_MARGIN_MS,
-                to + HealthConnectMapping.SESSION_MARGIN_MS,
-            )
+            val reader = reader()
+            val sessions = if (exercisePermission in granted) {
+                reader.readAll(
+                    ExerciseSessionRecord::class,
+                    from - HealthConnectMapping.SESSION_MARGIN_MS,
+                    to + HealthConnectMapping.SESSION_MARGIN_MS,
+                )
+            } else {
+                emptyList()
+            }
             val (hrFrom, hrTo) = HealthConnectMapping.readWindow(from, to, sessions)
-            val samples = HealthConnectMapping.samples(client.readAll(HeartRateRecord::class, hrFrom, hrTo), from, to)
-            val calories = HealthConnectMapping.bikingOverlapping(sessions, from, to)
-                .takeIf { it.isNotEmpty() }
-                ?.let { biking ->
-                    val records = client.readAll(
-                        TotalCaloriesBurnedRecord::class,
-                        biking.minOf { it.startTime.toEpochMilli() },
-                        biking.maxOf { it.endTime.toEpochMilli() },
-                    )
-                    HealthConnectMapping.calories(biking, records, from, to)
-                }
+            val samples = HealthConnectMapping.samples(reader.readAll(HeartRateRecord::class, hrFrom, hrTo), from, to)
+            val calories = if (caloriesPermission in granted) {
+                HealthConnectMapping.bikingOverlapping(sessions, from, to)
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { biking ->
+                        val records = reader.readAll(
+                            TotalCaloriesBurnedRecord::class,
+                            biking.minOf { it.startTime.toEpochMilli() },
+                            biking.maxOf { it.endTime.toEpochMilli() },
+                        )
+                        HealthConnectMapping.calories(biking, records, from, to)
+                    }
+            } else {
+                null
+            }
             hrReadOf(samples, calories)
         } catch (e: CancellationException) {
             throw e
@@ -79,14 +88,36 @@ class HealthConnectHeartRateSource(
         }
     }
 
-    private fun client(): HealthConnectClient = HealthConnectClient.getOrCreate(context)
+    /** 허용된 권한. Health Connect를 쓸 수 없거나 확인이 실패하면 빈 집합. */
+    private suspend fun granted(): Set<String> {
+        if (availability() != HealthAvailability.AVAILABLE) return emptySet()
+        return try {
+            reader().grantedPermissions()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            warnLog.warn("Health Connect permission check failed", e)
+            emptySet()
+        }
+    }
+}
+
+/** Health Connect에서 이 앱이 쓰는 두 가지: 허용된 권한, 삼성 헬스 기록 읽기. */
+internal interface HealthRecordReader {
+    suspend fun grantedPermissions(): Set<String>
 
     /** 삼성 헬스가 쓴 [type] 기록을 [from, to]에서 모든 페이지까지 읽는다. */
-    private suspend fun <T : Record> HealthConnectClient.readAll(type: KClass<T>, from: Long, to: Long): List<T> {
+    suspend fun <T : Record> readAll(type: KClass<T>, from: Long, to: Long): List<T>
+}
+
+private class ClientRecordReader(private val client: HealthConnectClient) : HealthRecordReader {
+    override suspend fun grantedPermissions(): Set<String> = client.permissionController.getGrantedPermissions()
+
+    override suspend fun <T : Record> readAll(type: KClass<T>, from: Long, to: Long): List<T> {
         val out = ArrayList<T>()
         var pageToken: String? = null
         do {
-            val response = readRecords(
+            val response = client.readRecords(
                 ReadRecordsRequest(
                     recordType = type,
                     timeRangeFilter = TimeRangeFilter.between(Instant.ofEpochMilli(from), Instant.ofEpochMilli(to)),
@@ -108,6 +139,12 @@ internal object HealthConnectMapping {
     /** 구간과 겹치는 운동을 놓치지 않으려고 운동 기록은 구간 앞뒤로 이만큼 더 넓게 읽는다. */
     const val SESSION_MARGIN_MS = 12 * 60 * 60_000L
 
+    /**
+     * 심박 기록도 구간 앞뒤로 이만큼 넓게 읽고 샘플을 [from, to]로 자른다. Health Connect가 기록을 시작 시각으로
+     * 거르든 겹침으로 거르든, 구간 시작 직전에 시작한 짧은 심박 기록을 놓치지 않는다.
+     */
+    const val HR_MARGIN_MS = 60_000L
+
     /** [records]의 샘플 중 [from, to] 안의 것, 시간순(기록 순서와 무관). */
     fun samples(records: List<HeartRateRecord>, from: Long, to: Long): List<HeartRateSample> =
         records.asSequence()
@@ -118,13 +155,13 @@ internal object HealthConnectMapping {
             .toList()
 
     /**
-     * 심박을 읽을 범위: [from, to]에 겹치는 운동들을 더한 범위.
+     * 심박을 읽을 범위: [from − HR_MARGIN_MS, to + HR_MARGIN_MS]에 [from, to]와 겹치는 운동들을 더한 범위.
      * 운동 내내 이어진 심박 기록이 구간보다 길어도 읽기 범위에 온전히 들어오게 한다.
      */
     fun readWindow(from: Long, to: Long, sessions: List<ExerciseSessionRecord>): Pair<Long, Long> {
         val overlapping = sessions.filter { overlap(it.startMs, it.endMs, from, to) > 0 }
-        val start = (overlapping.map { it.startMs } + from).min()
-        val end = (overlapping.map { it.endMs } + to).max()
+        val start = (overlapping.map { it.startMs } + (from - HR_MARGIN_MS)).min()
+        val end = (overlapping.map { it.endMs } + (to + HR_MARGIN_MS)).max()
         return start to end
     }
 

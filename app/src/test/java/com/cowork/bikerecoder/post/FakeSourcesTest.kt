@@ -96,6 +96,18 @@ class FakeSourcesTest {
     }
 
     @Test
+    fun `heart rate read clips samples to the window like the real source`() = runTest {
+        val wide = listOf(HeartRateSample(500L, 90), HeartRateSample(1_000L, 100), HeartRateSample(2_000L, 120), HeartRateSample(2_001L, 130))
+        val source = FakeHeartRateSource(reads = { _, _ -> HrRead.Samples(wide, calories = null) })
+
+        assertEquals(
+            HrRead.Samples(listOf(HeartRateSample(1_000L, 100), HeartRateSample(2_000L, 120)), calories = null),
+            source.read(1_000L, 2_000L),
+        )
+        assertEquals(HrRead.Empty, source.read(3_000L, 4_000L))
+    }
+
+    @Test
     fun `hrReadOf turns no samples into Empty and sorts the rest by time`() {
         val unsorted = listOf(HeartRateSample(5_000L, 150), HeartRateSample(1_000L, 100))
 

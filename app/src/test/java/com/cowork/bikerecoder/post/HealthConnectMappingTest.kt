@@ -106,6 +106,13 @@ class HealthConnectMappingTest {
         val sessions = listOf(session(-10 * min, 5 * min), session(50 * min, 70 * min), session(200 * min, 210 * min))
 
         assertEquals(-10 * min to 70 * min, HealthConnectMapping.readWindow(0, 60 * min, sessions))
-        assertEquals(0L to 60 * min, HealthConnectMapping.readWindow(0, 60 * min, emptyList()))
+    }
+
+    @Test
+    fun `heart-rate window always reaches 60 s past both ends`() {
+        val inside = listOf(session(10 * min, 20 * min))
+
+        assertEquals(-60_000L to 60 * min + 60_000L, HealthConnectMapping.readWindow(0, 60 * min, emptyList()))
+        assertEquals(-60_000L to 60 * min + 60_000L, HealthConnectMapping.readWindow(0, 60 * min, inside))
     }
 }

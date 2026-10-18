@@ -33,5 +33,10 @@ class FakePhotoSource(
         return mediaIds.filterTo(HashSet()) { it in present }
     }
 
+    /**
+     * Device tests only. In JVM tests `android.net.Uri` is a stub and no instance can exist: it cannot be subclassed,
+     * and with `unitTests.isReturnDefaultValues` `Uri.parse` would return null and fail Kotlin's non-null check anyway.
+     * JVM-tested code should carry `mediaId` and turn it into a Uri in the UI layer.
+     */
     override fun uri(mediaId: Long): Uri = Uri.parse("content://fake.photos/$mediaId")
 }
