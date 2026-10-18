@@ -29,6 +29,7 @@ fun FavoriteDialogs(
     onRename: (String) -> Unit,
     onConfirmDelete: () -> Unit,
     onDismiss: () -> Unit,
+    onSaveCustom: (String) -> Unit,
 ) {
     when (dialog) {
         null -> Unit
@@ -45,6 +46,7 @@ fun FavoriteDialogs(
             confirmButton = { TextButton(onClick = onDismiss) { Text("확인") } },
         )
         is FavoriteDialog.Rename -> RenameDialog(dialog, onRename, onDismiss)
+        is FavoriteDialog.NameCustom -> NameCustomDialog(dialog, onSaveCustom, onDismiss)
         is FavoriteDialog.ConfirmDelete -> AlertDialog(
             onDismissRequest = onDismiss,
             text = { Text(FavoriteRepository.DELETE_QUESTION) },
@@ -108,6 +110,31 @@ private fun RenameDialog(dialog: FavoriteDialog.Rename, onRename: (String) -> Un
             }
         },
         confirmButton = { TextButton(onClick = { onRename(name) }, enabled = name.isNotBlank()) { Text("저장") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+    )
+}
+
+/** The name of a custom favorite being registered, prefilled with the place name (Task 3 replaces it, spec §8.4). */
+@Composable
+private fun NameCustomDialog(dialog: FavoriteDialog.NameCustom, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+    var name by rememberSaveable(dialog.place) { mutableStateOf(dialog.place.name.take(FavoriteRepository.MAX_NAME_LENGTH)) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("즐겨찾기 이름") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it.take(FavoriteRepository.MAX_NAME_LENGTH) },
+                    label = { Text("이름") },
+                    singleLine = true,
+                    isError = dialog.error != null,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                ErrorText(dialog.error)
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(name) }, enabled = name.isNotBlank()) { Text("저장") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
     )
 }

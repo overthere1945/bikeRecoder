@@ -26,6 +26,7 @@ class FavoriteDialogsTest {
 
     private val p = GeoPoint(35.1, 129.0)
     private val saved = mutableListOf<Pair<FavoriteKind, String?>>()
+    private val savedCustom = mutableListOf<String>()
 
     private fun show(dialog: FavoriteDialog?) {
         composeRule.setContent {
@@ -37,6 +38,7 @@ class FavoriteDialogsTest {
                     onRename = {},
                     onConfirmDelete = {},
                     onDismiss = {},
+                    onSaveCustom = { savedCustom += it },
                 )
             }
         }
@@ -64,6 +66,28 @@ class FavoriteDialogsTest {
         field.performTextInput("카페")
         composeRule.onNodeWithText("저장").assertIsEnabled().performClick()
         assertEquals(listOf(FavoriteKind.CUSTOM to "카페"), saved)
+    }
+
+    @Test
+    fun nameCustomIsPrefilledWithThePlaceAndSavesTheName() {
+        show(FavoriteDialog.NameCustom(FavoritePlace("해운대 해수욕장", p, null)))
+
+        composeRule.onNodeWithText("즐겨찾기 이름").assertIsDisplayed()
+        composeRule.onNodeWithText("집").assertDoesNotExist()
+        val field = composeRule.onNode(hasSetTextAction())
+        field.assertTextEquals("이름", "해운대 해수욕장")
+        field.performTextClearance()
+        composeRule.onNodeWithText("저장").assertIsNotEnabled()
+        field.performTextInput("바다")
+        composeRule.onNodeWithText("저장").assertIsEnabled().performClick()
+        assertEquals(listOf("바다"), savedCustom)
+        assertEquals(emptyList<Pair<FavoriteKind, String?>>(), saved)
+    }
+
+    @Test
+    fun nameCustomShowsTheRefusal() {
+        show(FavoriteDialog.NameCustom(FavoritePlace("카페", p, null), error = "같은 이름의 즐겨찾기가 있습니다"))
+        composeRule.onNodeWithText("같은 이름의 즐겨찾기가 있습니다").assertIsDisplayed()
     }
 
     @Test

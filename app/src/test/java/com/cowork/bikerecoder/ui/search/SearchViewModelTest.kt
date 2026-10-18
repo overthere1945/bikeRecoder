@@ -171,11 +171,11 @@ class SearchViewModelTest {
     }
 
     @Test
-    fun `the register argument names home or work only`() {
+    fun `the register argument names home, work or a custom favorite`() {
         assertEquals(FavoriteKind.HOME, SearchViewModel.registerKind("HOME"))
         assertEquals(FavoriteKind.WORK, SearchViewModel.registerKind("WORK"))
         assertNull(SearchViewModel.registerKind(null))
-        assertNull(SearchViewModel.registerKind("CUSTOM"))
+        assertEquals(FavoriteKind.CUSTOM, SearchViewModel.registerKind("CUSTOM"))
         assertNull(SearchViewModel.registerKind("bogus"))
     }
 }

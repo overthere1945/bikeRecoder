@@ -37,7 +37,10 @@ data class SearchScreenState(
     val selected: Place? = null,
     /** "최근 검색", newest first; the screen shows it while the query is empty. */
     val recent: List<Place> = emptyList(),
-    /** The register mode (spec §7.4): a tap saves the place as this home or work, with no sheet. */
+    /**
+     * The register mode (spec §7.4, §8.2): a tap saves the place as this home or work, or names it as a custom
+     * favorite, with no sheet.
+     */
     val register: FavoriteKind? = null,
 )
 
@@ -116,12 +119,11 @@ class SearchViewModel(
     companion object {
         const val DEBOUNCE_MS = 400L
 
-        /** The search route's register-mode argument: a [FavoriteKind] name, HOME or WORK. */
+        /** The search route's register-mode argument: a [FavoriteKind] name (HOME, WORK or CUSTOM). */
         const val ARG_REGISTER = "register"
 
-        /** [ARG_REGISTER] → home or work; anything else (absent, CUSTOM, unknown) is the normal search. */
-        fun registerKind(arg: String?): FavoriteKind? =
-            FavoriteKind.entries.firstOrNull { it != FavoriteKind.CUSTOM && it.name == arg }
+        /** [ARG_REGISTER] → the kind being registered; anything else (absent, unknown) is the normal search. */
+        fun registerKind(arg: String?): FavoriteKind? = FavoriteKind.entries.firstOrNull { it.name == arg }
 
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer {

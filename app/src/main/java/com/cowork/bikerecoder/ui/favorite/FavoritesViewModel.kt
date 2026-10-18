@@ -49,16 +49,26 @@ sealed interface FavoriteDialog {
 
     data class Rename(val favorite: Favorite, val error: String? = null) : FavoriteDialog
 
+    /**
+     * The register-mode search for a custom favorite (spec §8.2): the name for [place] (prefilled with its name),
+     * [저장] [취소]; [FavoritesViewModel.saveCustom] saves it. [error] is the last refusal (the dialog stays open).
+     */
+    data class NameCustom(val place: FavoritePlace, val error: String? = null) : FavoriteDialog
+
     /** "즐겨찾기에서 삭제할까요?" [삭제] [취소] */
     data class ConfirmDelete(val favorite: Favorite) : FavoriteDialog
 }
 
 sealed interface FavoriteEvent {
-    /** [FavoritesViewModel.saveAs] saved the place as home or work ([kind]). */
+    /** The register-mode search saved its place as home, work or (named) a custom favorite ([kind]). */
     data class Registered(val kind: FavoriteKind) : FavoriteEvent {
-        /** The Toast: "집으로 저장했습니다" / "회사로 저장했습니다". */
+        /** The Toast: "집으로 저장했습니다" / "회사로 저장했습니다" / "즐겨찾기에 저장했습니다". */
         val message: String
-            get() = if (kind == FavoriteKind.HOME) "집으로 저장했습니다" else "회사로 저장했습니다"
+            get() = when (kind) {
+                FavoriteKind.HOME -> "집으로 저장했습니다"
+                FavoriteKind.WORK -> "회사로 저장했습니다"
+                FavoriteKind.CUSTOM -> "즐겨찾기에 저장했습니다"
+            }
     }
 }
 
@@ -120,10 +130,14 @@ class FavoritesViewModel(
     /**
      * The register-mode search (spec §7.4): save [place] as home or work with no name dialog, under the same rules as
      * [save]. Saved → [FavoriteEvent.Registered]; an existing one → [FavoriteDialog.ConfirmReplace]; refused or
-     * failed → [FavoriteDialog.Message].
+     * failed → [FavoriteDialog.Message]. A custom favorite (spec §8.2) first asks its name: [FavoriteDialog.NameCustom],
+     * then [saveCustom].
      */
     fun saveAs(place: FavoritePlace, kind: FavoriteKind) {
-        require(kind != FavoriteKind.CUSTOM) { "only home or work is registered" }
+        if (kind == FavoriteKind.CUSTOM) {
+            if (work?.isActive != true) _dialog.value = FavoriteDialog.NameCustom(place)
+            return
+        }
         val current = _dialog.value
         write(current, onFailure = FavoriteDialog.Message(MSG_SAVE_FAILED)) {
             when (val result = repository.save(kind, null, place)) {
@@ -190,6 +204,31 @@ class FavoritesViewModel(
         }
     }
 
+    /**
+     * From [FavoriteDialog.NameCustom] only: save its place as the custom favorite [name]. Saved →
+     * [FavoriteEvent.Registered]; refused (name, limit) or failed → the same dialog with the reason.
+     */
+    fun saveCustom(name: String) {
+        val current = _dialog.value as? FavoriteDialog.NameCustom ?: return
+        write(current) {
+            when (val result = repository.save(FavoriteKind.CUSTOM, name, current.place)) {
+                FavoriteResult.Saved -> registered(FavoriteKind.CUSTOM)
+                is FavoriteResult.ConfirmReplace -> current
+                is FavoriteResult.Rejected -> current.copy(error = result.message)
+            }
+        }
+    }
+
+    /**
+     * [＋ 즐겨찾기 추가] (spec §8.2): true when one more fits (the caller opens the register-mode search); at the limit
+     * (home and work included) shows [FavoriteRepository.MSG_LIMIT] and returns false.
+     */
+    fun startAdd(): Boolean {
+        if (favorites.value.size < FavoriteRepository.MAX_COUNT) return true
+        _dialog.value = FavoriteDialog.Message(FavoriteRepository.MSG_LIMIT)
+        return false
+    }
+
     fun dismiss() {
         _dialog.value = null
     }
@@ -221,6 +260,7 @@ class FavoritesViewModel(
     private fun failed(from: FavoriteDialog?): FavoriteDialog? = when (from) {
         is FavoriteDialog.ChooseName -> from.copy(error = MSG_SAVE_FAILED)
         is FavoriteDialog.Rename -> from.copy(error = MSG_SAVE_FAILED)
+        is FavoriteDialog.NameCustom -> from.copy(error = MSG_SAVE_FAILED)
         else -> null
     }
 

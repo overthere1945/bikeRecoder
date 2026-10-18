@@ -28,9 +28,9 @@ class FavoriteChipsTest {
     private val cafe = Favorite(3, FavoriteKind.CUSTOM, "카페", p, null, 3)
 
     private val selected = mutableListOf<Favorite>()
-    private val renamed = mutableListOf<Favorite>()
     private val deleted = mutableListOf<Favorite>()
     private val registered = mutableListOf<FavoriteKind>()
+    private var opened = 0
 
     private fun show(favorites: List<Favorite>, register: Boolean = false) {
         composeRule.setContent {
@@ -38,46 +38,62 @@ class FavoriteChipsTest {
                 FavoriteChips(
                     favorites = favorites,
                     onSelect = { selected += it },
-                    onRename = { renamed += it },
                     onDelete = { deleted += it },
+                    onOpenFavorites = { opened++ },
                     onRegister = if (register) ({ registered += it }) else null,
                 )
             }
         }
     }
 
+    private fun left(tag: String) = composeRule.onNodeWithTag(tag).fetchSemanticsNode().positionInRoot.x
+
     @Test
-    fun noFavoritesAndNoRegisterHidesTheRow() {
+    fun noFavoritesAndNoRegisterShowsOnlyTheFavoritesChip() {
         show(emptyList())
-        composeRule.onNodeWithTag(FavoriteTags.ROW).assertDoesNotExist()
+        composeRule.onNodeWithTag(FavoriteTags.ROW).assertIsDisplayed()
+        composeRule.onNodeWithText("★ 즐겨찾기").assertIsDisplayed().assertHasClickAction()
         composeRule.onNodeWithTag(FavoriteTags.register(FavoriteKind.HOME)).assertDoesNotExist()
+        composeRule.onNodeWithTag(FavoriteTags.register(FavoriteKind.WORK)).assertDoesNotExist()
     }
 
     @Test
-    fun noFavoritesWithRegisterShowsBothRegisterChips() {
+    fun noFavoritesWithRegisterShowsBothRegisterChipsThenTheFavoritesChip() {
         show(emptyList(), register = true)
 
-        composeRule.onNodeWithTag(FavoriteTags.ROW).assertIsDisplayed()
         composeRule.onNodeWithText("🏠 집 등록").performScrollTo().assertIsDisplayed().assertHasClickAction()
         composeRule.onNodeWithText("🏢 회사 등록").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag(FavoriteTags.ALL).performScrollTo().assertIsDisplayed()
+        assertTrue(left(FavoriteTags.register(FavoriteKind.HOME)) < left(FavoriteTags.register(FavoriteKind.WORK)))
+        assertTrue(left(FavoriteTags.register(FavoriteKind.WORK)) < left(FavoriteTags.ALL))
 
         composeRule.onNodeWithTag(FavoriteTags.register(FavoriteKind.WORK)).performClick()
         composeRule.onNodeWithTag(FavoriteTags.register(FavoriteKind.HOME)).performClick()
         assertEquals(listOf(FavoriteKind.WORK, FavoriteKind.HOME), registered)
         assertEquals(emptyList<Favorite>(), selected)
+        assertEquals(0, opened)
     }
 
     @Test
-    fun onlyHomeShowsHomeThenRegisterWorkThenCustom() {
+    fun customFavoritesAreNotChips() {
+        show(listOf(home, work, cafe), register = true)
+
+        composeRule.onNodeWithText("★ 카페").assertDoesNotExist()
+        composeRule.onNodeWithTag(FavoriteTags.chip(cafe.id)).assertDoesNotExist()
+        composeRule.onNodeWithText("직접 입력").assertDoesNotExist()
+        composeRule.onNodeWithText("★ 즐겨찾기").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun onlyHomeShowsHomeThenRegisterWorkThenTheFavoritesChip() {
         show(listOf(home, cafe), register = true)
 
         composeRule.onNodeWithText("🏠 집").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("🏢 회사 등록").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("★ 카페").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("★ 즐겨찾기").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag(FavoriteTags.register(FavoriteKind.HOME)).assertDoesNotExist()
-        val left = { text: String -> composeRule.onNodeWithText(text).fetchSemanticsNode().positionInRoot.x }
-        assertTrue(left("🏠 집") < left("🏢 회사 등록"))
-        assertTrue(left("🏢 회사 등록") < left("★ 카페"))
+        assertTrue(left(FavoriteTags.chip(home.id)) < left(FavoriteTags.register(FavoriteKind.WORK)))
+        assertTrue(left(FavoriteTags.register(FavoriteKind.WORK)) < left(FavoriteTags.ALL))
 
         composeRule.onNodeWithText("🏠 집").performClick()
         assertEquals(listOf(home), selected)
@@ -85,38 +101,34 @@ class FavoriteChipsTest {
     }
 
     @Test
-    fun registerChipsHaveNoMenu() {
+    fun homeWorkThenTheFavoritesChipAndATapOpensTheScreen() {
+        show(listOf(home, work, cafe))
+
+        composeRule.onNodeWithText("🏠 집").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("🏢 회사").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("★ 즐겨찾기").performScrollTo().assertIsDisplayed()
+        assertTrue(left(FavoriteTags.chip(home.id)) < left(FavoriteTags.chip(work.id)))
+        assertTrue(left(FavoriteTags.chip(work.id)) < left(FavoriteTags.ALL))
+
+        composeRule.onNodeWithTag(FavoriteTags.ALL).performClick()
+        assertEquals(1, opened)
+        assertEquals(emptyList<Favorite>(), selected)
+
+        composeRule.onNodeWithText("🏢 회사").performClick()
+        assertEquals(listOf(work), selected)
+    }
+
+    @Test
+    fun registerChipsAndTheFavoritesChipHaveNoMenu() {
         show(emptyList(), register = true)
 
         composeRule.onNodeWithTag(FavoriteTags.register(FavoriteKind.HOME)).performTouchInput { longClick() }
         composeRule.onNodeWithText("삭제").assertDoesNotExist()
         composeRule.onNodeWithText("이름 바꾸기").assertDoesNotExist()
-    }
 
-    @Test
-    fun chipsShowInOrderAndATapSelects() {
-        show(listOf(home, work, cafe))
-
-        composeRule.onNodeWithText("🏠 집").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("🏢 회사").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("★ 카페").performScrollTo().assertIsDisplayed()
-
-        composeRule.onNodeWithText("★ 카페").performClick()
-        assertEquals(listOf(cafe), selected)
-    }
-
-    @Test
-    fun longPressOnACustomChipOffersRenameAndDelete() {
-        show(listOf(home, work, cafe))
-
-        composeRule.onNodeWithTag(FavoriteTags.chip(cafe.id)).performScrollTo().performTouchInput { longClick() }
-        composeRule.onNodeWithText("이름 바꾸기").assertIsDisplayed()
-        composeRule.onNodeWithText("삭제").assertIsDisplayed()
-
-        composeRule.onNodeWithText("삭제").performClick()
-        assertEquals(listOf(cafe), deleted)
-        assertEquals(emptyList<Favorite>(), renamed)
-        assertEquals(emptyList<Favorite>(), selected)
+        composeRule.onNodeWithTag(FavoriteTags.ALL).performScrollTo().performTouchInput { longClick() }
+        composeRule.onNodeWithText("삭제").assertDoesNotExist()
+        composeRule.onNodeWithText("이름 바꾸기").assertDoesNotExist()
     }
 
     @Test
@@ -126,5 +138,9 @@ class FavoriteChipsTest {
         composeRule.onNodeWithTag(FavoriteTags.chip(home.id)).performScrollTo().performTouchInput { longClick() }
         composeRule.onNodeWithText("삭제").assertIsDisplayed()
         composeRule.onNodeWithText("이름 바꾸기").assertDoesNotExist()
+
+        composeRule.onNodeWithText("삭제").performClick()
+        assertEquals(listOf(home), deleted)
+        assertEquals(emptyList<Favorite>(), selected)
     }
 }

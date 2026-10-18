@@ -300,6 +300,127 @@ class FavoritesViewModelTest {
     fun registeredToastNamesTheKind() {
         assertEquals("집으로 저장했습니다", FavoriteEvent.Registered(FavoriteKind.HOME).message)
         assertEquals("회사로 저장했습니다", FavoriteEvent.Registered(FavoriteKind.WORK).message)
+        assertEquals("즐겨찾기에 저장했습니다", FavoriteEvent.Registered(FavoriteKind.CUSTOM).message)
+    }
+
+    @Test
+    fun saveAsCustomAsksForANameFirst() = runTest {
+        val store = FakeFavoriteStore()
+        val vm = viewModel(store)
+        val events = events(vm)
+        vm.saveAs(place1, FavoriteKind.CUSTOM)
+        settle()
+        assertEquals(FavoriteDialog.NameCustom(place1), vm.dialog.value)
+        assertEquals(emptyList<Favorite>(), store.current)
+        assertEquals(emptyList<FavoriteEvent>(), events)
+    }
+
+    @Test
+    fun namingACustomRegistrationSavesAndTells() = runTest {
+        val store = FakeFavoriteStore()
+        val vm = viewModel(store)
+        val events = events(vm)
+        vm.saveAs(place1, FavoriteKind.CUSTOM)
+        vm.saveCustom("  카페  ")
+        settle()
+        assertNull(vm.dialog.value)
+        assertEquals(listOf(FavoriteEvent.Registered(FavoriteKind.CUSTOM)), events)
+        val cafe = store.current.single()
+        assertEquals(FavoriteKind.CUSTOM, cafe.kind)
+        assertEquals("카페", cafe.name)
+        assertEquals(p1, cafe.point)
+        assertEquals("주소1", cafe.address)
+    }
+
+    @Test
+    fun customRegistrationRefusesADuplicateName() = runTest {
+        val store = FakeFavoriteStore(listOf(custom(1, "카페")))
+        val vm = viewModel(store)
+        val events = events(vm)
+        vm.saveAs(place1, FavoriteKind.CUSTOM)
+        vm.saveCustom("카페")
+        settle()
+        assertEquals(FavoriteDialog.NameCustom(place1, error = FavoriteRepository.MSG_DUPLICATE), vm.dialog.value)
+        assertEquals(emptyList<FavoriteEvent>(), events)
+        assertEquals(1, store.current.size)
+
+        // Still open: a new name saves.
+        vm.saveCustom("카페2")
+        settle()
+        assertNull(vm.dialog.value)
+        assertEquals(listOf(FavoriteEvent.Registered(FavoriteKind.CUSTOM)), events)
+    }
+
+    @Test
+    fun customRegistrationRefusesABlankOrLongName() = runTest {
+        val store = FakeFavoriteStore()
+        val vm = viewModel(store)
+        val events = events(vm)
+        vm.saveAs(place1, FavoriteKind.CUSTOM)
+        vm.saveCustom("   ")
+        settle()
+        assertEquals(FavoriteDialog.NameCustom(place1, error = FavoriteRepository.MSG_NAME_LENGTH), vm.dialog.value)
+
+        vm.saveCustom("가".repeat(21))
+        settle()
+        assertEquals(FavoriteDialog.NameCustom(place1, error = FavoriteRepository.MSG_NAME_LENGTH), vm.dialog.value)
+        assertEquals(emptyList<FavoriteEvent>(), events)
+        assertEquals(emptyList<Favorite>(), store.current)
+    }
+
+    @Test
+    fun customRegistrationWhenFullIsRefused() = runTest {
+        val store = FakeFavoriteStore((1L..20L).map { custom(it, "이름$it") })
+        val vm = viewModel(store)
+        val events = events(vm)
+        vm.saveAs(place1, FavoriteKind.CUSTOM)
+        vm.saveCustom("새")
+        settle()
+        assertEquals(FavoriteDialog.NameCustom(place1, error = FavoriteRepository.MSG_LIMIT), vm.dialog.value)
+        assertEquals(emptyList<FavoriteEvent>(), events)
+        assertEquals(20, store.current.size)
+    }
+
+    @Test
+    fun customRegistrationStoreFailureShowsSaveFailed() = runTest {
+        val vm = viewModel(FakeFavoriteStore().apply { failWrites = true })
+        val events = events(vm)
+        vm.saveAs(place1, FavoriteKind.CUSTOM)
+        vm.saveCustom("카페")
+        settle()
+        assertEquals(FavoriteDialog.NameCustom(place1, error = "즐겨찾기를 저장하지 못했습니다"), vm.dialog.value)
+        assertEquals(emptyList<FavoriteEvent>(), events)
+        assertEquals(1, log.messages.size)
+    }
+
+    @Test
+    fun saveCustomOutsideItsDialogDoesNothing() = runTest {
+        val store = FakeFavoriteStore()
+        val vm = viewModel(store)
+        vm.saveCustom("카페")
+        vm.startSave(place1)
+        vm.saveCustom("카페")
+        settle()
+        assertEquals(FavoriteDialog.ChooseName(place1), vm.dialog.value)
+        assertEquals(emptyList<Favorite>(), store.current)
+    }
+
+    @Test
+    fun startAddIsAllowedBelowTheLimit() = runTest {
+        val vm = viewModel(FakeFavoriteStore((1L..19L).map { custom(it, "이름$it") }))
+        settle()
+        assertEquals(true, vm.startAdd())
+        assertNull(vm.dialog.value)
+    }
+
+    @Test
+    fun startAddWhenFullShowsTheLimit() = runTest {
+        val full = (1L..18L).map { custom(it, "이름$it") } +
+            Favorite(19, FavoriteKind.HOME, "집", p1, null, 19) + Favorite(20, FavoriteKind.WORK, "회사", p1, null, 20)
+        val vm = viewModel(FakeFavoriteStore(full))
+        settle()
+        assertEquals(false, vm.startAdd())
+        assertEquals(FavoriteDialog.Message("즐겨찾기는 20개까지 저장할 수 있습니다"), vm.dialog.value)
     }
 
     @Test

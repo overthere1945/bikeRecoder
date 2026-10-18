@@ -28,6 +28,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.core.model.GeoPoint
+import com.cowork.bikerecoder.favorite.Favorite
 import com.cowork.bikerecoder.favorite.FavoriteKind
 import kotlinx.coroutines.flow.first
 import com.cowork.bikerecoder.ui.onboarding.OnboardingScreen
@@ -38,6 +39,7 @@ import com.cowork.bikerecoder.ui.onboarding.readPermissionState
 import com.cowork.bikerecoder.ui.favorite.FavoriteChips
 import com.cowork.bikerecoder.ui.favorite.FavoriteDialogs
 import com.cowork.bikerecoder.ui.favorite.FavoriteEvent
+import com.cowork.bikerecoder.ui.favorite.FavoritesScreen
 import com.cowork.bikerecoder.ui.favorite.FavoritesViewModel
 import com.cowork.bikerecoder.ui.history.HistoryScreen
 import com.cowork.bikerecoder.ui.history.HistoryViewModel
@@ -71,6 +73,7 @@ object Routes {
     const val MAIN = "main"
     const val SEARCH = "search"
     const val SEARCH_PATTERN = "$SEARCH?${SearchViewModel.ARG_REGISTER}={${SearchViewModel.ARG_REGISTER}}"
+    const val FAVORITES = "favorites"
     const val PLAN = "plan"
     const val NAVIGATE = "navigate"
     const val ARG_FROM_PLAN = "fromPlan"
@@ -85,7 +88,10 @@ object Routes {
 
     fun tripDetail(tripId: Long) = "history/trip/$tripId"
 
-    /** The search in register mode (spec §7.4): a tapped place becomes this home or work. [SEARCH] is the normal one. */
+    /**
+     * The search in register mode (spec §7.4, §8.2): a tapped place becomes this home or work, or (CUSTOM) is named as a
+     * custom favorite. [SEARCH] is the normal one.
+     */
     fun searchRegister(kind: FavoriteKind) = "$SEARCH?${SearchViewModel.ARG_REGISTER}=${kind.name}"
 
     fun segmentDetail(segmentId: Long) = "history/segment/$segmentId"
@@ -175,21 +181,25 @@ fun BikeNavHost(
     val favorites by favoritesViewModel.favorites.collectAsStateWithLifecycle()
     val favoritesLoaded by favoritesViewModel.favoritesLoaded.collectAsStateWithLifecycle()
     val favoriteDialog by favoritesViewModel.dialog.collectAsStateWithLifecycle()
-    // [chipsModifier] is the caller's outer spacing (outside the sideways scroll). [onRegister] (the map main only) adds
-    // the home/work register chips; without it an empty list draws nothing at all.
-    val favoriteChips: @Composable (Modifier, ((FavoriteKind) -> Unit)?) -> Unit = { chipsModifier, onRegister ->
-        FavoriteChips(
-            modifier = chipsModifier,
-            favorites = favorites,
-            onSelect = { favorite ->
-                planViewModel.setDestination(favorite)
-                navController.openPlan()
-            },
-            onRename = favoritesViewModel::startRename,
-            onDelete = favoritesViewModel::askDelete,
-            onRegister = onRegister,
-        )
+    // The chips and the favorites screen: a favorite becomes the destination, then the plan screen.
+    val selectFavorite: (Favorite) -> Unit = { favorite ->
+        planViewModel.setDestination(favorite)
+        navController.openPlan()
     }
+    // [chipsModifier] is the caller's outer spacing (outside the sideways scroll). [isCurrent]: the hosting screen is on
+    // top (a double tap opens the favorites screen once). [onRegister] (the map main only) adds the home/work register
+    // chips.
+    val favoriteChips: @Composable (Modifier, () -> Boolean, ((FavoriteKind) -> Unit)?) -> Unit =
+        { chipsModifier, isCurrent, onRegister ->
+            FavoriteChips(
+                modifier = chipsModifier,
+                favorites = favorites,
+                onSelect = selectFavorite,
+                onDelete = favoritesViewModel::askDelete,
+                onOpenFavorites = { if (isCurrent()) navController.navigate(Routes.FAVORITES) },
+                onRegister = onRegister,
+            )
+        }
 
     val setDestinationAndOpenPlan: (String, GeoPoint) -> Unit = { name, point ->
         planViewModel.setDestination(name, point)
@@ -263,6 +273,7 @@ fun BikeNavHost(
                     // No register chips before the list has loaded: an empty placeholder is not "no home, no work".
                     favoriteChips(
                         Modifier,
+                        isCurrent,
                         if (favoritesLoaded) {
                             { kind -> if (isCurrent()) navController.navigate(Routes.searchRegister(kind)) }
                         } else {
@@ -314,10 +325,26 @@ fun BikeNavHost(
                 onBack = { navController.popBackStack() },
                 onSetDestination = setDestinationAndOpenPlan,
                 onAddWaypoint = addWaypointAndOpenPlan,
-                favoriteChips = { favoriteChips(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), null) },
+                favoriteChips = { favoriteChips(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), isCurrent, null) },
                 onSaveFavorite = favoritesViewModel::startSave,
                 // The replace question and refusals are the shared dialogs below; a save ends in [FavoriteEvent.Registered].
                 onRegister = { place, kind -> if (isCurrent()) favoritesViewModel.saveAs(place, kind) },
+            )
+        }
+        composable(Routes.FAVORITES) { entry ->
+            val isCurrent = { navController.currentBackStackEntry?.id == entry.id }
+            FavoritesScreen(
+                favorites = favorites.filter { it.kind == FavoriteKind.CUSTOM },
+                onBack = { if (isCurrent()) navController.popBackStack() },
+                // At the limit the shared dialog says so and this screen stays.
+                onAdd = {
+                    if (isCurrent() && favoritesViewModel.startAdd()) {
+                        navController.navigate(Routes.searchRegister(FavoriteKind.CUSTOM))
+                    }
+                },
+                onSelect = { favorite -> if (isCurrent()) selectFavorite(favorite) },
+                onRename = favoritesViewModel::startRename,
+                onDelete = favoritesViewModel::askDelete,
             )
         }
         composable(Routes.PLAN) { entry ->
@@ -459,7 +486,7 @@ fun BikeNavHost(
         }
     }
     // Collected here, not on the search screen: each save is told once even if that screen was left meanwhile; only a
-    // register-mode search still on top goes back to main.
+    // register-mode search still on top goes back (to main for home/work, to the favorites screen for a custom one).
     LaunchedEffect(favoritesViewModel) {
         favoritesViewModel.events.collect { event ->
             when (event) {
@@ -480,6 +507,7 @@ fun BikeNavHost(
         onRename = favoritesViewModel::rename,
         onConfirmDelete = favoritesViewModel::confirmDelete,
         onDismiss = favoritesViewModel::dismiss,
+        onSaveCustom = favoritesViewModel::saveCustom,
     )
 }
 

@@ -91,7 +91,10 @@ fun SearchScreen(
     favoriteChips: @Composable () -> Unit = {},
     /** [즐겨찾기에 저장] on the result sheet; null hides it. */
     onSaveFavorite: ((FavoritePlace) -> Unit)? = null,
-    /** The register mode ([SearchScreenState.register]): a tapped place is saved as that home or work, with no sheet. */
+    /**
+     * The register mode ([SearchScreenState.register]): a tapped place is saved as that home or work, or named as a
+     * custom favorite, with no sheet.
+     */
     onRegister: (FavoritePlace, FavoriteKind) -> Unit = { _, _ -> },
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -115,7 +118,8 @@ fun SearchScreen(
                             when (state.register) {
                                 FavoriteKind.HOME -> "집 검색"
                                 FavoriteKind.WORK -> "회사 검색"
-                                else -> "장소, 주소 검색"
+                                FavoriteKind.CUSTOM -> "즐겨찾기 검색"
+                                null -> "장소, 주소 검색"
                             },
                         )
                     },

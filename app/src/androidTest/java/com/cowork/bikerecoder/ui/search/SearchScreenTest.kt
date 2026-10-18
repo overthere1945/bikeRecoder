@@ -31,7 +31,9 @@ import com.cowork.bikerecoder.search.PlaceSearch
 import com.cowork.bikerecoder.search.RecentPlaceRules
 import com.cowork.bikerecoder.search.RecentPlaceStore
 import com.cowork.bikerecoder.search.SearchResult
+import com.cowork.bikerecoder.favorite.FavoriteKind
 import com.cowork.bikerecoder.ui.favorite.FavoriteChips
+import com.cowork.bikerecoder.ui.favorite.FavoriteTags
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -99,8 +101,8 @@ class SearchScreenTest {
                         FavoriteChips(
                             favorites = emptyList(),
                             onSelect = {},
-                            onRename = {},
                             onDelete = {},
+                            onOpenFavorites = {},
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                         )
                     },
@@ -166,12 +168,18 @@ class SearchScreenTest {
     }
 
     @Test
-    fun withoutFavoritesTheResultsAreaSitsRightUnderTheSearchRow() {
-        // Empty query + no favorites: nothing but the search row's own 4dp padding may separate them.
+    fun withoutFavoritesOnlyTheFavoritesChipSitsBetweenTheSearchRowAndTheResults() {
+        // Empty query + no favorites (spec §8.1): [★ 즐겨찾기] alone, no register chips, then the results area right
+        // under the chip row (only its own 8dp padding between).
+        composeRule.onNodeWithTag(FavoriteTags.ALL).assertIsDisplayed()
+        composeRule.onNodeWithTag(FavoriteTags.register(FavoriteKind.HOME)).assertDoesNotExist()
+        composeRule.onNodeWithTag(FavoriteTags.register(FavoriteKind.WORK)).assertDoesNotExist()
         val query = composeRule.onNodeWithTag(SearchTags.QUERY).fetchSemanticsNode().boundsInWindow
+        val chips = composeRule.onNodeWithTag(FavoriteTags.ROW).fetchSemanticsNode().boundsInWindow
         val area = composeRule.onNodeWithTag(SearchTags.RESULTS_AREA).fetchSemanticsNode().boundsInWindow
-        val rowPadding = with(composeRule.density) { 4.dp.toPx() }
-        assertTrue("gap ${area.top - query.bottom}px must be at most the row padding ${rowPadding}px", area.top - query.bottom <= rowPadding + 1)
+        val padding = with(composeRule.density) { 8.dp.toPx() }
+        assertTrue("chips must sit under the search row", chips.top >= query.bottom)
+        assertTrue("gap ${area.top - chips.bottom}px must be at most ${padding}px", area.top - chips.bottom in 0f..padding + 1)
     }
 
     @Test

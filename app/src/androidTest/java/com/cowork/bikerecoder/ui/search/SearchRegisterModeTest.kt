@@ -25,7 +25,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 
-/** The search opened from a [🏠 집 등록] / [🏢 회사 등록] chip (spec §7.4). */
+/** The search opened from a [🏠 집 등록] / [🏢 회사 등록] chip (spec §7.4) or [＋ 즐겨찾기 추가] (spec §8.2). */
 class SearchRegisterModeTest {
     @get:Rule
     val composeRule = createComposeRule()
@@ -84,6 +84,28 @@ class SearchRegisterModeTest {
     fun workModeAsksForWork() {
         show(FavoriteKind.WORK)
         composeRule.onNodeWithText("회사 검색", useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun customModeAsksForAFavoriteAndHasNoChips() {
+        show(FavoriteKind.CUSTOM)
+        composeRule.onNodeWithText("즐겨찾기 검색", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithTag(CHIPS).assertDoesNotExist()
+    }
+
+    @Test
+    fun customModeTappingAResultRegistersItWithNoSheet() {
+        show(FavoriteKind.CUSTOM)
+        composeRule.onNodeWithTag(SearchTags.QUERY).performTextInput("부산역")
+        composeRule.waitUntil(10_000) {
+            composeRule.onAllNodes(hasText("부산역") and hasAnyAncestor(hasTestTag(SearchTags.RESULTS)))
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNode(hasText("부산역") and hasAnyAncestor(hasTestTag(SearchTags.RESULTS))).performClick()
+        composeRule.waitForIdle()
+
+        assertEquals(listOf(FavoritePlace(station.name, station.point, station.address) to FavoriteKind.CUSTOM), registered)
+        composeRule.onNodeWithText("목적지로 설정").assertDoesNotExist()
     }
 
     @Test
