@@ -63,8 +63,7 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.te
 | `ui.settings.SettingsScreenTest` | 11 | 설정 화면, 「사진·심박 연결」(허용 안 함 + [허용] / 모든 사진 허용·허용됨 / 선택한 사진만 + [설정 열기]·Health Connect를 사용할 수 없습니다, 스크롤 뒤 확인), 버튼마다 맞는 동작(가짜 동작으로, 실제 시스템 화면은 열지 않음) | 설정 「사진·심박 연결」 | 11/11 통과 |
 | `ui.settings.SettingsSegmentActionsTest` | 4 | 경로 데이터 버튼(설정 화면 구조가 바뀌어 다시 확인) | 설정 「사진·심박 연결」 | 4/4 통과 |
 
-위 18개 클래스 100개가 통과했습니다. 기기 전체 `@Test`는 186개(33개 클래스)이고, 나머지 15개 클래스 86개는 V1.2.0 개발 중 휴대폰에서 실행하지 않아 **기기 검증 대기**입니다. 이 가운데 `ride.RideScenarioTest`와 `nav.NavigationScenarioTest`는 Room 저장소를 쓰므로 DB v4(표 추가)의 영향을 받을 수 있어 먼저 확인합니다:
-`location.GpxLocationSourceTest` 1, `nav.NavigationScenarioTest` 6, `offline.MapLibreOfflineControllerTest` 7, `ride.RideScenarioTest` 5, `ui.common.NoticeSnackbarHostTest` 4, `ui.favorite.FavoriteChipsTest` 7, `ui.favorite.FavoriteDialogsTest` 10, `ui.favorite.FavoritesScreenTest` 6, `ui.navigate.GuidanceButtonRowTest` 3, `ui.pick.MapPickScreenTest` 6, `ui.plan.PlanScreenTest` 4, `ui.search.SearchRegisterModeTest` 10, `ui.search.SearchScreenTest` 13, `ui.trip.EndNavigationDialogTest` 3, `ui.trip.TripStartDialogsTest` 1.
+위 18개 클래스 100개가 통과했습니다. 그리고 최종 수정 묶음 직전(커밋 `476a5f8`, 2026-10-18)에 S22 Ultra(`R5CT43TFS9A`)에서 기기 테스트 **33개 클래스 184개 전체를 하나씩 실행해 모두 통과**했습니다(`ride.RideScenarioTest` 5/5, `nav.NavigationScenarioTest` 6/6 포함 — DB v4에서도 기존 기록·안내 흐름 정상). 최종 수정 묶음 뒤에는 그 수정이 닿은 6개 클래스를 다시 실행해 통과했습니다(위 표). 기기 전체 `@Test`는 지금 186개(33개 클래스)입니다.
 
 ### 수동 확인 (기기 검증 대기)
 
