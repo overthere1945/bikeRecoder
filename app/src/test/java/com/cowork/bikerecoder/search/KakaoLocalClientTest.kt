@@ -8,8 +8,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
+import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
+import mockwebserver3.RecordedRequest
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import org.junit.jupiter.api.AfterEach
@@ -261,5 +263,93 @@ class KakaoLocalClientTest {
         } catch (expected: CancellationException) {
             // cancellation surfaced to the caller
         }
+    }
+
+    /** One category answer: (name, distance) documents. */
+    private fun categoryBody(vararg places: Pair<String, Int>) = places.joinToString(
+        prefix = """{"documents":[""", postfix = "]}",
+    ) { (name, distance) ->
+        """{"place_name":"$name","road_address_name":"도로 $name","address_name":"지번 $name",""" +
+            """"x":"126.829","y":"37.56","distance":"$distance"}"""
+    }
+
+    /** Answers each category request by its code; codes with no answer fail with 500. */
+    private fun answerByCategory(answers: Map<String, MockResponse>) {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse =
+                answers[request.url.queryParameter("category_group_code")]
+                    ?: MockResponse.Builder().code(500).body("{}").build()
+        }
+    }
+
+    @Test
+    fun `nearby asks every category within 50 m by distance`() = runTest {
+        answerByCategory(KakaoLocalClient.NEARBY_CATEGORIES.associateWith { json("""{"documents":[]}""") })
+
+        val result = kakao.nearby(GeoPoint(37.56, 126.829))
+
+        assertEquals(SearchResult.Ok(emptyList<Place>()), result)
+        assertEquals(10, server.requestCount)
+        val urls = (1..10).map { server.takeRequest().url }
+        assertEquals(
+            setOf("SW8", "CE7", "FD6", "CS2", "MT1", "BK9", "PO3", "AT4", "CT1", "HP8"),
+            urls.map { it.queryParameter("category_group_code") }.toSet(),
+        )
+        urls.forEach { url ->
+            assertEquals("/v2/local/search/category.json", url.encodedPath)
+            assertEquals("126.829", url.queryParameter("x"))
+            assertEquals("37.56", url.queryParameter("y"))
+            assertEquals("50", url.queryParameter("radius"))
+            assertEquals("distance", url.queryParameter("sort"))
+            assertEquals("5", url.queryParameter("size"))
+        }
+    }
+
+    @Test
+    fun `nearby merges by distance with one place per name and at most five`() = runTest {
+        answerByCategory(
+            mapOf(
+                "CE7" to json(categoryBody("카페 A" to 30, "카페 B" to 45)),
+                "FD6" to json(categoryBody("식당" to 12, "카페 A" to 31, "분식" to 40)),
+                "CS2" to json(categoryBody("GS25" to 7)),
+                "BK9" to json(categoryBody("은행" to 13)),
+            ),
+        )
+
+        val places = (kakao.nearby(GeoPoint(37.56, 126.829)) as SearchResult.Ok).value
+
+        assertEquals(listOf("GS25", "식당", "은행", "카페 A", "분식"), places.map { it.name })
+        assertEquals(listOf(7, 12, 13, 30, 40), places.map { it.distanceM })
+        assertEquals("도로 GS25", places.first().address)
+    }
+
+    @Test
+    fun `nearby keeps the answers when some categories fail`() = runTest {
+        // Every code but CE7 and HP8 fails (500, or broken JSON for FD6).
+        answerByCategory(
+            mapOf(
+                "CE7" to json(categoryBody("카페" to 20)),
+                "FD6" to json("not json"),
+                "HP8" to json(categoryBody("의원" to 10)),
+            ),
+        )
+
+        val places = (kakao.nearby(GeoPoint(37.56, 126.829)) as SearchResult.Ok).value
+
+        assertEquals(listOf("의원", "카페"), places.map { it.name })
+    }
+
+    @Test
+    fun `nearby with every category failing is empty`() = runTest {
+        answerByCategory(emptyMap())
+
+        assertEquals(SearchResult.Ok(emptyList<Place>()), kakao.nearby(GeoPoint(37.56, 126.829)))
+        assertEquals(10, server.requestCount)
+    }
+
+    @Test
+    fun `nearby without a key is KEY_MISSING with no request`() = runTest {
+        assertEquals(SearchResult.Err(SearchError.KEY_MISSING), client("").nearby(GeoPoint(37.56, 126.829)))
+        assertEquals(0, server.requestCount)
     }
 }

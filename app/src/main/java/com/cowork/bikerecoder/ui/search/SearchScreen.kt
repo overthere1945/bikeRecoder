@@ -60,7 +60,10 @@ object SearchTags {
     const val RECENT_HEADER = "search-recent-header"
     const val RECENT_CLEAR = "search-recent-clear"
 
-    /** [🗺 지도에서 선택], the first line of the results area. */
+    /** [📍 현재 위치], the first line of the results area in the register mode. */
+    const val CURRENT_LOCATION = "search-current-location"
+
+    /** [🗺 지도에서 선택], the first line of the results area (after [CURRENT_LOCATION]). */
     const val MAP_PICK = "search-map-pick"
     fun recent(index: Int) = "search-recent-$index"
     fun recentRemove(index: Int) = "search-recent-remove-$index"
@@ -107,6 +110,8 @@ fun SearchScreen(
      * Null hides the line.
      */
     onPickOnMap: (() -> Unit)? = null,
+    /** [📍 현재 위치] (spec §8.3, the register mode): register the current location. Null hides the line. */
+    onCurrentLocation: (() -> Unit)? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val focus = remember { FocusRequester() }
@@ -145,20 +150,10 @@ fun SearchScreen(
                 favoriteChips()
             }
             Column(modifier = Modifier.weight(1f).fillMaxWidth().imePadding().testTag(SearchTags.RESULTS_AREA)) {
-                // Under the chips, above the recent places or the results; shown with a query too.
-                if (onPickOnMap != null) {
-                    Text(
-                        "🗺 지도에서 선택",
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag(SearchTags.MAP_PICK)
-                            .clickable(role = Role.Button, onClick = onPickOnMap)
-                            .heightIn(min = 48.dp)
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
-                    )
-                    HorizontalDivider()
-                }
+                // Under the chips (none in the register mode), above the recent places or the results; shown with a
+                // query too.
+                if (onCurrentLocation != null) ActionLine("📍 현재 위치", SearchTags.CURRENT_LOCATION, onCurrentLocation)
+                if (onPickOnMap != null) ActionLine("🗺 지도에서 선택", SearchTags.MAP_PICK, onPickOnMap)
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) { SearchResultsArea(state, onPlaceTap, viewModel) }
             }
         }
@@ -186,6 +181,22 @@ fun SearchScreen(
             },
         )
     }
+}
+
+/** One full-width tappable line at the top of the results area, with its divider. */
+@Composable
+private fun ActionLine(text: String, tag: String, onClick: () -> Unit) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodyLarge,
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(tag)
+            .clickable(role = Role.Button, onClick = onClick)
+            .heightIn(min = 48.dp)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+    )
+    HorizontalDivider()
 }
 
 /** The recent places while the query is empty, else the search state for it. */

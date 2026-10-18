@@ -143,6 +143,14 @@ fun rideRoute(guidance: NavUiState, ride: RideUiState): String? = when {
 fun initialRoutes(onboardingDone: Boolean, guidance: NavUiState, ride: RideUiState = RideUiState.Idle): List<String> =
     if (!onboardingDone) listOf(Routes.ONBOARDING) else listOfNotNull(Routes.MAIN, rideRoute(guidance, ride))
 
+/**
+ * After a register-mode save of [kind]: true when the screen on top ([route], its [registerArg]) is the register-mode
+ * search of that same kind, which then goes back. Any other screen stays (e.g. a late home save must not close the
+ * custom favorite search opened since).
+ */
+fun popsAfterRegistered(route: String?, registerArg: String?, kind: FavoriteKind): Boolean =
+    route == Routes.SEARCH_PATTERN && SearchViewModel.registerKind(registerArg) == kind
+
 @Composable
 fun BikeNavHost(
     container: AppContainer,
@@ -328,9 +336,12 @@ fun BikeNavHost(
             val isCurrent = { navController.currentBackStackEntry?.id == entry.id }
             // Keeps the shared location source running while searching (used as the "near" point).
             container.currentLocation.collectAsStateWithLifecycle()
-            val registering = SearchViewModel.registerKind(entry.arguments?.getString(SearchViewModel.ARG_REGISTER)) != null
-            // [이 위치로 설정] on the pick screen: like a tapped result (the sheet; no sheet in the register mode).
-            MapPickResultEffect(entry.savedStateHandle) { picked -> viewModel.onMapPicked(picked) }
+            val registerKind = SearchViewModel.registerKind(entry.arguments?.getString(SearchViewModel.ARG_REGISTER))
+            // [이 위치로 설정] on the pick screen: like a tapped result (the sheet), or in the register mode (spec §8.3)
+            // home/work saved at once and a custom favorite named.
+            MapPickResultEffect(entry.savedStateHandle) { picked ->
+                if (registerKind != null) favoritesViewModel.registerPicked(registerKind, picked) else viewModel.onMapPicked(picked)
+            }
             SearchScreen(
                 viewModel = viewModel,
                 onBack = { navController.popBackStack() },
@@ -340,7 +351,11 @@ fun BikeNavHost(
                 onSaveFavorite = favoritesViewModel::startSave,
                 // The replace question and refusals are the shared dialogs below; a save ends in [FavoriteEvent.Registered].
                 onRegister = { place, kind -> if (isCurrent()) favoritesViewModel.saveAs(place, kind) },
-                onPickOnMap = if (registering) null else ({ if (isCurrent()) navController.navigate(Routes.MAP_PICK) }),
+                onPickOnMap = { if (isCurrent()) navController.navigate(Routes.MAP_PICK) },
+                // [📍 현재 위치]: the register mode only (spec §8.3).
+                onCurrentLocation = registerKind?.let { kind ->
+                    { if (isCurrent()) favoritesViewModel.registerCurrent(kind, container.currentLocation.value) }
+                },
             )
         }
         composable(Routes.MAP_PICK) { entry ->
@@ -378,6 +393,7 @@ fun BikeNavHost(
             val isCurrent = { navController.currentBackStackEntry?.id == entry.id }
             FavoritesScreen(
                 favorites = favorites.filter { it.kind == FavoriteKind.CUSTOM },
+                loaded = favoritesLoaded,
                 onBack = { if (isCurrent()) navController.popBackStack() },
                 // At the limit the shared dialog says so and this screen stays.
                 onAdd = {
@@ -529,16 +545,16 @@ fun BikeNavHost(
         }
     }
     // Collected here, not on the search screen: each save is told once even if that screen was left meanwhile; only a
-    // register-mode search still on top goes back (to main for home/work, to the favorites screen for a custom one).
+    // register-mode search of that kind still on top goes back (to main for home/work, to the favorites screen for a
+    // custom one).
     LaunchedEffect(favoritesViewModel) {
         favoritesViewModel.events.collect { event ->
             when (event) {
                 is FavoriteEvent.Registered -> {
                     Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
                     val top = navController.currentBackStackEntry
-                    val registering = top?.destination?.route == Routes.SEARCH_PATTERN &&
-                        SearchViewModel.registerKind(top.arguments?.getString(SearchViewModel.ARG_REGISTER)) != null
-                    if (registering) navController.popBackStack()
+                    val registerArg = top?.arguments?.getString(SearchViewModel.ARG_REGISTER)
+                    if (popsAfterRegistered(top?.destination?.route, registerArg, event.kind)) navController.popBackStack()
                 }
             }
         }
@@ -551,6 +567,8 @@ fun BikeNavHost(
         onConfirmDelete = favoritesViewModel::confirmDelete,
         onDismiss = favoritesViewModel::dismiss,
         onSaveCustom = favoritesViewModel::saveCustom,
+        onStartCustom = favoritesViewModel::startCustom,
+        onConfirmCurrent = favoritesViewModel::confirmCurrent,
     )
 }
 

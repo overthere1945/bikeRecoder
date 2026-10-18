@@ -32,11 +32,12 @@ class FavoritesScreenTest {
     private val renamed = mutableListOf<Favorite>()
     private val deleted = mutableListOf<Favorite>()
 
-    private fun show(favorites: List<Favorite>) {
+    private fun show(favorites: List<Favorite>, loaded: Boolean = true) {
         composeRule.setContent {
             MaterialTheme {
                 FavoritesScreen(
                     favorites = favorites,
+                    loaded = loaded,
                     onBack = { back++ },
                     onAdd = { added++ },
                     onSelect = { selected += it },
@@ -70,6 +71,15 @@ class FavoritesScreenTest {
         composeRule.onNodeWithTag(FavoritesTags.ADD).assertIsDisplayed()
         composeRule.onNodeWithText("등록한 즐겨찾기가 없습니다").assertIsDisplayed()
         assertTrue(top(FavoritesTags.ADD) < top(FavoritesTags.EMPTY))
+    }
+
+    @Test
+    fun beforeTheListHasLoadedThereIsNoEmptyText() {
+        show(emptyList(), loaded = false)
+
+        composeRule.onNodeWithTag(FavoritesTags.ADD).assertIsDisplayed()
+        composeRule.onNodeWithTag(FavoritesTags.EMPTY).assertDoesNotExist()
+        composeRule.onNodeWithText("등록한 즐겨찾기가 없습니다").assertDoesNotExist()
     }
 
     @Test

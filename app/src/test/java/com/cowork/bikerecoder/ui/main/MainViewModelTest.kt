@@ -49,6 +49,8 @@ class MainViewModelTest {
     private val noSearch = object : PlaceSearch {
         override suspend fun keyword(query: String, near: GeoPoint?): SearchResult<List<Place>> = SearchResult.Ok(emptyList())
         override suspend fun addressOf(point: GeoPoint): SearchResult<String?> = SearchResult.Ok(null)
+
+        override suspend fun nearby(point: GeoPoint): SearchResult<List<Place>> = SearchResult.Ok(emptyList())
     }
 
     @BeforeEach

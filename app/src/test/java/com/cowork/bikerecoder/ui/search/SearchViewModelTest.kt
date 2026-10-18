@@ -40,6 +40,8 @@ class SearchViewModelTest {
         }
 
         override suspend fun addressOf(point: GeoPoint): SearchResult<String?> = SearchResult.Ok(null)
+
+        override suspend fun nearby(point: GeoPoint): SearchResult<List<Place>> = SearchResult.Ok(emptyList())
     }
 
     /** In memory, with the real list rules; [failing] makes every write throw. */

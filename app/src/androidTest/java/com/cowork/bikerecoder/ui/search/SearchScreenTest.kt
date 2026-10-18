@@ -61,6 +61,8 @@ class SearchScreenTest {
             SearchResult.Ok((1..30).map { Place("장소 $it", "주소 $it", GeoPoint(35.0 + it / 1000.0, 129.0), null) })
 
         override suspend fun addressOf(point: GeoPoint): SearchResult<String?> = SearchResult.Ok(null)
+
+        override suspend fun nearby(point: GeoPoint): SearchResult<List<Place>> = SearchResult.Ok(emptyList())
     }
 
     /** In memory, with the real list rules; empty unless a test fills it. */

@@ -3,6 +3,8 @@ package com.cowork.bikerecoder.search
 import com.cowork.bikerecoder.core.model.GeoPoint
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
@@ -28,6 +30,11 @@ class KakaoLocalClient(
         const val DEFAULT_BASE_URL = "https://dapi.kakao.com"
         private const val PAGE_SIZE = "15"
         private val json = Json { ignoreUnknownKeys = true }
+
+        /** Subway, cafe, restaurant, convenience store, mart, bank, public office, attraction, culture, hospital. */
+        val NEARBY_CATEGORIES = listOf("SW8", "CE7", "FD6", "CS2", "MT1", "BK9", "PO3", "AT4", "CT1", "HP8")
+        const val NEARBY_RADIUS_M = 50
+        const val NEARBY_MAX = 5
     }
 
     @Serializable
@@ -73,20 +80,22 @@ class KakaoLocalClient(
             }
             .addQueryParameter("size", PAGE_SIZE)
             .build()
-        return fetch(url) { body ->
-            // A document without usable coordinates is skipped instead of failing the whole list.
-            json.decodeFromString<KeywordResponse>(body).documents.mapNotNull { doc ->
-                val lat = doc.y.trim().toDoubleOrNull() ?: return@mapNotNull null
-                val lon = doc.x.trim().toDoubleOrNull() ?: return@mapNotNull null
-                Place(
-                    name = doc.placeName,
-                    address = doc.roadAddressName.ifBlank { doc.addressName },
-                    point = GeoPoint(lat = lat, lon = lon),
-                    distanceM = doc.distance.trim().toIntOrNull(),
-                )
-            }
-        }
+        return fetch(url, ::parsePlaces)
     }
+
+    /** The keyword and category searches answer with the same documents. */
+    private fun parsePlaces(body: String): List<Place> =
+        // A document without usable coordinates is skipped instead of failing the whole list.
+        json.decodeFromString<KeywordResponse>(body).documents.mapNotNull { doc ->
+            val lat = doc.y.trim().toDoubleOrNull() ?: return@mapNotNull null
+            val lon = doc.x.trim().toDoubleOrNull() ?: return@mapNotNull null
+            Place(
+                name = doc.placeName,
+                address = doc.roadAddressName.ifBlank { doc.addressName },
+                point = GeoPoint(lat = lat, lon = lon),
+                distanceM = doc.distance.trim().toIntOrNull(),
+            )
+        }
 
     override suspend fun addressOf(point: GeoPoint): SearchResult<String?> {
         if (apiKey.isBlank()) return SearchResult.Err(SearchError.KEY_MISSING)
@@ -100,6 +109,37 @@ class KakaoLocalClient(
             doc?.roadAddress?.addressName?.takeIf { it.isNotBlank() }
                 ?: doc?.address?.addressName?.takeIf { it.isNotBlank() }
         }
+    }
+
+    /**
+     * One category search per [NEARBY_CATEGORIES] code, all at once, within [NEARBY_RADIUS_M]; merged nearest first, one
+     * place per name, at most [NEARBY_MAX]. A failed category is left out; with every one failed the list is empty.
+     */
+    override suspend fun nearby(point: GeoPoint): SearchResult<List<Place>> {
+        if (apiKey.isBlank()) return SearchResult.Err(SearchError.KEY_MISSING)
+        val answers = coroutineScope {
+            NEARBY_CATEGORIES.map { code ->
+                async {
+                    val url = baseUrl.newBuilder()
+                        .addPathSegments("v2/local/search/category.json")
+                        .addQueryParameter("category_group_code", code)
+                        .addQueryParameter("x", point.lon.toString())
+                        .addQueryParameter("y", point.lat.toString())
+                        .addQueryParameter("radius", NEARBY_RADIUS_M.toString())
+                        .addQueryParameter("sort", "distance")
+                        .addQueryParameter("size", NEARBY_MAX.toString())
+                        .build()
+                    fetch(url, ::parsePlaces)
+                }
+            }.awaitAll()
+        }
+        val places = answers.filterIsInstance<SearchResult.Ok<List<Place>>>()
+            .flatMap { it.value }
+            .filter { it.name.isNotBlank() }
+            .sortedBy { it.distanceM ?: Int.MAX_VALUE }
+            .distinctBy { it.name }
+            .take(NEARBY_MAX)
+        return SearchResult.Ok(places)
     }
 
     private suspend fun <T> fetch(url: HttpUrl, parse: (String) -> T): SearchResult<T> =

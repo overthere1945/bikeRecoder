@@ -22,4 +22,10 @@ interface PlaceSearch {
 
     /** Reverse geocode; `Ok(null)` when Kakao has no address for [point]. */
     suspend fun addressOf(point: GeoPoint): SearchResult<String?>
+
+    /**
+     * The named places within 50 m of [point] (spec §8.4: the favorite-name suggestions), nearest first, one per name,
+     * at most five.
+     */
+    suspend fun nearby(point: GeoPoint): SearchResult<List<Place>>
 }

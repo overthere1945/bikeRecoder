@@ -8,11 +8,17 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.model.GeoPoint
+import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.favorite.Favorite
 import com.cowork.bikerecoder.favorite.FavoriteKind
 import com.cowork.bikerecoder.favorite.FavoritePlace
 import com.cowork.bikerecoder.favorite.FavoriteRepository
 import com.cowork.bikerecoder.favorite.FavoriteResult
+import com.cowork.bikerecoder.search.PlaceSearch
+import com.cowork.bikerecoder.search.SearchResult
+import com.cowork.bikerecoder.ui.common.addressOrNull
+import com.cowork.bikerecoder.ui.pick.PickedPoint
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -27,12 +33,14 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.Locale
+import kotlin.math.roundToInt
 
 /** The favorite dialog on screen (at most one). */
 sealed interface FavoriteDialog {
     /**
-     * "즐겨찾기에 저장": [집] [회사] / "직접 입력" 칸(place.name.take(FavoriteRepository.MAX_NAME_LENGTH)로 채움, 입력도 그
-     * 길이까지) [저장] [취소]. [error]는 마지막 거절 문구(대화상자는 열린 채).
+     * "즐겨찾기에 저장": [집] [회사] [직접 입력] [취소]. [직접 입력]은 [NameFavorite](장소 이름을 미리 넣음, spec §8.4).
+     * [error]는 마지막 거절 문구(대화상자는 열린 채).
      */
     data class ChooseName(val place: FavoritePlace, val error: String? = null) : FavoriteDialog
 
@@ -50,10 +58,38 @@ sealed interface FavoriteDialog {
     data class Rename(val favorite: Favorite, val error: String? = null) : FavoriteDialog
 
     /**
-     * The register-mode search for a custom favorite (spec §8.2): the name for [place] (prefilled with its name),
-     * [저장] [취소]; [FavoritesViewModel.saveCustom] saves it. [error] is the last refusal (the dialog stays open).
+     * [📍 현재 위치] for home or work (spec §8.3): [question] ("현재 위치를 집으로 저장할까요?"), the address or the
+     * coordinates ([FavoritePlace.name] of [place]), [accuracyWarning] when the fix is rough, [저장] [취소].
+     * [FavoritesViewModel.confirmCurrent] saves it like a tapped result.
      */
-    data class NameCustom(val place: FavoritePlace, val error: String? = null) : FavoriteDialog
+    data class ConfirmCurrent(
+        val kind: FavoriteKind,
+        val place: FavoritePlace,
+        val question: String,
+        val accuracyWarning: String?,
+    ) : FavoriteDialog
+
+    /**
+     * "즐겨찾기 이름" (spec §8.4): the name of a custom favorite for [place], [저장] [취소];
+     * [FavoritesViewModel.saveCustom] saves it. [initialName] goes into the field (the place name for a search result;
+     * the nearest place, else the address, for the current location or a map pick — known once [loadingSuggestions]
+     * ends). [suggestions]: "추천 이름" chips (nearby place names, then the address). [error] is the last refusal (the
+     * dialog stays open). [register]: asked by the register-mode search, so a save tells [FavoriteEvent.Registered]
+     * (the sheet's [직접 입력] does not). [accuracyWarning]: the current location was rough.
+     */
+    data class NameFavorite(
+        val place: FavoritePlace,
+        val initialName: String,
+        val suggestions: List<String> = emptyList(),
+        val loadingSuggestions: Boolean = false,
+        val error: String? = null,
+        val register: Boolean = true,
+        val accuracyWarning: String? = null,
+    ) : FavoriteDialog {
+        /** The same request (place and origin), whatever its field state: a save or the suggestions may land on it. */
+        fun sameRequest(other: FavoriteDialog?): Boolean =
+            other is NameFavorite && other.place == place && other.register == register
+    }
 
     /** "즐겨찾기에서 삭제할까요?" [삭제] [취소] */
     data class ConfirmDelete(val favorite: Favorite) : FavoriteDialog
@@ -78,6 +114,7 @@ sealed interface FavoriteEvent {
  */
 class FavoritesViewModel(
     private val repository: FavoriteRepository,
+    private val placeSearch: PlaceSearch,
     private val log: WarnLog = androidWarnLog(TAG),
 ) : ViewModel() {
 
@@ -111,6 +148,12 @@ class FavoritesViewModel(
 
     private var work: Job? = null
 
+    /** The address of the current location being looked up ([registerCurrent]); a second press waits for it. */
+    private var locating: Job? = null
+
+    /** The "추천 이름" of the open [FavoriteDialog.NameFavorite]. */
+    private var suggesting: Job? = null
+
     fun startSave(place: FavoritePlace) {
         _dialog.value = FavoriteDialog.ChooseName(place)
     }
@@ -130,12 +173,12 @@ class FavoritesViewModel(
     /**
      * The register-mode search (spec §7.4): save [place] as home or work with no name dialog, under the same rules as
      * [save]. Saved → [FavoriteEvent.Registered]; an existing one → [FavoriteDialog.ConfirmReplace]; refused or
-     * failed → [FavoriteDialog.Message]. A custom favorite (spec §8.2) first asks its name: [FavoriteDialog.NameCustom],
-     * then [saveCustom].
+     * failed → [FavoriteDialog.Message]. A custom favorite (spec §8.2) first asks its name: [FavoriteDialog.NameFavorite]
+     * prefilled with the place name, then [saveCustom].
      */
     fun saveAs(place: FavoritePlace, kind: FavoriteKind) {
         if (kind == FavoriteKind.CUSTOM) {
-            if (work?.isActive != true) _dialog.value = FavoriteDialog.NameCustom(place)
+            if (work?.isActive != true) openName(place, prefill = place.name, register = true)
             return
         }
         val current = _dialog.value
@@ -204,32 +247,148 @@ class FavoritesViewModel(
         }
     }
 
+    /** [직접 입력] in [FavoriteDialog.ChooseName] (spec §8.4): the name dialog, prefilled with the place name. */
+    fun startCustom() {
+        val current = _dialog.value as? FavoriteDialog.ChooseName ?: return
+        if (work?.isActive == true) return
+        openName(current.place, prefill = current.place.name, register = false)
+    }
+
     /**
-     * From [FavoriteDialog.NameCustom] only: save its place as the custom favorite [name]. Saved →
-     * [FavoriteEvent.Registered]; refused (name, limit) or failed → the same dialog with the reason.
+     * [📍 현재 위치] in the register-mode search (spec §8.3). No [fix] yet → [MSG_NO_LOCATION]. Else its address is
+     * looked up, then home or work asks [FavoriteDialog.ConfirmCurrent] and a custom favorite its name
+     * ([FavoriteDialog.NameFavorite]). A fix rougher than [MAX_ACCURACY_M] carries [accuracyWarning].
+     */
+    fun registerCurrent(kind: FavoriteKind, fix: LocationFix?) {
+        if (work?.isActive == true || locating?.isActive == true) return
+        if (fix == null) {
+            _dialog.value = FavoriteDialog.Message(MSG_NO_LOCATION)
+            return
+        }
+        val warning = accuracyWarning(fix.accuracyM)
+        locating = viewModelScope.launch {
+            val address = placeSearch.addressOrNull(fix.point)
+            val place = FavoritePlace(address ?: coordinates(fix.point), fix.point, address)
+            when (kind) {
+                FavoriteKind.HOME, FavoriteKind.WORK ->
+                    _dialog.value = FavoriteDialog.ConfirmCurrent(kind, place, currentQuestion(kind), warning)
+                FavoriteKind.CUSTOM -> openName(place, prefill = null, register = true, warning = warning)
+            }
+        }
+    }
+
+    /** [저장] in [FavoriteDialog.ConfirmCurrent]: saved like a tapped result ([saveAs]). */
+    fun confirmCurrent() {
+        val current = _dialog.value as? FavoriteDialog.ConfirmCurrent ?: return
+        saveAs(current.place, current.kind)
+    }
+
+    /**
+     * [이 위치로 설정] on "지도에서 선택" for the register-mode search (spec §8.3): home or work is saved at once (that
+     * button was the confirmation; [saveAs]), a custom favorite asks its name.
+     */
+    fun registerPicked(kind: FavoriteKind, picked: PickedPoint) {
+        val place = FavoritePlace(picked.address ?: PickedPoint.FALLBACK_NAME, picked.point, picked.address)
+        when (kind) {
+            FavoriteKind.HOME, FavoriteKind.WORK -> saveAs(place, kind)
+            FavoriteKind.CUSTOM -> if (work?.isActive != true) openName(place, prefill = null, register = true)
+        }
+    }
+
+    /**
+     * Opens [FavoriteDialog.NameFavorite] for [place] and loads its "추천 이름". [prefill] (a search result's name) is the
+     * field's name; null (current location, map pick) takes the nearest place, else the address, else empty.
+     */
+    private fun openName(place: FavoritePlace, prefill: String?, register: Boolean, warning: String? = null) {
+        suggesting?.cancel()
+        val opened = FavoriteDialog.NameFavorite(
+            place = place,
+            initialName = prefill.orEmpty().take(FavoriteRepository.MAX_NAME_LENGTH),
+            loadingSuggestions = true,
+            register = register,
+            accuracyWarning = warning,
+        )
+        _dialog.value = opened
+        suggesting = viewModelScope.launch {
+            val names = nearbyNames(place.point)
+            val initial = prefill ?: names.firstOrNull() ?: place.address.orEmpty()
+            val suggestions = (names + listOfNotNull(place.address)).filter { it.isNotBlank() }.distinct()
+            _dialog.update {
+                if (opened.sameRequest(it) && (it as FavoriteDialog.NameFavorite).loadingSuggestions) {
+                    it.copy(
+                        initialName = initial.take(FavoriteRepository.MAX_NAME_LENGTH),
+                        suggestions = suggestions,
+                        loadingSuggestions = false,
+                    )
+                } else {
+                    it
+                }
+            }
+        }
+    }
+
+    /** Nearby place names, nearest first; none when the search fails (the name can still be typed). */
+    private suspend fun nearbyNames(point: GeoPoint): List<String> = try {
+        (placeSearch.nearby(point) as? SearchResult.Ok)?.value.orEmpty().map { it.name }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        log.warn("nearby places failed", e)
+        emptyList()
+    }
+
+    /**
+     * From [FavoriteDialog.NameFavorite] only: save its place as the custom favorite [name]. Saved → closed, and
+     * [FavoriteEvent.Registered] when the register-mode search asked; refused (name, limit) or failed → the same dialog
+     * with the reason. Suggestions arriving meanwhile are kept.
      */
     fun saveCustom(name: String) {
-        val current = _dialog.value as? FavoriteDialog.NameCustom ?: return
-        write(current) {
-            when (val result = repository.save(FavoriteKind.CUSTOM, name, current.place)) {
-                FavoriteResult.Saved -> registered(FavoriteKind.CUSTOM)
-                is FavoriteResult.ConfirmReplace -> current
-                is FavoriteResult.Rejected -> current.copy(error = result.message)
+        val current = _dialog.value as? FavoriteDialog.NameFavorite ?: return
+        if (work?.isActive == true) return
+        work = viewModelScope.launch {
+            val error = try {
+                when (val result = repository.save(FavoriteKind.CUSTOM, name, current.place)) {
+                    FavoriteResult.Saved -> {
+                        if (current.register) _events.trySend(FavoriteEvent.Registered(FavoriteKind.CUSTOM))
+                        null
+                    }
+                    // Never for a custom favorite.
+                    is FavoriteResult.ConfirmReplace -> MSG_SAVE_FAILED
+                    is FavoriteResult.Rejected -> result.message
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.warn("favorite write failed", e)
+                MSG_SAVE_FAILED
             }
+            val saved = error == null
+            _dialog.update {
+                when {
+                    !current.sameRequest(it) -> it
+                    saved -> null
+                    else -> (it as FavoriteDialog.NameFavorite).copy(error = error)
+                }
+            }
+            if (saved) suggesting?.cancel()
         }
     }
 
     /**
      * [＋ 즐겨찾기 추가] (spec §8.2): true when one more fits (the caller opens the register-mode search); at the limit
-     * (home and work included) shows [FavoriteRepository.MSG_LIMIT] and returns false.
+     * (home and work included) shows [FavoriteRepository.MSG_LIMIT] and returns false; before [favoritesLoaded] it
+     * does nothing and returns false.
      */
     fun startAdd(): Boolean {
+        // The placeholder list before the first answer says nothing about the count: the press is ignored.
+        if (!favoritesLoaded.value) return false
         if (favorites.value.size < FavoriteRepository.MAX_COUNT) return true
         _dialog.value = FavoriteDialog.Message(FavoriteRepository.MSG_LIMIT)
         return false
     }
 
     fun dismiss() {
+        suggesting?.cancel()
         _dialog.value = null
     }
 
@@ -260,16 +419,33 @@ class FavoritesViewModel(
     private fun failed(from: FavoriteDialog?): FavoriteDialog? = when (from) {
         is FavoriteDialog.ChooseName -> from.copy(error = MSG_SAVE_FAILED)
         is FavoriteDialog.Rename -> from.copy(error = MSG_SAVE_FAILED)
-        is FavoriteDialog.NameCustom -> from.copy(error = MSG_SAVE_FAILED)
         else -> null
     }
 
     companion object {
         private const val TAG = "Favorites"
         const val MSG_SAVE_FAILED = "즐겨찾기를 저장하지 못했습니다"
+        const val MSG_NO_LOCATION = "현재 위치를 찾는 중입니다. 잠시 후 다시 눌러 주세요"
+
+        /** A fix rougher than this (m) is warned about (spec §8.3); saving is still allowed. */
+        const val MAX_ACCURACY_M = 50f
+
+        /** "현재 위치를 집으로 저장할까요?" / "현재 위치를 회사로 저장할까요?" */
+        fun currentQuestion(kind: FavoriteKind): String = when (kind) {
+            FavoriteKind.HOME -> "현재 위치를 집으로 저장할까요?"
+            FavoriteKind.WORK -> "현재 위치를 회사로 저장할까요?"
+            FavoriteKind.CUSTOM -> throw IllegalArgumentException("a custom favorite asks its name instead")
+        }
+
+        /** "위치 오차가 큽니다(약 {n}m)" above [MAX_ACCURACY_M], n rounded; else null. */
+        fun accuracyWarning(accuracyM: Float): String? =
+            if (accuracyM > MAX_ACCURACY_M) "위치 오차가 큽니다(약 ${accuracyM.roundToInt()}m)" else null
+
+        /** The name of a point with no address, as on the pick screen. */
+        private fun coordinates(point: GeoPoint) = String.format(Locale.ROOT, "%.5f, %.5f", point.lat, point.lon)
 
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
-            initializer { FavoritesViewModel(container.favorites) }
+            initializer { FavoritesViewModel(container.favorites, container.placeSearch) }
         }
     }
 }

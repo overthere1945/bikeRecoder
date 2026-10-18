@@ -47,6 +47,8 @@ class MapPickViewModelTest {
             gates[point]?.let { return it.await() }
             return answers[point] ?: SearchResult.Ok("주소 ${point.lat}")
         }
+
+        override suspend fun nearby(point: GeoPoint): SearchResult<List<Place>> = SearchResult.Ok(emptyList())
     }
 
     @BeforeEach

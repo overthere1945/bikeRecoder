@@ -46,12 +46,13 @@ object FavoritesTags {
 
 /**
  * "즐겨찾기" (spec §8.2): [＋ 즐겨찾기 추가] first, then the custom [favorites] (the caller passes custom ones only, in
- * creation order) with name and address, or "등록한 즐겨찾기가 없습니다". A tap is [onSelect]; [⋮] or a long press opens
- * [이름 바꾸기] [삭제].
+ * creation order) with name and address, or "등록한 즐겨찾기가 없습니다" — only once [loaded] (before the first list,
+ * an empty one is not "none"). A tap is [onSelect]; [⋮] or a long press opens [이름 바꾸기] [삭제].
  */
 @Composable
 fun FavoritesScreen(
     favorites: List<Favorite>,
+    loaded: Boolean,
     onBack: () -> Unit,
     onAdd: () -> Unit,
     onSelect: (Favorite) -> Unit,
@@ -79,7 +80,7 @@ fun FavoritesScreen(
                     )
                     HorizontalDivider()
                 }
-                if (favorites.isEmpty()) {
+                if (loaded && favorites.isEmpty()) {
                     item {
                         Text(
                             "등록한 즐겨찾기가 없습니다",

@@ -4,6 +4,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -22,6 +24,7 @@ import com.cowork.bikerecoder.search.RecentPlaceStore
 import com.cowork.bikerecoder.search.SearchResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -37,6 +40,8 @@ class SearchRegisterModeTest {
         override suspend fun keyword(query: String, near: GeoPoint?): SearchResult<List<Place>> = SearchResult.Ok(listOf(station))
 
         override suspend fun addressOf(point: GeoPoint): SearchResult<String?> = SearchResult.Ok(null)
+
+        override suspend fun nearby(point: GeoPoint): SearchResult<List<Place>> = SearchResult.Ok(emptyList())
     }
 
     private val recent = object : RecentPlaceStore {
@@ -56,6 +61,10 @@ class SearchRegisterModeTest {
     }
 
     private val registered = mutableListOf<Pair<FavoritePlace, FavoriteKind>>()
+    private var currentLocation = 0
+    private var pickOnMap = 0
+
+    private fun top(tag: String) = composeRule.onNodeWithTag(tag).fetchSemanticsNode().positionInRoot.y
 
     private fun show(kind: FavoriteKind) {
         composeRule.setContent {
@@ -68,6 +77,8 @@ class SearchRegisterModeTest {
                     favoriteChips = { Text("칩", modifier = Modifier.testTag(CHIPS)) },
                     onSaveFavorite = {},
                     onRegister = { place, k -> registered += place to k },
+                    onPickOnMap = { pickOnMap++ },
+                    onCurrentLocation = { currentLocation++ },
                 )
             }
         }
@@ -134,6 +145,39 @@ class SearchRegisterModeTest {
         // A blank address is saved as none, as from the sheet.
         assertEquals(listOf(FavoritePlace(beach.name, beach.point, null) to FavoriteKind.HOME), registered)
         composeRule.onNodeWithText("목적지로 설정").assertDoesNotExist()
+    }
+
+    @Test
+    fun currentLocationThenMapPickAreTheFirstLinesAboveTheRecentPlaces() {
+        recent.places.value = listOf(beach)
+        show(FavoriteKind.HOME)
+
+        composeRule.onNodeWithTag(SearchTags.CURRENT_LOCATION).assertIsDisplayed().assertTextEquals("📍 현재 위치")
+        composeRule.onNodeWithTag(SearchTags.MAP_PICK).assertIsDisplayed().assertTextEquals("🗺 지도에서 선택")
+        assertTrue(top(SearchTags.QUERY) < top(SearchTags.CURRENT_LOCATION))
+        assertTrue(top(SearchTags.CURRENT_LOCATION) < top(SearchTags.MAP_PICK))
+        assertTrue(top(SearchTags.MAP_PICK) < top(SearchTags.RECENT_HEADER))
+    }
+
+    @Test
+    fun theTwoLinesCallBack() {
+        show(FavoriteKind.CUSTOM)
+
+        composeRule.onNodeWithTag(SearchTags.CURRENT_LOCATION).performClick()
+        assertEquals(1, currentLocation)
+        assertEquals(0, pickOnMap)
+        composeRule.onNodeWithTag(SearchTags.MAP_PICK).performClick()
+        assertEquals(1, pickOnMap)
+        assertEquals(1, currentLocation)
+        assertEquals(emptyList<Pair<FavoritePlace, FavoriteKind>>(), registered)
+    }
+
+    @Test
+    fun theLinesStayWithAQuery() {
+        show(FavoriteKind.WORK)
+        composeRule.onNodeWithTag(SearchTags.QUERY).performTextInput("부산역")
+        composeRule.onNodeWithTag(SearchTags.CURRENT_LOCATION).assertIsDisplayed()
+        composeRule.onNodeWithTag(SearchTags.MAP_PICK).assertIsDisplayed()
     }
 
     private companion object {

@@ -81,6 +81,8 @@ class PlaceLookupTest {
     private class FakeSearch(private val answer: suspend () -> SearchResult<String?>) : PlaceSearch {
         override suspend fun keyword(query: String, near: GeoPoint?): SearchResult<List<Place>> = SearchResult.Ok(emptyList())
         override suspend fun addressOf(point: GeoPoint): SearchResult<String?> = answer()
+
+        override suspend fun nearby(point: GeoPoint): SearchResult<List<Place>> = SearchResult.Ok(emptyList())
     }
 
     @Test
