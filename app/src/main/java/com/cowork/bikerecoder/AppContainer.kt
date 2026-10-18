@@ -12,6 +12,7 @@ import com.cowork.bikerecoder.data.DataStoreDayDistances
 import com.cowork.bikerecoder.data.DataStoreRecentPlaces
 import com.cowork.bikerecoder.data.DayDistances
 import com.cowork.bikerecoder.data.RoomFavoriteStore
+import com.cowork.bikerecoder.data.RoomPostStore
 import com.cowork.bikerecoder.data.RoomRideStore
 import com.cowork.bikerecoder.data.RoomTripStore
 import com.cowork.bikerecoder.data.SettingsRepository
@@ -29,6 +30,12 @@ import com.cowork.bikerecoder.nav.NavigationController
 import com.cowork.bikerecoder.offline.MapLibreOfflineController
 import com.cowork.bikerecoder.offline.NetworkWaiter
 import com.cowork.bikerecoder.offline.SegmentRepository
+import com.cowork.bikerecoder.post.HealthConnectHeartRateSource
+import com.cowork.bikerecoder.post.HeartRateSource
+import com.cowork.bikerecoder.post.MediaStorePhotoSource
+import com.cowork.bikerecoder.post.PhotoSource
+import com.cowork.bikerecoder.post.PostProcessor
+import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.ride.RideController
 import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.routing.BRouterRouter
@@ -186,6 +193,21 @@ class AppContainer(context: Context) {
 
     /** The current recording state, without creating [ride]. */
     val rideState: RideUiState get() = rideCreated.value?.ui?.value ?: RideUiState.Idle
+
+    /**
+     * Post-processing (photos, heart rate, simplified routes of ended segments) runs here, apart from [rideScope]: it
+     * only touches Room, MediaStore and Health Connect. [PostProcessor] catches its own failures.
+     */
+    private val postScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    val postStore: PostStore = RoomPostStore(db)
+    val photoSource: PhotoSource = MediaStorePhotoSource(appContext)
+    val heartRateSource: HeartRateSource = HealthConnectHeartRateSource(appContext)
+
+    /** Started while the app is on screen ([MainActivity.onStart] and the screens that show its results). */
+    val postProcessor: PostProcessor = PostProcessor(
+        rideStore, postStore, photoSource, heartRateSource, clock = System::currentTimeMillis, scope = postScope,
+    )
 
     private companion object {
         const val TAG = "AppContainer"

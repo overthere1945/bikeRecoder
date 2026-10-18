@@ -23,12 +23,7 @@ class MediaStorePhotoSource(
     private val context = context.applicationContext
     private val collection: Uri = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
 
-    override fun access(): PhotoAccess = when {
-        granted(Manifest.permission.READ_MEDIA_IMAGES) -> PhotoAccess.FULL
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
-            granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) -> PhotoAccess.PARTIAL
-        else -> PhotoAccess.NONE
-    }
+    override fun access(): PhotoAccess = photoAccessOf(Build.VERSION.SDK_INT, ::granted)
 
     override suspend fun photos(from: Long, to: Long): List<PhotoCandidate> = withContext(Dispatchers.IO) {
         if (access() == PhotoAccess.NONE) return@withContext emptyList()
@@ -100,6 +95,18 @@ class MediaStorePhotoSource(
         /** 카메라가 찍은 사진만(화면 캡처·다운로드·메신저 사진 제외). */
         const val CAMERA_RELATIVE_PATH = "DCIM/Camera/"
     }
+}
+
+/**
+ * [sdkInt]에서 [granted] 권한으로 얻는 사진 접근. Android 13+는 `READ_MEDIA_IMAGES`(모든 사진),
+ * Android 14+는 `READ_MEDIA_VISUAL_USER_SELECTED`만 있으면 선택한 사진만, Android 11–12는 `READ_EXTERNAL_STORAGE`(모든 사진).
+ */
+internal fun photoAccessOf(sdkInt: Int, granted: (String) -> Boolean): PhotoAccess = when {
+    granted(Manifest.permission.READ_MEDIA_IMAGES) -> PhotoAccess.FULL
+    sdkInt <= Build.VERSION_CODES.S_V2 && granted(Manifest.permission.READ_EXTERNAL_STORAGE) -> PhotoAccess.FULL
+    sdkInt >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+        granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) -> PhotoAccess.PARTIAL
+    else -> PhotoAccess.NONE
 }
 
 /** 찍은 시각: `DATE_TAKEN`(ms), 없거나 0 이하이면 `DATE_ADDED`(초) × 1000. */

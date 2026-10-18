@@ -175,12 +175,12 @@ interface FavoriteDao {
 
 @Dao
 abstract class PostDao {
-    /** extras가 없거나 할 일이 남은 끝난 구간. FAILED는 [failedUntil] 한도(구간 끝 + 이 값) 안일 때만. */
+    /** extras가 없거나 할 일이 남은 끝난 구간, 최근 시작 순. FAILED는 [failedUntil] 한도(구간 끝 + 이 값) 안일 때만. */
     @Query(
         "SELECT s.* FROM ride_segment s LEFT JOIN segment_extras e ON e.segmentId = s.id " +
             "WHERE s.endedAt IS NOT NULL AND (e.segmentId IS NULL OR e.photoScanDone = 0 OR e.simplifiedDone = 0 " +
             "OR e.hrStatus = 'PENDING' OR (e.hrStatus = 'FAILED' AND :now <= s.endedAt + :failedUntil)) " +
-            "ORDER BY s.startedAt ASC, s.id ASC",
+            "ORDER BY s.startedAt DESC, s.id DESC",
     )
     abstract suspend fun segmentsNeedingWork(now: Long, failedUntil: Long): List<RideSegmentEntity>
 

@@ -16,10 +16,12 @@ class HrStatusTest {
     }
 
     @Test
-    fun pendingRetriesUntilTwentyFourHours() {
+    fun pendingIsAlwaysTried() {
         assertTrue(HrRetryPolicy.shouldTry(HrStatus.PENDING, endedAt, endedAt))
-        assertTrue(HrRetryPolicy.shouldTry(HrStatus.PENDING, endedAt, limit)) // inclusive
-        assertFalse(HrRetryPolicy.shouldTry(HrStatus.PENDING, endedAt, limit + 1))
+        assertTrue(HrRetryPolicy.shouldTry(HrStatus.PENDING, endedAt, limit))
+        // past the limit too, so an Empty read can turn it into NONE (e.g. V1.1.0 rides first seen after an upgrade)
+        assertTrue(HrRetryPolicy.shouldTry(HrStatus.PENDING, endedAt, limit + 1))
+        assertEquals(HrStatus.NONE, HrRetryPolicy.after(HrRead.Empty, endedAt, limit + 1))
     }
 
     @Test
@@ -36,6 +38,7 @@ class HrStatusTest {
     @Test
     fun failedIsRetried() {
         assertTrue(HrRetryPolicy.shouldTry(HrStatus.FAILED, endedAt, endedAt + 60_000))
+        assertTrue(HrRetryPolicy.shouldTry(HrStatus.FAILED, endedAt, limit)) // inclusive
         assertFalse(HrRetryPolicy.shouldTry(HrStatus.FAILED, endedAt, limit + 1))
         assertEquals(HrStatus.FAILED, HrRetryPolicy.after(HrRead.Failed, endedAt, endedAt + 60_000))
         // a read failure stays FAILED even past the limit; shouldTry stops retrying it

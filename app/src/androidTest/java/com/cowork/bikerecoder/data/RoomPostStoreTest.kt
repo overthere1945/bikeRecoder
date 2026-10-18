@@ -165,12 +165,13 @@ class RoomPostStoreTest {
         store.saveExtras(done(failed, HrStatus.FAILED))
 
         val limit = endedAt + HrRetryPolicy.GIVE_UP_MS
-        val within = listOf(noExtras, photosLeft, simplifyLeft, pending, failed)
+        // 최근 시작 순
+        val within = listOf(failed, pending, simplifyLeft, photosLeft, noExtras)
         assertEquals(within, store.segmentsNeedingWork(now = 11_000L).map { it.id })
         assertEquals(within, store.segmentsNeedingWork(now = limit).map { it.id }) // 한도 포함
         // 한도를 넘긴 FAILED는 [다시 가져오기]로만 다시 읽는다. PENDING은 늘 남는다.
         assertEquals(
-            listOf(noExtras, photosLeft, simplifyLeft, pending),
+            listOf(pending, simplifyLeft, photosLeft, noExtras),
             store.segmentsNeedingWork(now = limit + 1).map { it.id },
         )
         assertEquals(endedAt, store.segmentsNeedingWork(now = 11_000L).first().endedAt)

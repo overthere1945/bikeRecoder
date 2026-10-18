@@ -31,6 +31,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        // The app came on screen: post-process ended rides (photos, heart rate, routes) — a no-op while one is running.
+        (application as BikeApp).container.postProcessor.request()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)

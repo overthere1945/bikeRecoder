@@ -45,7 +45,7 @@ class SegmentGone(val segmentId: Long, cause: Throwable? = null) :
  */
 interface PostStore {
     /**
-     * 끝난 구간 중 할 일이 남은 것(시작 순): extras 없음, !photoScanDone, !simplifiedDone,
+     * 끝난 구간 중 할 일이 남은 것(최근 시작 순 — 업그레이드 뒤 첫 실행도 마지막 주행부터): extras 없음, !photoScanDone, !simplifiedDone,
      * hrStatus == PENDING, 또는 hrStatus == FAILED이고 [now] <= endedAt + HrRetryPolicy.GIVE_UP_MS.
      */
     suspend fun segmentsNeedingWork(now: Long): List<RideSegment>
