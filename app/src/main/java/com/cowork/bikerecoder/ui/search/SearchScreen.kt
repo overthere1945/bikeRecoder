@@ -7,10 +7,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
@@ -28,6 +30,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -37,6 +46,29 @@ import com.cowork.bikerecoder.favorite.FavoritePlace
 import com.cowork.bikerecoder.search.Place
 import com.cowork.bikerecoder.ui.common.GlyphIcon
 import com.cowork.bikerecoder.ui.common.PlaceActionSheet
+
+object SearchTags {
+    const val QUERY = "search-query"
+    const val RESULTS = "search-results"
+}
+
+/** Hides the keyboard and releases focus when the user starts dragging the list (code-driven scrolls leave it up). */
+@Composable
+internal fun rememberHideKeyboardOnDrag(): NestedScrollConnection {
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    return remember(keyboard, focusManager) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (source == NestedScrollSource.UserInput && available != Offset.Zero) {
+                    keyboard?.hide()
+                    focusManager.clearFocus()
+                }
+                return Offset.Zero
+            }
+        }
+    }
+}
 
 @Composable
 fun SearchScreen(
@@ -64,13 +96,13 @@ fun SearchScreen(
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = { /* results follow typing */ }),
-                    modifier = Modifier.weight(1f).focusRequester(focus),
+                    modifier = Modifier.weight(1f).focusRequester(focus).testTag(SearchTags.QUERY),
                 )
             }
             if (state.query.isEmpty()) {
-                Box(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) { favoriteChips() }
+                favoriteChips()
             }
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth().imePadding()) {
                 when (val result = state.result) {
                     SearchUiState.Idle -> Unit
                     SearchUiState.Loading -> CircularProgressIndicator(Modifier.align(Alignment.TopCenter).padding(24.dp))
@@ -82,7 +114,10 @@ fun SearchScreen(
                     is SearchUiState.Results -> if (result.places.isEmpty()) {
                         Text("검색 결과가 없습니다", modifier = Modifier.padding(16.dp))
                     } else {
-                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        LazyColumn(
+                            state = rememberLazyListState(),
+                            modifier = Modifier.fillMaxSize().nestedScroll(rememberHideKeyboardOnDrag()).testTag(SearchTags.RESULTS),
+                        ) {
                             items(result.places) { place ->
                                 PlaceRow(place, onClick = { viewModel.select(place) })
                                 HorizontalDivider()
