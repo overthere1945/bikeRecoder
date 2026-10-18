@@ -74,6 +74,7 @@ import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.nav.NavigationService
 import com.cowork.bikerecoder.ride.RideUiState
+import com.cowork.bikerecoder.ride.ScreenNotice
 import com.cowork.bikerecoder.ui.common.KeepScreenOn
 import com.cowork.bikerecoder.ui.common.NoticeSnackbarHost
 import com.cowork.bikerecoder.ui.record.AutoPauseChip
@@ -114,9 +115,6 @@ object NavigateTags {
 
 private const val PAUSED_ALPHA = 0.4f
 
-/** The recording's notices sit above the bottom panel and the page dots. */
-private val NOTICE_BOTTOM_PADDING = 220.dp
-
 private const val TTS_MISSING =
     "한국어 음성(TTS)을 사용할 수 없습니다. 설정 > 일반 관리 > 텍스트 음성 변환에서 한국어를 설치하세요"
 
@@ -127,7 +125,7 @@ private val etaFormat = DateTimeFormatter.ofPattern("a h:mm", Locale.KOREAN)
  * Turn-by-turn guidance (spec §4.5): turn card on top, the map following the rider, remaining distance /
  * ETA / speed and [음소거] [전체 경로] [종료] below. While a recording starts or runs (spec §3) the buttons are [음소거]
  * [안내 취소 · 기록 계속] [주행 종료] and [전체 경로] moves onto the map; once it runs its line sits under the turn
- * card and a second page shows its numbers. The recording's on-screen notices show while guiding. Also hosts the start
+ * card and a second page shows its numbers. The recording's on-screen notices show on the guidance map while guiding. Also hosts the start
  * progress, start errors and the end-of-trip screens (with the recording's segment summary). Leaving the screen never
  * stops guidance; once the controller is idle (closed, or nothing to show) [onGuidanceEndedWhileRecording] is called if
  * a recording goes on ([goesToRecordAfterGuidance]: [안내 취소 · 기록 계속], ruling U1's arrival), else [onClose].
@@ -210,6 +208,8 @@ fun NavigateScreen(
                 mapDownloadText = offlineProgress?.takeIf { it.tripId == state.tripId }?.chipText,
                 serviceWarning = serviceWarning,
                 showRecordingButtons = recording,
+                notice = notice,
+                onNoticeShown = viewModel::noticeShown,
                 onMute = viewModel::setMuted,
                 onEnd = { askEnd = true },
                 onCancelGuidance = viewModel::cancelGuidance,
@@ -253,12 +253,6 @@ fun NavigateScreen(
             }
         }
         SnackbarHost(snackbar, modifier = Modifier.align(Alignment.Center).padding(16.dp))
-        // Above the bottom panel (and the page dots).
-        NoticeSnackbarHost(
-            notice = notice,
-            onShown = viewModel::noticeShown,
-            modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = NOTICE_BOTTOM_PADDING),
-        )
     }
 
     if (askEnd && state is NavUiState.Active) {
@@ -283,6 +277,8 @@ fun NavigateScreen(
  * own): pages turn by swiping the record line, the numbers page or the bottom panel, or by the page dots.
  * [rideFailure]: the guided trip's recording could not start (a banner; a tap closes it with [onDismissRideFailure]).
  * [showRecordingButtons]: a recording starts or runs — [GuidanceButtonRow]'s recording buttons, and [전체 경로] on the map.
+ * The recording's on-screen [notice] sits at the bottom of the map page, above the BottomEnd [전체 경로] button, so it
+ * covers neither that button nor the page dots ([onNoticeShown] reports it shown).
  */
 @Composable
 private fun ActiveContent(
@@ -293,6 +289,8 @@ private fun ActiveContent(
     mapDownloadText: String?,
     serviceWarning: String?,
     showRecordingButtons: Boolean,
+    notice: ScreenNotice?,
+    onNoticeShown: (Long) -> Unit,
     onMute: (Boolean) -> Unit,
     onEnd: () -> Unit,
     onCancelGuidance: () -> Unit,
@@ -345,6 +343,12 @@ private fun ActiveContent(
                                     .testTag(GuidanceTags.OVERVIEW_ON_MAP),
                             ) { Text(GuidanceButton.OVERVIEW.label) }
                         }
+                        // Clears the 12 dp + 48 dp [전체 경로] button at BottomEnd.
+                        NoticeSnackbarHost(
+                            notice = notice,
+                            onShown = onNoticeShown,
+                            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp),
+                        )
                         Column(
                             modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp),

@@ -39,7 +39,9 @@ class NoticeSnackbarHostTest {
         waitForText("안내를 마칩니다. 기록은 계속됩니다")
         assertEquals(listOf(1L), shown)
 
-        // The same notice again (e.g. a recomposition, or an equal copy): not reported or shown again.
+        // Cleared (as when reported shown), then the same notice again (e.g. an equal copy): not reported again.
+        notice.value = null
+        composeRule.mainClock.advanceTimeBy(APPEAR_MS)
         notice.value = ScreenNotice(1, "안내를 마칩니다. 기록은 계속됩니다")
         composeRule.mainClock.advanceTimeBy(APPEAR_MS)
         assertEquals(listOf(1L), shown)

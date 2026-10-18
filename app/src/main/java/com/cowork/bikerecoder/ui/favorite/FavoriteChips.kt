@@ -6,7 +6,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -16,6 +15,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.cowork.bikerecoder.favorite.Favorite
 import com.cowork.bikerecoder.favorite.FavoriteKind
@@ -36,7 +37,8 @@ object FavoriteTags {
 
 /**
  * The saved places as chips: home, work, then the custom ones, scrolling sideways. Nothing is drawn without
- * favorites. A tap is [onSelect]; a long press opens the menu: [이름 바꾸기] (custom ones only) and [삭제].
+ * favorites. A tap is [onSelect]; a long press opens the menu: [이름 바꾸기] (custom ones only) and [삭제]. The row is
+ * only as wide as its chips (the map around it keeps its pans and long presses); each chip is a 48 dp touch target.
  */
 @Composable
 fun FavoriteChips(
@@ -48,7 +50,7 @@ fun FavoriteChips(
 ) {
     if (favorites.isEmpty()) return
     Row(
-        modifier = modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).testTag(FavoriteTags.ROW),
+        modifier = modifier.horizontalScroll(rememberScrollState()).testTag(FavoriteTags.ROW),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -75,7 +77,10 @@ private fun FavoriteChip(
             shadowElevation = 2.dp,
             modifier = Modifier
                 .testTag(FavoriteTags.chip(favorite.id))
+                // Riders tap with gloves.
+                .minimumInteractiveComponentSize()
                 .combinedClickable(
+                    role = Role.Button,
                     onClickLabel = "목적지로 설정",
                     onClick = { onSelect(favorite) },
                     onLongClickLabel = "메뉴",

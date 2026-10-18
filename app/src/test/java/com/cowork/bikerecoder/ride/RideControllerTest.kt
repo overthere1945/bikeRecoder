@@ -558,6 +558,21 @@ class RideControllerTest {
     }
 
     @Test
+    fun splitKeepsTheAutoPauseChipOfTheRecording() = runTest {
+        val h = splitHarness()
+        h.settings.value = AppSettings(autoPauseEnabled = true)
+        h.start(h.trip())
+        play(20_000)
+        h.controller.setAutoPause(false)
+        val firstSegment = h.active.segmentId
+
+        h.controller.splitSegment()
+
+        assertNotEquals(firstSegment, h.active.segmentId)
+        assertFalse(h.active.autoPause)
+    }
+
+    @Test
     fun splitAnnouncesTheNewSegmentOnceByVoiceAndOnScreen() = runTest {
         val h = splitHarness()
         h.start(h.trip())
@@ -728,6 +743,22 @@ class RideControllerTest {
         h.controller.announce("안내를 마칩니다. 기록은 계속됩니다")
 
         assertTrue(voice.spoken.isEmpty(), voice.spoken.toString())
+        assertNull(h.controller.notice.value)
+    }
+
+    @Test
+    fun aFailedStartClearsANoticePostedWhileStarting() = runTest {
+        val h = harness(straight(100.0))
+        val tripId = h.trip()
+        h.tripManager.complete(tripId)
+        val starting = h.controller.startRecording(tripId)!!
+        assertEquals(RideUiState.Starting(tripId), h.controller.ui.value)
+        h.controller.announce("안내를 마칩니다. 기록은 계속됩니다")
+        assertNotNull(h.controller.notice.value)
+
+        starting.join()
+
+        assertEquals(RideUiState.Failed(tripId, RideController.MSG_START_FAILED), h.controller.ui.value)
         assertNull(h.controller.notice.value)
     }
 

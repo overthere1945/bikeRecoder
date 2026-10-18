@@ -549,7 +549,11 @@ class NavigationControllerTest {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { h.controller.ui.toList(states) }
 
         h.controller.kmSource = recordingKm
-        h.controller.start(tripId)
+        h.controller.begin(tripId)
+        h.awaitActive()
+        // Muted: the arrival is not heard, so its screen text is what tells the rider (ruling F1: the mute ends with it).
+        h.controller.setMuted(true)
+        assertTrue(voice.muted)
         h.controller.ui.first { it is NavUiState.Idle || it is NavUiState.Finished }
         runCurrent()
 
@@ -558,7 +562,7 @@ class NavigationControllerTest {
         assertEquals(TripStatus.ACTIVE, store.trips.getValue(tripId).status)
         assertNotNull(store.stops(tripId).single().visitedAt)
         assertEquals(listOf("목적지에 도착했습니다"), arrived)
-        assertEquals(1, voice.spoken.count { it == "목적지에 도착했습니다" }, voice.spoken.toString())
+        assertEquals(0, voice.spoken.count { it == "목적지에 도착했습니다" }, voice.spoken.toString())
         assertFalse(voice.muted)
         assertFalse(h.source.collecting, "location source stopped at arrival")
         assertTrue(offline.deleted.isEmpty(), "the trip is not completed, its offline maps stay")

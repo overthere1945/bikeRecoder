@@ -135,9 +135,15 @@ class RideController(
 
     /**
      * Everything belonging to one recording (one segment). [startPhrase] replaces "기록을 시작합니다" (and is shown as a
-     * notice); [bridge] carries the fixes from the segment before (see [splitSegment]).
+     * notice); [bridge] carries the fixes from the segment before (see [splitSegment]); [autoPause] is the auto-pause
+     * chip carried from that segment (null: the setting's default).
      */
-    private class Run(val tripId: Long, val startPhrase: String? = null, var bridge: Bridge? = null) {
+    private class Run(
+        val tripId: Long,
+        val startPhrase: String? = null,
+        var bridge: Bridge? = null,
+        val autoPause: Boolean? = null,
+    ) {
         var startJob: Job? = null
         lateinit var trip: Trip
         var session: RecordingSession? = null
@@ -203,9 +209,14 @@ class RideController(
     }
 
     /** Starts a new [Run] of [tripId] without waiting (the state is [RideUiState.Starting] when this returns). */
-    private fun launchRun(tripId: Long, startPhrase: String? = null, bridge: Bridge? = null): Job {
+    private fun launchRun(
+        tripId: Long,
+        startPhrase: String? = null,
+        bridge: Bridge? = null,
+        autoPause: Boolean? = null,
+    ): Job {
         run?.cancelJobs()
-        val r = Run(tripId, startPhrase, bridge)
+        val r = Run(tripId, startPhrase, bridge, autoPause)
         // Cancelled with the run if its start fails or it stops.
         bridge?.let {
             r.skipUpTo = it.takenUpTo
@@ -284,13 +295,16 @@ class RideController(
      *
      * Meanwhile the state stays Active (old segment) → Starting → Active (new segment); the location stream stays
      * subscribed (a bridge collects the fixes in between for the new segment) and the day's km count goes on (the new
-     * session starts from the day totals, which include the closed segment).
+     * session starts from the day totals, which include the closed segment). The new segment keeps the closed one's
+     * auto-pause chip.
      */
     suspend fun splitSegment(): String? {
         val r = run ?: return null
         r.startJob?.join()
         if (run !== r || r.session == null || r.stopping || r.finishJob != null) return null
         val bridge = openBridge(r)
+        // The rider's chip of this recording, not the setting's default, goes on in the new segment.
+        val autoPause = r.session!!.autoPause
         var next: Job? = null
         var error: String? = null
         val job = scope.launch {
@@ -304,7 +318,7 @@ class RideController(
             } else {
                 error = finished.error
                 bridge.takenUpTo = r.lastFix?.timeMillis ?: Long.MIN_VALUE
-                next = launchRun(r.tripId, phrases.newSegmentStarted, bridge)
+                next = launchRun(r.tripId, phrases.newSegmentStarted, bridge, autoPause)
             }
         }
         r.finishJob = job
@@ -402,7 +416,7 @@ class RideController(
         val date = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
         val today = rideStore.dayTotals(r.tripId, date)
         if (run !== r) return
-        val session = RecordingSession(now, current.autoPauseEnabled, today, zone)
+        val session = RecordingSession(now, r.autoPause ?: current.autoPauseEnabled, today, zone)
         val segmentId = rideStore.openSegment(r.tripId, now, date)
         if (run !== r) return
         r.trip = trip
@@ -710,12 +724,13 @@ class RideController(
         return r to session
     }
 
-    /** The start of [r] failed: nothing records. */
+    /** The start of [r] failed: nothing records; a notice posted while it started must not reach a later recording. */
     private fun fail(r: Run) {
         if (run !== r) return
         releaseKmSource(r)
         r.cancelJobs()
         run = null
+        _notice.value = null
         _ui.value = RideUiState.Failed(r.tripId, MSG_START_FAILED)
     }
 
