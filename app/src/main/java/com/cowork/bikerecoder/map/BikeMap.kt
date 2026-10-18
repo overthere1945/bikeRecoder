@@ -295,16 +295,17 @@ fun BikeMap(
     LaunchedEffect(style, overlay.photos) {
         val loaded = style ?: return@LaunchedEffect
         val wanted = overlay.photos.associateBy { it.photoId }
-        (photoImages.keys - wanted.keys).forEach { id ->
-            loaded.removeImage(photoImageName(id))
-            photoImages.remove(id)
-        }
+        // New images before the source names them, stale ones only after it no longer does.
         wanted.values.forEach { photo ->
             if (photoImages.containsKey(photo.photoId) && photoImages[photo.photoId] === photo.thumbnail) return@forEach
             loaded.addImage(photoImageName(photo.photoId), photoMarker(photo.thumbnail, markerPx, borderPx))
             photoImages[photo.photoId] = photo.thumbnail
         }
         loaded.getSourceAs<GeoJsonSource>(PHOTOS_SOURCE)?.setGeoJson(photosGeoJson(overlay.photos))
+        (photoImages.keys - wanted.keys).forEach { id ->
+            loaded.removeImage(photoImageName(id))
+            photoImages.remove(id)
+        }
     }
 
     // Frame the requested points once the style (and so the map size) is ready.

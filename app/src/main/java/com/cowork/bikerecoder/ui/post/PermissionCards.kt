@@ -98,8 +98,7 @@ fun PhotoPermissionPrompt(photoSource: PhotoSource, settings: SettingsRepository
 
     LifecycleResumeEffect(photoSource) {
         val now = photoSource.access()
-        // PhotoAccess is ordered FULL, PARTIAL, NONE: a lower ordinal is more access.
-        if (now.ordinal < access.ordinal) currentOnAccessGained()
+        if (accessRank(now) > accessRank(access)) currentOnAccessGained()
         access = now
         onPauseOrDispose { }
     }
@@ -127,6 +126,13 @@ fun PhotoPermissionPrompt(photoSource: PhotoSource, settings: SettingsRepository
             }
         },
     )
+}
+
+/** How much [access] allows: NONE < PARTIAL < FULL. */
+private fun accessRank(access: PhotoAccess): Int = when (access) {
+    PhotoAccess.NONE -> 0
+    PhotoAccess.PARTIAL -> 1
+    PhotoAccess.FULL -> 2
 }
 
 /**

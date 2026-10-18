@@ -243,7 +243,7 @@ class RecordViewModelTest {
         val tripId = s.tripManager.startTrip(TripType.SINGLE_DAY, RouteProfile.CYCLEWAY_FIRST, emptyList()).id
         s.vm.start(tripId)
         runCurrent()
-        assertEquals(0, s.vm.summaryPhotoCount.value)
+        assertEquals(0, s.vm.summaryExtras.value.photoCount)
         assertEquals(0, s.passes, "no pass while recording")
 
         s.vm.onEndChoice(RecordingEnd.COMPLETE_TRIP)
@@ -257,12 +257,12 @@ class RecordViewModelTest {
         )
         s.postStore.setHidden(s.postStore.photos.value.first().id, hidden = true)
         runCurrent()
-        assertEquals(2, s.vm.summaryPhotoCount.value, "hidden photos are not counted")
+        assertEquals(2, s.vm.summaryExtras.value.photoCount, "hidden photos are not counted")
         assertEquals(1, s.passes)
 
         s.vm.dismissSummary()
         runCurrent()
-        assertEquals(0, s.vm.summaryPhotoCount.value)
+        assertEquals(0, s.vm.summaryExtras.value.photoCount)
         assertEquals(1, s.passes)
     }
 }

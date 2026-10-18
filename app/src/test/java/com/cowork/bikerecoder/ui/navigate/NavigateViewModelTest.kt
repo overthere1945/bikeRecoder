@@ -21,6 +21,13 @@ import com.cowork.bikerecoder.nav.RecordingVoiceOutput
 import com.cowork.bikerecoder.nav.ScriptedLocationSource
 import com.cowork.bikerecoder.nav.fixture
 import com.cowork.bikerecoder.nav.gpxFixture
+import com.cowork.bikerecoder.core.post.PhotoPositionSource
+import com.cowork.bikerecoder.core.post.PlacedPhoto
+import com.cowork.bikerecoder.post.FakeHeartRateSource
+import com.cowork.bikerecoder.post.FakePhotoSource
+import com.cowork.bikerecoder.post.FakePostStore
+import com.cowork.bikerecoder.post.PostProcessor
+import com.cowork.bikerecoder.ride.FakeRideStore
 import com.cowork.bikerecoder.ride.RecordingEnd
 import com.cowork.bikerecoder.ride.RideControls
 import com.cowork.bikerecoder.ride.RideUiState
@@ -103,6 +110,11 @@ class NavigateViewModelTest {
     private val rideUi = MutableStateFlow<RideUiState>(RideUiState.Idle)
     private var summaryDismissals = 0
 
+    /** The recorded segments (for the summary's photos) and the post-processing passes so far. */
+    private val rides = FakeRideStore(store)
+    private val postStore = FakePostStore { (store.trips.keys + OTHER_TRIP).flatMap { rides.segments(it) } }.also { it.beforeList = { passes++ } }
+    private var passes = 0
+
     private fun TestScope.setup(
         args: Map<String, Any?> = emptyMap(),
         voice: VoiceOutput = RecordingVoiceOutput(),
@@ -125,6 +137,11 @@ class NavigateViewModelTest {
             },
             rideControls = rideControls,
             rideNotice = rideNotice,
+            postStore = postStore,
+            postProcessor = PostProcessor(
+                rides, postStore, FakePhotoSource(), FakeHeartRateSource(), clock = { testScheduler.currentTime },
+                scope = backgroundScope, warnLog = { _, _ -> },
+            ),
         )
         return Setup(vm, tripManager, controller)
     }
@@ -554,5 +571,58 @@ class NavigateViewModelTest {
         rideUi.value = summaryOf(1)
         s.vm.dismissRideFailure()
         assertEquals(1, summaryDismissals, "a summary is not a failure")
+    }
+
+    @Test
+    fun theGuidedSummaryCountsVisiblePhotosAndRequestsOnePass() = runTest(dispatcher) {
+        val s = setup()
+        val id = s.runningTrip(TripType.SINGLE_DAY)
+        val segmentId = rides.openSegment(id, 0L, LocalDate.of(2026, 10, 18))
+        rides.closeSegment(segmentId, 60_000L, SegmentTotals.ZERO)
+        rideUi.value = recordingOf(id)
+        runCurrent()
+        assertEquals(0, passes, "no pass while guiding and recording")
+
+        s.vm.onEndChoice(EndAction.COMPLETE_TRIP)
+        runCurrent()
+        rideUi.value = RideUiState.Finished(rides.segment(segmentId)!!, track = emptyList(), error = null)
+        runCurrent()
+        assertInstanceOf(FinishedView.Done::class.java, finishedView(s.vm.ui.value as NavUiState.Finished, rideUi.value))
+        assertEquals(1, passes, "the summary asks for one pass")
+
+        postStore.upsertPhotos(
+            segmentId,
+            (1L..3L).map { PlacedPhoto(it, it, GeoPoint(37.5, 127.0), PhotoPositionSource.TRACK) },
+        )
+        postStore.setHidden(postStore.photos.value.first().id, hidden = true)
+        runCurrent()
+        assertEquals(2, s.vm.summaryExtras.value.photoCount, "hidden photos are not counted")
+
+        s.vm.confirmFinished()
+        runCurrent()
+        assertEquals(0, s.vm.summaryExtras.value.photoCount)
+        assertEquals(1, passes)
+    }
+
+    @Test
+    fun anotherTripsSummaryIsNotTheGuidedSummary() = runTest(dispatcher) {
+        val s = setup()
+        val id = s.runningTrip(TripType.SINGLE_DAY)
+        s.vm.onEndChoice(EndAction.COMPLETE_TRIP)
+        runCurrent()
+        val other = rides.openSegment(OTHER_TRIP, 0L, LocalDate.of(2026, 10, 18))
+        rides.closeSegment(other, 60_000L, SegmentTotals.ZERO)
+        postStore.upsertPhotos(other, listOf(PlacedPhoto(1, 1, GeoPoint(37.5, 127.0), PhotoPositionSource.TRACK)))
+
+        rideUi.value = RideUiState.Finished(rides.segment(other)!!, track = emptyList(), error = null)
+        runCurrent()
+
+        assertEquals(0, s.vm.summaryExtras.value.photoCount, "that summary is not shown here")
+        assertEquals(0, passes)
+    }
+
+    private companion object {
+        /** A trip the guidance does not know (its summary is not the guided one). */
+        const val OTHER_TRIP = 999L
     }
 }

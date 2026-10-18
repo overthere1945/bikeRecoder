@@ -491,6 +491,7 @@ fun BikeNavHost(
                 },
                 // [안내만 끝내기 (기록 계속)]: the recording goes on, on the record screen.
                 onGuidanceEndedWhileRecording = { if (isCurrent()) navController.openOnMain(Routes.record()) },
+                photoPrompt = { PhotoPrompt(container) },
             )
         }
         composable(

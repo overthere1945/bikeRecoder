@@ -103,7 +103,7 @@ fun RecordScreen(
     val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
     val serviceWarning by viewModel.serviceWarning.collectAsStateWithLifecycle()
     val notice by viewModel.noticeForScreen.collectAsStateWithLifecycle()
-    val summaryPhotoCount by viewModel.summaryPhotoCount.collectAsStateWithLifecycle()
+    val summaryExtras by viewModel.summaryExtras.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
 
@@ -162,10 +162,7 @@ fun RecordScreen(
                 segment = state.segment,
                 map = { modifier -> SummaryMap(state.track, tileSource, modifier) },
                 onConfirm = closeSummary,
-                footer = {
-                    SummaryPhotoCount(summaryPhotoCount)
-                    photoPrompt()
-                },
+                footer = { SummaryExtrasContent(summaryExtras, photoPrompt) },
             )
         }
         SnackbarHost(snackbar, modifier = Modifier.align(Alignment.Center).padding(16.dp))
@@ -417,12 +414,6 @@ private fun RecordMap(state: RideUiState.Active, tileSource: TileSource, modifie
             ) { Text("현재 위치로") }
         }
     }
-}
-
-/** "사진 N장" under the summary's map; nothing without photos. */
-@Composable
-internal fun SummaryPhotoCount(count: Int) {
-    if (count > 0) Text("사진 ${count}장", style = MaterialTheme.typography.titleMedium)
 }
 
 /** The summary's map: the whole track framed. */

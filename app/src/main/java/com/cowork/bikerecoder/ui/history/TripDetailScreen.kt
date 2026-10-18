@@ -33,7 +33,10 @@ import com.cowork.bikerecoder.ui.photo.rememberPhotoViewerState
 import com.cowork.bikerecoder.ui.record.NumberRow
 import java.time.LocalDate
 
-/** [photoPrompt]: the photo permission card where it applies (spec §2.4), shown under the photo strip. */
+/**
+ * [photoPrompt]: the photo permission card where it applies (spec §2.4), shown under the photo strip.
+ * [map]: the map for its content (replaceable in tests).
+ */
 @Composable
 fun TripDetailScreen(
     viewModel: TripDetailViewModel,
@@ -42,6 +45,7 @@ fun TripDetailScreen(
     onOpenSegment: (Long) -> Unit,
     onBack: () -> Unit,
     photoPrompt: @Composable () -> Unit = {},
+    map: @Composable (DetailMapContent, Modifier) -> Unit = { content, modifier -> DetailMap(content, tileSource, modifier) },
 ) {
     val segmentsByDate by viewModel.segmentsByDate.collectAsStateWithLifecycle()
     val total by viewModel.total.collectAsStateWithLifecycle()
@@ -49,7 +53,7 @@ fun TripDetailScreen(
     val track by viewModel.track.collectAsStateWithLifecycle()
     val photos by viewModel.photos.collectAsStateWithLifecycle()
     val viewer = rememberPhotoViewerState()
-    val mapPhotos = rememberMapPhotos(photos.visible, thumbnails)
+    val mapPhotos = rememberMapPhotos(photos, thumbnails)
     // A recording of this trip may have gone on meanwhile.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refresh() }
     TripDetailContent(
@@ -62,9 +66,7 @@ fun TripDetailScreen(
         onDismiss = viewModel::dismiss,
         onBack = onBack,
         map = { modifier ->
-            SegmentMap(track, tileSource, modifier, mapPhotos) { photoId ->
-                viewer.open(photos.visible, photos.visible.indexOfFirst { it.id == photoId })
-            }
+            map(DetailMapContent(track, mapPhotos) { photoId -> viewer.openPhoto(photos.visible, photoId) }, modifier)
         },
         photos = {
             PhotoStrip(

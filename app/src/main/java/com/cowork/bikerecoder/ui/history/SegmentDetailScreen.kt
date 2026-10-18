@@ -38,7 +38,20 @@ import com.cowork.bikerecoder.ui.photo.rememberPhotoViewerState
 import com.cowork.bikerecoder.ui.record.NumberRow
 
 /**
+ * What a detail screen's map shows: the [track] and the previews of the visible photos only ([photos], spec §2.3);
+ * a tap on one gives its id to [onPhotoClick].
+ */
+class DetailMapContent(val track: List<GeoPoint>, val photos: List<MapPhoto>, val onPhotoClick: (Long) -> Unit)
+
+/** The detail screens' MapLibre map ([SegmentMap]) for [content]. */
+@Composable
+internal fun DetailMap(content: DetailMapContent, tileSource: TileSource, modifier: Modifier) {
+    SegmentMap(content.track, tileSource, modifier, content.photos, content.onPhotoClick)
+}
+
+/**
  * [photoPrompt]: the photo permission card where it applies (spec §2.4), shown under the photo strip.
+ * [map]: the map for its content (replaceable in tests).
  */
 @Composable
 fun SegmentDetailScreen(
@@ -47,6 +60,7 @@ fun SegmentDetailScreen(
     thumbnails: PhotoThumbnails,
     onBack: () -> Unit,
     photoPrompt: @Composable () -> Unit = {},
+    map: @Composable (DetailMapContent, Modifier) -> Unit = { content, modifier -> DetailMap(content, tileSource, modifier) },
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val photos by viewModel.photos.collectAsStateWithLifecycle()
@@ -57,15 +71,13 @@ fun SegmentDetailScreen(
         }
         SegmentDetailState.Missing -> HistoryScaffold(title = "구간 기록", onBack = onBack) { EmptyText() }
         is SegmentDetailState.Loaded -> {
-            val mapPhotos = rememberMapPhotos(photos.visible, thumbnails)
+            val mapPhotos = rememberMapPhotos(photos, thumbnails)
             SegmentDetailContent(
                 segment = s.segment,
                 altitude = s.altitude,
                 speed = s.speed,
                 map = { modifier ->
-                    SegmentMap(s.track, tileSource, modifier, mapPhotos) { photoId ->
-                        viewer.open(photos.visible, photos.visible.indexOfFirst { it.id == photoId })
-                    }
+                    map(DetailMapContent(s.track, mapPhotos) { photoId -> viewer.openPhoto(photos.visible, photoId) }, modifier)
                 },
                 onBack = onBack,
                 photos = {

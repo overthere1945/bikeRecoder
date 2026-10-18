@@ -88,6 +88,7 @@ import com.cowork.bikerecoder.ui.record.RIDE_PAGE_COUNT
 import com.cowork.bikerecoder.ui.record.RideNumbersPage
 import com.cowork.bikerecoder.ui.record.SegmentSummaryContent
 import com.cowork.bikerecoder.ui.record.StopButton
+import com.cowork.bikerecoder.ui.record.SummaryExtrasContent
 import com.cowork.bikerecoder.ui.record.SummaryMap
 import com.cowork.bikerecoder.ui.record.rideSummaryLine
 import com.cowork.bikerecoder.ui.record.swipeTurnsPages
@@ -137,8 +138,11 @@ fun NavigateScreen(
     tileSource: TileSource,
     onClose: () -> Unit,
     onGuidanceEndedWhileRecording: () -> Unit,
+    /** The photo permission card of the segment summary (spec §2.4, ruling R9). */
+    photoPrompt: @Composable () -> Unit = {},
 ) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
+    val summaryExtras by viewModel.summaryExtras.collectAsStateWithLifecycle()
     val ride by viewModel.rideUi.collectAsStateWithLifecycle()
     val recording by viewModel.recording.collectAsStateWithLifecycle()
     val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
@@ -244,6 +248,7 @@ fun NavigateScreen(
                             map = { modifier -> SummaryMap(summary.track, tileSource, modifier) },
                             onConfirm = viewModel::confirmFinished,
                         ) {
+                            SummaryExtrasContent(summaryExtras, photoPrompt)
                             if (view.completed) Text(TRIP_COMPLETED, style = MaterialTheme.typography.headlineSmall)
                             if (view.canConvert) {
                                 OutlinedButton(onClick = viewModel::convertToMultiDay) { Text("여러 날로 바꾸기") }

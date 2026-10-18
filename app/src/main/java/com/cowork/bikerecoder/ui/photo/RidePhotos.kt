@@ -52,18 +52,25 @@ internal suspend fun setPhotoHidden(store: PostStore, photo: RidePhoto, hidden: 
 }
 
 /**
- * [photos] as map previews: grey discs at first, then (all at once, so the map uploads its images once) with their
- * thumbnails. Thumbnails already read are kept while the list changes.
+ * The map previews of [photos]: only the visible ones (hidden photos never reach the map, spec §2.3), in time order,
+ * with the thumbnails read so far ([thumbnails] by mediaId; grey without one).
+ */
+internal fun mapPhotosOf(photos: RidePhotos, thumbnails: Map<Long, ImageBitmap>): List<MapPhoto> =
+    photos.visible.map { MapPhoto(it.id, it.point, thumbnails[it.mediaId]) }
+
+/**
+ * [photos]' map previews ([mapPhotosOf]): grey discs at first, then (all at once, so the map uploads its images once)
+ * with their thumbnails. Thumbnails already read are kept while the list changes.
  */
 @Composable
-fun rememberMapPhotos(photos: List<RidePhoto>, thumbnails: PhotoThumbnails): List<MapPhoto> {
+fun rememberMapPhotos(photos: RidePhotos, thumbnails: PhotoThumbnails): List<MapPhoto> {
     val sizePx = with(LocalDensity.current) { MAP_PHOTO_DIAMETER.roundToPx() }
     var loaded by remember { mutableStateOf<Map<Long, ImageBitmap>>(emptyMap()) }
-    LaunchedEffect(photos, sizePx) {
-        val missing = photos.map { it.mediaId }.distinct().filterNot { it in loaded }
+    LaunchedEffect(photos.visible, sizePx) {
+        val missing = photos.visible.map { it.mediaId }.distinct().filterNot { it in loaded }
         if (missing.isEmpty()) return@LaunchedEffect
         val read = missing.mapNotNull { id -> thumbnails.thumbnail(id, sizePx)?.let { id to it } }
         if (read.isNotEmpty()) loaded = loaded + read
     }
-    return remember(photos, loaded) { photos.map { MapPhoto(it.id, it.point, loaded[it.mediaId]) } }
+    return remember(photos, loaded) { mapPhotosOf(photos, loaded) }
 }

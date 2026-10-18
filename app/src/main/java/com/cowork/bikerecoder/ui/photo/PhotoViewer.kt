@@ -137,6 +137,12 @@ class PhotoViewerState internal constructor() {
         startIndex = index.coerceIn(0, photos.lastIndex)
     }
 
+    /** A tap on the map preview [photoId]: opens [photos] at it; nothing if it is no longer among them. */
+    fun openPhoto(photos: List<RidePhoto>, photoId: Long) {
+        val index = photos.indexOfFirst { it.id == photoId }
+        if (index >= 0) open(photos, index)
+    }
+
     fun close() {
         openIds = null
     }
@@ -157,13 +163,21 @@ fun PhotoViewerHost(
     onToggleHidden: (RidePhoto) -> Unit,
 ) {
     val ids = state.openIds ?: return
-    val byId = remember(photos) { (photos.visible + photos.hidden).associateBy { it.id } }
-    val shown = remember(ids, byId) { ids.mapNotNull { byId[it] } }
+    val shown = remember(ids, photos) { viewerPhotos(ids, photos) }
     if (shown.isEmpty()) {
         LaunchedEffect(Unit) { state.close() }
         return
     }
     PhotoViewer(shown, state.startIndex, thumbnails, onToggleHidden, onDismiss = state::close)
+}
+
+/**
+ * What the viewer opened with [openIds] shows of the screen's current [photos]: those ids in that order, hidden or not
+ * (a photo hidden or shown again while open stays), without the ones gone meanwhile (deleted from the gallery).
+ */
+internal fun viewerPhotos(openIds: List<Long>, photos: RidePhotos): List<RidePhoto> {
+    val byId = (photos.visible + photos.hidden).associateBy { it.id }
+    return openIds.mapNotNull { byId[it] }
 }
 
 private val SEOUL: ZoneId = ZoneId.of("Asia/Seoul")
