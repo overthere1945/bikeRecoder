@@ -9,6 +9,11 @@ import com.cowork.bikerecoder.core.recording.RideSegment
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
+
+// Shared by the JVM tests (src/test) and the device tests (src/androidTest). Thread-safe.
 
 /**
  * In-memory [PostStore] like RoomPostStore. [segments] are the ride segments that exist (the ride_segment table):
@@ -18,17 +23,18 @@ import kotlinx.coroutines.flow.map
 class FakePostStore(private val segments: suspend () -> List<RideSegment>) : PostStore {
     val extrasById = MutableStateFlow<Map<Long, SegmentExtras>>(emptyMap())
     val photos = MutableStateFlow<List<RidePhoto>>(emptyList())
-    val samplesById = mutableMapOf<Long, List<HeartRateSample>>()
-    val simplified = mutableMapOf<Long, CumulativeEntry>()
-    private var nextPhotoId = 1L
+    val samplesById: MutableMap<Long, List<HeartRateSample>> = ConcurrentHashMap()
+    val simplified: MutableMap<Long, CumulativeEntry> = ConcurrentHashMap()
+    private val nextPhotoId = AtomicLong(1L)
 
-    var beforeList: suspend () -> Unit = {}
+    @Volatile var beforeList: suspend () -> Unit = {}
 
     override suspend fun segmentsNeedingWork(now: Long): List<RideSegment> {
         beforeList()
+        val extras = extrasById.value
         return segments().filter { s ->
             val endedAt = s.endedAt ?: return@filter false
-            val e = extrasById.value[s.id] ?: return@filter true
+            val e = extras[s.id] ?: return@filter true
             !e.photoScanDone || !e.simplifiedDone || e.hrStatus == HrStatus.PENDING ||
                 (e.hrStatus == HrStatus.FAILED && now <= endedAt + HrRetryPolicy.GIVE_UP_MS)
         }.sortedWith(compareByDescending<RideSegment> { it.startedAt }.thenByDescending { it.id })
@@ -41,7 +47,7 @@ class FakePostStore(private val segments: suspend () -> List<RideSegment>) : Pos
 
     override suspend fun saveExtras(extras: SegmentExtras) {
         requireSegment(extras.segmentId)
-        extrasById.value = extrasById.value + (extras.segmentId to extras)
+        extrasById.update { it + (extras.segmentId to extras) }
     }
 
     override fun observePhotos(segmentIds: List<Long>): Flow<List<RidePhoto>> =
@@ -50,19 +56,20 @@ class FakePostStore(private val segments: suspend () -> List<RideSegment>) : Pos
     override suspend fun upsertPhotos(segmentId: Long, photos: List<PlacedPhoto>) {
         if (photos.isEmpty()) return
         requireSegment(segmentId)
-        val have = this.photos.value.filter { it.segmentId == segmentId }.mapTo(HashSet()) { it.mediaId }
-        val added = photos.filter { it.mediaId !in have }.distinctBy { it.mediaId }.map {
-            RidePhoto(nextPhotoId++, segmentId, it.mediaId, it.takenAt, it.point, it.source, hidden = false)
+        this.photos.update { current ->
+            val have = current.filter { it.segmentId == segmentId }.mapTo(HashSet()) { it.mediaId }
+            current + photos.filter { it.mediaId !in have }.distinctBy { it.mediaId }.map {
+                RidePhoto(nextPhotoId.getAndIncrement(), segmentId, it.mediaId, it.takenAt, it.point, it.source, hidden = false)
+            }
         }
-        this.photos.value = this.photos.value + added
     }
 
     override suspend fun setHidden(photoId: Long, hidden: Boolean) {
-        photos.value = photos.value.map { if (it.id == photoId) it.copy(hidden = hidden) else it }
+        photos.update { all -> all.map { if (it.id == photoId) it.copy(hidden = hidden) else it } }
     }
 
     override suspend fun deletePhotosByMediaId(mediaIds: Collection<Long>) {
-        photos.value = photos.value.filterNot { it.mediaId in mediaIds }
+        photos.update { all -> all.filterNot { it.mediaId in mediaIds } }
     }
 
     override suspend fun replaceSamples(segmentId: Long, samples: List<HeartRateSample>) {

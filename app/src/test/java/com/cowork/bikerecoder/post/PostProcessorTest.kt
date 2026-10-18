@@ -15,6 +15,7 @@ import com.cowork.bikerecoder.ride.FakeRideStore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -233,7 +234,7 @@ class PostProcessorTest {
     }
 
     @Test
-    fun noPermissionIsFailedAndRetried() = runTest {
+    fun noPermissionStaysPendingAndIsRetried() = runTest {
         val segment = ride()
         heartRate.permitted = false
         val p = processor()
@@ -241,43 +242,93 @@ class PostProcessorTest {
 
         p.runOnce()
 
-        assertEquals(emptyList<Pair<Long, Long>>(), heartRate.calls) // not read without permission
-        assertEquals(HrStatus.FAILED, extras(segment)!!.hrStatus)
-        assertEquals(now, extras(segment)!!.hrLastTriedAt)
+        // R8: not read without permission, and not FAILED either — only the attempt is noted
+        assertEquals(emptyList<Pair<Long, Long>>(), heartRate.calls)
+        var e = extras(segment)!!
+        assertEquals(HrStatus.PENDING, e.hrStatus)
+        assertEquals(now, e.hrLastTriedAt)
+        assertNull(e.hrFirstTriedAt)
 
         heartRate.permitted = true
         heartRate.availability = HealthAvailability.UPDATE_REQUIRED
         now = END + 2 * 60_000L
         p.runOnce()
 
-        assertEquals(emptyList<Pair<Long, Long>>(), heartRate.calls) // nor while Health Connect is unavailable
-        assertEquals(HrStatus.FAILED, extras(segment)!!.hrStatus)
+        // nor while Health Connect is unavailable
+        assertEquals(emptyList<Pair<Long, Long>>(), heartRate.calls)
+        assertEquals(HrStatus.PENDING, extras(segment)!!.hrStatus)
+        assertEquals(now, extras(segment)!!.hrLastTriedAt)
 
         heartRate.availability = HealthAvailability.AVAILABLE
         heartRate.reads = { _, _ -> HrRead.Samples(samples(), null) }
-        now = END + DAY // the limit itself still retries
+        now = END + 3 * 60_000L
         p.runOnce()
 
         assertEquals(listOf(START to END), heartRate.calls)
-        assertEquals(HrStatus.READY, extras(segment)!!.hrStatus)
-        assertEquals(END + 60_000L, extras(segment)!!.hrFirstTriedAt)
+        e = extras(segment)!!
+        assertEquals(HrStatus.READY, e.hrStatus)
+        assertEquals(now, e.hrFirstTriedAt)
+        assertEquals(now, e.hrLastTriedAt)
     }
 
     @Test
-    fun failedPastLimitIsNotRetried() = runTest {
-        val segment = ride()
+    fun oldPendingSegmentWithoutPermissionStaysPendingThenResolvesWhenGranted() = runTest {
+        // V1.1.0 rides seen for the first time after the upgrade, before the Health Connect card was ever shown
+        val withHeartRate = ride(START, END)
+        val without = ride(START + 60 * 60_000L, END + 60 * 60_000L)
         heartRate.permitted = false
+        heartRate.reads = { from, _ -> if (from == START) HrRead.Samples(samples(), 40.0) else HrRead.Empty }
+        val p = processor()
+        now = END + 3 * DAY
+
+        p.runOnce()
+
+        assertEquals(emptyList<Pair<Long, Long>>(), heartRate.calls)
+        for (segment in listOf(withHeartRate, without)) {
+            assertEquals(HrStatus.PENDING, extras(segment)!!.hrStatus)
+            assertEquals(now, extras(segment)!!.hrLastTriedAt)
+        }
+
+        heartRate.permitted = true
+        now += 60_000L
+        p.runOnce()
+
+        assertEquals(2, heartRate.calls.size)
+        assertEquals(HrStatus.READY, extras(withHeartRate)!!.hrStatus)
+        assertEquals(40.0, extras(withHeartRate)!!.calories)
+        assertEquals(HrStatus.NONE, extras(without)!!.hrStatus)
+    }
+
+    @Test
+    fun failedWithinLimitIsRetried() = runTest {
+        val segment = ride()
+        heartRate.reads = { _, _ -> HrRead.Failed } // an actual read error from a permitted source
         val p = processor()
         now = END + 60_000L
         p.runOnce()
         assertEquals(HrStatus.FAILED, extras(segment)!!.hrStatus)
 
-        heartRate.permitted = true
+        heartRate.reads = { _, _ -> HrRead.Samples(samples(), null) }
+        now = END + 2 * 60_000L
+        p.runOnce() // within the limit FAILED is read again
+        assertEquals(HrStatus.READY, extras(segment)!!.hrStatus)
+        assertEquals(2, heartRate.calls.size)
+    }
+
+    @Test
+    fun failedPastLimitIsNotRetried() = runTest {
+        val segment = ride()
+        heartRate.reads = { _, _ -> HrRead.Failed }
+        val p = processor()
+        now = END + 60_000L
+        p.runOnce()
+        assertEquals(HrStatus.FAILED, extras(segment)!!.hrStatus)
+
         heartRate.reads = { _, _ -> HrRead.Samples(samples(), null) }
         now = END + DAY + 1
         p.runOnce() // still listed (photo scan not done yet), but FAILED is past its retries
 
-        assertEquals(emptyList<Pair<Long, Long>>(), heartRate.calls)
+        assertEquals(1, heartRate.calls.size)
         assertEquals(HrStatus.FAILED, extras(segment)!!.hrStatus)
     }
 
@@ -384,13 +435,42 @@ class PostProcessorTest {
         p.runOnce()
         val ready = extras(segment)!!
 
-        heartRate.permitted = false
+        // R7: a failed read never throws away heart rate already read.
+        heartRate.reads = { _, _ -> HrRead.Failed }
         now = END + 2 * DAY
         p.refetchHeartRate(segment.id)
 
-        // A failed or empty read never throws away heart rate already read.
         assertEquals(ready.copy(hrLastTriedAt = now), extras(segment))
         assertEquals(samples(), store.samples(segment.id))
+
+        // Nor does a missing permission (R8: not read at all).
+        heartRate.permitted = false
+        now = END + 3 * DAY
+        p.refetchHeartRate(segment.id)
+
+        assertEquals(2, heartRate.calls.size)
+        assertEquals(ready.copy(hrLastTriedAt = now), extras(segment))
+        assertEquals(samples(), store.samples(segment.id))
+    }
+
+    @Test
+    fun refetchEmptyKeepsReadyData() = runTest {
+        val segment = ride()
+        heartRate.reads = { _, _ -> HrRead.Samples(samples(), 50.0) }
+        val p = processor()
+        now = END + 60_000L
+        p.runOnce()
+        val ready = extras(segment)!!
+
+        // R7: Empty, within the limit (would be PENDING) and past it (would be NONE), keeps READY and its data.
+        heartRate.reads = { _, _ -> HrRead.Empty }
+        for (at in listOf(END + 2 * 60 * 60_000L, END + 2 * DAY)) {
+            now = at
+            p.refetchHeartRate(segment.id)
+
+            assertEquals(ready.copy(hrLastTriedAt = now), extras(segment))
+            assertEquals(samples(), store.samples(segment.id))
+        }
     }
 
     @Test
@@ -509,6 +589,105 @@ class PostProcessorTest {
 
         assertFalse(p.running.value)
         assertEquals(2, warnings.size)
+    }
+
+    @Test
+    fun segmentFailureSkipsOnlyThatSegment() = runTest {
+        val older = ride(START, END)
+        val newer = ride(START + DAY, END + DAY)
+        // Reading the newer ride's progress fails before any step starts (e.g. an unreadable row).
+        val failing = object : PostStore by store {
+            override suspend fun extras(segmentId: Long): SegmentExtras? =
+                if (segmentId == newer.id) throw IllegalStateException("bad row") else store.extras(segmentId)
+        }
+        now = END + DAY + 60_000L
+
+        processor(postStore = failing).runOnce()
+
+        assertNull(extras(newer))
+        assertNull(store.simplified[newer.id])
+        assertNotNull(extras(older)) // newest first, so the older ride comes after the failing one
+        assertNotNull(store.simplified[older.id])
+        assertEquals(1, warnings.size)
+    }
+
+    @Test
+    fun photoAccessFailureStaysInPhotoStep() = runTest {
+        val segment = ride()
+        val failing = object : PhotoSource by photos {
+            override fun access(): PhotoAccess = throw SecurityException("no package")
+        }
+        heartRate.reads = { _, _ -> HrRead.Samples(samples(), null) }
+        now = END + DAY + 1
+
+        processor(photoSource = failing).runOnce()
+
+        val e = extras(segment)!!
+        assertFalse(e.photoScanDone)
+        assertEquals(HrStatus.READY, e.hrStatus)
+        assertTrue(e.simplifiedDone)
+        assertEquals(1, warnings.size)
+    }
+
+    @Test
+    fun cancellationThrownBySourceIsAFailureNotTheEndOfThePass() = runTest {
+        val older = ride(START, END)
+        val newer = ride(START + DAY, END + DAY)
+        // e.g. a TimeoutCancellationException from a withTimeout inside the source, while this pass is not cancelled
+        val timingOut = object : HeartRateSource by heartRate {
+            override suspend fun read(from: Long, to: Long): HrRead =
+                throw kotlinx.coroutines.CancellationException("timed out")
+        }
+        now = END + DAY + 60_000L
+
+        processor(hrSource = timingOut).runOnce()
+
+        for (segment in listOf(older, newer)) {
+            assertEquals(HrStatus.FAILED, extras(segment)!!.hrStatus)
+            assertTrue(extras(segment)!!.simplifiedDone)
+        }
+        assertEquals(2, warnings.size)
+    }
+
+    @Test
+    fun cancelledPassResetsRunningAndReleasesTheLock() = runTest {
+        val segment = ride()
+        now = END + 60_000L
+        val never = CompletableDeferred<Unit>()
+        store.beforeList = { never.await() }
+        val p = processor()
+
+        val pass = launch { p.runOnce() }
+        runCurrent()
+        assertTrue(p.running.value)
+
+        pass.cancel()
+        runCurrent()
+
+        assertTrue(pass.isCancelled)
+        assertFalse(p.running.value)
+        assertEquals(emptyList<String>(), warnings) // a real cancellation is not a failure
+
+        store.beforeList = {}
+        p.runOnce()
+        assertNotNull(extras(segment))
+    }
+
+    @Test
+    fun pruneSurvivesGalleryFailure() = runTest {
+        val segment = ride()
+        photos.photos = listOf(PhotoCandidate(1, START + 60_000L, exif = null))
+        now = END + 60_000L
+        processor().runOnce()
+        val failing = object : PhotoSource by photos {
+            override suspend fun existing(mediaIds: Collection<Long>): Set<Long> =
+                throw IllegalStateException("MediaStore query returned no cursor")
+        }
+
+        processor(photoSource = failing).pruneDeletedPhotos(listOf(segment.id))
+
+        assertEquals(listOf(1L), photosOf(segment).map { it.mediaId }) // nothing deleted
+        assertEquals(1, warnings.size)
     }
 
     @Test
