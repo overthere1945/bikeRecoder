@@ -13,6 +13,7 @@ import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.post.SegmentExtras
+import com.cowork.bikerecoder.ride.ShortRides
 import com.cowork.bikerecoder.ui.health.HeartRateGate
 import com.cowork.bikerecoder.ui.health.HeartRateSection
 import kotlinx.coroutines.CancellationException
@@ -45,6 +46,8 @@ data class SummaryExtrasState(
     val heartRate: SegmentExtras? = null,
     /** "거의 움직이지 않은 기록입니다. 저장할까요?" (spec §6.10): a ride under 10 m, not answered yet. */
     val askShort: Boolean = false,
+    /** [버리기] is being carried out for this summary: its other actions (e.g. [여러 날로 바꾸기]) are off (ruling R20). */
+    val discarding: Boolean = false,
 )
 
 /**
@@ -70,6 +73,9 @@ class SummaryExtras(
     private val segment = summarySegment.distinctUntilChanged().stateIn(scope, SharingStarted.Eagerly, null)
     private val onScreen = MutableStateFlow(false)
 
+    /** The segment whose [버리기] is being carried out. */
+    private val discarding = MutableStateFlow<Long?>(null)
+
     /** Reads done by the one-minute loop, per segment (touched only from [scope]'s loop). */
     private val refetched = HashMap<Long, Int>()
 
@@ -88,7 +94,10 @@ class SummaryExtras(
                     postStore.observePhotos(listOf(id)).map { photos -> photos.count { !it.hidden } }.catch { emit(0) },
                     postStore.observeExtras(listOf(id)).map { it.firstOrNull() }.catch { emit(null) },
                     askShort(id),
-                ) { photoCount, heartRate, askShort -> SummaryExtrasState(photoCount, heartRate, askShort) }
+                    discarding.map { it == id },
+                ) { photoCount, heartRate, askShort, discarding ->
+                    SummaryExtrasState(photoCount, heartRate, askShort, discarding)
+                }
             }
         }
         .stateIn(scope, SharingStarted.Eagerly, SummaryExtrasState())
@@ -121,12 +130,20 @@ class SummaryExtras(
         val id = segment.value ?: return
         if (id in shortRides.answered.value) return
         shortRides.answer(id)
+        discarding.value = id
         scope.launch {
-            // Once started, the deletion finishes even if the screen goes away; the summary is closed only if it stays.
-            withContext(NonCancellable) { shortRides.discard(id) }
-            close()
+            try {
+                // Once started, the deletion finishes even if the screen goes away; the summary closes only if it stays.
+                withContext(NonCancellable) { shortRides.discard(id) }
+                close()
+            } finally {
+                discarding.compareAndSet(id, null)
+            }
         }
     }
+
+    /** True from [discardShort] until its summary closes (checked at once, not through [state]). */
+    val isDiscarding: Boolean get() = discarding.value != null
 
     /** [저장], or the dialog dismissed: the segment stays and is not asked about again. */
     fun keepShort() {

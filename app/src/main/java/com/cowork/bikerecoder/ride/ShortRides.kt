@@ -1,12 +1,11 @@
-package com.cowork.bikerecoder.ui.record
+package com.cowork.bikerecoder.ride
 
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStore
+import com.cowork.bikerecoder.core.recording.TripDeleteCondition
 import com.cowork.bikerecoder.core.trip.OfflineMapController
-import com.cowork.bikerecoder.core.trip.TripStatus
-import com.cowork.bikerecoder.core.trip.TripStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,10 +19,10 @@ import kotlinx.coroutines.flow.update
  */
 class ShortRides(
     private val rideStore: RideStore,
-    private val tripStore: TripStore,
-    private val offlineMaps: OfflineMapController,
+    offlineMaps: OfflineMapController,
     private val log: WarnLog,
 ) {
+    private val deleter = TripDeleter(rideStore, offlineMaps, log)
     private val _answered = MutableStateFlow<Set<Long>>(emptySet())
 
     /** Segments whose question was answered ([버리기], [저장] or dismissed); never asked again. */
@@ -37,27 +36,16 @@ class ShortRides(
     suspend fun isShort(segmentId: Long): Boolean = rideStore.segment(segmentId)?.isShortAndFinished() == true
 
     /**
-     * [버리기]: deletes the segment, if it is still a finished short one, and then its trip when no segment of it is left
-     * (an open one counts) and it is not ACTIVE — with the trip's offline maps, as the history's delete does. Nothing
-     * else is ever deleted. Failures are logged.
+     * [버리기]: deletes the segment, if it is still a finished short one, and then its trip only if, at the moment of
+     * deleting, it is COMPLETED with no segment left, open or closed ([TripDeleter], [TripDeleteCondition.NO_SEGMENTS]).
+     * Nothing else is ever deleted. Failures are logged.
      */
     suspend fun discard(segmentId: Long) {
         try {
             val segment = rideStore.segment(segmentId) ?: return
             if (!segment.isShortAndFinished()) return
             rideStore.deleteSegment(segmentId)
-            val tripId = segment.tripId
-            if (rideStore.segments(tripId).isNotEmpty()) return
-            val trip = tripStore.trip(tripId) ?: return
-            if (trip.status == TripStatus.ACTIVE) return
-            try {
-                offlineMaps.deleteForTrip(tripId)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                log.warn("Could not delete the offline maps of trip $tripId", e)
-            }
-            rideStore.deleteTrip(tripId)
+            deleter.delete(segment.tripId, TripDeleteCondition.NO_SEGMENTS)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

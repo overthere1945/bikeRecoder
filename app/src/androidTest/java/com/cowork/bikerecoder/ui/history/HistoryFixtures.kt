@@ -6,7 +6,9 @@ import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
+import com.cowork.bikerecoder.core.recording.TripDeleteCondition
 import com.cowork.bikerecoder.core.recording.TripRideSummary
+import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.map.TileSource
 import java.time.LocalDate
 
@@ -28,6 +30,8 @@ internal class ReadOnlyRides(private val segments: List<RideSegment>, private va
     override suspend fun tripSummaries(): List<TripRideSummary> = error("read only")
     override suspend fun deleteSegment(id: Long) = error("read only")
     override suspend fun deleteTrip(tripId: Long) = error("read only")
+    override suspend fun deleteTripIf(tripId: Long, condition: TripDeleteCondition): Boolean = error("read only")
+    override suspend fun emptyTrips(): List<Trip> = error("read only")
 }
 
 /** For screens whose map slot is replaced. */

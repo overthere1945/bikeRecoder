@@ -26,6 +26,28 @@ abstract class TripDao {
     @Query("DELETE FROM trip WHERE id = :id")
     abstract suspend fun deleteTrip(id: Long)
 
+    /** [TripDeleteCondition.NO_SEGMENTS][com.cowork.bikerecoder.core.recording.TripDeleteCondition]; rows deleted. */
+    @Query(
+        "DELETE FROM trip WHERE id = :id AND status = 'COMPLETED' " +
+            "AND NOT EXISTS (SELECT 1 FROM ride_segment WHERE tripId = :id)",
+    )
+    abstract suspend fun deleteCompletedWithoutSegments(id: Long): Int
+
+    /** [TripDeleteCondition.NOT_RECORDING][com.cowork.bikerecoder.core.recording.TripDeleteCondition]; rows deleted. */
+    @Query(
+        "DELETE FROM trip WHERE id = :id AND status = 'COMPLETED' " +
+            "AND NOT EXISTS (SELECT 1 FROM ride_segment WHERE tripId = :id AND endedAt IS NULL)",
+    )
+    abstract suspend fun deleteCompletedNotRecording(id: Long): Int
+
+    /** [TripDeleteCondition.SHORT_NOT_RECORDING][com.cowork.bikerecoder.core.recording.TripDeleteCondition]; rows deleted. */
+    @Query(
+        "DELETE FROM trip WHERE id = :id AND status = 'COMPLETED' " +
+            "AND NOT EXISTS (SELECT 1 FROM ride_segment WHERE tripId = :id AND endedAt IS NULL) " +
+            "AND (SELECT COALESCE(SUM(distanceM), 0) FROM ride_segment WHERE tripId = :id) < :maxDistanceM",
+    )
+    abstract suspend fun deleteShortCompletedNotRecording(id: Long, maxDistanceM: Double): Int
+
     @Query("SELECT * FROM waypoint WHERE tripId = :tripId ORDER BY stop_order ASC")
     abstract suspend fun stops(tripId: Long): List<WaypointEntity>
 
@@ -153,6 +175,10 @@ abstract class RideDao {
 
     @Query("DELETE FROM ride_segment WHERE id = :id")
     abstract suspend fun deleteSegment(id: Long)
+
+    /** Trips with segments that all have no distance (none in [tripRideRows]). */
+    @Query("SELECT tripId FROM ride_segment GROUP BY tripId HAVING MAX(distanceM) <= 0 ORDER BY tripId")
+    abstract suspend fun emptyTripIds(): List<Long>
 }
 
 @Dao

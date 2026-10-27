@@ -13,11 +13,14 @@ import com.cowork.bikerecoder.core.post.HeartRateSummary
 import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
 import com.cowork.bikerecoder.core.post.RideColors
 import com.cowork.bikerecoder.core.recording.RideStore
+import com.cowork.bikerecoder.core.recording.TripDeleteCondition
 import com.cowork.bikerecoder.core.recording.TripRideSummary
+import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.OfflineMapController
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.post.SegmentCard
+import com.cowork.bikerecoder.ride.TripDeleter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -63,8 +66,9 @@ data class MonthGroup(val header: String, val cards: List<TripCard>)
  * recorded) cannot be deleted; otherwise deleting asks first and then removes the trip with its stops, segments and
  * points, and its offline maps (whose refs have no foreign key to the trip).
  *
- * Short trips (spec §6.10: under [MIN_RIDE_DISTANCE_M] in all, not in progress) are not listed but counted
- * ([hiddenShortCount]); [정리] deletes them after asking. Nothing is deleted without asking.
+ * Short trips (spec §6.10: under [MIN_RIDE_DISTANCE_M] in all, or all 0 m (R21), not in progress) are not listed but
+ * counted ([hiddenShortCount]); [정리] deletes them after asking. Nothing is deleted without asking, and every delete is
+ * conditional in the store ([TripDeleter], ruling R20).
  *
  * The listed trips are also shown as [months] of cards (spec §6.11), whose routes, photos and heart rate come from
  * one read of [postStore] per load (not one per trip); if that read fails the cards are shown without them.
@@ -75,6 +79,9 @@ class HistoryViewModel(
     private val offlineMaps: OfflineMapController,
     private val log: WarnLog,
 ) : ViewModel() {
+
+    /** Every trip delete here goes through it: conditional, then the offline maps (ruling R20). */
+    private val deleter = TripDeleter(rideStore, offlineMaps, log)
 
     private val _trips = MutableStateFlow<List<TripRideSummary>>(emptyList())
     val trips: StateFlow<List<TripRideSummary>> = _trips.asStateFlow()
@@ -134,8 +141,11 @@ class HistoryViewModel(
                     _dialog.value = HistoryDialog.Message(MSG_ACTIVE_TRIP_NOT_DELETABLE)
                     return@withLock
                 }
-                guarded("Could not delete the offline maps of trip $tripId") { offlineMaps.deleteForTrip(tripId) }
-                guarded("Could not delete trip $tripId") { rideStore.deleteTrip(tripId) }
+                // In one statement, only if still COMPLETED and not recording (it may have started meanwhile).
+                val deleted = guarded("Could not delete trip $tripId") {
+                    deleter.delete(tripId, TripDeleteCondition.NOT_RECORDING)
+                }
+                if (deleted == false) _dialog.value = HistoryDialog.Message(MSG_ACTIVE_TRIP_NOT_DELETABLE)
                 load()
             }
         }
@@ -162,8 +172,10 @@ class HistoryViewModel(
             mutex.withLock {
                 val now = guarded("Could not read the ride history") { split() } ?: return@withLock
                 for (tripId in now.hidden.filter { it in counted }) {
-                    guarded("Could not delete the offline maps of trip $tripId") { offlineMaps.deleteForTrip(tripId) }
-                    guarded("Could not delete trip $tripId") { rideStore.deleteTrip(tripId) }
+                    // Checked again in the deleting statement: COMPLETED, nothing open, still under 10 m.
+                    guarded("Could not delete trip $tripId") {
+                        deleter.delete(tripId, TripDeleteCondition.SHORT_NOT_RECORDING)
+                    }
                 }
                 load()
             }
@@ -193,14 +205,18 @@ class HistoryViewModel(
         }
     }
 
-    /** The listed trips and the short ones hidden (under [MIN_RIDE_DISTANCE_M] in all, not ACTIVE, nothing open). */
+    /**
+     * The listed trips and the short ones hidden: under [MIN_RIDE_DISTANCE_M] in all, not ACTIVE, nothing open — also
+     * the trips whose segments are all 0 m, which are never listed (ruling R21).
+     */
     private suspend fun split(): HistorySplit {
         val all = rideStore.tripSummaries()
+        val empty = rideStore.emptyTrips()
         val open = rideStore.openSegments().mapTo(HashSet()) { it.tripId }
-        val (hidden, shown) = all.partition {
-            it.distanceM < MIN_RIDE_DISTANCE_M && it.trip.status != TripStatus.ACTIVE && it.trip.id !in open
-        }
-        return HistorySplit(shown, hidden.map { it.trip.id })
+        fun finished(trip: Trip) = trip.status != TripStatus.ACTIVE && trip.id !in open
+        val (hidden, shown) = all.partition { it.distanceM < MIN_RIDE_DISTANCE_M && finished(it.trip) }
+        val hiddenEmpty = empty.filter(::finished).map { it.id }
+        return HistorySplit(shown, hidden.map { it.trip.id } + hiddenEmpty)
     }
 
     private class HistorySplit(val shown: List<TripRideSummary>, val hidden: List<Long>)

@@ -38,6 +38,7 @@ import com.cowork.bikerecoder.post.PhotoThumbnails
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.ride.RideController
+import com.cowork.bikerecoder.ride.ShortRides
 import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.routing.BRouterRouter
 import com.cowork.bikerecoder.routing.ProfileInstaller
@@ -46,7 +47,6 @@ import com.cowork.bikerecoder.search.PlaceSearch
 import com.cowork.bikerecoder.search.RecentPlaceStore
 import com.cowork.bikerecoder.tts.AndroidTtsVoiceOutput
 import com.cowork.bikerecoder.tts.VoiceOutput
-import com.cowork.bikerecoder.ui.record.ShortRides
 import com.cowork.bikerecoder.core.model.LocationFix
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -215,7 +215,7 @@ class AppContainer(context: Context) {
     )
 
     /** Short rides asked about at the summaries (spec §6.10), shared so a segment is asked about once. */
-    val shortRides: ShortRides = ShortRides(rideStore, tripStore, offline, androidWarnLog("ShortRides"))
+    val shortRides: ShortRides = ShortRides(rideStore, offline, androidWarnLog("ShortRides"))
 
     private companion object {
         const val TAG = "AppContainer"

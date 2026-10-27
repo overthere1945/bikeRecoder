@@ -22,9 +22,9 @@ import com.cowork.bikerecoder.ride.RecordingEnd
 import com.cowork.bikerecoder.ride.RideControls
 import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.ride.ScreenNotice
+import com.cowork.bikerecoder.ride.ShortRides
 import com.cowork.bikerecoder.ride.recordingTripId
 import com.cowork.bikerecoder.tts.VoiceOutput
-import com.cowork.bikerecoder.ui.record.ShortRides
 import com.cowork.bikerecoder.ui.record.SummaryExtras
 import com.cowork.bikerecoder.ui.record.SummaryExtrasState
 import com.cowork.bikerecoder.ui.trip.EndAction
@@ -213,6 +213,8 @@ class NavigateViewModel(
 
     /** [여러 날로 바꾸기] on the finished screen; the summary shown with it is closed once the trip is converted. */
     fun convertToMultiDay() {
+        // Ruling R20: not while [버리기] may still delete this trip.
+        if (extras.isDiscarding) return
         val shown = shownSummary()
         viewModelScope.launch {
             controller.convertToMultiDay()

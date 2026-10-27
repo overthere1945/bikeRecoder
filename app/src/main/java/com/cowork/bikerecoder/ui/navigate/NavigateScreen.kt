@@ -259,7 +259,10 @@ fun NavigateScreen(
                             )
                             if (view.completed) Text(TRIP_COMPLETED, style = MaterialTheme.typography.headlineSmall)
                             if (view.canConvert) {
-                                OutlinedButton(onClick = viewModel::convertToMultiDay) { Text("여러 날로 바꾸기") }
+                                OutlinedButton(
+                                    onClick = viewModel::convertToMultiDay,
+                                    enabled = !summaryExtras.discarding,
+                                ) { Text("여러 날로 바꾸기") }
                             }
                         }
                     }

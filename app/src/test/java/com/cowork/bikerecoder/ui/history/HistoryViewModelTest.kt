@@ -8,6 +8,7 @@ import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.post.PhotoPositionSource
 import com.cowork.bikerecoder.core.post.PlacedPhoto
 import com.cowork.bikerecoder.core.post.RideColors
+import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.core.trip.OfflineMapController
@@ -23,6 +24,7 @@ import com.cowork.bikerecoder.post.FakePostStore
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.SegmentExtras
 import com.cowork.bikerecoder.ride.FakeRideStore
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -398,6 +400,99 @@ class HistoryViewModelTest {
 
         assertEquals(emptyList<Long>(), rides.deletedTrips)
         assertEquals(1, vm.hiddenShortCount.value)
+    }
+
+    /** Ruling R21: a trip whose segments are all exactly 0 m is short too — hidden, counted and cleaned up. */
+    @Test
+    fun zeroMetreTripsCountAsShort() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        trip(2, TripStatus.ACTIVE)
+        trip(3, TripStatus.COMPLETED)
+        trip(4, TripStatus.COMPLETED)
+        segment(1, startedAt = 100, totals = SegmentTotals.ZERO)
+        segment(1, startedAt = 150, totals = SegmentTotals.ZERO)
+        segment(2, startedAt = 200, totals = SegmentTotals.ZERO) // ACTIVE: not counted
+        segment(3, startedAt = 300)
+        segment(4, startedAt = 400, totals = SegmentTotals.ZERO)
+        segment(4, startedAt = 450, open = true) // being recorded: not counted
+        val vm = history()
+        advanceUntilIdle()
+
+        assertEquals(listOf(3L), vm.trips.value.map { it.trip.id })
+        assertEquals(1, vm.hiddenShortCount.value)
+
+        vm.requestCleanup()
+        advanceUntilIdle()
+        assertEquals(HistoryDialog.ConfirmCleanup(1), vm.dialog.value)
+        vm.confirmCleanup()
+        advanceUntilIdle()
+
+        assertEquals(listOf(1L), rides.deletedTrips)
+        assertEquals(0, vm.hiddenShortCount.value)
+        assertEquals(setOf(2L, 3L, 4L), trips.trips.keys)
+    }
+
+    /**
+     * Ruling R20: while one trip's offline maps are being deleted (which can wait for a running download), another
+     * counted trip turns ACTIVE: it is not deleted, as each delete checks the status in its own statement.
+     */
+    @Test
+    fun cleanupKeepsATripThatTurnsActiveWhileMapsAreDeleted() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        trip(2, TripStatus.COMPLETED)
+        segment(1, startedAt = 200, totals = short(1.0))
+        segment(2, startedAt = 100, totals = short(2.0))
+        val gate = CompletableDeferred<Unit>()
+        val mapsDeleted = mutableListOf<Long>()
+        val slowMaps = object : OfflineMapController {
+            override suspend fun deleteForTrip(tripId: Long) {
+                gate.await()
+                mapsDeleted += tripId
+            }
+            override suspend fun downloadForTrip(tripId: Long, route: Route, fromDistanceAlongM: Double) = Unit
+        }
+        val vm = history(slowMaps)
+        advanceUntilIdle()
+        vm.requestCleanup()
+        advanceUntilIdle()
+        vm.confirmCleanup()
+        advanceUntilIdle()
+        assertEquals(listOf(1L), rides.deletedTrips, "the first trip's row is gone; its maps are being deleted")
+
+        trips.trips[2] = trips.trips.getValue(2).copy(status = TripStatus.ACTIVE)
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(listOf(1L), rides.deletedTrips, "trip 2 turned ACTIVE: kept")
+        assertEquals(listOf(1L), mapsDeleted, "maps only for the deleted trip")
+        assertEquals(listOf(2L), vm.trips.value.map { it.trip.id })
+    }
+
+    /** Ruling R20: the single delete is conditional too — a trip found ACTIVE at the delete is kept and says why. */
+    @Test
+    fun singleDeleteOfATripThatTurnedActiveIsRefused() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        segment(1, startedAt = 100)
+        val slow = object : RideStore by rides {
+            var flipOnNextOpenRead = false
+            override suspend fun openSegments() = rides.openSegments().also {
+                if (flipOnNextOpenRead) trips.trips[1] = trips.trips.getValue(1).copy(status = TripStatus.ACTIVE)
+            }
+        }
+        val vm = HistoryViewModel(slow, postStore, offline, log)
+        advanceUntilIdle()
+        vm.requestDelete(1)
+        advanceUntilIdle()
+        assertEquals(HistoryDialog.ConfirmDelete(1), vm.dialog.value)
+
+        // The trip starts right after the in-progress check passed, before the delete.
+        slow.flipOnNextOpenRead = true
+        vm.confirmDelete()
+        advanceUntilIdle()
+
+        assertEquals(emptyList<Long>(), rides.deletedTrips)
+        assertEquals(emptyList<Long>(), offline.deleted)
+        assertEquals(HistoryDialog.Message(MSG_ACTIVE_TRIP_NOT_DELETABLE), vm.dialog.value)
     }
 
     private fun short(distance: Double) = SegmentTotals.ZERO.copy(distanceM = distance, movingTimeMs = 1_000)

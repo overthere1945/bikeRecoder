@@ -18,13 +18,17 @@ import com.cowork.bikerecoder.post.FakePhotoSource
 import com.cowork.bikerecoder.post.FakePostStore
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.ride.FakeRideStore
+import com.cowork.bikerecoder.ride.ShortRides
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.CompletableDeferred
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.time.LocalDate
 
@@ -41,7 +45,8 @@ class SummaryExtrasTest {
     private val heartRate = FakeHeartRateSource()
     private val shown = MutableStateFlow<Long?>(null)
     private val offline = RecordingOfflineMaps()
-    private val shortRides = ShortRides(rides, trips, offline, RecordingLog())
+    private val log = RecordingLog()
+    private val shortRides = ShortRides(rides, offline, log)
 
     /** A finished one-minute ride ([totals] and [endedAt] for a longer one) of a trip with [status]. */
     private suspend fun TestScope.setup(
@@ -320,6 +325,90 @@ class SummaryExtrasTest {
         assertEquals(emptyList<Long>(), offline.deleted)
         assertEquals(true, trips.trips.containsKey(TRIP))
         assertEquals(1, closed)
+    }
+
+    /** Review Important 2: an open sibling (still recording) keeps the trip, whatever its status. */
+    @Test
+    fun discardKeepsTripWithAnOpenSegment() = runTest {
+        val (id, extras) = setup(SHORT)
+        val recording = rides.openSegment(TRIP, 70_000L, LocalDate.of(2026, 10, 18))
+        shown.value = id
+        runCurrent()
+
+        var closed = 0
+        extras.discardShort { closed++ }
+        runCurrent()
+
+        assertEquals(listOf(id), rides.deletedSegments)
+        assertEquals(emptyList<Long>(), rides.deletedTrips)
+        assertEquals(listOf(recording), rides.segments(TRIP).map { it.id }, "the open segment stays")
+        assertEquals(1, closed)
+    }
+
+    /**
+     * Ruling R20: the trip turns ACTIVE (e.g. [여러 날로 바꾸기]) while the discard is under way: it is not deleted, as the
+     * delete checks the status in the same statement. Meanwhile the summary says it is discarding.
+     */
+    @Test
+    fun discardKeepsATripThatTurnsActiveMeanwhile() = runTest {
+        val (id, extras) = setup(SHORT)
+        shown.value = id
+        runCurrent()
+        val gate = CompletableDeferred<Unit>()
+        rides.deleteSegmentGate = gate
+
+        var closed = 0
+        extras.discardShort { closed++ }
+        assertTrue(extras.isDiscarding)
+        runCurrent()
+        assertEquals(true, extras.state.value.discarding)
+        trips.trips[TRIP] = trips.trips.getValue(TRIP).copy(status = TripStatus.ACTIVE, type = TripType.MULTI_DAY)
+        gate.complete(Unit)
+        runCurrent()
+
+        assertEquals(listOf(id), rides.deletedSegments)
+        assertEquals(emptyList<Long>(), rides.deletedTrips, "ACTIVE by the time of the delete: kept")
+        assertEquals(emptyList<Long>(), offline.deleted)
+        assertEquals(1, closed)
+        assertFalse(extras.isDiscarding)
+        assertEquals(false, extras.state.value.discarding)
+    }
+
+    /** Review minor 2: a segment still being recorded is never discarded. */
+    @Test
+    fun anOpenSegmentIsNotAskedAboutNorDiscarded() = runTest {
+        setup()
+        val open = rides.openSegment(TRIP, 70_000L, LocalDate.of(2026, 10, 18))
+        val extras = SummaryExtras(shown, store, PostProcessor(
+            rides, store, FakePhotoSource(), heartRate, clock = { 0L }, scope = backgroundScope, warnLog = { _, _ -> },
+        ), shortRides, backgroundScope)
+        shown.value = open
+        runCurrent()
+        assertEquals(false, extras.state.value.askShort)
+
+        shortRides.discard(open)
+
+        assertEquals(emptyList<Long>(), rides.deletedSegments)
+        assertEquals(emptyList<Long>(), rides.deletedTrips)
+    }
+
+    /** Review minor 3: a failed delete is logged, nothing is lost, and the summary still closes. */
+    @Test
+    fun aFailedDiscardIsLoggedAndTheSummaryStillCloses() = runTest {
+        val (id, extras) = setup(SHORT)
+        shown.value = id
+        runCurrent()
+        rides.failDeleteSegment = true
+
+        var closed = 0
+        extras.discardShort { closed++ }
+        runCurrent()
+
+        assertEquals(listOf("Could not discard segment $id"), log.messages)
+        assertEquals(emptyList<Long>(), rides.deletedTrips)
+        assertEquals(listOf(id), rides.segments(TRIP).map { it.id })
+        assertEquals(1, closed)
+        assertEquals(false, extras.state.value.discarding)
     }
 
     @Test
