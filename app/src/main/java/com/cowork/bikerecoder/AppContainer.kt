@@ -14,6 +14,7 @@ import com.cowork.bikerecoder.data.DayDistances
 import com.cowork.bikerecoder.data.RoomFavoriteStore
 import com.cowork.bikerecoder.data.RoomPostStore
 import com.cowork.bikerecoder.data.RoomRideStore
+import com.cowork.bikerecoder.data.RoomTripMediaStore
 import com.cowork.bikerecoder.data.RoomTripStore
 import com.cowork.bikerecoder.data.SettingsRepository
 import com.cowork.bikerecoder.favorite.FavoriteRepository
@@ -47,6 +48,9 @@ import com.cowork.bikerecoder.search.PlaceSearch
 import com.cowork.bikerecoder.search.RecentPlaceStore
 import com.cowork.bikerecoder.tts.AndroidTtsVoiceOutput
 import com.cowork.bikerecoder.tts.VoiceOutput
+import com.cowork.bikerecoder.video.MediaStoreWriter
+import com.cowork.bikerecoder.video.TripMediaStore
+import com.cowork.bikerecoder.video.VideoJobStore
 import com.cowork.bikerecoder.core.model.LocationFix
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -216,6 +220,15 @@ class AppContainer(context: Context) {
 
     /** Short rides asked about at the summaries (spec §6.10), shared so a segment is asked about once. */
     val shortRides: ShortRides = ShortRides(rideStore, offline, androidWarnLog("ShortRides"))
+
+    /** Videos and summary images made from trips (V1.3.0 spec §5.1). */
+    val tripMedia: TripMediaStore = RoomTripMediaStore(db)
+
+    /** Last video options, this phone's seconds per frame and the unfinished job (spec §1.2, §3.6, §5.1). */
+    val videoJobStore: VideoJobStore = VideoJobStore(appContext)
+
+    /** Gallery files of made videos and images (spec §3.5). */
+    val mediaStoreWriter: MediaStoreWriter = MediaStoreWriter(appContext.contentResolver)
 
     private companion object {
         const val TAG = "AppContainer"

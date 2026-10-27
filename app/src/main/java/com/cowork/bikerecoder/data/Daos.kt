@@ -292,3 +292,15 @@ data class SegmentCardRow(
     val maxBpm: Int?,
     val hrDetailed: Boolean,
 )
+
+@Dao
+interface TripMediaDao {
+    @Query("SELECT * FROM trip_media WHERE tripId = :tripId ORDER BY createdAt DESC, id DESC")
+    fun observe(tripId: Long): Flow<List<TripMediaEntity>>
+
+    @Insert
+    suspend fun insert(media: TripMediaEntity): Long
+
+    @Query("DELETE FROM trip_media WHERE id IN (:ids)")
+    suspend fun delete(ids: List<Long>)
+}

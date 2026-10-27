@@ -17,6 +17,8 @@ import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.favorite.Favorite
 import com.cowork.bikerecoder.favorite.FavoriteKind
 import com.cowork.bikerecoder.post.RidePhoto
+import com.cowork.bikerecoder.video.MediaKind
+import com.cowork.bikerecoder.video.TripMedia
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -28,7 +30,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.time.LocalDate
 
-/** 스펙 ⑥: 이전 버전 데이터가 마이그레이션 뒤에도 그대로이고, 새 테이블이 동작한다(1→2, 2→3, 3→4). */
+/** 스펙 ⑥: 이전 버전 데이터가 마이그레이션 뒤에도 그대로이고, 새 테이블이 동작한다(1→2, 2→3, 3→4, 4→5). */
 @RunWith(AndroidJUnit4::class)
 class RideDatabaseMigrationTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
@@ -176,6 +178,58 @@ class RideDatabaseMigrationTest {
             assertEquals(emptyList<HeartRateSample>(), post.samples(21))
             assertEquals(emptyList<CumulativeEntry>(), post.cumulativeEntries())
             assertEquals(listOf(21L), post.segmentsNeedingWork(now = 5_000L).map { it.id })
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun v4DataSurvivesMigrationTo5() = runBlocking {
+        helper.createDatabase(DB, 4).apply {
+            execSQL(
+                "INSERT INTO trip (id, type, status, profile, createdAt, lastActiveAt, completedAt) " +
+                    "VALUES (5, 'MULTI_DAY', 'COMPLETED', 'BALANCED', 1000, 2000, 6000)",
+            )
+            execSQL(
+                "INSERT INTO ride_segment (id, tripId, startedAt, endedAt, localDate, distanceM, movingTimeMs, " +
+                    "elapsedMs, maxSpeedMps, ascentM, descentM, minAltitudeM, maxAltitudeM) " +
+                    "VALUES (21, 5, 3000, 4000, '2026-10-12', 1500.0, 60000, 90000, 8.5, 10.0, 4.0, NULL, NULL)",
+            )
+            execSQL(
+                "INSERT INTO track_point (id, segmentId, timeMillis, lat, lon, altitudeM, speedMps, accuracyM) " +
+                    "VALUES (31, 21, 3500, 37.5, 127.0, 12.0, 5.0, 4.0)",
+            )
+            execSQL(
+                "INSERT INTO ride_photo (id, segmentId, mediaId, takenAt, lat, lon, positionSource, hidden) " +
+                    "VALUES (51, 21, 900, 3600, 37.5, 127.0, 'EXIF', 1)",
+            )
+            close()
+        }
+
+        helper.runMigrationsAndValidate(DB, 5, true).close()
+
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, DB).build()
+        try {
+            val trip = RoomTripStore(db).trip(5)
+            assertNotNull(trip)
+            assertEquals(TripStatus.COMPLETED, trip!!.status)
+            assertEquals(6_000L, trip.completedAt)
+
+            val rides = RoomRideStore(db)
+            assertEquals(listOf(21L), rides.segments(5).map { it.id })
+            assertEquals(
+                listOf(TrackPoint(3_500L, GeoPoint(37.5, 127.0), altitudeM = 12.0, speedMps = 5f, accuracyM = 4f)),
+                rides.points(21),
+            )
+            val photos = RoomPostStore(db).observePhotos(listOf(21)).first()
+            assertEquals(listOf(900L), photos.map { it.mediaId })
+            assertEquals(true, photos.single().hidden)
+
+            // 새 표는 비어 있고, 여행에 기록을 더할 수 있다.
+            val media = RoomTripMediaStore(db)
+            assertEquals(emptyList<TripMedia>(), media.observe(5).first())
+            val id = media.add(TripMedia(0, 5, MediaKind.VIDEO, "content://media/external/video/media/1", 7_000L, "{}"))
+            assertEquals(listOf(id), media.observe(5).first().map { it.id })
         } finally {
             db.close()
         }

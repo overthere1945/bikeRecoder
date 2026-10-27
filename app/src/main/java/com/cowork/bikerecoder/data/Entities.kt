@@ -185,6 +185,28 @@ data class HeartRateSampleEntity(
     val bpm: Int,
 )
 
+/** kind는 MediaKind의 name, uri는 갤러리(MediaStore) 항목, optionsJson은 만들 때의 옵션(음악 제외). */
+@Entity(
+    tableName = "trip_media",
+    foreignKeys = [
+        ForeignKey(
+            entity = TripEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["tripId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("tripId")],
+)
+data class TripMediaEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long,
+    val tripId: Long,
+    val kind: String,
+    val uri: String,
+    val createdAt: Long,
+    val optionsJson: String,
+)
+
 /**
  * points는 PolylineCodec 문자열, localDate는 ISO(yyyy-MM-dd).
  * 경계 상자(min/max lat/lon)는 점이 없으면 null.
