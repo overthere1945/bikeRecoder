@@ -76,6 +76,18 @@ enum class StartResult {
     }
 }
 
+/** What the screens use of [VideoJob] (replaceable in the UI's tests). */
+interface VideoJobControl {
+    val state: StateFlow<VideoJobState>
+    val isRunning: Boolean
+    suspend fun startVideo(tripId: Long, options: VideoOptions): StartResult
+    suspend fun startImage(tripId: Long, aspect: Aspect): StartResult
+    fun cancel()
+    fun acknowledge()
+    suspend fun unfinished(): PendingJob?
+    suspend fun dismissUnfinished()
+}
+
 /**
  * The one video or summary-image job (spec §3.1–3.4), outside any screen. One at a time; never while recording.
  *
@@ -101,9 +113,9 @@ class VideoJob(
     private val clock: () -> Long = System::currentTimeMillis,
     private val nanoTime: () -> Long = System::nanoTime,
     private val zone: ZoneId = SEOUL,
-) {
+) : VideoJobControl {
     private val _state = MutableStateFlow<VideoJobState>(VideoJobState.Idle)
-    val state: StateFlow<VideoJobState> = _state.asStateFlow()
+    override val state: StateFlow<VideoJobState> = _state.asStateFlow()
 
     /** Held from the start checks until the job has ended (and by [unfinished]). */
     private val claimed = AtomicBoolean(false)
@@ -111,9 +123,9 @@ class VideoJob(
     @Volatile private var stoppedByRecording = false
 
     /** A job is being checked, made or cleaned up. */
-    val isRunning: Boolean get() = claimed.get()
+    override val isRunning: Boolean get() = claimed.get()
 
-    suspend fun startVideo(tripId: Long, options: VideoOptions): StartResult {
+    override suspend fun startVideo(tripId: Long, options: VideoOptions): StartResult {
         if (!claimed.compareAndSet(false, true)) return StartResult.BUSY
         var launched = false
         try {
@@ -139,7 +151,7 @@ class VideoJob(
         }
     }
 
-    suspend fun startImage(tripId: Long, aspect: Aspect): StartResult {
+    override suspend fun startImage(tripId: Long, aspect: Aspect): StartResult {
         if (!claimed.compareAndSet(false, true)) return StartResult.BUSY
         var launched = false
         try {
@@ -160,12 +172,12 @@ class VideoJob(
     }
 
     /** [취소]: the running job stops and deletes what it made. */
-    fun cancel() {
+    override fun cancel() {
         running?.cancel()
     }
 
     /** After the UI has shown a finished job's result: back to [VideoJobState.Idle] (a running job is not touched). */
-    fun acknowledge() {
+    override fun acknowledge() {
         val s = _state.value
         if (s is VideoJobState.Done || s is VideoJobState.Failed || s is VideoJobState.Cancelled) {
             _state.compareAndSet(s, VideoJobState.Idle)
@@ -177,7 +189,7 @@ class VideoJob(
      * a job runs). Its half-written gallery item and video map are deleted here (ruling V6); the job stays offered until
      * it is made again ([startVideo] / [startImage] with its options, without music) or [dismissUnfinished].
      */
-    suspend fun unfinished(): PendingJob? {
+    override suspend fun unfinished(): PendingJob? {
         if (!claimed.compareAndSet(false, true)) return null
         try {
             return clearLeftovers()
@@ -187,7 +199,7 @@ class VideoJob(
     }
 
     /** [닫기]: forget the unfinished job (its leftovers deleted). Nothing happens while a job runs. */
-    suspend fun dismissUnfinished() {
+    override suspend fun dismissUnfinished() {
         if (!claimed.compareAndSet(false, true)) return
         try {
             clearLeftovers()

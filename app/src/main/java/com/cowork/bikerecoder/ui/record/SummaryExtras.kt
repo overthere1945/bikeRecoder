@@ -48,6 +48,11 @@ data class SummaryExtrasState(
     val askShort: Boolean = false,
     /** [버리기] is being carried out for this summary: its other actions (e.g. [여러 날로 바꾸기]) are off (ruling R20). */
     val discarding: Boolean = false,
+    /**
+     * The trip [영상 만들기] [이미지 만들기] are offered for (V1.3.0 spec §1.1): the summary's trip once it is completed
+     * with a finished ride of 10 m or more; null otherwise.
+     */
+    val mediaTripId: Long? = null,
 )
 
 /**
@@ -61,6 +66,9 @@ data class SummaryExtrasState(
  *
  * A segment shorter than 10 m is asked about once ([SummaryExtrasState.askShort], spec §6.10): [discardShort] deletes it
  * (and its trip when nothing else is left of it, [ShortRides.discard]), [keepShort] keeps it.
+ *
+ * [mediaTrip] gives the segment's trip when the video buttons are offered under the summary
+ * ([SummaryExtrasState.mediaTripId]); read once per segment shown (the trip is completed before its summary shows).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SummaryExtras(
@@ -69,6 +77,7 @@ class SummaryExtras(
     private val postProcessor: PostProcessor,
     private val shortRides: ShortRides,
     private val scope: CoroutineScope,
+    private val mediaTrip: suspend (segmentId: Long) -> Long? = { null },
 ) {
     private val segment = summarySegment.distinctUntilChanged().stateIn(scope, SharingStarted.Eagerly, null)
     private val onScreen = MutableStateFlow(false)
@@ -95,8 +104,9 @@ class SummaryExtras(
                     postStore.observeExtras(listOf(id)).map { it.firstOrNull() }.catch { emit(null) },
                     askShort(id),
                     discarding.map { it == id },
-                ) { photoCount, heartRate, askShort, discarding ->
-                    SummaryExtrasState(photoCount, heartRate, askShort, discarding)
+                    flow { emit(mediaTrip(id)) }.catch { emit(null) },
+                ) { photoCount, heartRate, askShort, discarding, mediaTripId ->
+                    SummaryExtrasState(photoCount, heartRate, askShort, discarding, mediaTripId)
                 }
             }
         }
@@ -192,7 +202,8 @@ class SummaryExtras(
  * The summary's extras above its other footer lines: "사진 N장" (nothing without photos), [photoPrompt], and the heart
  * rate ([HeartRateSection] with [heartRateGate]; [onRefetch] = [다시 가져오기]). [onScreen] is told while this is on a
  * started screen (it drives [SummaryExtras.onScreen]). A short ride ([SummaryExtrasState.askShort]) is asked about
- * over the summary: [onDiscard] = [버리기], [onKeep] = [저장] or the dialog dismissed (spec §6.10).
+ * over the summary: [onDiscard] = [버리기], [onKeep] = [저장] or the dialog dismissed (spec §6.10). Last, [mediaEntry]
+ * for [SummaryExtrasState.mediaTripId] ([영상 만들기] [이미지 만들기] or the progress card, V1.3.0 spec §1.1).
  */
 @Composable
 fun SummaryExtrasContent(
@@ -203,6 +214,7 @@ fun SummaryExtrasContent(
     onScreen: (Boolean) -> Unit = {},
     onDiscard: () -> Unit = {},
     onKeep: () -> Unit = {},
+    mediaEntry: @Composable (tripId: Long) -> Unit = {},
 ) {
     val currentOnScreen by rememberUpdatedState(onScreen)
     LifecycleStartEffect(Unit) {
@@ -212,6 +224,7 @@ fun SummaryExtrasContent(
     SummaryPhotoCount(state.photoCount)
     photoPrompt()
     HeartRateSection(state.heartRate, onRefetch, heartRateGate)
+    state.mediaTripId?.let { mediaEntry(it) }
     if (state.askShort) ShortRideDialog(onDiscard, onKeep)
 }
 

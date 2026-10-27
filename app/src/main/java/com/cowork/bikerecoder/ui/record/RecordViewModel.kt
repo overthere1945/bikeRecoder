@@ -17,6 +17,7 @@ import com.cowork.bikerecoder.ride.RideController
 import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.ride.ScreenNotice
 import com.cowork.bikerecoder.ride.ShortRides
+import com.cowork.bikerecoder.ui.video.mediaTripOf
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -45,6 +46,8 @@ class RecordViewModel(
     postStore: PostStore,
     postProcessor: PostProcessor,
     shortRides: ShortRides,
+    /** The summary's trip when it offers [영상 만들기] [이미지 만들기] ([SummaryExtras]); none by default. */
+    mediaTrip: suspend (segmentId: Long) -> Long? = { null },
 ) : ViewModel() {
 
     val ui: StateFlow<RideUiState> = ride.ui
@@ -55,6 +58,7 @@ class RecordViewModel(
         postProcessor = postProcessor,
         shortRides = shortRides,
         scope = viewModelScope,
+        mediaTrip = mediaTrip,
     )
 
     /**
@@ -138,6 +142,7 @@ class RecordViewModel(
                     postStore = container.postStore,
                     postProcessor = container.postProcessor,
                     shortRides = container.shortRides,
+                    mediaTrip = { id -> mediaTripOf(id, container.rideStore, container.tripStore) },
                 )
             }
         }

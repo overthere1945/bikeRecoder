@@ -10,6 +10,8 @@ import androidx.compose.runtime.mutableStateOf
 import com.cowork.bikerecoder.nav.NavNotifications
 import com.cowork.bikerecoder.ui.BikeNavHost
 import com.cowork.bikerecoder.ui.LaunchRequest
+import com.cowork.bikerecoder.video.MediaKind
+import com.cowork.bikerecoder.video.VideoNotifications
 
 class MainActivity : ComponentActivity() {
     private val launchRequest = mutableStateOf<LaunchRequest?>(null)
@@ -20,12 +22,15 @@ class MainActivity : ComponentActivity() {
         val container = (application as BikeApp).container
         // On recreation the request was already handled (the intent still carries it).
         if (savedInstanceState == null) launchRequest.value = intent.launchRequest()
+        // A fresh start offers again a video job a forced kill left unfinished (spec §3.3).
+        val freshStart = savedInstanceState == null
         setContent {
             MaterialTheme {
                 BikeNavHost(
                     container = container,
                     launchRequest = launchRequest.value,
                     onLaunchRequestHandled = { launchRequest.value = null },
+                    offerUnfinishedVideo = freshStart,
                 )
             }
         }
@@ -45,7 +50,12 @@ class MainActivity : ComponentActivity() {
 
     private fun Intent.launchRequest(): LaunchRequest? {
         val tripId = getLongExtra(NavNotifications.EXTRA_RESUME_TRIP_ID, -1L)
+        val previewUri = getStringExtra(VideoNotifications.EXTRA_PREVIEW_URI)
+        val previewKind = MediaKind.entries.firstOrNull { it.name == getStringExtra(VideoNotifications.EXTRA_PREVIEW_KIND) }
         return when {
+            previewUri != null && previewKind != null -> LaunchRequest.Preview(
+                previewUri, previewKind, getBooleanExtra(VideoNotifications.EXTRA_PREVIEW_DOWNSCALED, false),
+            )
             tripId >= 0 -> LaunchRequest.ResumeTrip(tripId)
             getBooleanExtra(NavNotifications.EXTRA_SHOW_NAVIGATION, false) -> LaunchRequest.ShowNavigation
             else -> null

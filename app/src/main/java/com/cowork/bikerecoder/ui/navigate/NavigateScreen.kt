@@ -143,6 +143,8 @@ fun NavigateScreen(
     photoPrompt: @Composable () -> Unit = {},
     /** The heart-rate permission flow of the segment summary (spec §3.4, ruling R9). */
     heartRateGate: HeartRateGate? = null,
+    /** Under a completed trip's summary: [영상 만들기] [이미지 만들기] of that trip (V1.3.0 spec §1.1). */
+    mediaEntry: @Composable (tripId: Long) -> Unit = {},
 ) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val summaryExtras by viewModel.summaryExtras.collectAsStateWithLifecycle()
@@ -258,6 +260,8 @@ fun NavigateScreen(
                                 onKeep = viewModel::keepShortRide,
                             )
                             if (view.completed) Text(TRIP_COMPLETED, style = MaterialTheme.typography.headlineSmall)
+                            // Under "여행을 완료했습니다" (spec §1.1).
+                            summaryExtras.mediaTripId?.let { mediaEntry(it) }
                             if (view.canConvert) {
                                 OutlinedButton(
                                     onClick = viewModel::convertToMultiDay,

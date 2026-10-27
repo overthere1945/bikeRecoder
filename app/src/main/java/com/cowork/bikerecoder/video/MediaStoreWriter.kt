@@ -43,6 +43,12 @@ class MediaStoreWriter(private val resolver: ContentResolver) {
     fun exists(uri: Uri): Boolean =
         query(uri, null).use { it.moveToFirst() }
 
+    /** MediaStore가 기록한 파일 이름(만들 때 준 이름과 다를 수 있다), 이미 없으면 null. */
+    fun displayName(uri: Uri): String? =
+        query(uri, null).use { c ->
+            if (c.moveToFirst()) c.getString(c.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)) else null
+        }
+
     /** [kind]의 폴더에 있는 이름들(확장자 포함, 만드는 중·휴지통 항목 포함) — `MediaNaming.unique`에 넘긴다. */
     fun existingNames(kind: MediaKind): Set<String> {
         val selection = "${MediaStore.MediaColumns.RELATIVE_PATH} = ?"
@@ -79,12 +85,6 @@ class MediaStoreWriter(private val resolver: ContentResolver) {
             get() = when (this) {
                 MediaKind.VIDEO -> "Movies/bikeRecoder/"
                 MediaKind.IMAGE -> "Pictures/bikeRecoder/"
-            }
-
-        val MediaKind.mimeType: String
-            get() = when (this) {
-                MediaKind.VIDEO -> "video/mp4"
-                MediaKind.IMAGE -> "image/png"
             }
     }
 }

@@ -77,6 +77,19 @@ import com.cowork.bikerecoder.ui.trip.StartPlan
 import com.cowork.bikerecoder.ui.trip.TripStartDialogs
 import com.cowork.bikerecoder.ui.trip.TripStartState
 import com.cowork.bikerecoder.ui.trip.TripStartViewModel
+import com.cowork.bikerecoder.ui.video.MediaEntry
+import com.cowork.bikerecoder.ui.video.MediaPreviewScreen
+import com.cowork.bikerecoder.ui.video.VideoHost
+import com.cowork.bikerecoder.ui.video.VideoOutcome
+import com.cowork.bikerecoder.ui.video.VideoViewModel
+import com.cowork.bikerecoder.ui.video.galleryThumbnail
+import com.cowork.bikerecoder.ui.video.shareMedia
+import com.cowork.bikerecoder.ui.video.viewMedia
+import com.cowork.bikerecoder.video.MediaKind
+import android.net.Uri
+import androidx.core.net.toUri
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 object Routes {
     const val ONBOARDING = "onboarding"
@@ -99,6 +112,15 @@ object Routes {
     const val CUMULATIVE = "cumulative"
     const val TRIP_DETAIL = "history/trip/{${TripDetailViewModel.ARG_TRIP}}"
     const val SEGMENT_DETAIL = "history/segment/{${SegmentDetailViewModel.ARG_SEGMENT}}"
+
+    /** The made video or image (V1.3.0 spec §3.5). */
+    const val ARG_URI = "uri"
+    const val ARG_KIND = "kind"
+    const val ARG_DOWNSCALED = "downscaled"
+    const val MEDIA_PREVIEW = "media-preview?$ARG_URI={$ARG_URI}&$ARG_KIND={$ARG_KIND}&$ARG_DOWNSCALED={$ARG_DOWNSCALED}"
+
+    fun mediaPreview(uri: String, kind: MediaKind, downscaled: Boolean) =
+        "media-preview?$ARG_URI=${Uri.encode(uri)}&$ARG_KIND=${kind.name}&$ARG_DOWNSCALED=$downscaled"
 
     fun tripDetail(tripId: Long) = "history/trip/$tripId"
 
@@ -129,6 +151,9 @@ sealed interface LaunchRequest {
 
     /** The progress notification: show the running guidance or recording ([rideRoute]). */
     data object ShowNavigation : LaunchRequest
+
+    /** "영상을 만들었습니다": the preview of the made file. */
+    data class Preview(val uri: String, val kind: MediaKind, val downscaled: Boolean) : LaunchRequest
 }
 
 /**
@@ -162,6 +187,8 @@ fun BikeNavHost(
     container: AppContainer,
     launchRequest: LaunchRequest? = null,
     onLaunchRequestHandled: () -> Unit = {},
+    /** A fresh start: offer the video job a forced kill left unfinished (spec §3.3). */
+    offerUnfinishedVideo: Boolean = false,
 ) {
     val navController = rememberNavController()
     val context = LocalContext.current
@@ -237,16 +264,44 @@ fun BikeNavHost(
         navController.openPlan()
     }
 
+    // Activity-scoped: the video sheet, its dialogs and the job's result over every screen (V1.3.0 spec §1, §3).
+    val videoViewModel: VideoViewModel = viewModel(
+        viewModelStoreOwner = context.findActivity(),
+        factory = VideoViewModel.factory(container),
+    )
+    val mediaThumbnail = remember(container) { galleryThumbnail(container.appContext.contentResolver) }
+
     LaunchedEffect(launchRequest) {
         val request = launchRequest ?: return@LaunchedEffect
-        val route = when (request) {
+        // Ignored while onboarding is still showing (there is no main screen to return to yet).
+        val onboarding = navController.currentDestination?.route == Routes.ONBOARDING
+        when (request) {
             is LaunchRequest.ResumeTrip -> Routes.navigate(request.tripId)
             LaunchRequest.ShowNavigation -> rideRoute(container.navigationState, container.rideState)
-        }
-        // Ignored while onboarding is still showing (there is no main screen to return to yet).
-        if (route != null && navController.currentDestination?.route != Routes.ONBOARDING) navController.openOnMain(route)
+            is LaunchRequest.Preview -> {
+                if (!onboarding) navController.openPreview(request.uri, request.kind, request.downscaled)
+                null
+            }
+        }?.let { route -> if (!onboarding) navController.openOnMain(route) }
         onLaunchRequestHandled()
     }
+
+    // A finished job while the app is on screen: the preview (or its failure's message), once.
+    val videoOutcome by videoViewModel.outcome.collectAsStateWithLifecycle()
+    LaunchedEffect(videoOutcome) {
+        val outcome = videoOutcome ?: return@LaunchedEffect
+        if (outcome is VideoOutcome.Preview && navController.currentDestination?.route != Routes.ONBOARDING) {
+            navController.openPreview(outcome.uri, outcome.kind, outcome.downscaled)
+        }
+        videoViewModel.outcomeShown()
+    }
+    var unfinishedOffered by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (!offerUnfinishedVideo || unfinishedOffered) return@LaunchedEffect
+        unfinishedOffered = true
+        videoViewModel.checkUnfinished()
+    }
+    val mediaEntry: @Composable (Long) -> Unit = { tripId -> MediaEntry(videoViewModel, tripId) }
 
     NavHost(navController = navController, startDestination = startDestination) {
         composable(Routes.ONBOARDING) {
@@ -502,6 +557,7 @@ fun BikeNavHost(
                 onGuidanceEndedWhileRecording = { if (isCurrent()) navController.openOnMain(Routes.record()) },
                 photoPrompt = { PhotoPrompt(container) },
                 heartRateGate = heartRateGate,
+                mediaEntry = mediaEntry,
             )
         }
         composable(
@@ -528,6 +584,7 @@ fun BikeNavHost(
                 onSetDestination = { if (isCurrent()) navController.navigate(Routes.SEARCH) },
                 photoPrompt = { PhotoPrompt(container) },
                 heartRateGate = heartRateGate,
+                mediaEntry = mediaEntry,
             )
         }
         composable(Routes.HISTORY) {
@@ -551,8 +608,9 @@ fun BikeNavHost(
         composable(
             Routes.TRIP_DETAIL,
             arguments = listOf(navArgument(TripDetailViewModel.ARG_TRIP) { type = NavType.LongType }),
-        ) {
+        ) { entry ->
             val viewModel: TripDetailViewModel = viewModel(factory = TripDetailViewModel.factory(container))
+            val tripId = entry.arguments?.getLong(TripDetailViewModel.ARG_TRIP) ?: -1L
             TripDetailScreen(
                 viewModel = viewModel,
                 tileSource = container.tileSource,
@@ -561,6 +619,44 @@ fun BikeNavHost(
                 onBack = { navController.popBackStack() },
                 photoPrompt = { PhotoPrompt(container) },
                 heartRateGate = heartRateGate,
+                mediaEntry = { mediaEntry(tripId) },
+                mediaThumbnail = mediaThumbnail,
+                onOpenMedia = { media -> context.viewMedia(media.uri, media.kind) },
+            )
+        }
+        composable(
+            Routes.MEDIA_PREVIEW,
+            arguments = listOf(
+                navArgument(Routes.ARG_URI) { type = NavType.StringType },
+                navArgument(Routes.ARG_KIND) { type = NavType.StringType },
+                navArgument(Routes.ARG_DOWNSCALED) {
+                    type = NavType.BoolType
+                    defaultValue = false
+                },
+            ),
+        ) { entry ->
+            val uri = entry.arguments?.getString(Routes.ARG_URI).orEmpty()
+            val kind = MediaKind.entries.firstOrNull { it.name == entry.arguments?.getString(Routes.ARG_KIND) } ?: MediaKind.VIDEO
+            val downscaled = entry.arguments?.getBoolean(Routes.ARG_DOWNSCALED) == true
+            val isCurrent = { navController.currentBackStackEntry?.id == entry.id }
+            // MediaStore's own name (it may differ from the one asked for); none when it cannot be read.
+            val fileName by produceState<String?>(null, uri) {
+                value = withContext(Dispatchers.IO) {
+                    try {
+                        container.mediaStoreWriter.displayName(uri.toUri())
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+            }
+            MediaPreviewScreen(
+                uri = uri,
+                kind = kind,
+                downscaled = downscaled,
+                fileName = fileName,
+                onBack = { if (isCurrent()) navController.popBackStack() },
+                onShare = { context.shareMedia(uri, kind) },
+                onOpenGallery = { context.viewMedia(uri, kind) },
             )
         }
         composable(
@@ -614,6 +710,12 @@ fun BikeNavHost(
         onStartCustom = favoritesViewModel::startCustom,
         onConfirmCurrent = favoritesViewModel::confirmCurrent,
     )
+    VideoHost(videoViewModel)
+}
+
+/** The made file's preview on top (a second one of the same file is not pushed). */
+private fun NavController.openPreview(uri: String, kind: MediaKind, downscaled: Boolean) {
+    navigate(Routes.mediaPreview(uri, kind, downscaled)) { launchSingleTop = true }
 }
 
 /** The guidance or record screen on top of main (plan/search/ride entries are dropped). */

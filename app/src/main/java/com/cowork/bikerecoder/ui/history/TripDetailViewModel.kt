@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.ui.history
 
+import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.createSavedStateHandle
@@ -17,6 +18,7 @@ import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
+import com.cowork.bikerecoder.core.trip.TripStore
 import com.cowork.bikerecoder.map.MapLine
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.PostStore
@@ -26,6 +28,10 @@ import com.cowork.bikerecoder.ui.health.TrackColorMode
 import com.cowork.bikerecoder.ui.photo.RidePhotos
 import com.cowork.bikerecoder.ui.photo.observeRidePhotos
 import com.cowork.bikerecoder.ui.photo.setPhotoHidden
+import com.cowork.bikerecoder.ui.video.canMakeMedia
+import com.cowork.bikerecoder.ui.video.missingMedia
+import com.cowork.bikerecoder.video.TripMedia
+import com.cowork.bikerecoder.video.TripMediaStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -37,7 +43,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
@@ -56,6 +64,11 @@ import java.time.LocalDate
  * [TrackColorMode.HEART_RATE] by that segment's own samples, and the photos of every day ([photos], spec §2.3).
  * [heartRate]: the trip's time-weighted average, highest heart rate and calories, and each day's average (spec §3.3).
  * The first load drops the photos deleted from the gallery and asks for a post-processing pass, once per screen.
+ *
+ * V1.3.0 (spec §1.1, §5.1): [canMakeMedia] — a completed trip with a finished ride of 10 m or more offers [영상 만들기]
+ * [이미지 만들기]; [media] — the videos and images made from it ("만든 영상·이미지"), newest first. Each load (opening the
+ * screen, coming back to it) drops the made files the gallery no longer has: only when [mediaExists] says false, never
+ * when the check fails (ruling V6).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class TripDetailViewModel(
@@ -65,6 +78,10 @@ class TripDetailViewModel(
     private val postProcessor: PostProcessor,
     private val log: WarnLog = WarnLog { _, _ -> },
     private val compute: CoroutineDispatcher = Dispatchers.Default,
+    private val tripStore: TripStore? = null,
+    private val tripMedia: TripMediaStore? = null,
+    /** Whether a made file is still in the gallery; throws when that cannot be told. */
+    private val mediaExists: suspend (uri: String) -> Boolean = { true },
 ) : ViewModel() {
 
     private val _segmentsByDate = MutableStateFlow<Map<LocalDate, List<RideSegment>>>(emptyMap())
@@ -72,6 +89,19 @@ class TripDetailViewModel(
 
     private val _total = MutableStateFlow(SegmentTotals.ZERO)
     val total: StateFlow<SegmentTotals> = _total.asStateFlow()
+
+    private val _canMakeMedia = MutableStateFlow(false)
+
+    /** [영상 만들기] [이미지 만들기] are offered. */
+    val canMakeMedia: StateFlow<Boolean> = _canMakeMedia.asStateFlow()
+
+    /** "만든 영상·이미지", newest first. */
+    val media: StateFlow<List<TripMedia>> = (tripMedia?.observe(tripId) ?: emptyFlow())
+        .catch { e ->
+            log.warn("Could not read the made files of trip $tripId", e)
+            emit(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private val _dialog = MutableStateFlow<HistoryDialog?>(null)
     val dialog: StateFlow<HistoryDialog?> = _dialog.asStateFlow()
@@ -224,7 +254,12 @@ class TripDetailViewModel(
     private suspend fun load() {
         guarded("Could not read the segments of trip $tripId") {
             // Empty segments are kept in the store but not listed (nor counted in the totals).
-            val segments = rideStore.segments(tripId).filterNot { it.isEmpty }
+            val all = rideStore.segments(tripId)
+            val segments = all.filterNot { it.isEmpty }
+            tripStore?.let { trips ->
+                _canMakeMedia.value = guarded("Could not read trip $tripId") { canMakeMedia(trips.trip(tripId), all) } ?: false
+            }
+            pruneMedia()
             _segmentsByDate.value = segments.groupBy { it.localDate }.toSortedMap()
             _total.value = tripTotals(segments)
             val ids = segments.map { it.id }
@@ -240,6 +275,15 @@ class TripDetailViewModel(
                 tracks.value = ordered.map { it.id to rideStore.points(it.id) }
                 trackOf = segments
             }
+        }
+    }
+
+    /** The made files gone from the gallery leave "만든 영상·이미지". */
+    private suspend fun pruneMedia() {
+        val store = tripMedia ?: return
+        guarded("Could not prune the made files of trip $tripId") {
+            val gone = missingMedia(store.observe(tripId).first(), mediaExists, log)
+            if (gone.isNotEmpty()) store.remove(gone)
         }
     }
 
@@ -260,6 +304,9 @@ class TripDetailViewModel(
                 val tripId = requireNotNull(createSavedStateHandle().get<Long>(ARG_TRIP)) { "missing $ARG_TRIP" }
                 TripDetailViewModel(
                     container.rideStore, tripId, container.postStore, container.postProcessor, androidWarnLog("TripDetail"),
+                    tripStore = container.tripStore,
+                    tripMedia = container.tripMedia,
+                    mediaExists = { uri -> withContext(Dispatchers.IO) { container.mediaStoreWriter.exists(uri.toUri()) } },
                 )
             }
         }

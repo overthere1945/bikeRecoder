@@ -30,6 +30,7 @@ import com.cowork.bikerecoder.ui.record.SummaryExtrasState
 import com.cowork.bikerecoder.ui.trip.EndAction
 import com.cowork.bikerecoder.ui.trip.canConvertToMultiDay
 import kotlinx.coroutines.CancellationException
+import com.cowork.bikerecoder.ui.video.mediaTripOf
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -74,6 +75,8 @@ class NavigateViewModel(
     postStore: PostStore,
     postProcessor: PostProcessor,
     shortRides: ShortRides,
+    /** The summary's trip when it offers [영상 만들기] [이미지 만들기] ([SummaryExtras]); none by default. */
+    mediaTrip: suspend (segmentId: Long) -> Long? = { null },
 ) : ViewModel() {
 
     val ui: StateFlow<NavUiState> = controller.ui
@@ -84,6 +87,7 @@ class NavigateViewModel(
         postProcessor = postProcessor,
         shortRides = shortRides,
         scope = viewModelScope,
+        mediaTrip = mediaTrip,
     )
 
     /**
@@ -276,6 +280,7 @@ class NavigateViewModel(
                     postStore = container.postStore,
                     postProcessor = container.postProcessor,
                     shortRides = container.shortRides,
+                    mediaTrip = { id -> mediaTripOf(id, container.rideStore, container.tripStore) },
                 )
             }
         }

@@ -41,12 +41,17 @@ import com.cowork.bikerecoder.ui.photo.PhotoViewerHost
 import com.cowork.bikerecoder.ui.photo.rememberMapPhotos
 import com.cowork.bikerecoder.ui.photo.rememberPhotoViewerState
 import com.cowork.bikerecoder.ui.record.NumberRow
+import com.cowork.bikerecoder.ui.video.MediaThumbnail
+import com.cowork.bikerecoder.ui.video.TripMediaRow
+import com.cowork.bikerecoder.video.TripMedia
 import java.time.LocalDate
 
 /**
  * [photoPrompt]: the photo permission card where it applies (spec §2.4), shown under the photo strip.
  * [heartRateGate]: the heart-rate permission card or "Health Connect를 사용할 수 없습니다" (spec §3.4; null = none).
  * [map]: the map for its content (replaceable in tests).
+ * [mediaEntry]: [영상 만들기] [이미지 만들기] (or the progress card) of this trip, shown when it is completed with a ride to
+ * make it from (V1.3.0 spec §1.1); [mediaThumbnail] and [onOpenMedia]: "만든 영상·이미지" (§5.1).
  */
 @Composable
 fun TripDetailScreen(
@@ -57,6 +62,9 @@ fun TripDetailScreen(
     onBack: () -> Unit,
     photoPrompt: @Composable () -> Unit = {},
     heartRateGate: HeartRateGate? = null,
+    mediaEntry: @Composable () -> Unit = {},
+    mediaThumbnail: MediaThumbnail = { _, _ -> null },
+    onOpenMedia: (TripMedia) -> Unit = {},
     map: @Composable (DetailMapContent, Modifier) -> Unit = { content, modifier -> DetailMap(content, tileSource, modifier) },
 ) {
     val segmentsByDate by viewModel.segmentsByDate.collectAsStateWithLifecycle()
@@ -67,6 +75,8 @@ fun TripDetailScreen(
     val colorMode by viewModel.colorMode.collectAsStateWithLifecycle()
     val photos by viewModel.photos.collectAsStateWithLifecycle()
     val refetching by viewModel.refetching.collectAsStateWithLifecycle()
+    val canMakeMedia by viewModel.canMakeMedia.collectAsStateWithLifecycle()
+    val media by viewModel.media.collectAsStateWithLifecycle()
     val access = rememberHeartRateAccess(heartRateGate)
     val viewer = rememberPhotoViewerState()
     val mapPhotos = rememberMapPhotos(photos, thumbnails)
@@ -106,6 +116,10 @@ fun TripDetailScreen(
         heartRate = heartRate,
         onRefetchHeartRate = tripRefetchAction(access.value, viewModel::refetchHeartRate),
         refetching = refetching,
+        videos = {
+            if (canMakeMedia) mediaEntry()
+            TripMediaRow(media, mediaThumbnail, onOpenMedia)
+        },
     )
     PhotoViewerHost(viewer, photos, thumbnails, onToggleHidden = { viewModel.setHidden(it, hidden = !it.hidden) })
 }
@@ -119,6 +133,7 @@ internal fun tripRefetchAction(access: HeartRateAccess, refetch: () -> Unit): ((
 
 /**
  * The trip's map ([map], every day's track and photos; outside the scrolling part, so it keeps its drags), then
+ * [videos] ([영상 만들기] [이미지 만들기] and "만든 영상·이미지", V1.3.0 spec §1.1, §5.1),
  * [photos] (the photo strip and card, spec §2.3), the totals (with the trip's [heartRate], spec §3.3) and its segments
  * under a header per date (with that day's average heart rate); a long press asks to delete.
  */
@@ -137,6 +152,7 @@ fun TripDetailContent(
     heartRate: TripHeartRate = TripHeartRate(),
     onRefetchHeartRate: (() -> Unit)? = null,
     refetching: Boolean = false,
+    videos: @Composable () -> Unit = {},
 ) {
     HistoryScaffold(title = "여행 기록", onBack = onBack) {
         if (segmentsByDate.isEmpty()) {
@@ -145,8 +161,8 @@ fun TripDetailContent(
             Column(modifier = Modifier.fillMaxSize()) {
                 map?.invoke(Modifier.fillMaxWidth().height(240.dp))
                 TripDetailList(
-                    segmentsByDate, total, heartRate, onOpenSegment, onRequestDelete, photos, onRefetchHeartRate, refetching,
-                    Modifier.weight(1f),
+                    segmentsByDate, total, heartRate, onOpenSegment, onRequestDelete, videos, photos, onRefetchHeartRate,
+                    refetching, Modifier.weight(1f),
                 )
             }
         }
@@ -161,6 +177,7 @@ private fun TripDetailList(
     heartRate: TripHeartRate,
     onOpenSegment: (Long) -> Unit,
     onRequestDelete: (Long) -> Unit,
+    videos: @Composable () -> Unit,
     photos: @Composable () -> Unit,
     onRefetchHeartRate: (() -> Unit)?,
     refetching: Boolean,
@@ -171,6 +188,9 @@ private fun TripDetailList(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = modifier.fillMaxWidth(),
     ) {
+        item(key = "videos") {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { videos() }
+        }
         item(key = "photos") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { photos() }
         }

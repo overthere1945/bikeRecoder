@@ -65,6 +65,30 @@ class SummaryExtrasTest {
         return id to SummaryExtras(shown, store, processor, shortRides, backgroundScope)
     }
 
+    /**
+     * V1.3.0 spec §1.1: [영상 만들기] [이미지 만들기] under the summary only when its trip is completed (a single-day trip
+     * ended, or a multi-day trip's [여행 완료]) with a finished ride of 10 m or more.
+     */
+    @Test
+    fun offersTheVideoButtonsForACompletedTrip() = runTest {
+        val (id, _) = setup()
+        val processor = PostProcessor(rides, store, FakePhotoSource(), heartRate, clock = { 0L }, scope = backgroundScope, warnLog = { _, _ -> })
+        val extras = SummaryExtras(shown, store, processor, shortRides, backgroundScope) { segment ->
+            com.cowork.bikerecoder.ui.video.mediaTripOf(segment, rides, trips)
+        }
+        shown.value = id
+        runCurrent()
+        assertEquals(TRIP, extras.state.value.mediaTripId)
+
+        // Stopped for today (the trip goes on): none.
+        trips.trips[TRIP] = trips.trips.getValue(TRIP).copy(status = TripStatus.ACTIVE)
+        shown.value = null
+        runCurrent()
+        shown.value = id
+        runCurrent()
+        assertEquals(null, extras.state.value.mediaTripId)
+    }
+
     /** Reads of the heart-rate source other than the one pass the summary asks for when it appears. */
     private fun refetches() = heartRate.calls.size - 1
 

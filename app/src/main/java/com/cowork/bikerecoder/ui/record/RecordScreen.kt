@@ -100,6 +100,8 @@ fun RecordScreen(
     onSetDestination: () -> Unit = {},
     photoPrompt: @Composable () -> Unit = {},
     heartRateGate: HeartRateGate? = null,
+    /** Under a completed trip's summary: [영상 만들기] [이미지 만들기] of that trip (V1.3.0 spec §1.1). */
+    mediaEntry: @Composable (tripId: Long) -> Unit = {},
 ) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val navigating by viewModel.navigating.collectAsStateWithLifecycle()
@@ -170,6 +172,7 @@ fun RecordScreen(
                         summaryExtras, photoPrompt, heartRateGate, viewModel::refetchHeartRate, viewModel::summaryOnScreen,
                         onDiscard = { viewModel.discardShortRide(closeSummary) },
                         onKeep = viewModel::keepShortRide,
+                        mediaEntry = mediaEntry,
                     )
                 },
             )
