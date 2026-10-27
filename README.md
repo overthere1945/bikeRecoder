@@ -4,7 +4,7 @@ Bicycle navigation, route tracking, and photo video generator app based on trave
 
 자전거 주행을 기록하고, 자전거도로를 우선하는 길안내를 하며, 주행 경로를 사진과 MP4 영상으로 만들어 주는 개인용 안드로이드 앱입니다. 서버 없이 모든 처리를 휴대폰 안에서 합니다.
 
-- 현재 버전: **V1.2.0 (개발 중)** · V1.0.0·V1.1.0 출시, 실주행 검증 대기 — 버전 규칙: [docs/VERSIONING.md](docs/VERSIONING.md), 변경 이력: [CHANGELOG.md](CHANGELOG.md)
+- 현재 버전: **V1.2.1 (개발 중)** · V1.0.0·V1.1.0 출시, 실주행 검증 대기 — 버전 규칙: [docs/VERSIONING.md](docs/VERSIONING.md), 변경 이력: [CHANGELOG.md](CHANGELOG.md)
 - 대상 기기: Samsung Galaxy S26 (Android 17), Galaxy Watch7 (심박, Health Connect 경유)
 
 ## 로드맵
