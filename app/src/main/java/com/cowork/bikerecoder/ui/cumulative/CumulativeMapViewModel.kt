@@ -42,14 +42,19 @@ import java.time.LocalDate
 /** [이번 주] / [이번 달] (spec §6.6), the quick period chosen last; null once another period is chosen. */
 enum class QuickPeriod { THIS_WEEK, THIS_MONTH }
 
-/** One row of the ride list (spec §6.5): the ride's colour on the map and "10월 25일 (토) · 1.59km · 15분". */
-data class RideRow(val segmentId: Long, val color: String, val text: String)
+/**
+ * One ride of the list (spec §6.8): its colour on the map, [date] "10월 25일 (일)" and [detail] "1.58km · 12분" (the
+ * row's two lines); [text] "10월 25일 (일) · 1.58km · 12분" is the map's info card.
+ */
+data class RideRow(val segmentId: Long, val color: String, val date: String, val detail: String) {
+    val text: String get() = "$date · $detail"
+}
 
 /**
  * What the cumulative map shows (spec §4, §6). Only rides of at least [MIN_RIDE_DISTANCE_M][com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M]
  * count anywhere. [entries]: the rides of [period], newest first; [rides]: their rows, each with its colour
  * ([RideColors], newest first); [lines]: the same rides as drawn (those with at least 2 points); [selected]: the
- * highlighted ride, one of [rides]; [totals]: their distance, count and moving time. [years]: every year with a ride,
+ * highlighted ride, one of [rides] ([selectedRow]); [totals]: their distance, count and moving time. [years]: every year with a ride,
  * newest first; [months]: the months with a ride in [period]'s year (none without a year); [weeks]: the weeks with a
  * ride of [period]'s month (none without a month); [week]: [period]'s week as a week of its month, rides or not
  * (null without a week, or without its month). [quick]: the quick period chosen, if that is what [period] is.
@@ -79,6 +84,9 @@ data class CumulativeMapState(
 
     /** There are rides, but none in [period] ("이 기간에 기록이 없습니다"); same wait as [empty]. */
     val periodEmpty: Boolean get() = loaded && settled && years.isNotEmpty() && entries.isEmpty()
+
+    /** The row of the highlighted ride, for the info card under the map (spec §6.8); null with none highlighted. */
+    val selectedRow: RideRow? get() = selected?.let { id -> rides.firstOrNull { it.segmentId == id } }
 }
 
 /**
@@ -173,9 +181,9 @@ class CumulativeMapViewModel(
     fun thisMonth() = choose(CumulativeSummary.thisMonth(today()), QuickPeriod.THIS_MONTH)
 
     /**
-     * A tap on a ride's row or line: highlights it and frames the map on it; the highlighted ride again, or null (an
-     * empty spot on the map), lets go of the highlight and leaves the map where it is. A ride not listed lets go of the
-     * highlight too.
+     * A tap on a ride's line on the map (a row opens the record instead, spec §6.8): highlights it and frames the map
+     * on it; the highlighted ride again, or null (an empty spot on the map), lets go of the highlight and leaves the map
+     * where it is. A ride not listed lets go of the highlight too.
      */
     fun select(segmentId: Long?) {
         val shown = state.value
@@ -268,7 +276,7 @@ internal fun cumulativeStateOf(
         period = period,
         quick = quick,
         entries = entries,
-        rides = entries.mapIndexed { i, e -> RideRow(e.segmentId, colors[i], rideRowText(e)) },
+        rides = entries.mapIndexed { i, e -> rideRowOf(e, colors[i]) },
         lines = entries.mapIndexedNotNull { i, e -> if (e.points.size >= 2) RideLine(e.segmentId, e.points, colors[i]) else null },
         selected = selected?.takeIf { id -> entries.any { it.segmentId == id } },
         totals = CumulativeSummary.totals(entries),
@@ -283,12 +291,16 @@ internal fun cumulativeStateOf(
 
 private const val WEEKDAYS = "월화수목금토일"
 
-/** A ride-list row (spec §6.5): "M월 d일 (E) · {거리} · {이동 시간}", e.g. "10월 25일 (토) · 1.59km · 15분". */
-internal fun rideRowText(entry: CumulativeEntry): String {
+/** [entry]'s row in [color] (spec §6.8): "M월 d일 (E)", e.g. "10월 25일 (일)", and "{거리} · {이동 시간}", e.g. "1.58km · 12분". */
+internal fun rideRowOf(entry: CumulativeEntry, color: String): RideRow {
     val date = entry.localDate
     val weekday = WEEKDAYS[date.dayOfWeek.value - 1]
-    return "${date.monthValue}월 ${date.dayOfMonth}일 ($weekday) · ${RideFormat.distance(entry.distanceM)} · " +
-        RideFormat.duration(entry.movingTimeMs)
+    return RideRow(
+        segmentId = entry.segmentId,
+        color = color,
+        date = "${date.monthValue}월 ${date.dayOfMonth}일 ($weekday)",
+        detail = "${RideFormat.distance(entry.distanceM)} · ${RideFormat.duration(entry.movingTimeMs)}",
+    )
 }
 
 /** The south-west and north-east corners of every point of [entries] (one point if they are the same); null if none. */

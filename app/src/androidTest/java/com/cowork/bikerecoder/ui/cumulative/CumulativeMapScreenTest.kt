@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.ui.cumulative
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
@@ -7,6 +8,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -14,6 +20,8 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isPopup
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -22,6 +30,9 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.unit.dp
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.CumulativeEntry
 import com.cowork.bikerecoder.core.post.CumulativeSummary
@@ -33,8 +44,8 @@ import org.junit.Test
 import java.time.LocalDate
 
 /**
- * The cumulative map screen on fake state, its map replaced (spec §4, §6.4–§6.6): the summary, the period menus and
- * quick periods, the ride list and its highlight, the empty texts.
+ * The cumulative map screen on fake state, its map replaced (spec §4, §6.4–§6.6, §6.8): the summary, the period menus
+ * and quick periods, the ride list that opens records, the map's highlight and info card, the empty texts.
  */
 class CumulativeMapScreenTest {
     @get:Rule
@@ -66,11 +77,15 @@ class CumulativeMapScreenTest {
         settled: Boolean = true,
     ) = cumulativeStateOf(CumulativeSummary.rides(rides), settled, period, quick, selected)
 
-    /** Shows [initial]; the controls act like the view model's on [rides]. */
+    /**
+     * Shows [initial]; the controls act like the view model's on [rides]. A tap on the fake map acts like a tap on
+     * [mapTapHits]'s line (the view model's select: the same ride again lets go of it).
+     */
     private fun show(
         initial: CumulativeMapState,
         rides: List<CumulativeEntry> = all,
         onOpenRide: (Long) -> Unit = {},
+        mapTapHits: Long? = null,
         onBack: () -> Unit = {},
     ) {
         var state by mutableStateOf(initial)
@@ -84,18 +99,19 @@ class CumulativeMapScreenTest {
             selectWeek = { start -> choose(PeriodFilter(state.period.year, state.period.month, start)) },
             thisWeek = { choose(PeriodFilter(2026, 10, LocalDate.of(2026, 10, 26)), QuickPeriod.THIS_WEEK) },
             thisMonth = { choose(PeriodFilter(2026, 10), QuickPeriod.THIS_MONTH) },
-            selectRide = { id ->
-                state = stateFor(state.period, rides, state.quick, selected = if (state.selected == id) null else id)
-            },
             openRide = onOpenRide,
         )
+        fun mapTap() {
+            val id = mapTapHits
+            state = stateFor(state.period, rides, state.quick, selected = if (id == null || state.selected == id) null else id)
+        }
         composeRule.setContent {
             MaterialTheme {
                 CumulativeMapContent(
                     state = state,
                     actions = actions,
                     onBack = onBack,
-                    map = { modifier -> Box(modifier.testTag(MAP)) },
+                    map = { modifier -> Box(modifier.testTag(MAP).clickable { mapTap() }) },
                 )
             }
         }
@@ -157,36 +173,100 @@ class CumulativeMapScreenTest {
     fun rideRowsNewestFirst() {
         show(stateFor(PeriodFilter(), october), october)
 
-        val texts = listOf(
-            "10월 27일 (화) · 3.00km · 10분",
-            "10월 24일 (토) · 1.59km · 15분",
-            "10월 20일 (화) · 5.00km · 20분",
-            "9월 30일 (수) · 2.00km · 5분",
+        composeRule.onNodeWithText("이 기간 주행 4회").assertIsDisplayed()
+        composeRule.onNodeWithText("누르면 기록을 봅니다").assertIsDisplayed()
+        // Newest first (the list scrolls; the screen may show only a few rows at a time).
+        val rows = listOf(
+            Triple(13L, "10월 27일 (화)", "3.00km · 10분"),
+            Triple(11L, "10월 24일 (토)", "1.59km · 15분"),
+            Triple(12L, "10월 20일 (화)", "5.00km · 20분"),
+            Triple(14L, "9월 30일 (수)", "2.00km · 5분"),
         )
-        val tops = texts.map { composeRule.onNodeWithText(it).assertIsDisplayed().fetchSemanticsNode().boundsInRoot.top }
-        assertEquals("newest first", tops.sorted(), tops)
-        composeRule.onNodeWithText("기록 보기").assertDoesNotExist()
+        val list = composeRule.onNodeWithTag(CumulativeMapTags.RIDES)
+        rows.forEachIndexed { index, (id, date, detail) ->
+            list.performScrollToIndex(index)
+            val row = hasTestTag(CumulativeMapTags.ride(id))
+            val dateTop = composeRule.onNode(hasText(date) and hasAnyAncestor(row), useUnmergedTree = true)
+                .assertIsDisplayed().fetchSemanticsNode().boundsInRoot.top
+            val detailTop = composeRule.onNode(hasText(detail) and hasAnyAncestor(row), useUnmergedTree = true)
+                .assertIsDisplayed().fetchSemanticsNode().boundsInRoot.top
+            assertTrue("$detail under $date", dateTop < detailTop)
+            // Every row says it opens: "›", a button at least 48 dp high.
+            composeRule.onNode(hasText("›") and hasAnyAncestor(row), useUnmergedTree = true).assertIsDisplayed()
+            composeRule.onNode(row)
+                .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button))
+                .assertHeightIsAtLeast(48.dp)
+            // The next (older) ride comes right under it.
+            val next = rows.getOrNull(index + 1) ?: return@forEachIndexed
+            val below = composeRule.onNodeWithTag(CumulativeMapTags.ride(next.first))
+            if (below.isDisplayed()) {
+                val top = composeRule.onNode(row).fetchSemanticsNode().boundsInRoot.top
+                assertTrue("${next.second} under $date", top < below.fetchSemanticsNode().boundsInRoot.top)
+            }
+        }
+        list.performScrollToIndex(0)
+        val first = composeRule.onNodeWithTag(CumulativeMapTags.ride(13)).fetchSemanticsNode().boundsInRoot.top
+        val second = composeRule.onNodeWithTag(CumulativeMapTags.ride(11)).assertIsDisplayed()
+            .fetchSemanticsNode().boundsInRoot.top
+        assertTrue("newest first", first < second)
+        composeRule.onNodeWithTag(CumulativeMapTags.RIDE_CARD).assertDoesNotExist()
+        composeRule.onNodeWithText("기록 보기 ›").assertDoesNotExist()
     }
 
     @Test
-    fun tappingARowShowsOpenAndTappingAgainHidesIt() {
+    fun rowTapOpensRecordWithoutSelecting() {
         val opened = mutableListOf<Long>()
         show(stateFor(PeriodFilter(), october), october, onOpenRide = { opened += it })
 
         composeRule.onNodeWithTag(CumulativeMapTags.ride(11)).performClick()
-        composeRule.onNodeWithText("기록 보기").assertIsDisplayed()
-        composeRule.onNodeWithText("기록 보기").performClick()
         assertEquals(listOf(11L), opened)
+        // Nothing is highlighted: no info card.
+        composeRule.onNodeWithTag(CumulativeMapTags.RIDE_CARD).assertDoesNotExist()
+        composeRule.onNodeWithText("기록 보기 ›").assertDoesNotExist()
 
-        // Another row: [기록 보기] moves to it.
+        composeRule.onNodeWithTag(CumulativeMapTags.RIDES).performScrollToNode(hasTestTag(CumulativeMapTags.ride(12)))
         composeRule.onNodeWithTag(CumulativeMapTags.ride(12)).performClick()
-        composeRule.onAllNodesWithText("기록 보기").assertCountEquals(1)
-        composeRule.onNodeWithText("기록 보기").performClick()
         assertEquals(listOf(11L, 12L), opened)
+        composeRule.onNodeWithTag(CumulativeMapTags.RIDE_CARD).assertDoesNotExist()
+    }
 
-        // The same row again: no highlight.
-        composeRule.onNodeWithTag(CumulativeMapTags.ride(12)).performClick()
-        composeRule.onNodeWithText("기록 보기").assertDoesNotExist()
+    @Test
+    fun aHighlightedRideHasAnInfoCardThatOpensIt() {
+        val opened = mutableListOf<Long>()
+        show(stateFor(PeriodFilter(), october, selected = 11), october, onOpenRide = { opened += it })
+
+        composeRule.onNodeWithTag(CumulativeMapTags.RIDE_CARD).assertIsDisplayed()
+        composeRule.onNodeWithText("10월 24일 (토) · 1.59km · 15분").assertIsDisplayed()
+        // The card is between the map and the list.
+        val mapBottom = composeRule.onNodeWithTag(MAP).fetchSemanticsNode().boundsInRoot.bottom
+        val card = composeRule.onNodeWithTag(CumulativeMapTags.RIDE_CARD).fetchSemanticsNode().boundsInRoot
+        val listTop = composeRule.onNodeWithText("이 기간 주행 4회").fetchSemanticsNode().boundsInRoot.top
+        assertTrue("card under the map", card.top >= mapBottom)
+        assertTrue("card above the list", card.bottom <= listTop)
+        // Its row stays in the list, in view.
+        composeRule.onNodeWithTag(CumulativeMapTags.ride(11)).assertIsDisplayed()
+
+        composeRule.onNodeWithText("기록 보기 ›").performClick()
+        assertEquals(listOf(11L), opened)
+    }
+
+    @Test
+    fun mapTapShowsTheCardAndTappingAgainHidesIt() {
+        show(stateFor(PeriodFilter(), october), october, mapTapHits = 12)
+
+        composeRule.onNodeWithTag(MAP).performClick()
+        composeRule.onNodeWithText("10월 20일 (화) · 5.00km · 20분").assertIsDisplayed()
+        composeRule.onAllNodesWithText("기록 보기 ›").assertCountEquals(1)
+
+        // The same line again: no card.
+        composeRule.onNodeWithTag(MAP).performClick()
+        composeRule.onNodeWithTag(CumulativeMapTags.RIDE_CARD).assertDoesNotExist()
+
+        // A period change lets go of it too.
+        composeRule.onNodeWithTag(MAP).performClick()
+        composeRule.onNodeWithTag(CumulativeMapTags.RIDE_CARD).assertIsDisplayed()
+        composeRule.onNodeWithText("이번 달").performClick()
+        composeRule.onNodeWithTag(CumulativeMapTags.RIDE_CARD).assertDoesNotExist()
     }
 
     @Test
@@ -209,13 +289,13 @@ class CumulativeMapScreenTest {
 
         composeRule.onNodeWithText("5주 ▾").assertIsDisplayed()
         composeRule.onNodeWithText("3.00km · 주행 1회 · 10분").assertIsDisplayed()
-        composeRule.onNodeWithText("10월 27일 (화) · 3.00km · 10분").assertIsDisplayed()
-        composeRule.onNodeWithText("10월 24일 (토) · 1.59km · 15분").assertDoesNotExist()
+        composeRule.onNodeWithText("10월 27일 (화)").assertIsDisplayed()
+        composeRule.onNodeWithText("10월 24일 (토)").assertDoesNotExist()
 
         // The first week of October has days of September.
         composeRule.onNodeWithText("5주 ▾").performClick()
         composeRule.onNodeWithText("10월 1주 (9/28~10/4)").performClick()
-        composeRule.onNodeWithText("9월 30일 (수) · 2.00km · 5분").assertIsDisplayed()
+        composeRule.onNodeWithText("9월 30일 (수)").assertIsDisplayed()
     }
 
     @Test
@@ -235,7 +315,7 @@ class CumulativeMapScreenTest {
         composeRule.onNodeWithTag(CumulativeMapTags.THIS_WEEK).assertIsNotSelected()
         composeRule.onNodeWithText("9.59km · 주행 3회 · 45분").assertIsDisplayed()
         composeRule.onNodeWithText("10월 ▾").assertIsDisplayed()
-        composeRule.onNodeWithText("9월 30일 (수) · 2.00km · 5분").assertDoesNotExist()
+        composeRule.onNodeWithText("9월 30일 (수)").assertDoesNotExist()
     }
 
     @Test
@@ -265,7 +345,7 @@ class CumulativeMapScreenTest {
         // [전체]: the rides again.
         composeRule.onNodeWithTag(CumulativeMapTags.ALL).performClick()
         composeRule.onNodeWithText(CUMULATIVE_PERIOD_EMPTY).assertDoesNotExist()
-        composeRule.onNodeWithText("10월 27일 (화) · 3.00km · 10분").assertIsDisplayed()
+        composeRule.onNodeWithText("10월 27일 (화)").assertIsDisplayed()
     }
 
     @Test

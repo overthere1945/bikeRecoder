@@ -6,19 +6,19 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -36,6 +36,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -53,6 +55,11 @@ import java.time.LocalDate
 
 const val CUMULATIVE_EMPTY = "아직 기록이 없습니다. 주행을 기록하면 여기에 쌓입니다"
 const val CUMULATIVE_PERIOD_EMPTY = "이 기간에 기록이 없습니다"
+const val CUMULATIVE_LIST_HINT = "누르면 기록을 봅니다"
+const val CUMULATIVE_OPEN_RIDE = "기록 보기 ›"
+
+/** The list's heading (spec §6.8): "이 기간 주행 {n}회". */
+fun cumulativeListTitle(rides: Int): String = "이 기간 주행 ${rides}회"
 
 object CumulativeMapTags {
     const val ALL = "cumulative-all"
@@ -62,6 +69,7 @@ object CumulativeMapTags {
     const val THIS_WEEK = "cumulative-this-week"
     const val THIS_MONTH = "cumulative-this-month"
     const val RIDES = "cumulative-rides"
+    const val RIDE_CARD = "cumulative-ride-card"
 
     fun ride(segmentId: Long) = "cumulative-ride-$segmentId"
 }
@@ -74,7 +82,8 @@ fun cumulativeSummaryText(totals: CumulativeTotals): String =
 
 /**
  * [map]: the map of the rides, told to call onUserGesture when the user moves it and onRideClick when a ride's line
- * (or an empty spot) is tapped (replaceable in tests). [onOpenRide]: [기록 보기], with the ride's segment id.
+ * (or an empty spot) is tapped, which highlights the ride (replaceable in tests). [onOpenRide]: a ride's row or the
+ * info card's [기록 보기 ›], with the ride's segment id.
  */
 @Composable
 fun CumulativeMapScreen(
@@ -104,7 +113,6 @@ fun CumulativeMapScreen(
             selectWeek = viewModel::selectWeek,
             thisWeek = viewModel::thisWeek,
             thisMonth = viewModel::thisMonth,
-            selectRide = viewModel::select,
             openRide = onOpenRide,
         ),
         onBack = onBack,
@@ -114,7 +122,8 @@ fun CumulativeMapScreen(
 
 /**
  * What the cumulative map screen's controls do: the period chips ([selectMonth] and [selectWeek] take null for the
- * whole year / month), a tap on a ride's row ([selectRide]) and [기록 보기] ([openRide]).
+ * whole year / month), and a tap on a ride's row or on the info card's [기록 보기 ›] ([openRide], spec §6.8). A tap on
+ * the map is the map's own (see [CumulativeMapScreen]).
  */
 class CumulativeMapActions(
     val showAll: () -> Unit = {},
@@ -123,15 +132,14 @@ class CumulativeMapActions(
     val selectWeek: (LocalDate?) -> Unit = {},
     val thisWeek: () -> Unit = {},
     val thisMonth: () -> Unit = {},
-    val selectRide: (Long) -> Unit = {},
     val openRide: (Long) -> Unit = {},
 )
 
 /**
  * "누적 지도" (spec §4, §6.4–§6.6): the summary of the chosen period; [전체] [연도 ▾] [월 ▾] [주 ▾] ([월 ▾] only once a
  * year is chosen, [주 ▾] once a month is; their "전체" is the whole year / month) and below them [이번 주] [이번 달];
- * then [map] (about 55% of the screen) and the list of the period's rides, newest first, each with its colour. The
- * highlighted ride's row has [기록 보기]. With no ride at all ([CumulativeMapState.empty]), only [CUMULATIVE_EMPTY];
+ * then [map] (about 55% of the screen), the info card of the ride highlighted on the map (spec §6.8), and the list of
+ * the period's rides, newest first, each with its colour. With no ride at all ([CumulativeMapState.empty]), only [CUMULATIVE_EMPTY];
  * with none in the period, [CUMULATIVE_PERIOD_EMPTY] in place of the list. No summary while nothing is read yet, nor
  * while there is no route but a pass may still bring some.
  */
@@ -159,6 +167,7 @@ fun CumulativeMapContent(
                 PeriodRow(state, actions)
                 QuickRow(state, actions)
                 map(Modifier.fillMaxWidth().weight(0.7f))
+                state.selectedRow?.let { RideCard(it, actions) }
                 RideList(state, actions, Modifier.fillMaxWidth().weight(0.3f))
             }
         }
@@ -235,8 +244,36 @@ private fun QuickRow(state: CumulativeMapState, actions: CumulativeMapActions) {
 }
 
 /**
- * The period's rides, newest first: a colour dot and the row text; a tap highlights the ride (or lets go of it). The
- * highlighted row is shaded, has [기록 보기], and is scrolled into view (it may have been tapped on the map).
+ * Under the map, the ride highlighted there (spec §6.8): "10월 25일 (일) · 1.58km · 12분" in its colour and
+ * [기록 보기 ›], which opens its record.
+ */
+@Composable
+private fun RideCard(row: RideRow, actions: CumulativeMapActions) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .clip(MaterialTheme.shapes.medium)
+            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .height(IntrinsicSize.Min)
+            .testTag(CumulativeMapTags.RIDE_CARD),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ColorBar(row.color)
+        Text(
+            row.text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.weight(1f).padding(start = 12.dp),
+        )
+        TextButton(onClick = { actions.openRide(row.segmentId) }) { Text(CUMULATIVE_OPEN_RIDE) }
+    }
+}
+
+/**
+ * "이 기간 주행 {n}회" and "누르면 기록을 봅니다", then the period's rides, newest first, as cards: the ride's colour, its
+ * date and, smaller, its distance and moving time, and "›". A tap opens the ride's record (spec §6.8). The ride
+ * highlighted on the map is shaded and scrolled into view.
  */
 @Composable
 private fun RideList(state: CumulativeMapState, actions: CumulativeMapActions, modifier: Modifier) {
@@ -251,33 +288,63 @@ private fun RideList(state: CumulativeMapState, actions: CumulativeMapActions, m
         val index = state.rides.indexOfFirst { it.segmentId == state.selected }
         if (index >= 0) listState.animateScrollToItem(index)
     }
-    LazyColumn(state = listState, modifier = modifier.testTag(CumulativeMapTags.RIDES)) {
-        items(state.rides, key = { it.segmentId }) { row ->
-            val selected = row.segmentId == state.selected
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 48.dp)
-                    .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
-                    .clickable { actions.selectRide(row.segmentId) }
-                    .padding(horizontal = 16.dp)
-                    .testTag(CumulativeMapTags.ride(row.segmentId)),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(12.dp)
-                        .clip(CircleShape)
-                        .background(Color(android.graphics.Color.parseColor(row.color))),
+    Column(modifier = modifier) {
+        if (state.rides.isNotEmpty()) {
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                Text(cumulativeListTitle(state.rides.size), style = MaterialTheme.typography.titleSmall)
+                Text(
+                    CUMULATIVE_LIST_HINT,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(modifier = Modifier.width(12.dp))
-                Text(row.text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                if (selected) {
-                    TextButton(onClick = { actions.openRide(row.segmentId) }) { Text("기록 보기") }
-                }
+            }
+        }
+        LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f).testTag(CumulativeMapTags.RIDES)) {
+            items(state.rides, key = { it.segmentId }) { row ->
+                RideRowCard(row, selected = row.segmentId == state.selected, onClick = { actions.openRide(row.segmentId) })
             }
         }
     }
+}
+
+@Composable
+private fun RideRowCard(row: RideRow, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+            .clip(MaterialTheme.shapes.medium)
+            .background(
+                if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+            )
+            .clickable(role = Role.Button, onClick = onClick)
+            .heightIn(min = 48.dp)
+            .height(IntrinsicSize.Min)
+            .testTag(CumulativeMapTags.ride(row.segmentId)),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ColorBar(row.color)
+        Column(modifier = Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Text(row.date, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+            Text(
+                row.detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Text("›", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(end = 16.dp))
+    }
+}
+
+/** The ride's colour on the map, 4 dp wide, the full height of its row. */
+@Composable
+private fun ColorBar(color: String) {
+    Box(
+        modifier = Modifier
+            .width(4.dp)
+            .fillMaxHeight()
+            .background(Color(android.graphics.Color.parseColor(color))),
+    )
 }
 
 /** A chip that opens a menu of [items] (text and what choosing it does). */

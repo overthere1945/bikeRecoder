@@ -420,9 +420,9 @@ class CumulativeMapViewModelTest {
         val state = vm.state.value
         assertEquals(
             listOf(
-                RideRow(2, "#E53935", "10월 24일 (토) · 1.59km · 15분"),
-                RideRow(3, "#1E88E5", "10월 20일 (화) · 5.00km · 20분"),
-                RideRow(1, "#43A047", "10월 18일 (일) · 12.34km · 1시간 2분"),
+                RideRow(2, "#E53935", "10월 24일 (토)", "1.59km · 15분"),
+                RideRow(3, "#1E88E5", "10월 20일 (화)", "5.00km · 20분"),
+                RideRow(1, "#43A047", "10월 18일 (일)", "12.34km · 1시간 2분"),
             ),
             state.rides,
         )
@@ -442,7 +442,7 @@ class CumulativeMapViewModelTest {
         vm.selectMonth(10)
         vm.selectWeek(LocalDate.of(2026, 10, 12))
         settle()
-        assertEquals(listOf(RideRow(1, "#E53935", "10월 18일 (일) · 12.34km · 1시간 2분")), vm.state.value.rides)
+        assertEquals(listOf(RideRow(1, "#E53935", "10월 18일 (일)", "12.34km · 1시간 2분")), vm.state.value.rides)
     }
 
     @Test
@@ -450,12 +450,13 @@ class CumulativeMapViewModelTest {
         val monday = LocalDate.of(2026, 10, 26)
         assertEquals(
             listOf("월", "화", "수", "목", "금", "토", "일"),
-            (0L until 7L).map { rideRowText(CumulativeEntry(1, monday.plusDays(it), 0.0, 0L, emptyList())).substringAfter("(").take(1) },
+            (0L until 7L).map { rideRowOf(CumulativeEntry(1, monday.plusDays(it), 0.0, 0L, emptyList()), "#E53935").date.substringAfter("(").take(1) },
         )
-        assertEquals(
-            "11월 1일 (일) · 0.01km · 0분",
-            rideRowText(CumulativeEntry(1, LocalDate.of(2026, 11, 1), 10.0, 59_999L, emptyList())),
-        )
+        val row = rideRowOf(CumulativeEntry(1, LocalDate.of(2026, 11, 1), 10.0, 59_999L, emptyList()), "#E53935")
+        assertEquals("11월 1일 (일)", row.date)
+        assertEquals("0.01km · 0분", row.detail)
+        // The map's info card (spec §6.8): the date, distance and moving time on one line.
+        assertEquals("11월 1일 (일) · 0.01km · 0분", row.text)
     }
 
     @Test
@@ -489,6 +490,43 @@ class CumulativeMapViewModelTest {
         vm.select(99)
         settle()
         assertNull(vm.state.value.selected)
+    }
+
+    @Test
+    fun mapTapSelectsAndShowsCard() = runTest(dispatcher) {
+        entry(1, LocalDate.of(2026, 10, 18), distanceM = 12_345.0, movingTimeMs = 3_720_000L)
+        entry(2, LocalDate.of(2026, 10, 25), distanceM = 1_580.0, movingTimeMs = 720_000L)
+        val vm = viewModel()
+        settle()
+        assertNull(vm.state.value.selectedRow, "no card before a tap")
+
+        // A tap on ride 2's line (spec §6.8): highlighted, and the card under the map shows that ride.
+        vm.select(2)
+        settle()
+        assertEquals(2L, vm.state.value.selected)
+        val card = vm.state.value.selectedRow!!
+        assertEquals(RideRow(2, "#E53935", "10월 25일 (일)", "1.58km · 12분"), card)
+        assertEquals("10월 25일 (일) · 1.58km · 12분", card.text)
+
+        // The same line again: no highlight, no card.
+        vm.select(2)
+        settle()
+        assertNull(vm.state.value.selectedRow)
+
+        // An empty spot: no card either.
+        vm.select(1)
+        settle()
+        assertEquals(1L, vm.state.value.selectedRow?.segmentId)
+        vm.select(null)
+        settle()
+        assertNull(vm.state.value.selectedRow)
+
+        // A period without the ride: no card.
+        vm.select(2)
+        settle()
+        vm.selectYear(2026)
+        settle()
+        assertNull(vm.state.value.selectedRow)
     }
 
     @Test
