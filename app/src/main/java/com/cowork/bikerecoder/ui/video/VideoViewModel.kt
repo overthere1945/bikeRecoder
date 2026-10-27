@@ -260,17 +260,17 @@ class VideoViewModel(
     fun cancel() = job.cancel()
 
     /**
-     * The [outcome] was taken on screen (the preview opened): the job goes back to idle. A failure's message is shown
-     * here, as the other dialogs — except a job stopped by a recording (or any failure while one runs): spec §3.2 says
-     * that by the notification only, and a dialog would cover the record screen of the ride that just started.
-     */
-    /**
      * The preview to open on screen for [outcome], or null: a failure, or a job that ended while a recording runs (its
      * last seconds of encoding cannot be stopped; final review M2). The preview is then not opened over the record
      * screen; the "영상을 만들었습니다" notification opens it later.
      */
     fun previewToOpen(outcome: VideoOutcome): VideoOutcome.Preview? = (outcome as? VideoOutcome.Preview)?.takeIf { !recording() }
 
+    /**
+     * The [outcome] was taken on screen (the preview opened): the job goes back to idle. A failure's message is shown
+     * here, as the other dialogs — except a job stopped by a recording (or any failure while one runs): spec §3.2 says
+     * that by the notification only, and a dialog would cover the record screen of the ride that just started.
+     */
     fun outcomeShown() {
         val shown = outcome.value
         val byRecording = shown is VideoOutcome.Message && (shown.text == VideoJob.MSG_RECORDING_STARTED || recording())
