@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Shader
 import android.os.SystemClock
 import androidx.compose.foundation.background
@@ -74,9 +75,9 @@ import org.maplibre.android.style.sources.GeoJsonSource
  * [lines]: more recorded paths drawn like [track], each on its own (nothing joins one to the next), e.g. a trip's
  * segments (ruling R10).
  * [photos]: round previews of ride photos where they were taken (spec §2.3).
- * [faintLines]: paths drawn thin and see-through (#E53935, width 3, opacity 0.35) under the track, so where many of
- * them overlap the line shows darker — the cumulative map's routes (spec §4). Unlike the track they are redrawn as
- * soon as they change. A path of fewer than 2 points is not drawn.
+ * [rides]: the cumulative map's rides (spec §6.4–§6.5), newest first, each in its own colour under the track: width 4,
+ * opacity 0.8; with [selectedRide] that ride is width 6, opacity 1 and on top, the others opacity 0.25. Unlike the
+ * track they are redrawn as soon as they change. A ride of fewer than 2 points is not drawn.
  */
 data class MapOverlay(
     val route: Route?,
@@ -86,7 +87,8 @@ data class MapOverlay(
     val photos: List<MapPhoto> = emptyList(),
     val trackColors: List<String>? = null,
     val lines: List<MapLine> = emptyList(),
-    val faintLines: List<List<GeoPoint>> = emptyList(),
+    val rides: List<RideLine> = emptyList(),
+    val selectedRide: Long? = null,
 )
 
 /**
@@ -94,6 +96,9 @@ data class MapOverlay(
  * [points] (null = the track's red).
  */
 data class MapLine(val points: List<GeoPoint>, val colors: List<String>? = null)
+
+/** One ride of [MapOverlay.rides]: its segment, path and colour ("#RRGGBB"). */
+data class RideLine(val segmentId: Long, val points: List<GeoPoint>, val color: String)
 
 /** A ride photo on the map: a round preview [MAP_PHOTO_DIAMETER] wide with a white border; a grey disc while [thumbnail] is null. */
 data class MapPhoto(val photoId: Long, val point: GeoPoint, val thumbnail: ImageBitmap?)
@@ -125,14 +130,21 @@ private const val ROUTE_SOURCE = "bike-route"
 private const val STOPS_SOURCE = "bike-stops"
 private const val USER_SOURCE = "bike-user"
 private const val TRACK_SOURCE = "bike-track"
-private const val FAINT_SOURCE = "bike-faint"
+private const val RIDES_SOURCE = "bike-rides"
+private const val RIDES_LAYER = "$RIDES_SOURCE-line"
 private const val PHOTOS_SOURCE = "bike-photos"
 private const val PHOTOS_LAYER = "$PHOTOS_SOURCE-symbol"
 private const val PHOTO_PLACEHOLDER_COLOR = "#9E9E9E"
 private const val ROUTE_COLOR = "#1E88E5"
 private const val TRACK_COLOR = "#E53935"
-private const val FAINT_LINE_WIDTH = 3f
-private const val FAINT_LINE_OPACITY = 0.35f
+private const val RIDE_WIDTH = 4.0
+private const val RIDE_OPACITY = 0.8
+private const val SELECTED_RIDE_WIDTH = 6.0
+private const val SELECTED_RIDE_OPACITY = 1.0
+private const val DIMMED_RIDE_OPACITY = 0.25
+
+/** Half the side of the square around a tap in which a ride counts as tapped (the lines are only 4 wide). */
+private val RIDE_TAP_SLOP = 12.dp
 private const val FOLLOW_ZOOM = 17.0
 private const val FOLLOW_TILT = 50.0
 private const val FOLLOW_ANIMATION_MS = 800
@@ -158,6 +170,11 @@ fun BikeMap(
     onCameraMoveStarted: (() -> Unit)? = null,
     /** A tap on a photo preview of [MapOverlay.photos], with its [MapPhoto.photoId]. */
     onPhotoClick: ((Long) -> Unit)? = null,
+    /**
+     * A tap on the map with [MapOverlay.rides] tappable: the ride tapped ([pickRide] where several are), or null for a
+     * spot with none.
+     */
+    onRideClick: ((Long?) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -170,6 +187,10 @@ fun BikeMap(
     val currentOnCameraIdle by rememberUpdatedState(onCameraIdle)
     val currentOnCameraMoveStarted by rememberUpdatedState(onCameraMoveStarted)
     val currentOnPhotoClick by rememberUpdatedState(onPhotoClick)
+    val currentOnRideClick by rememberUpdatedState(onRideClick)
+    val currentRides by rememberUpdatedState(overlay.rides)
+    val currentSelectedRide by rememberUpdatedState(overlay.selectedRide)
+    val rideTapSlopPx = with(LocalDensity.current) { RIDE_TAP_SLOP.toPx() }
 
     var styleAttempt by remember { mutableIntStateOf(0) }
     val styleResult by produceState<Result<String>?>(initialValue = null, tileSource, styleAttempt) {
@@ -236,10 +257,21 @@ fun BikeMap(
                 true
             }
             m.addOnMapClickListener { latLng ->
-                val onPhoto = currentOnPhotoClick ?: return@addOnMapClickListener false
-                val tapped = m.queryRenderedFeatures(m.projection.toScreenLocation(latLng), PHOTOS_LAYER).firstOrNull()
-                val photoId = tapped?.getNumberProperty(PHOTO_ID)?.toLong() ?: return@addOnMapClickListener false
-                onPhoto(photoId)
+                val at = m.projection.toScreenLocation(latLng)
+                currentOnPhotoClick?.let { onPhoto ->
+                    val tapped = m.queryRenderedFeatures(at, PHOTOS_LAYER).firstOrNull()
+                    val photoId = tapped?.getNumberProperty(PHOTO_ID)?.toLong()
+                    if (photoId != null) {
+                        onPhoto(photoId)
+                        return@addOnMapClickListener true
+                    }
+                }
+                val onRide = currentOnRideClick ?: return@addOnMapClickListener false
+                val box = RectF(at.x - rideTapSlopPx, at.y - rideTapSlopPx, at.x + rideTapSlopPx, at.y + rideTapSlopPx)
+                val hits = m.queryRenderedFeatures(box, RIDES_LAYER)
+                    .mapNotNull { f -> if (f.hasProperty(RIDE_ID)) f.getNumberProperty(RIDE_ID).toLong() else null }
+                    .distinct()
+                onRide(pickRide(hits, currentSelectedRide, currentRides.map { it.segmentId }))
                 true
             }
             m.addOnMoveListener(object : MapLibreMap.OnMoveListener {
@@ -312,11 +344,12 @@ fun BikeMap(
             .atMostEveryUnless(TRACK_UPDATE_MS, SystemClock::uptimeMillis, ::redrawAtOnce)
             .collect { d -> source.setGeoJson(withContext(Dispatchers.Default) { trackGeoJson(d.track, d.colors, d.lines) }) }
     }
-    // Many long paths: built off the main thread; a newer list cancels the one still being built.
-    LaunchedEffect(style, overlay.faintLines) {
-        val source = style?.getSourceAs<GeoJsonSource>(FAINT_SOURCE) ?: return@LaunchedEffect
-        val lines = overlay.faintLines
-        source.setGeoJson(withContext(Dispatchers.Default) { faintLinesGeoJson(lines) })
+    // Many long paths: built off the main thread; a newer list or highlight cancels the one still being built.
+    LaunchedEffect(style, overlay.rides, overlay.selectedRide) {
+        val source = style?.getSourceAs<GeoJsonSource>(RIDES_SOURCE) ?: return@LaunchedEffect
+        val rides = overlay.rides
+        val selected = overlay.selectedRide
+        source.setGeoJson(withContext(Dispatchers.Default) { ridesGeoJson(rides, selected) })
     }
     LaunchedEffect(style, overlay.user) {
         style?.getSourceAs<GeoJsonSource>(USER_SOURCE)?.setGeoJson(userGeoJson(overlay.user))
@@ -424,7 +457,7 @@ private fun installOverlayLayers(style: Style) {
     style.addSource(GeoJsonSource(ROUTE_SOURCE, EMPTY_COLLECTION))
     style.addSource(GeoJsonSource(STOPS_SOURCE, EMPTY_COLLECTION))
     style.addSource(GeoJsonSource(USER_SOURCE, EMPTY_COLLECTION))
-    style.addSource(GeoJsonSource(FAINT_SOURCE, EMPTY_COLLECTION))
+    style.addSource(GeoJsonSource(RIDES_SOURCE, EMPTY_COLLECTION))
     style.addSource(GeoJsonSource(TRACK_SOURCE, EMPTY_COLLECTION))
     style.addSource(GeoJsonSource(PHOTOS_SOURCE, EMPTY_COLLECTION))
 
@@ -436,14 +469,14 @@ private fun installOverlayLayers(style: Style) {
             PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
         ),
     )
-    // The faint paths: above the planned route, below the track. One colour and opacity for all of them, so the
-    // overlaps add up.
+    // The rides: above the planned route, below the track; each its own colour, width and opacity ([ridesGeoJson]),
+    // the highlighted one on top.
     style.addLayer(
-        LineLayer("$FAINT_SOURCE-line", FAINT_SOURCE).withProperties(
-            PropertyFactory.lineColor(Color.parseColor(TRACK_COLOR)),
-            PropertyFactory.lineWidth(FAINT_LINE_WIDTH),
-            PropertyFactory.lineOpacity(FAINT_LINE_OPACITY),
-            // Butt ends and mitred corners: round ones overlap the line itself and show as darker beads at vertices.
+        LineLayer(RIDES_LAYER, RIDES_SOURCE).withProperties(
+            PropertyFactory.lineColor(Expression.toColor(Expression.get(LINE_COLOR))),
+            PropertyFactory.lineWidth(Expression.toNumber(Expression.get(RIDE_WIDTH_KEY))),
+            PropertyFactory.lineOpacity(Expression.toNumber(Expression.get(RIDE_OPACITY_KEY))),
+            // Butt ends and mitred corners: round ones overlap the see-through line itself and show as darker beads.
             PropertyFactory.lineCap(Property.LINE_CAP_BUTT),
             PropertyFactory.lineJoin(Property.LINE_JOIN_MITER),
         ),
@@ -546,21 +579,52 @@ private fun colorFeature(points: List<GeoPoint>, color: String): String {
     return """{"type":"Feature","properties":{"$LINE_COLOR":"$color"},"geometry":{"type":"LineString","coordinates":[$coords]}}"""
 }
 
-/** [lines] as one MultiLineString ([lon,lat] pairs), leaving out those of fewer than 2 points; empty if none is left. */
-internal fun faintLinesGeoJson(lines: List<List<GeoPoint>>): String {
-    val drawn = lines.filter { it.size >= 2 }
+private const val RIDE_ID = "segmentId"
+private const val RIDE_SELECTED = "selected"
+private const val RIDE_WIDTH_KEY = "width"
+private const val RIDE_OPACITY_KEY = "opacity"
+
+/**
+ * [rides] (newest first) as one LineString feature each with its segmentId, colour, whether it is [selected], and its
+ * width and opacity: 4 and 0.8 with nothing selected; with a selection 6 and 1 for it, 0.25 for the rest. Oldest first,
+ * so newer rides are drawn over older ones, and the selected one last (on top). Rides of fewer than 2 points are left
+ * out; empty if none is left.
+ */
+internal fun ridesGeoJson(rides: List<RideLine>, selected: Long?): String {
+    val drawn = rides.filter { it.points.size >= 2 }
     if (drawn.isEmpty()) return EMPTY_COLLECTION
-    val coords = StringBuilder()
-    drawn.forEachIndexed { i, line ->
-        if (i > 0) coords.append(',')
-        coords.append('[')
-        line.forEachIndexed { j, p ->
-            if (j > 0) coords.append(',')
-            coords.append(coordinate(p))
+    val ordered = drawn.asReversed().filter { it.segmentId != selected } + drawn.filter { it.segmentId == selected }
+    val out = StringBuilder("""{"type":"FeatureCollection","features":[""")
+    ordered.forEachIndexed { i, ride ->
+        val isSelected = ride.segmentId == selected
+        val width = if (isSelected) SELECTED_RIDE_WIDTH else RIDE_WIDTH
+        val opacity = when {
+            selected == null -> RIDE_OPACITY
+            isSelected -> SELECTED_RIDE_OPACITY
+            else -> DIMMED_RIDE_OPACITY
         }
-        coords.append(']')
+        if (i > 0) out.append(',')
+        out.append("""{"type":"Feature","properties":{"$RIDE_ID":${ride.segmentId},"$LINE_COLOR":"${ride.color}",""")
+        out.append(""""$RIDE_SELECTED":$isSelected,"$RIDE_WIDTH_KEY":$width,"$RIDE_OPACITY_KEY":$opacity},""")
+        out.append(""""geometry":{"type":"LineString","coordinates":[""")
+        ride.points.forEachIndexed { j, p ->
+            if (j > 0) out.append(',')
+            out.append(coordinate(p))
+        }
+        out.append("]}}")
     }
-    return """{"type":"Feature","properties":{},"geometry":{"type":"MultiLineString","coordinates":[$coords]}}"""
+    return out.append("]}").toString()
+}
+
+/**
+ * Which ride a tap means, given the rides found around it ([hitSegmentIds]): the highlighted one ([selected]) if it is
+ * among them, since it is drawn on top; otherwise the newest of them by [rideOrder] (newest first, as drawn: newer
+ * over older). Null for a spot with no ride.
+ */
+internal fun pickRide(hitSegmentIds: List<Long>, selected: Long?, rideOrder: List<Long>): Long? {
+    if (hitSegmentIds.isEmpty()) return null
+    if (selected != null && selected in hitSegmentIds) return selected
+    return rideOrder.firstOrNull { it in hitSegmentIds } ?: hitSegmentIds.first()
 }
 
 private fun lineGeoJson(points: List<GeoPoint>): String {

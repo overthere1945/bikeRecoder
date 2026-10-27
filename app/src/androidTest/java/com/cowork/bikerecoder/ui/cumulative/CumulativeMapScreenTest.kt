@@ -32,7 +32,10 @@ import org.junit.Rule
 import org.junit.Test
 import java.time.LocalDate
 
-/** The cumulative map screen on fake state, its map replaced (spec §4): the summary, the period menus, the empty text. */
+/**
+ * The cumulative map screen on fake state, its map replaced (spec §4, §6.4–§6.6): the summary, the period menus and
+ * quick periods, the ride list and its highlight, the empty texts.
+ */
 class CumulativeMapScreenTest {
     @get:Rule
     val composeRule = createComposeRule()
@@ -46,30 +49,51 @@ class CumulativeMapScreenTest {
     private fun entry(id: Long, date: LocalDate, distanceM: Double, movingTimeMs: Long) =
         CumulativeEntry(id, date, distanceM, movingTimeMs, listOf(GeoPoint(37.5, 127.0), GeoPoint(37.51, 127.01)))
 
-    /** What the view model would show for [period] (the same core rules). */
-    private fun stateFor(period: PeriodFilter): CumulativeMapState {
-        val entries = CumulativeSummary.filter(all, period)
-        return CumulativeMapState(
-            loaded = true,
-            settled = true,
-            period = period,
-            entries = entries,
-            lines = entries.map { it.points },
-            totals = CumulativeSummary.totals(entries),
-            years = CumulativeSummary.years(all),
-            months = period.year?.let { CumulativeSummary.months(all, it) }.orEmpty(),
-        )
-    }
+    /** Rides of October 2026 (and one of 30 September); "today" is Tuesday 2026-10-27. */
+    private val october = listOf(
+        entry(11, LocalDate.of(2026, 10, 24), 1_590.0, 900_000L),
+        entry(12, LocalDate.of(2026, 10, 20), 5_000.0, 1_200_000L),
+        entry(13, LocalDate.of(2026, 10, 27), 3_000.0, 600_000L),
+        entry(14, LocalDate.of(2026, 9, 30), 2_000.0, 300_000L),
+    )
 
-    private fun show(initial: CumulativeMapState, onBack: () -> Unit = {}) {
+    /** What the view model would show of [rides] (the same rules). */
+    private fun stateFor(
+        period: PeriodFilter,
+        rides: List<CumulativeEntry> = all,
+        quick: QuickPeriod? = null,
+        selected: Long? = null,
+        settled: Boolean = true,
+    ) = cumulativeStateOf(CumulativeSummary.rides(rides), settled, period, quick, selected)
+
+    /** Shows [initial]; the controls act like the view model's on [rides]. */
+    private fun show(
+        initial: CumulativeMapState,
+        rides: List<CumulativeEntry> = all,
+        onOpenRide: (Long) -> Unit = {},
+        onBack: () -> Unit = {},
+    ) {
         var state by mutableStateOf(initial)
+        fun choose(period: PeriodFilter, quick: QuickPeriod? = null) {
+            state = stateFor(period, rides, quick)
+        }
+        val actions = CumulativeMapActions(
+            showAll = { choose(PeriodFilter()) },
+            selectYear = { choose(PeriodFilter(it)) },
+            selectMonth = { month -> choose(PeriodFilter(state.period.year, month)) },
+            selectWeek = { start -> choose(PeriodFilter(state.period.year, state.period.month, start)) },
+            thisWeek = { choose(PeriodFilter(2026, 10, LocalDate.of(2026, 10, 26)), QuickPeriod.THIS_WEEK) },
+            thisMonth = { choose(PeriodFilter(2026, 10), QuickPeriod.THIS_MONTH) },
+            selectRide = { id ->
+                state = stateFor(state.period, rides, state.quick, selected = if (state.selected == id) null else id)
+            },
+            openRide = onOpenRide,
+        )
         composeRule.setContent {
             MaterialTheme {
                 CumulativeMapContent(
                     state = state,
-                    onShowAll = { state = stateFor(PeriodFilter()) },
-                    onSelectYear = { state = stateFor(PeriodFilter(it)) },
-                    onSelectMonth = { month -> state = stateFor(PeriodFilter(state.period.year, month)) },
+                    actions = actions,
                     onBack = onBack,
                     map = { modifier -> Box(modifier.testTag(MAP)) },
                 )
@@ -127,6 +151,115 @@ class CumulativeMapScreenTest {
         composeRule.onNodeWithText("35.00km · 주행 3회 · 1시간 45분").assertIsDisplayed()
         composeRule.onNodeWithText("연도 ▾").assertIsDisplayed()
         composeRule.onNodeWithTag(CumulativeMapTags.MONTH).assertIsNotEnabled()
+    }
+
+    @Test
+    fun rideRowsNewestFirst() {
+        show(stateFor(PeriodFilter(), october), october)
+
+        val texts = listOf(
+            "10월 27일 (화) · 3.00km · 10분",
+            "10월 24일 (토) · 1.59km · 15분",
+            "10월 20일 (화) · 5.00km · 20분",
+            "9월 30일 (수) · 2.00km · 5분",
+        )
+        val tops = texts.map { composeRule.onNodeWithText(it).assertIsDisplayed().fetchSemanticsNode().boundsInRoot.top }
+        assertEquals("newest first", tops.sorted(), tops)
+        composeRule.onNodeWithText("기록 보기").assertDoesNotExist()
+    }
+
+    @Test
+    fun tappingARowShowsOpenAndTappingAgainHidesIt() {
+        val opened = mutableListOf<Long>()
+        show(stateFor(PeriodFilter(), october), october, onOpenRide = { opened += it })
+
+        composeRule.onNodeWithTag(CumulativeMapTags.ride(11)).performClick()
+        composeRule.onNodeWithText("기록 보기").assertIsDisplayed()
+        composeRule.onNodeWithText("기록 보기").performClick()
+        assertEquals(listOf(11L), opened)
+
+        // Another row: [기록 보기] moves to it.
+        composeRule.onNodeWithTag(CumulativeMapTags.ride(12)).performClick()
+        composeRule.onAllNodesWithText("기록 보기").assertCountEquals(1)
+        composeRule.onNodeWithText("기록 보기").performClick()
+        assertEquals(listOf(11L, 12L), opened)
+
+        // The same row again: no highlight.
+        composeRule.onNodeWithTag(CumulativeMapTags.ride(12)).performClick()
+        composeRule.onNodeWithText("기록 보기").assertDoesNotExist()
+    }
+
+    @Test
+    fun weekMenuListsTheWeeksOfTheMonth() {
+        show(stateFor(PeriodFilter(), october), october)
+        composeRule.onNodeWithTag(CumulativeMapTags.WEEK).assertIsNotEnabled()
+
+        composeRule.onNodeWithText("연도 ▾").performClick()
+        composeRule.onNodeWithText("2026년").performClick()
+        composeRule.onNodeWithTag(CumulativeMapTags.WEEK).assertIsNotEnabled()
+        composeRule.onNodeWithText("월 ▾").performClick()
+        composeRule.onNodeWithText("10월").performClick()
+        composeRule.onNodeWithTag(CumulativeMapTags.WEEK).assertIsEnabled()
+
+        composeRule.onNodeWithText("주 ▾").performClick()
+        composeRule.onNode(hasText("전체") and hasAnyAncestor(isPopup())).assertIsDisplayed()
+        composeRule.onNodeWithText("10월 1주 (9/28~10/4)").assertIsDisplayed()
+        composeRule.onNodeWithText("10월 4주 (10/19~10/25)").assertIsDisplayed()
+        composeRule.onNodeWithText("10월 5주 (10/26~11/1)").performClick()
+
+        composeRule.onNodeWithText("5주 ▾").assertIsDisplayed()
+        composeRule.onNodeWithText("3.00km · 주행 1회 · 10분").assertIsDisplayed()
+        composeRule.onNodeWithText("10월 27일 (화) · 3.00km · 10분").assertIsDisplayed()
+        composeRule.onNodeWithText("10월 24일 (토) · 1.59km · 15분").assertDoesNotExist()
+
+        // The first week of October has days of September.
+        composeRule.onNodeWithText("5주 ▾").performClick()
+        composeRule.onNodeWithText("10월 1주 (9/28~10/4)").performClick()
+        composeRule.onNodeWithText("9월 30일 (수) · 2.00km · 5분").assertIsDisplayed()
+    }
+
+    @Test
+    fun thisWeekAndThisMonth() {
+        show(stateFor(PeriodFilter(), october), october)
+        composeRule.onNodeWithTag(CumulativeMapTags.THIS_WEEK).assertIsNotSelected()
+        composeRule.onNodeWithTag(CumulativeMapTags.THIS_MONTH).assertIsNotSelected()
+
+        composeRule.onNodeWithText("이번 주").performClick()
+        composeRule.onNodeWithTag(CumulativeMapTags.THIS_WEEK).assertIsSelected()
+        composeRule.onNodeWithTag(CumulativeMapTags.ALL).assertIsNotSelected()
+        composeRule.onNodeWithText("3.00km · 주행 1회 · 10분").assertIsDisplayed()
+        composeRule.onNodeWithText("5주 ▾").assertIsDisplayed()
+
+        composeRule.onNodeWithText("이번 달").performClick()
+        composeRule.onNodeWithTag(CumulativeMapTags.THIS_MONTH).assertIsSelected()
+        composeRule.onNodeWithTag(CumulativeMapTags.THIS_WEEK).assertIsNotSelected()
+        composeRule.onNodeWithText("9.59km · 주행 3회 · 45분").assertIsDisplayed()
+        composeRule.onNodeWithText("10월 ▾").assertIsDisplayed()
+        composeRule.onNodeWithText("9월 30일 (수) · 2.00km · 5분").assertDoesNotExist()
+    }
+
+    @Test
+    fun periodWithoutRidesSaysSo() {
+        show(stateFor(PeriodFilter(2026, 12), october), october)
+
+        composeRule.onNodeWithText(CUMULATIVE_PERIOD_EMPTY).assertIsDisplayed()
+        composeRule.onNodeWithText("이 기간에 기록이 없습니다").assertIsDisplayed()
+        composeRule.onNodeWithText(CUMULATIVE_EMPTY).assertDoesNotExist()
+        composeRule.onNodeWithText("0.00km · 주행 0회 · 0분").assertIsDisplayed()
+        composeRule.onNodeWithTag(MAP).assertIsDisplayed()
+
+        // [전체]: the rides again.
+        composeRule.onNodeWithTag(CumulativeMapTags.ALL).performClick()
+        composeRule.onNodeWithText(CUMULATIVE_PERIOD_EMPTY).assertDoesNotExist()
+        composeRule.onNodeWithText("10월 27일 (화) · 3.00km · 10분").assertIsDisplayed()
+    }
+
+    @Test
+    fun noPeriodEmptyTextWhileAPassMayStillAddRoutes() {
+        show(stateFor(PeriodFilter(2026, 12), october, settled = false), october)
+
+        composeRule.onNodeWithText(CUMULATIVE_PERIOD_EMPTY).assertDoesNotExist()
+        composeRule.onNodeWithTag(MAP).assertIsDisplayed()
     }
 
     @Test

@@ -541,7 +541,12 @@ fun BikeNavHost(
         }
         composable(Routes.CUMULATIVE) {
             val viewModel: CumulativeMapViewModel = viewModel(factory = CumulativeMapViewModel.factory(container))
-            CumulativeMapScreen(viewModel = viewModel, tileSource = container.tileSource, onBack = { navController.popBackStack() })
+            CumulativeMapScreen(
+                viewModel = viewModel,
+                tileSource = container.tileSource,
+                onBack = { navController.popBackStack() },
+                onOpenRide = { segmentId -> navController.navigate(Routes.segmentDetail(segmentId)) },
+            )
         }
         composable(
             Routes.TRIP_DETAIL,

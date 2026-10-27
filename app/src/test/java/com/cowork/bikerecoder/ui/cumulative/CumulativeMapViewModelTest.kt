@@ -6,9 +6,12 @@ import com.cowork.bikerecoder.core.post.CumulativeTotals
 import com.cowork.bikerecoder.core.post.HrRead
 import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.post.PeriodFilter
+import com.cowork.bikerecoder.core.post.WeekOption
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
+import com.cowork.bikerecoder.map.RideLine
+import com.cowork.bikerecoder.map.pickRide
 import com.cowork.bikerecoder.nav.FakeTripStore
 import com.cowork.bikerecoder.nav.RecordingLog
 import com.cowork.bikerecoder.post.FakeHeartRateSource
@@ -83,7 +86,7 @@ class CumulativeMapViewModelTest {
     }
 
     private fun TestScope.viewModel(postStore: PostStore = countingStore) =
-        CumulativeMapViewModel(postStore, processor(), log, compute = dispatcher)
+        CumulativeMapViewModel(postStore, processor(), log, compute = dispatcher, today = { TODAY })
 
     /** A simplified route of [id] on [date], two points at [lat]. */
     private fun entry(
@@ -122,8 +125,8 @@ class CumulativeMapViewModelTest {
 
         val state = vm.state.value
         assertEquals(listOf(simplifiedB, simplifiedA), state.entries) // newest first
-        assertEquals(listOf(simplifiedB.points, simplifiedA.points), state.lines)
-        assertTrue(state.lines.flatten().none { p -> tracks.flatten().contains(p) }, "no track point is drawn")
+        assertEquals(listOf(simplifiedB.points, simplifiedA.points), state.lines.map { it.points })
+        assertTrue(state.lines.flatMap { it.points }.none { p -> tracks.flatten().contains(p) }, "no track point is drawn")
         assertEquals(4_500.0, state.totals.distanceM)
         assertTrue(entryReads >= 1)
         // The view model has no RideStore; the pass it asked for had nothing to do, so no track was read at all.
@@ -272,7 +275,7 @@ class CumulativeMapViewModelTest {
         settle()
 
         assertEquals(listOf(GeoPoint(37.5, 127.0)), vm.fit.value!!.points)
-        assertEquals(emptyList<List<GeoPoint>>(), vm.state.value.lines, "one point is no line")
+        assertEquals(emptyList<RideLine>(), vm.state.value.lines, "one point is no line")
     }
 
     @Test
@@ -407,6 +410,292 @@ class CumulativeMapViewModelTest {
     }
 
     @Test
+    fun rowsAreNewestFirstWithColours() = runTest(dispatcher) {
+        val older = entry(1, LocalDate.of(2026, 10, 18), distanceM = 12_345.0, movingTimeMs = 3_720_000L, lat = 35.0)
+        val newest = entry(2, LocalDate.of(2026, 10, 24), distanceM = 1_590.0, movingTimeMs = 900_000L, lat = 36.0)
+        val middle = entry(3, LocalDate.of(2026, 10, 20), distanceM = 5_000.0, movingTimeMs = 1_200_000L, lat = 37.0)
+        val vm = viewModel()
+        settle()
+
+        val state = vm.state.value
+        assertEquals(
+            listOf(
+                RideRow(2, "#E53935", "10월 24일 (토) · 1.59km · 15분"),
+                RideRow(3, "#1E88E5", "10월 20일 (화) · 5.00km · 20분"),
+                RideRow(1, "#43A047", "10월 18일 (일) · 12.34km · 1시간 2분"),
+            ),
+            state.rides,
+        )
+        // The map draws each ride in its row's colour.
+        assertEquals(
+            listOf(
+                RideLine(2, newest.points, "#E53935"),
+                RideLine(3, middle.points, "#1E88E5"),
+                RideLine(1, older.points, "#43A047"),
+            ),
+            state.lines,
+        )
+        assertNull(state.selected)
+
+        // Colours follow the chosen period: the newest ride of it is the first colour.
+        vm.selectYear(2026)
+        vm.selectMonth(10)
+        vm.selectWeek(LocalDate.of(2026, 10, 12))
+        settle()
+        assertEquals(listOf(RideRow(1, "#E53935", "10월 18일 (일) · 12.34km · 1시간 2분")), vm.state.value.rides)
+    }
+
+    @Test
+    fun weekdaysAreOneKoreanLetter() {
+        val monday = LocalDate.of(2026, 10, 26)
+        assertEquals(
+            listOf("월", "화", "수", "목", "금", "토", "일"),
+            (0L until 7L).map { rideRowText(CumulativeEntry(1, monday.plusDays(it), 0.0, 0L, emptyList())).substringAfter("(").take(1) },
+        )
+        assertEquals(
+            "11월 1일 (일) · 0.01km · 0분",
+            rideRowText(CumulativeEntry(1, LocalDate.of(2026, 11, 1), 10.0, 59_999L, emptyList())),
+        )
+    }
+
+    @Test
+    fun selectAndDeselect() = runTest(dispatcher) {
+        entry(1, LocalDate.of(2026, 10, 18))
+        entry(2, LocalDate.of(2026, 10, 24))
+        val vm = viewModel()
+        settle()
+
+        vm.select(1)
+        settle()
+        assertEquals(1L, vm.state.value.selected)
+        // Another ride: it is the one highlighted.
+        vm.select(2)
+        settle()
+        assertEquals(2L, vm.state.value.selected)
+        // The same ride again: no highlight.
+        vm.select(2)
+        settle()
+        assertNull(vm.state.value.selected)
+        // An empty spot on the map: no highlight.
+        vm.select(1)
+        settle()
+        vm.select(null)
+        settle()
+        assertNull(vm.state.value.selected)
+        // A ride that is not shown cannot be highlighted.
+        vm.select(99)
+        settle()
+        assertNull(vm.state.value.selected)
+    }
+
+    @Test
+    fun changingPeriodClearsSelection() = runTest(dispatcher) {
+        entry(1, LocalDate.of(2026, 10, 26))
+        entry(2, LocalDate.of(2026, 10, 27))
+        val vm = viewModel()
+        settle()
+        val changes = listOf<Pair<String, () -> Unit>>(
+            "year" to { vm.selectYear(2026) },
+            "month" to { vm.selectMonth(10) },
+            "week" to { vm.selectWeek(LocalDate.of(2026, 10, 26)) },
+            "whole month" to { vm.selectWeek(null) },
+            "this week" to { vm.thisWeek() },
+            "this month" to { vm.thisMonth() },
+            "all" to { vm.showAll() },
+        )
+        for ((name, change) in changes) {
+            vm.select(2)
+            settle()
+            assertEquals(2L, vm.state.value.selected, name)
+            change()
+            settle()
+            assertNull(vm.state.value.selected, name)
+        }
+    }
+
+    @Test
+    fun selectingFitsTheMapToThatRide() = runTest(dispatcher) {
+        entry(1, LocalDate.of(2026, 10, 18), points = listOf(GeoPoint(35.1, 129.0), GeoPoint(35.2, 129.1)))
+        entry(2, LocalDate.of(2026, 10, 24), points = listOf(GeoPoint(37.5, 126.9), GeoPoint(37.6, 127.0)))
+        val processor = processor()
+        val vm = CumulativeMapViewModel(countingStore, processor, log, compute = dispatcher, today = { TODAY })
+        settle()
+        assertEquals(listOf(GeoPoint(35.1, 126.9), GeoPoint(37.6, 129.1)), vm.fit.value!!.points)
+
+        vm.select(1)
+        settle()
+        val ride = vm.fit.value!!
+        assertEquals(listOf(GeoPoint(35.1, 129.0), GeoPoint(35.2, 129.1)), ride.points, "framed on that ride")
+        assertNull(ride.padding, "the usual margin")
+
+        // Letting go of the highlight leaves the map where it is.
+        vm.select(null)
+        settle()
+        assertSame(ride, vm.fit.value)
+
+        // The camera is on the chosen ride now: a new route does not frame everything again.
+        entry(3, LocalDate.of(2026, 10, 25), points = listOf(GeoPoint(33.0, 126.0), GeoPoint(33.1, 126.1)))
+        processor.runOnce()
+        settle()
+        assertEquals(3, vm.state.value.rides.size)
+        assertSame(ride, vm.fit.value)
+    }
+
+    @Test
+    fun weekMenuOnlyAfterMonth() = runTest(dispatcher) {
+        entry(1, LocalDate.of(2026, 9, 30))
+        entry(2, LocalDate.of(2026, 10, 20))
+        entry(3, LocalDate.of(2026, 11, 2))
+        val vm = viewModel()
+        settle()
+        assertEquals(emptyList<WeekOption>(), vm.state.value.weeks, "no week without a month")
+
+        // Without a month, a week cannot be chosen.
+        vm.selectWeek(LocalDate.of(2026, 10, 19))
+        settle()
+        assertEquals(PeriodFilter(), vm.state.value.period)
+
+        vm.selectYear(2026)
+        settle()
+        assertEquals(emptyList<WeekOption>(), vm.state.value.weeks, "no week without a month")
+
+        vm.selectMonth(10)
+        settle()
+        assertEquals(
+            listOf("10월 1주 (9/28~10/4)", "10월 4주 (10/19~10/25)"),
+            vm.state.value.weeks.map { it.label },
+        )
+
+        vm.selectWeek(LocalDate.of(2026, 9, 28))
+        settle()
+        assertEquals(PeriodFilter(2026, 10, LocalDate.of(2026, 9, 28)), vm.state.value.period)
+        assertEquals(listOf(1L), vm.state.value.entries.map { it.segmentId }, "the whole week, September days too")
+
+        // [주 ▾] → 전체: the whole month again.
+        vm.selectWeek(null)
+        settle()
+        assertEquals(PeriodFilter(2026, 10), vm.state.value.period)
+        assertEquals(listOf(2L), vm.state.value.entries.map { it.segmentId })
+
+        // Another month or year starts with no week.
+        vm.selectWeek(LocalDate.of(2026, 10, 19))
+        vm.selectMonth(11)
+        settle()
+        assertEquals(PeriodFilter(2026, 11), vm.state.value.period)
+        vm.selectWeek(LocalDate.of(2026, 11, 2))
+        vm.selectYear(2026)
+        settle()
+        assertEquals(PeriodFilter(2026), vm.state.value.period)
+        assertEquals(emptyList<WeekOption>(), vm.state.value.weeks)
+    }
+
+    @Test
+    fun thisWeekAndThisMonth() = runTest(dispatcher) {
+        // Today is Tuesday 2026-10-27: this week is Monday 10/26 to Sunday 11/1.
+        entry(1, LocalDate.of(2026, 10, 3))
+        entry(2, LocalDate.of(2026, 10, 25))
+        entry(3, LocalDate.of(2026, 10, 26))
+        entry(4, LocalDate.of(2026, 10, 27))
+        entry(5, LocalDate.of(2026, 9, 30))
+        val vm = viewModel()
+        settle()
+        assertNull(vm.state.value.quick)
+
+        vm.thisWeek()
+        settle()
+        assertEquals(QuickPeriod.THIS_WEEK, vm.state.value.quick)
+        assertEquals(PeriodFilter(2026, 10, LocalDate.of(2026, 10, 26)), vm.state.value.period)
+        assertEquals(listOf(4L, 3L), vm.state.value.entries.map { it.segmentId })
+
+        vm.thisMonth()
+        settle()
+        assertEquals(QuickPeriod.THIS_MONTH, vm.state.value.quick)
+        assertEquals(PeriodFilter(2026, 10), vm.state.value.period)
+        assertEquals(listOf(4L, 3L, 2L, 1L), vm.state.value.entries.map { it.segmentId })
+
+        // Any other choice is no quick period.
+        vm.selectWeek(LocalDate.of(2026, 10, 19))
+        settle()
+        assertNull(vm.state.value.quick)
+        vm.thisWeek()
+        vm.showAll()
+        settle()
+        assertNull(vm.state.value.quick)
+        assertEquals(5, vm.state.value.entries.size)
+    }
+
+    @Test
+    fun periodWithoutRidesSaysSo() = runTest(dispatcher) {
+        entry(1, LocalDate.of(2025, 6, 1))
+        val vm = viewModel()
+        settle()
+        assertFalse(vm.state.value.periodEmpty)
+
+        vm.thisMonth()
+        settle()
+        assertTrue(vm.state.value.periodEmpty)
+        assertFalse(vm.state.value.empty, "there are rides, just not in this period")
+        assertEquals(emptyList<RideRow>(), vm.state.value.rides)
+
+        vm.showAll()
+        settle()
+        assertFalse(vm.state.value.periodEmpty)
+    }
+
+    @Test
+    fun periodEmptyWaitsWhileAPassMayStillAddRoutes() = runTest(dispatcher) {
+        entry(1, LocalDate.of(2025, 6, 1))
+        ride(startedAt = 1_000L, done = false)
+        val gate = CompletableDeferred<Unit>()
+        store.beforeList = { gate.await() }
+        val vm = viewModel()
+        settle()
+        vm.thisWeek()
+        settle()
+        assertFalse(vm.state.value.settled)
+        assertFalse(vm.state.value.periodEmpty, "the pass may still bring a ride of this week")
+
+        gate.complete(Unit)
+        settle()
+        assertTrue(vm.state.value.settled)
+        // The ride the pass simplified is dated 2026-10-18, not this week.
+        assertTrue(vm.state.value.periodEmpty)
+    }
+
+    @Test
+    fun jitterSegmentsNotListed() = runTest(dispatcher) {
+        // Standing still: GPS jitter of under 10 m, far from the real ride.
+        entry(1, LocalDate.of(2026, 10, 24), distanceM = 0.27, points = listOf(GeoPoint(33.0, 126.0), GeoPoint(33.0001, 126.0)))
+        entry(2, LocalDate.of(2026, 10, 25), distanceM = 9.99, points = listOf(GeoPoint(38.0, 128.0), GeoPoint(38.0001, 128.0)))
+        entry(3, LocalDate.of(2026, 10, 20), distanceM = 1_000.0, points = listOf(GeoPoint(37.5, 127.0), GeoPoint(37.6, 127.1)))
+        val vm = viewModel()
+        settle()
+
+        val state = vm.state.value
+        assertEquals(listOf(3L), state.rides.map { it.segmentId })
+        assertEquals(listOf(3L), state.lines.map { it.segmentId })
+        assertEquals("#E53935", state.rides.single().color, "the first colour goes to the newest real ride")
+        assertEquals(1, state.totals.rides)
+        assertEquals(listOf(GeoPoint(37.5, 127.0), GeoPoint(37.6, 127.1)), vm.fit.value!!.points, "jitter is not framed")
+        // A jitter segment cannot be highlighted.
+        vm.select(2)
+        settle()
+        assertNull(vm.state.value.selected)
+    }
+
+    @Test
+    fun tapOnOverlapPicksTopRide() {
+        // The highlighted ride is on top where rides overlap.
+        assertEquals(3L, pickRide(listOf(5L, 3L), selected = 3L, rideOrder = listOf(5L, 3L)))
+        // Without one, the newest of the rides tapped.
+        assertEquals(5L, pickRide(listOf(5L, 3L), selected = null, rideOrder = listOf(5L, 3L)))
+        assertEquals(5L, pickRide(listOf(3L, 5L), selected = null, rideOrder = listOf(7L, 5L, 3L)))
+        assertEquals(5L, pickRide(listOf(3L, 5L), selected = 7L, rideOrder = listOf(7L, 5L, 3L)))
+        // An empty spot.
+        assertNull(pickRide(emptyList(), selected = 3L, rideOrder = listOf(5L, 3L)))
+    }
+
+    @Test
     fun summaryText() {
         assertEquals("35.00km · 주행 3회 · 1시간 45분", cumulativeSummaryText(CumulativeTotals(35_000.0, 3, 6_300_000L)))
         assertEquals("0.00km · 주행 0회 · 0분", cumulativeSummaryText(CumulativeTotals(0.0, 0, 0L)))
@@ -415,5 +704,6 @@ class CumulativeMapViewModelTest {
     private companion object {
         const val TRIP = 1L
         const val NOW = 10_000_000L
+        val TODAY: LocalDate = LocalDate.of(2026, 10, 27)
     }
 }

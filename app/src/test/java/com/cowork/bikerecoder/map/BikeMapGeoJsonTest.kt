@@ -66,19 +66,39 @@ class BikeMapGeoJsonTest {
     }
 
     @Test
-    fun `faint lines are one MultiLineString without the lines too short to draw`() {
+    fun `rides are one feature each, oldest first, with their colour and style`() {
         val a = GeoPoint(37.5, 127.0)
         val b = GeoPoint(37.51, 127.0)
         val c = GeoPoint(38.0, 127.0)
         val d = GeoPoint(38.01, 127.0)
-        val e = GeoPoint(38.02, 127.0)
-        assertEquals(
-            """{"type":"Feature","properties":{},"geometry":{"type":"MultiLineString","coordinates":[""" +
-                "[[127.0,37.5],[127.0,37.51]],[[127.0,38.0],[127.0,38.01],[127.0,38.02]]]}}",
-            faintLinesGeoJson(listOf(listOf(a, b), listOf(c), emptyList(), listOf(c, d, e))),
+        // Newest first, as the cumulative map lists them; a ride of one point draws nothing.
+        val rides = listOf(
+            RideLine(5, listOf(a, b), "#E53935"),
+            RideLine(3, listOf(c, d), "#1E88E5"),
+            RideLine(2, listOf(c), "#43A047"),
         )
-        assertEquals(empty, faintLinesGeoJson(emptyList()))
-        assertEquals(empty, faintLinesGeoJson(listOf(listOf(a), emptyList())))
+        fun feature(id: Long, color: String, selected: Boolean, width: String, opacity: String, coords: String) =
+            """{"type":"Feature","properties":{"segmentId":$id,"color":"$color","selected":$selected,""" +
+                """"width":$width,"opacity":$opacity},"geometry":{"type":"LineString","coordinates":[$coords]}}"""
+        val ab = "[127.0,37.5],[127.0,37.51]"
+        val cd = "[127.0,38.0],[127.0,38.01]"
+
+        // Nothing selected: every ride width 4, opacity 0.8; the newest drawn last (on top).
+        assertEquals(
+            """{"type":"FeatureCollection","features":[""" +
+                feature(3, "#1E88E5", false, "4.0", "0.8", cd) + "," + feature(5, "#E53935", false, "4.0", "0.8", ab) +
+                "]}",
+            ridesGeoJson(rides, selected = null),
+        )
+        // One selected: it is width 6, opacity 1 and drawn last; the others fade to 0.25.
+        assertEquals(
+            """{"type":"FeatureCollection","features":[""" +
+                feature(5, "#E53935", false, "4.0", "0.25", ab) + "," + feature(3, "#1E88E5", true, "6.0", "1.0", cd) +
+                "]}",
+            ridesGeoJson(rides, selected = 3),
+        )
+        assertEquals(empty, ridesGeoJson(emptyList(), selected = null))
+        assertEquals(empty, ridesGeoJson(listOf(RideLine(2, listOf(c), "#43A047")), selected = 2))
     }
 
     @Test
