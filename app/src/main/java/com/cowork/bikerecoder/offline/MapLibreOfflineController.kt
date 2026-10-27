@@ -32,7 +32,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.maplibre.android.MapLibre
@@ -46,6 +45,7 @@ import org.maplibre.android.offline.OfflineRegionStatus
 import org.maplibre.android.offline.OfflineTilePyramidRegionDefinition
 import org.maplibre.geojson.MultiPolygon
 import org.maplibre.geojson.Point
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -58,6 +58,13 @@ class OfflineException(message: String) : Exception(message)
  * [downloadForTrip] only starts the work on [scope] and returns, so navigation never waits for it; calls are
  * serialized by a mutex and a trip with a download already running is not started twice.
  * [deleteForTrip] cancels that trip's running download first. All MapLibre calls happen on the main thread.
+ *
+ * A VIDEO download ([downloadForTrack]) can take minutes, so it yields (final review I1): every user of the mutex
+ * goes through [locked], which counts the coroutines waiting for it, and the VIDEO download stops as soon as one
+ * waits — within [STALL_POLL_MS] — keeping what arrived, as it does when it stalls. So trip delete, [정리], the end of
+ * a navigation-only ride, a guidance change, [지도 모두 지우기] and a new trip's map never wait behind a video. A
+ * yield flag was chosen over taking the region's wait out of the mutex: the region is never deleted under a running
+ * observer, and every other path stays exactly as it was.
  */
 class MapLibreOfflineController(
     context: Context,
@@ -79,6 +86,9 @@ class MapLibreOfflineController(
     val progress: StateFlow<OfflineProgress?> = _progress.asStateFlow()
 
     private val mutex = Mutex()
+
+    /** Coroutines waiting in [locked]; a running VIDEO download yields to them. */
+    private val waiting = AtomicInteger(0)
     private val lock = Any()
     private val inFlight = HashMap<Long, Job>()
 
@@ -98,7 +108,7 @@ class MapLibreOfflineController(
     override suspend fun deleteForTrip(tripId: Long) {
         val running = synchronized(lock) { inFlight.remove(tripId) }
         running?.cancelAndJoin()
-        mutex.withLock { removeTripRegions(tripId, strict = false) }
+        locked { removeTripRegions(tripId, strict = false) }
         _progress.compareAndSetIf(tripId) { null }
     }
 
@@ -108,17 +118,18 @@ class MapLibreOfflineController(
      * waits, ignores the Wi-Fi-only setting (the user asked for the video now) and never touches the trip's
      * navigation map. A complete VIDEO region of the trip is used again; an unfinished one is replaced; a download
      * that fails is logged (the snapshots fetch tiles themselves while online). Returns false only when there is no
-     * internet and the trip has no complete map of its own to draw from. Holds the download mutex meanwhile.
+     * internet and the trip has no complete map of its own to draw from. Holds the download mutex meanwhile, but gives
+     * it up as soon as another map task waits for it (the class comment): it then returns true with what arrived.
      */
     override suspend fun downloadForTrack(tripId: Long, points: List<GeoPoint>): Boolean {
         require(points.isNotEmpty()) { "no points" }
-        return mutex.withLock {
+        return locked {
             val video = findTripRegions(tripId, setOf(RegionKind.VIDEO))
             if (video.isNotEmpty() && video.all { it.meta?.kind == RegionKind.VIDEO && isComplete(it.region) }) {
-                return@withLock true
+                return@locked true
             }
             if (!network.isOnline()) {
-                return@withLock findTripRegions(tripId).any { it.meta != null && isComplete(it.region) }
+                return@locked findTripRegions(tripId).any { it.meta != null && isComplete(it.region) }
             }
             try {
                 removeTripRegions(tripId, strict = true, kinds = setOf(RegionKind.VIDEO))
@@ -126,7 +137,10 @@ class MapLibreOfflineController(
                 val definition = OfflineGeometryRegionDefinition(
                     tileSource.styleUrl, corridorGeometry(plan), VIDEO_MIN_ZOOM, VIDEO_MAX_ZOOM, VIDEO_PIXEL_RATIO, false,
                 )
-                downloadRegion(tripId, RegionKind.VIDEO, truncated = false, definition, stallMs = VIDEO_STALL_MS) { }
+                downloadRegion(
+                    tripId, RegionKind.VIDEO, truncated = false, definition, stallMs = VIDEO_STALL_MS,
+                    yieldWhen = { waiting.get() > 0 },
+                ) { }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -139,7 +153,7 @@ class MapLibreOfflineController(
 
     /** Deletes the trip's VIDEO regions and their refs only; the navigation map stays. */
     override suspend fun deleteVideoRegions(tripId: Long) {
-        mutex.withLock { removeTripRegions(tripId, strict = false, kinds = setOf(RegionKind.VIDEO)) }
+        locked { removeTripRegions(tripId, strict = false, kinds = setOf(RegionKind.VIDEO)) }
     }
 
     /** A [Route] through [points] (one point is doubled: a line needs two) for [CorridorPlanner]. */
@@ -173,7 +187,7 @@ class MapLibreOfflineController(
     override suspend fun deleteAll() {
         val running = synchronized(lock) { inFlight.values.toList().also { inFlight.clear() } }
         running.forEach { it.cancelAndJoin() }
-        mutex.withLock {
+        locked {
             val deleted = mutableListOf<Long>()
             var failures = 0
             for (region in ownRegions()) {
@@ -229,11 +243,11 @@ class MapLibreOfflineController(
             // blocks neither other trips' downloads nor deleteForTrip, and an existing map stays until a
             // replacement can really be downloaded. Nothing is shown while waiting.
             if (settings.settings.first().wifiOnlyOfflineMaps) {
-                if (mutex.withLock { decide(tripId) } == DownloadDecision.SKIP) return
+                if (locked { decide(tripId) } == DownloadDecision.SKIP) return
                 network.awaitUnmetered()
             }
 
-            mutex.withLock {
+            locked {
                 when (decide(tripId)) {
                     DownloadDecision.SKIP -> return
                     DownloadDecision.REPLACE -> removeTripRegions(tripId, strict = true, kinds = RegionKind.TRIP_MAP)
@@ -267,7 +281,7 @@ class MapLibreOfflineController(
             log.warn("Offline map download for trip $tripId failed; removing its partial regions", e)
             withContext(NonCancellable) {
                 try {
-                    mutex.withLock { removeTripRegions(tripId, strict = false, kinds = RegionKind.TRIP_MAP) }
+                    locked { removeTripRegions(tripId, strict = false, kinds = RegionKind.TRIP_MAP) }
                 } catch (cleanup: Exception) {
                     log.warn("Could not remove the partial offline regions of trip $tripId", cleanup)
                 }
@@ -278,6 +292,24 @@ class MapLibreOfflineController(
         }
     }
 
+    /**
+     * [mutex] for [block]. While this waits, [waiting] counts it, so a running VIDEO download stops and lets go
+     * (the class comment). Inline like `withLock`, so [block] may return from the caller.
+     */
+    private suspend inline fun <T> locked(block: () -> T): T {
+        waiting.incrementAndGet()
+        try {
+            mutex.lock()
+        } finally {
+            waiting.decrementAndGet()
+        }
+        try {
+            return block()
+        } finally {
+            mutex.unlock()
+        }
+    }
+
     /** Creates the region, records its ref at once (so a cancel never leaves an unreferenced region), downloads it. */
     private suspend fun downloadRegion(
         tripId: Long,
@@ -285,6 +317,7 @@ class MapLibreOfflineController(
         truncated: Boolean,
         definition: OfflineRegionDefinition,
         stallMs: Long?,
+        yieldWhen: (() -> Boolean)? = null,
         onStatus: (OfflineRegionStatus) -> Unit,
     ) {
         val region = withContext(NonCancellable) {
@@ -292,16 +325,18 @@ class MapLibreOfflineController(
             refs.insert(OfflineRegionRefEntity(0, tripId, created.id, kind.name, clock()))
             created
         }
-        awaitComplete(region, stallMs, onStatus)
+        awaitComplete(region, stallMs, yieldWhen, onStatus)
     }
 
     /**
      * Downloads [region] to the end. With [stallMs], gives up quietly (keeping what arrived) once no resource has
-     * completed for that long: MapLibre retries a failing resource forever.
+     * completed for that long: MapLibre retries a failing resource forever; and, checked as often, once [yieldWhen]
+     * says another map task waits for the mutex.
      */
     private suspend fun awaitComplete(
         region: OfflineRegion,
         stallMs: Long? = null,
+        yieldWhen: (() -> Boolean)? = null,
         onStatus: (OfflineRegionStatus) -> Unit,
     ) {
         withContext(Dispatchers.Main) {
@@ -336,6 +371,10 @@ class MapLibreOfflineController(
                     while (withTimeoutOrNull(STALL_POLL_MS) { done.await() } == null) {
                         if (SystemClock.elapsedRealtime() - lastChangeAt > stallMs) {
                             log.warn("Offline region ${region.id} stalled at $lastCount resources; using what arrived", null)
+                            break
+                        }
+                        if (yieldWhen?.invoke() == true) {
+                            log.warn("Video map download yielded to another map task at $lastCount resources; using what arrived", null)
                             break
                         }
                     }
@@ -500,6 +539,7 @@ class MapLibreOfflineController(
         const val AMBIENT_CACHE_BYTES = 100L * 1024 * 1024
         const val ESTIMATED_BYTES_PER_TILE = 15_000L
         private val ALL_KINDS: Set<RegionKind> = RegionKind.entries.toSet()
+        /** How often a waiting download checks for a stall and (VIDEO) for a map task waiting for the mutex. */
         private const val STALL_POLL_MS = 1_000L
 
         /** A video map download that has made no progress for this long is used as it is (spec §3.4). */

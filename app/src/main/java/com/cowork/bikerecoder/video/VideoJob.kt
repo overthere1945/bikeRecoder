@@ -283,29 +283,39 @@ class VideoJob(
                 store.setPending(PendingJob(tripId, kind, optionsJson, clock()))
                 backend.publish(item)
                 published = true
-                store.setPending(null)
+                // In the gallery: made, whatever the steps below do (final review I2). A trip deleted meanwhile makes the
+                // trip_media row fail (foreign key); the file stays and is previewed, without a row (id 0).
                 val media = TripMedia(0, tripId, kind, item, clock(), optionsJson)
-                val id = tripMedia.add(media)
-                made.secondsPerFrame?.let { store.recordSpeed(it) }
-                result = VideoJobState.Done(media.copy(id = id), made.downscaled)
+                result = VideoJobState.Done(media, made.downscaled)
+                attempt("Could not clear the pending video job") { store.setPending(null) }
+                attempt("Could not add the trip_media row of the made ${kind.name.lowercase()}") {
+                    result = VideoJobState.Done(media.copy(id = tripMedia.add(media)), made.downscaled)
+                }
+                made.secondsPerFrame?.let { attempt("Could not record this phone's seconds per frame") { store.recordSpeed(it) } }
             }
         } catch (e: CancellationException) {
             if (!published) result = if (stoppedByRecording) VideoJobState.Failed(MSG_RECORDING_STARTED) else VideoJobState.Cancelled
         } catch (e: Throwable) {
-            // Errors too (an OutOfMemoryError on a frame bitmap): a failure, not a silent "cancelled".
+            // Errors too (an OutOfMemoryError on a frame bitmap): a failure, not a silent "cancelled". After publishing,
+            // the made file is kept and [result] stays Done.
             log.warn("Making the ${kind.name.lowercase()} of trip $tripId failed", e)
-            result = VideoJobState.Failed(failureMessage(e, kind, neededBytes))
+            if (!published) result = VideoJobState.Failed(failureMessage(e, kind, neededBytes))
         } finally {
-            withContext(NonCancellable) {
-                val item = uri
-                if (!published && item != null) attempt("Could not delete the unfinished gallery item") { backend.delete(item) }
-                attempt("Could not clear the pending video job") { store.setPending(null) }
-                attempt("Could not delete the video map") { maps.deleteVideoRegions(tripId) }
+            // Released even when the cleanup throws an Error (final review M1): otherwise the card stays and every start
+            // says "이미 영상을 만들고 있습니다" until the app restarts.
+            try {
+                withContext(NonCancellable) {
+                    val item = uri
+                    if (!published && item != null) attempt("Could not delete the unfinished gallery item") { backend.delete(item) }
+                    attempt("Could not clear the pending video job") { store.setPending(null) }
+                    attempt("Could not delete the video map") { maps.deleteVideoRegions(tripId) }
+                }
+            } finally {
+                _state.value = result
+                _runningTripId.value = null
+                if (running === currentCoroutineContext()[Job]) running = null
+                claimed.set(false)
             }
-            _state.value = result
-            _runningTripId.value = null
-            if (running === currentCoroutineContext()[Job]) running = null
-            claimed.set(false)
         }
     }
 

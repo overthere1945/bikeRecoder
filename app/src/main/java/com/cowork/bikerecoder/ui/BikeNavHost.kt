@@ -80,7 +80,6 @@ import com.cowork.bikerecoder.ui.trip.TripStartViewModel
 import com.cowork.bikerecoder.ui.video.MediaEntry
 import com.cowork.bikerecoder.ui.video.MediaPreviewScreen
 import com.cowork.bikerecoder.ui.video.VideoHost
-import com.cowork.bikerecoder.ui.video.VideoOutcome
 import com.cowork.bikerecoder.ui.video.VideoViewModel
 import com.cowork.bikerecoder.ui.video.galleryThumbnail
 import com.cowork.bikerecoder.ui.video.shareMedia
@@ -287,12 +286,14 @@ fun BikeNavHost(
         onLaunchRequestHandled()
     }
 
-    // A finished job while the app is on screen: the preview (or its failure's message), once.
+    // A finished job while the app is on screen: the preview (or its failure's message), once. Not over a recording
+    // that started meanwhile: then the "영상을 만들었습니다" notification stays to open it.
     val videoOutcome by videoViewModel.outcome.collectAsStateWithLifecycle()
     LaunchedEffect(videoOutcome) {
         val outcome = videoOutcome ?: return@LaunchedEffect
-        if (outcome is VideoOutcome.Preview && navController.currentDestination?.route != Routes.ONBOARDING) {
-            navController.openPreview(outcome.uri, outcome.kind, outcome.downscaled)
+        val preview = videoViewModel.previewToOpen(outcome)
+        if (preview != null && navController.currentDestination?.route != Routes.ONBOARDING) {
+            navController.openPreview(preview.uri, preview.kind, preview.downscaled)
             // Seen here: "영상을 만들었습니다" would only open it again.
             VideoNotifications.cancelResult(context)
         }

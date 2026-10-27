@@ -417,6 +417,28 @@ class VideoViewModelTest {
         assertNull(vm.outcome.value)
     }
 
+    /**
+     * Final review M2: a job that ends as a recording starts (its last seconds of encoding cannot be stopped) is not
+     * opened over the record screen; "영상을 만들었습니다" opens it later. Still taken, so the job goes back to idle.
+     */
+    @Test
+    fun `done while recording is not opened on screen`() = runTest(dispatcher) {
+        val vm = vm()
+        val media = TripMedia(5, TRIP, MediaKind.VIDEO, "content://media/external/video/media/5", 0L, "{}")
+        val preview = VideoOutcome.Preview(media.uri, MediaKind.VIDEO, downscaled = false)
+        job.state.value = VideoJobState.Done(media, downscaled = false)
+        advanceUntilIdle()
+        assertEquals(preview, vm.previewToOpen(vm.outcome.value!!))
+
+        recording = true
+        assertNull(vm.previewToOpen(vm.outcome.value!!))
+        vm.outcomeShown()
+        advanceUntilIdle()
+        assertNull(vm.dialog.value)
+        assertEquals(VideoJobState.Idle, job.state.value)
+        assertNull(vm.previewToOpen(VideoOutcome.Message("영상을 만들지 못했습니다")))
+    }
+
     /** Spec §3.2: said by the notification only — no dialog over the record screen of the ride that just started. */
     @Test
     fun `a job stopped by a recording is not told on screen`() = runTest(dispatcher) {

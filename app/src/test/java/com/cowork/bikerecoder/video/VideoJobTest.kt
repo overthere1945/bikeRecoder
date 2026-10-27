@@ -496,6 +496,66 @@ class VideoJobTest {
         assertEquals("close", backend.sinks.single().events.last())
     }
 
+    /** Final review I2: the trip deleted mid-job (trip_media's foreign key fails) — the video stays in the gallery, Done. */
+    @Test
+    fun aPublishedVideoIsDoneEvenWhenItsRowCannotBeAdded() = runBlocking {
+        media.failAdd = { IllegalStateException("FOREIGN KEY constraint failed") }
+
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
+        val done = awaitEnd() as VideoJobState.Done
+        awaitIdle()
+
+        val uri = backend.created.single()
+        assertEquals(TripMedia(0, TRIP, MediaKind.VIDEO, uri, NOW, VideoOptionsJson.encode(short)), done.media)
+        assertEquals(listOf(uri), backend.published)
+        assertEquals(emptyList<String>(), backend.deleted)
+        assertNull(store.pending())
+        // The steps after the row still ran: this phone's speed is recorded.
+        assertTrue(store.secondsPerFrame() != null)
+        assertTrue(warnings.any { "row" in it }, warnings.toString())
+    }
+
+    /** Even an Error after publishing keeps the published file and reports it as made. */
+    @Test
+    fun anErrorAfterPublishingStillEndsDone() = runBlocking {
+        media.failAdd = { OutOfMemoryError("row") }
+
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
+
+        assertTrue(awaitEnd() is VideoJobState.Done)
+        awaitIdle()
+        assertEquals(emptyList<String>(), backend.deleted)
+        assertEquals(1, backend.published.size)
+    }
+
+    /** Final review M1: an Error in the cleanup still ends the state and frees the job (and is not swallowed). */
+    @Test
+    fun anErrorInTheCleanupStillReleasesTheJob() = runBlocking {
+        val uncaught = Collections.synchronizedList(mutableListOf<Throwable>())
+        val handler = kotlinx.coroutines.CoroutineExceptionHandler { _, e -> uncaught += e }
+        val failing = VideoJob(
+            loadInputs = { inputs }, store = store, tripMedia = media, maps = maps, backend = backend, recording = recording,
+            online = { true }, startService = {},
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + handler).also { scopes += it },
+            log = { message, _ -> warnings += message }, clock = { NOW }, nanoTime = { backend.nanos },
+        )
+        maps.failDelete = { StackOverflowError("cleanup") }
+
+        assertEquals(StartResult.STARTED, failing.startVideo(TRIP, short))
+
+        val end = withTimeout(20_000) { failing.state.first { it is VideoJobState.Done || it is VideoJobState.Failed } }
+        assertTrue(end is VideoJobState.Done, end.toString())
+        withTimeout(20_000) { while (failing.isRunning) kotlinx.coroutines.delay(5) }
+        assertNull(failing.runningTripId.value)
+        withTimeout(20_000) { while (uncaught.isEmpty()) kotlinx.coroutines.delay(5) }
+        assertTrue(uncaught.single() is StackOverflowError)
+
+        // Free again: the next job starts.
+        maps.failDelete = null
+        assertEquals(StartResult.STARTED, failing.startImage(TRIP, Aspect.PORTRAIT))
+        assertTrue(withTimeout(20_000) { failing.state.first { it is VideoJobState.Done } } is VideoJobState.Done)
+    }
+
     @Test
     fun theMapIsCheckedBeforeTheMusicIsMade() = runBlocking {
         online = false
@@ -640,8 +700,11 @@ class VideoJobTest {
             return available
         }
 
+        var failDelete: (() -> Throwable)? = null
+
         override suspend fun deleteVideoRegions(tripId: Long) {
             deleted += tripId
+            failDelete?.let { throw it() }
         }
     }
 
@@ -649,8 +712,10 @@ class VideoJobTest {
         val rows: MutableList<TripMedia> = Collections.synchronizedList(mutableListOf())
         val pendingAtAdd = mutableListOf<PendingJob?>()
         override fun observe(tripId: Long): Flow<List<TripMedia>> = flowOf(rows.filter { it.tripId == tripId })
+        var failAdd: (() -> Throwable)? = null
         override suspend fun add(m: TripMedia): Long {
             pendingAtAdd += store.pending()
+            failAdd?.let { throw it() }
             return (rows.size + 100L).also { rows += m.copy(id = it) }
         }
         override suspend fun remove(ids: Collection<Long>) {
