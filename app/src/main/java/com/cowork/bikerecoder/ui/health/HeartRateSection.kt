@@ -120,7 +120,13 @@ fun HeartRateSection(
 @Composable
 fun HeartRateNotice(gate: HeartRateGate?) {
     if (gate == null) return
-    val access = rememberHeartRateAccess(gate)
+    HeartRateNotice(gate, rememberHeartRateAccess(gate))
+}
+
+/** The same for a screen that also needs the [access] itself (one state, so the permission flow runs once). */
+@Composable
+fun HeartRateNotice(gate: HeartRateGate?, access: HeartRateAccessState) {
+    if (gate == null) return
     HeartRateNotice(access.value) { HeartRatePermissionPrompt(gate, access) }
 }
 

@@ -33,6 +33,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -194,6 +195,92 @@ class DetailHeartRateTest {
         assertEquals(300.0, hr.calories, "the calories that are known, summed")
         assertEquals(mapOf(day1 to 100, day2 to 155), hr.avgByDate)
         assertTrue(hr.canColor, "one detailed segment is enough")
+    }
+
+    @Test
+    fun tripRefetchReadsEverySegment() = runTest(dispatcher) {
+        val a = segment(startedAt = 0, date = day1)
+        val b = segment(startedAt = 100_000, date = day2)
+        val open = rides.openSegment(TRIP, 200_000, day2) // still being recorded: left alone
+        val vm = tripDetail()
+        advanceUntilIdle()
+        val before = heartRate.calls.size
+
+        heartRate.reads = { from, _ -> HrRead.Samples(listOf(HeartRateSample(from + 1_000L, if (from < 100_000L) 110 else 150)), calories = null) }
+        vm.refetchHeartRate()
+        assertTrue(vm.refetching.value, "busy at once")
+        advanceUntilIdle()
+
+        assertEquals(before + 2, heartRate.calls.size, "one read per closed segment, not the open one")
+        assertFalse(vm.refetching.value)
+        assertEquals(HrStatus.READY, store.extras(a)?.hrStatus)
+        assertEquals(HrStatus.READY, store.extras(b)?.hrStatus)
+        assertNull(store.extras(open))
+    }
+
+    @Test
+    fun tripRefetchRunsOnceWhileBusy() = runTest(dispatcher) {
+        segment(startedAt = 0, date = day1)
+        segment(startedAt = 100_000, date = day2)
+        val vm = tripDetail()
+        advanceUntilIdle()
+        val before = heartRate.calls.size
+
+        vm.refetchHeartRate()
+        vm.refetchHeartRate()
+        advanceUntilIdle()
+        assertEquals(before + 2, heartRate.calls.size, "the second press while busy is ignored")
+
+        vm.refetchHeartRate()
+        advanceUntilIdle()
+        assertEquals(before + 4, heartRate.calls.size, "a new pass is possible once the first is over")
+        assertFalse(vm.refetching.value)
+    }
+
+    @Test
+    fun tripRefetchContinuesPastAFailingSegment() = runTest(dispatcher) {
+        val a = segment(startedAt = 0, date = day1)
+        val b = segment(startedAt = 100_000, date = day2)
+        val vm = tripDetail()
+        advanceUntilIdle()
+        val before = heartRate.calls.size
+
+        heartRate.reads = { from, _ ->
+            if (from < 100_000L) throw IllegalStateException("Health Connect hiccup")
+            HrRead.Samples(listOf(HeartRateSample(from + 1_000L, 150)), calories = null)
+        }
+        vm.refetchHeartRate()
+        advanceUntilIdle()
+
+        assertEquals(before + 2, heartRate.calls.size, "the failing segment did not stop the pass")
+        assertNotEquals(HrStatus.READY, store.extras(a)?.hrStatus)
+        assertEquals(HrStatus.READY, store.extras(b)?.hrStatus)
+        assertFalse(vm.refetching.value, "not stuck busy")
+    }
+
+    @Test
+    fun tripTotalsFollowRefetchedExtras() = runTest(dispatcher) {
+        val a = segment(startedAt = 0, date = day1)
+        ready(a, listOf(HeartRateSample(0L, 100)), avg = 100, max = 110, calories = null)
+        val vm = tripDetail()
+        advanceUntilIdle()
+        assertEquals(100, vm.heartRate.value.avgBpm)
+        assertEquals(110, vm.heartRate.value.maxBpm)
+        assertNull(vm.heartRate.value.calories)
+
+        heartRate.reads = { from, _ ->
+            HrRead.Samples(
+                listOf(HeartRateSample(from, 100), HeartRateSample(from + 1_000L, 160), HeartRateSample(from + 2_000L, 170)),
+                calories = 42.0,
+            )
+        }
+        vm.refetchHeartRate()
+        advanceUntilIdle()
+
+        val hr = vm.heartRate.value
+        assertEquals(170, hr.maxBpm, "the totals follow the new samples")
+        assertTrue(hr.avgBpm!! > 100, "average rose with the new samples: ${hr.avgBpm}")
+        assertEquals(42.0, hr.calories)
     }
 
     @Test

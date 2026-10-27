@@ -15,9 +15,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -28,9 +30,12 @@ import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.post.PhotoThumbnails
+import com.cowork.bikerecoder.ui.health.HR_REFETCH
+import com.cowork.bikerecoder.ui.health.HeartRateAccess
 import com.cowork.bikerecoder.ui.health.HeartRateGate
 import com.cowork.bikerecoder.ui.health.HeartRateNotice
 import com.cowork.bikerecoder.ui.health.heartRateLine
+import com.cowork.bikerecoder.ui.health.rememberHeartRateAccess
 import com.cowork.bikerecoder.ui.photo.PhotoStrip
 import com.cowork.bikerecoder.ui.photo.PhotoViewerHost
 import com.cowork.bikerecoder.ui.photo.rememberMapPhotos
@@ -61,6 +66,8 @@ fun TripDetailScreen(
     val heartRate by viewModel.heartRate.collectAsStateWithLifecycle()
     val colorMode by viewModel.colorMode.collectAsStateWithLifecycle()
     val photos by viewModel.photos.collectAsStateWithLifecycle()
+    val refetching by viewModel.refetching.collectAsStateWithLifecycle()
+    val access = rememberHeartRateAccess(heartRateGate)
     val viewer = rememberPhotoViewerState()
     val mapPhotos = rememberMapPhotos(photos, thumbnails)
     // A recording of this trip may have gone on meanwhile.
@@ -94,9 +101,11 @@ fun TripDetailScreen(
                 onOpenHidden = { viewer.open(photos.hidden, 0) },
             )
             photoPrompt()
-            HeartRateNotice(heartRateGate)
+            HeartRateNotice(heartRateGate, access)
         },
         heartRate = heartRate,
+        onRefetchHeartRate = viewModel::refetchHeartRate.takeIf { access.value == HeartRateAccess.GRANTED },
+        refetching = refetching,
     )
     PhotoViewerHost(viewer, photos, thumbnails, onToggleHidden = { viewModel.setHidden(it, hidden = !it.hidden) })
 }
@@ -119,6 +128,8 @@ fun TripDetailContent(
     map: (@Composable (Modifier) -> Unit)? = null,
     photos: @Composable () -> Unit = {},
     heartRate: TripHeartRate = TripHeartRate(),
+    onRefetchHeartRate: (() -> Unit)? = null,
+    refetching: Boolean = false,
 ) {
     HistoryScaffold(title = "여행 기록", onBack = onBack) {
         if (segmentsByDate.isEmpty()) {
@@ -126,7 +137,10 @@ fun TripDetailContent(
         } else {
             Column(modifier = Modifier.fillMaxSize()) {
                 map?.invoke(Modifier.fillMaxWidth().height(240.dp))
-                TripDetailList(segmentsByDate, total, heartRate, onOpenSegment, onRequestDelete, photos, Modifier.weight(1f))
+                TripDetailList(
+                    segmentsByDate, total, heartRate, onOpenSegment, onRequestDelete, photos, onRefetchHeartRate, refetching,
+                    Modifier.weight(1f),
+                )
             }
         }
     }
@@ -141,6 +155,8 @@ private fun TripDetailList(
     onOpenSegment: (Long) -> Unit,
     onRequestDelete: (Long) -> Unit,
     photos: @Composable () -> Unit,
+    onRefetchHeartRate: (() -> Unit)?,
+    refetching: Boolean,
     modifier: Modifier,
 ) {
     LazyColumn(
@@ -151,7 +167,7 @@ private fun TripDetailList(
         item(key = "photos") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { photos() }
         }
-        item(key = "total") { TripTotal(total, heartRate) }
+        item(key = "total") { TripTotal(total, heartRate, onRefetchHeartRate, refetching) }
         segmentsByDate.forEach { (date, segments) ->
             item(key = "date-$date") {
                 Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
@@ -183,7 +199,7 @@ private fun TripDetailList(
 }
 
 @Composable
-private fun TripTotal(total: SegmentTotals, heartRate: TripHeartRate) {
+private fun TripTotal(total: SegmentTotals, heartRate: TripHeartRate, onRefetchHeartRate: (() -> Unit)?, refetching: Boolean) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("여행 합계", style = MaterialTheme.typography.titleMedium)
@@ -195,8 +211,25 @@ private fun TripTotal(total: SegmentTotals, heartRate: TripHeartRate) {
                 "평균/최고" to "${RideFormat.speedKmh(total.avgSpeedMps)} / ${RideFormat.speedKmh(total.maxSpeedMps)}km/h",
                 "누적 상승" to RideFormat.altitude(total.ascentM),
             )
-            if (heartRate.avgBpm != null) {
-                Text(heartRateLine(heartRate.avgBpm, heartRate.maxBpm, heartRate.calories), style = MaterialTheme.typography.bodyLarge)
+            if (heartRate.avgBpm != null || onRefetchHeartRate != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (heartRate.avgBpm != null) {
+                        Text(
+                            heartRateLine(heartRate.avgBpm, heartRate.maxBpm, heartRate.calories),
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.weight(1f),
+                        )
+                    } else {
+                        Spacer(Modifier.weight(1f))
+                    }
+                    if (onRefetchHeartRate != null) {
+                        OutlinedButton(onClick = onRefetchHeartRate, enabled = !refetching) { Text(HR_REFETCH) }
+                    }
+                }
             }
         }
     }

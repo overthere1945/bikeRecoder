@@ -135,6 +135,11 @@ class TripDetailViewModel(
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    private val _refetching = MutableStateFlow(false)
+
+    /** True while [refetchHeartRate] goes through the trip's segments ([다시 가져오기] is disabled meanwhile). */
+    val refetching: StateFlow<Boolean> = _refetching.asStateFlow()
+
     private val mutex = Mutex()
 
     /** The segments [lines] were read for (read again only when they change, e.g. a recording went on). */
@@ -185,6 +190,27 @@ class TripDetailViewModel(
 
     fun setColorMode(mode: TrackColorMode) {
         _colorMode.value = mode
+    }
+
+    /**
+     * The trip's [다시 가져오기] (spec §6.9): every closed segment's heart rate is read again, one after another, by
+     * [PostProcessor.refetchHeartRate] (which keeps stored heart rate when nothing better comes, rulings R7, R17). Ignored
+     * while a pass is running; a segment that fails is skipped. The totals follow the stored extras.
+     */
+    fun refetchHeartRate() {
+        if (!_refetching.compareAndSet(expect = false, update = true)) return
+        viewModelScope.launch {
+            try {
+                val ids = guarded("Could not read the segments of trip $tripId") {
+                    rideStore.segments(tripId).filter { it.endedAt != null }.map { it.id }
+                }.orEmpty()
+                for (id in ids) {
+                    guarded("Heart rate refetch failed for segment $id") { postProcessor.refetchHeartRate(id) }
+                }
+            } finally {
+                _refetching.value = false
+            }
+        }
     }
 
     /** [숨기기] ([hidden] = true) / [다시 보이기] in the full-screen view. */
