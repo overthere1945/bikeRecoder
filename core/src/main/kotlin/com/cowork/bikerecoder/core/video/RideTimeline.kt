@@ -46,6 +46,9 @@ class RideTimeline(
 
     val totalMoveMs: Long = if (points.isEmpty()) 0L else moves.last()
 
+    /** 경로를 따라 잰 누적 거리(숫자 띠·카메라가 함께 쓴다). 이 경로가 살아 있는 동안만 둔다. */
+    internal val routeDistance: RouteDistance by lazy { RouteDistance(this) }
+
     /** 이동 시각 [moveMs]의 위치·고도·지나온 인덱스(범위 밖은 처음/끝 지점에 붙인다). */
     fun at(moveMs: Long): Located {
         require(points.isNotEmpty()) { "빈 경로" }

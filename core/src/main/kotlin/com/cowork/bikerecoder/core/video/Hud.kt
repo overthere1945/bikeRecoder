@@ -18,7 +18,7 @@ object Hud {
      * 심박(그 실제 시각 ±30초 안 가장 가까운 샘플, [HeartRateColor] 규칙). [heartRate]는 시간순.
      */
     fun at(moveMs: Long, timeline: RideTimeline, heartRate: List<HeartRateSample>): HudValues {
-        val route = RouteDistance.of(timeline)
+        val route = timeline.routeDistance
         val located = timeline.at(moveMs)
         val from = (moveMs - SPEED_WINDOW_MS).coerceAtLeast(0L)
         val to = (moveMs + SPEED_WINDOW_MS).coerceAtMost(timeline.totalMoveMs)
@@ -41,9 +41,9 @@ object Hud {
 
 /**
  * 경로를 따라 처음부터 잰 거리(m). 구간이 바뀌는 곳(다른 구간의 첫 지점으로 옮겨 감)의 거리는 세지 않는다.
- * 프레임마다 다시 재지 않도록 마지막 경로 하나의 결과를 둔다.
+ * 프레임마다 다시 재지 않도록 경로마다 한 번만 만든다([RideTimeline.routeDistance]).
  */
-internal class RouteDistance private constructor(private val timeline: RideTimeline) {
+internal class RouteDistance(private val timeline: RideTimeline) {
 
     private val points = timeline.points
 
@@ -62,11 +62,4 @@ internal class RouteDistance private constructor(private val timeline: RideTimel
     }
 
     fun atMove(moveMs: Long): Double = at(timeline.at(moveMs))
-
-    companion object {
-        @Volatile private var last: RouteDistance? = null
-
-        fun of(timeline: RideTimeline): RouteDistance =
-            last?.takeIf { it.timeline === timeline } ?: RouteDistance(timeline).also { last = it }
-    }
 }

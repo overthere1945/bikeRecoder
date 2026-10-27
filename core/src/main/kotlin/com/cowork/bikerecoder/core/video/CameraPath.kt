@@ -33,8 +33,8 @@ object CameraPath {
     /** MapLibre 타일 크기: zoom z에서 세계 폭 = 512·2^z 픽셀. */
     private const val TILE_SIZE = 512.0
 
-    /** 앞을 보는 점이 이보다 가까우면(경로 끝·제자리) 방향을 바꾸지 않는다. */
-    private const val MIN_LOOK_M = 1.0
+    /** 앞을 보는 점까지 직선거리가 이보다 짧으면(경로 끝·멈춰 선 곳의 GPS 흔들림) 방향을 바꾸지 않는다. */
+    private const val MIN_LOOK_M = 25.0
 
     /**
      * [plans]와 같은 길이. INTRO_OVERVIEW·OUTRO = [overview], INTRO_DESCENT = overview → 첫 주행 카메라를 부드럽게(smoothstep) 보간,
@@ -42,7 +42,7 @@ object CameraPath {
      * PHOTO = 바로 앞 프레임 카메라 그대로.
      */
     fun cameras(plans: List<FramePlan>, timeline: RideTimeline, overview: Camera): List<Camera> {
-        val route = RouteDistance.of(timeline)
+        val route = timeline.routeDistance
         val segmentEnd = segmentEnds(timeline)
         val maxStep = MAX_TURN_DEG_PER_S / FPS
 
@@ -77,19 +77,24 @@ object CameraPath {
         return out
     }
 
+    /** 영상 화면 전체([aspect] 크기)에 맞춘 [overview]. */
+    fun overview(points: List<GeoPoint>, aspect: Aspect): Camera = overview(points, aspect.width, aspect.height)
+
     /**
-     * 전체 경로가 화면([aspect] 크기, 기울기 0, 북쪽 위)에 각 변 10% 여백을 두고 들어오는 카메라. 중심은 메르카토르 상의 가운데.
-     * zoom은 화면 1픽셀 = 지도 1픽셀(pixel ratio 1) 기준이고 [ZOOM]보다 크지 않다.
+     * 전체 경로가 [widthPx]×[heightPx] 지도(기울기 0, 북쪽 위)에 각 변 10% 여백을 두고 들어오는 카메라. 중심은 메르카토르 상의 가운데.
+     * zoom은 지도 1픽셀 = 스냅샷 1픽셀(pixel ratio 1) 기준이고 [ZOOM]보다 크지 않다. 요약 이미지의 지도 칸·720p 영상처럼
+     * 실제로 찍는 지도 크기를 넘긴다(규칙 V5).
      */
-    fun overview(points: List<GeoPoint>, aspect: Aspect): Camera {
+    fun overview(points: List<GeoPoint>, widthPx: Int, heightPx: Int): Camera {
         require(points.isNotEmpty()) { "빈 경로" }
+        require(widthPx > 0 && heightPx > 0) { "지도 크기 ${widthPx}x$heightPx" }
         val xs = points.map { mercatorX(it.lon) }
         val ys = points.map { mercatorY(it.lat) }
         val spanX = xs.max() - xs.min()
         val spanY = ys.max() - ys.min()
         val usable = 1.0 - 2 * OVERVIEW_MARGIN
         fun fit(span: Double, size: Int) = if (span <= 0.0) Double.POSITIVE_INFINITY else log2(usable * size / (span * TILE_SIZE))
-        val zoom = min(min(fit(spanX, aspect.width), fit(spanY, aspect.height)), ZOOM).coerceAtLeast(0.0)
+        val zoom = min(min(fit(spanX, widthPx), fit(spanY, heightPx)), ZOOM).coerceAtLeast(0.0)
         val center = GeoPoint(latitudeOf((ys.max() + ys.min()) / 2), longitudeOf((xs.max() + xs.min()) / 2))
         return Camera(center, zoom, bearing = 0.0, tilt = 0.0)
     }
