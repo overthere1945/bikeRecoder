@@ -239,6 +239,20 @@ class CumulativeMapScreenTest {
     }
 
     @Test
+    fun thisWeekWithoutRidesStillShowsItsNumber() {
+        // Nothing ridden since Monday 10/26.
+        val beforeThisWeek = october.filter { it.localDate < LocalDate.of(2026, 10, 26) }
+        show(stateFor(PeriodFilter(), beforeThisWeek), beforeThisWeek)
+
+        composeRule.onNodeWithText("이번 주").performClick()
+        composeRule.onNodeWithTag(CumulativeMapTags.THIS_WEEK).assertIsSelected()
+        composeRule.onNodeWithText("5주 ▾").assertIsDisplayed()
+        composeRule.onNodeWithText(CUMULATIVE_PERIOD_EMPTY).assertIsDisplayed()
+        composeRule.onNodeWithText("이 기간에 기록이 없습니다").assertIsDisplayed()
+        composeRule.onNodeWithText("주 ▾").assertDoesNotExist()
+    }
+
+    @Test
     fun periodWithoutRidesSaysSo() {
         show(stateFor(PeriodFilter(2026, 12), october), october)
 

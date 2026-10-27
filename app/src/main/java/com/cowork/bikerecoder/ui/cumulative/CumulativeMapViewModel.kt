@@ -51,7 +51,8 @@ data class RideRow(val segmentId: Long, val color: String, val text: String)
  * ([RideColors], newest first); [lines]: the same rides as drawn (those with at least 2 points); [selected]: the
  * highlighted ride, one of [rides]; [totals]: their distance, count and moving time. [years]: every year with a ride,
  * newest first; [months]: the months with a ride in [period]'s year (none without a year); [weeks]: the weeks with a
- * ride of [period]'s month (none without a month). [quick]: the quick period chosen, if that is what [period] is.
+ * ride of [period]'s month (none without a month); [week]: [period]'s week as a week of its month, rides or not
+ * (null without a week, or without its month). [quick]: the quick period chosen, if that is what [period] is.
  * [loaded]: the routes have been read at least once. [settled]: they were last read with no post-processing pass
  * running or waiting, so what is missing is not just still being simplified.
  */
@@ -68,6 +69,7 @@ data class CumulativeMapState(
     val years: List<Int> = emptyList(),
     val months: List<Int> = emptyList(),
     val weeks: List<WeekOption> = emptyList(),
+    val week: WeekOption? = null,
 ) {
     /**
      * No ride recorded at all ("아직 기록이 없습니다…"). Never while the routes are still being read or a pass may
@@ -172,7 +174,8 @@ class CumulativeMapViewModel(
 
     /**
      * A tap on a ride's row or line: highlights it and frames the map on it; the highlighted ride again, or null (an
-     * empty spot on the map), lets go of the highlight and leaves the map where it is. A ride not listed is ignored.
+     * empty spot on the map), lets go of the highlight and leaves the map where it is. A ride not listed lets go of the
+     * highlight too.
      */
     fun select(segmentId: Long?) {
         val shown = state.value
@@ -272,6 +275,9 @@ internal fun cumulativeStateOf(
         years = CumulativeSummary.years(rides),
         months = year?.let { CumulativeSummary.months(rides, it) }.orEmpty(),
         weeks = if (year != null && month != null) CumulativeSummary.weeks(rides, year, month) else emptyList(),
+        week = period.weekStart?.let { start ->
+            if (year != null && month != null) CumulativeSummary.weekOf(start, year, month) else null
+        },
     )
 }
 

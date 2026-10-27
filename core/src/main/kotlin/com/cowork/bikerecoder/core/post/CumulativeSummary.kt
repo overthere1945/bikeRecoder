@@ -28,7 +28,8 @@ data class PeriodFilter(
     val weekStart: LocalDate? = null,
 )
 
-data class WeekOption(val start: LocalDate, val label: String)
+/** A Monday-to-Sunday week as a week of one month: [number] is N of "N주", [label] is "M월 N주 (M/d~M/d)". */
+data class WeekOption(val start: LocalDate, val label: String, val number: Int)
 
 data class CumulativeTotals(val distanceM: Double, val rides: Int, val movingTimeMs: Long)
 
@@ -71,23 +72,27 @@ object CumulativeSummary {
         rides(entries).filter { it.localDate.year == year }.map { it.localDate.monthValue }.distinct().sorted()
 
     /**
-     * [year]년 [month]월과 겹치는 월요일 시작 주 가운데 기록이 있는 주, 오래된 순.
-     * 주 번호는 그 달 1일이 든 주를 1주로 센다. 라벨은 "M월 N주 (M/d~M/d)".
+     * [year]년 [month]월과 겹치는 월요일 시작 주 가운데 기록이 있는 주, 오래된 순. 각 주는 [weekOf].
      */
     fun weeks(entries: List<CumulativeEntry>, year: Int, month: Int): List<WeekOption> {
         val first = LocalDate.of(year, month, 1)
         val last = first.with(TemporalAdjusters.lastDayOfMonth())
-        val firstWeekStart = mondayOf(first)
         return rides(entries)
             .map { mondayOf(it.localDate) }
             .distinct()
             .filter { it <= last && it.plusDays(6) >= first }
             .sorted()
-            .map { start ->
-                val n = ChronoUnit.WEEKS.between(firstWeekStart, start).toInt() + 1
-                val end = start.plusDays(6)
-                WeekOption(start, "${month}월 ${n}주 (${start.monthValue}/${start.dayOfMonth}~${end.monthValue}/${end.dayOfMonth})")
-            }
+            .map { weekOf(it, year, month) }
+    }
+
+    /**
+     * 월요일 [start]로 시작하는 주를 [year]년 [month]월의 주로 본 것(기록과 상관없음). 주 번호는 그 달 1일이 든 주를
+     * 1주로 센다. 라벨은 "M월 N주 (M/d~M/d)".
+     */
+    fun weekOf(start: LocalDate, year: Int, month: Int): WeekOption {
+        val n = ChronoUnit.WEEKS.between(mondayOf(LocalDate.of(year, month, 1)), start).toInt() + 1
+        val end = start.plusDays(6)
+        return WeekOption(start, "${month}월 ${n}주 (${start.monthValue}/${start.dayOfMonth}~${end.monthValue}/${end.dayOfMonth})", n)
     }
 
     fun thisWeek(today: LocalDate): PeriodFilter = PeriodFilter(weekStart = mondayOf(today))

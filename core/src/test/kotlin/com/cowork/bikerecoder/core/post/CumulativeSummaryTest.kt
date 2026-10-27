@@ -141,6 +141,31 @@ class CumulativeSummaryTest {
     }
 
     @Test
+    fun weekOfAWeekWithoutRides() {
+        assertEquals(
+            WeekOption(LocalDate.of(2026, 10, 26), "10월 5주 (10/26~11/1)", 5),
+            CumulativeSummary.weekOf(LocalDate.of(2026, 10, 26), 2026, 10),
+        )
+        assertEquals(
+            WeekOption(LocalDate.of(2026, 12, 28), "1월 1주 (12/28~1/3)", 1),
+            CumulativeSummary.weekOf(LocalDate.of(2026, 12, 28), 2027, 1),
+        )
+        assertEquals(
+            WeekOption(LocalDate.of(2026, 12, 28), "12월 5주 (12/28~1/3)", 5),
+            CumulativeSummary.weekOf(LocalDate.of(2026, 12, 28), 2026, 12),
+        )
+    }
+
+    @Test
+    fun weeksCarryTheirNumber() {
+        val list = listOf(
+            entry(1, LocalDate.of(2026, 10, 1), 1000.0, 1),
+            entry(2, LocalDate.of(2026, 10, 25), 1000.0, 1),
+        )
+        assertEquals(listOf(1, 4), CumulativeSummary.weeks(list, 2026, 10).map { it.number })
+    }
+
+    @Test
     fun weeksIgnoreJitterSegments() {
         val list = listOf(entry(1, LocalDate.of(2026, 10, 20), 0.2, 1))
         assertEquals(emptyList(), CumulativeSummary.weeks(list, 2026, 10))

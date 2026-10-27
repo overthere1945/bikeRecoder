@@ -205,11 +205,10 @@ private fun PeriodRow(state: CumulativeMapState, actions: CumulativeMapActions) 
     }
 }
 
-/** "주 ▾", or with a week chosen its number from the [주 ▾] menu, e.g. "4주 ▾". */
+/** "주 ▾", or with a week chosen its number in its month, e.g. "4주 ▾" (also for a week without rides). */
 private fun weekChipLabel(state: CumulativeMapState): String {
-    val start = state.period.weekStart ?: return "주 ▾"
-    val label = state.weeks.firstOrNull { it.start == start }?.label ?: return "주 ▾"
-    return "${label.substringAfter("월 ").substringBefore(" (")} ▾"
+    val week = state.week ?: return "주 ▾"
+    return "${week.number}주 ▾"
 }
 
 /** [이번 주] [이번 달], under the period chips. */

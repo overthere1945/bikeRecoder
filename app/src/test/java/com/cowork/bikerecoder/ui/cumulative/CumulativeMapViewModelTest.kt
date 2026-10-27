@@ -482,7 +482,10 @@ class CumulativeMapViewModelTest {
         vm.select(null)
         settle()
         assertNull(vm.state.value.selected)
-        // A ride that is not shown cannot be highlighted.
+        // A ride that is not shown cannot be highlighted, and lets go of the one that is.
+        vm.select(1)
+        settle()
+        assertEquals(1L, vm.state.value.selected)
         vm.select(99)
         settle()
         assertNull(vm.state.value.selected)
@@ -622,6 +625,29 @@ class CumulativeMapViewModelTest {
         settle()
         assertNull(vm.state.value.quick)
         assertEquals(5, vm.state.value.entries.size)
+    }
+
+    @Test
+    fun thisWeekWithoutRidesStillHasItsNumber() = runTest(dispatcher) {
+        // Today is Tuesday 2026-10-27; nothing ridden since Monday 10/26.
+        entry(1, LocalDate.of(2026, 10, 25))
+        val vm = viewModel()
+        settle()
+        assertNull(vm.state.value.week, "no week chosen")
+
+        vm.thisWeek()
+        settle()
+        assertTrue(vm.state.value.periodEmpty)
+        assertEquals(WeekOption(LocalDate.of(2026, 10, 26), "10월 5주 (10/26~11/1)", 5), vm.state.value.week)
+        assertEquals(listOf(4), vm.state.value.weeks.map { it.number }, "the menu still lists only weeks with rides")
+
+        vm.selectWeek(LocalDate.of(2026, 10, 19))
+        settle()
+        assertEquals(4, vm.state.value.week?.number)
+
+        vm.selectWeek(null)
+        settle()
+        assertNull(vm.state.value.week, "the whole month")
     }
 
     @Test
