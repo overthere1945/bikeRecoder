@@ -521,7 +521,7 @@ class CumulativeMapViewModelTest {
         settle()
         assertNull(vm.state.value.selectedRow)
 
-        // A period without the ride: no card.
+        // A period change (even one still holding the ride): no card.
         vm.select(2)
         settle()
         vm.selectYear(2026)
