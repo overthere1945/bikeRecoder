@@ -8,7 +8,7 @@ import android.net.NetworkRequest
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
-/** Waits for a Wi-Fi-like (not metered) connection. Open so tests can substitute it. */
+/** Waits for a Wi-Fi-like (not metered) connection, or tells whether any is up. Open so tests can substitute it. */
 open class NetworkWaiter(context: Context) {
     private val connectivity = context.applicationContext.getSystemService(ConnectivityManager::class.java)
 
@@ -29,6 +29,13 @@ open class NetworkWaiter(context: Context) {
             connectivity.registerNetworkCallback(request, callback)
             cont.invokeOnCancellation { unregister(callback) }
         }
+    }
+
+    /** Whether some network with validated internet is up now (metered or not). */
+    open fun isOnline(): Boolean {
+        val caps = connectivity.activeNetwork?.let { connectivity.getNetworkCapabilities(it) } ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
     private fun unregister(callback: ConnectivityManager.NetworkCallback) {

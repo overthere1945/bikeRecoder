@@ -1,9 +1,14 @@
 package com.cowork.bikerecoder.offline
 
 import android.content.Context
+import android.os.SystemClock
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.model.GeoMath
+import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.Route
+import com.cowork.bikerecoder.core.model.RouteProfile
+import com.cowork.bikerecoder.core.model.RouteSummary
 import com.cowork.bikerecoder.core.offline.CorridorPlan
 import com.cowork.bikerecoder.core.offline.CorridorPlanner
 import com.cowork.bikerecoder.core.trip.OfflineMapController
@@ -29,6 +34,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.maplibre.android.MapLibre
 import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.offline.OfflineGeometryRegionDefinition
@@ -64,7 +70,7 @@ class MapLibreOfflineController(
     /** Planner limit; lowered by tests to get a truncated plan from a short route. */
     private val maxTiles: Long = DEFAULT_MAX_TILES,
     private val log: WarnLog = androidWarnLog(TAG),
-) : OfflineMapController, OfflineMapStorage {
+) : OfflineMapController, OfflineMapStorage, VideoMaps {
 
     private val appContext: Context = context.applicationContext
     private val _progress = MutableStateFlow<OfflineProgress?>(null)
@@ -94,6 +100,60 @@ class MapLibreOfflineController(
         running?.cancelAndJoin()
         mutex.withLock { removeTripRegions(tripId, strict = false) }
         _progress.compareAndSetIf(tripId) { null }
+    }
+
+    /**
+     * The map around [points] for a video (spec §3.1①): the trip corridor plan of a route through the points, at
+     * zoom 13–16, kind VIDEO, downloaded to the end (or until it stalls, spec §3.4). Unlike [downloadForTrip] this
+     * waits, ignores the Wi-Fi-only setting (the user asked for the video now) and never touches the trip's
+     * navigation map. A complete VIDEO region of the trip is used again; an unfinished one is replaced; a download
+     * that fails is logged (the snapshots fetch tiles themselves while online). Returns false only when there is no
+     * internet and the trip has no complete map of its own to draw from. Holds the download mutex meanwhile.
+     */
+    override suspend fun downloadForTrack(tripId: Long, points: List<GeoPoint>): Boolean {
+        require(points.isNotEmpty()) { "no points" }
+        return mutex.withLock {
+            val video = findTripRegions(tripId, setOf(RegionKind.VIDEO))
+            if (video.isNotEmpty() && video.all { it.meta?.kind == RegionKind.VIDEO && isComplete(it.region) }) {
+                return@withLock true
+            }
+            if (!network.isOnline()) {
+                return@withLock findTripRegions(tripId).any { it.meta != null && isComplete(it.region) }
+            }
+            try {
+                removeTripRegions(tripId, strict = true, kinds = setOf(RegionKind.VIDEO))
+                val plan = CorridorPlanner.plan(routeThrough(points), maxTiles = Long.MAX_VALUE)
+                val definition = OfflineGeometryRegionDefinition(
+                    tileSource.styleUrl, corridorGeometry(plan), VIDEO_MIN_ZOOM, VIDEO_MAX_ZOOM, VIDEO_PIXEL_RATIO, false,
+                )
+                downloadRegion(tripId, RegionKind.VIDEO, truncated = false, definition, stallMs = VIDEO_STALL_MS) { }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Online anyway: the snapshots fetch what they need themselves.
+                log.warn("Video map download for trip $tripId failed; drawing from the network", e)
+            }
+            true
+        }
+    }
+
+    /** Deletes the trip's VIDEO regions and their refs only; the navigation map stays. */
+    override suspend fun deleteVideoRegions(tripId: Long) {
+        mutex.withLock { removeTripRegions(tripId, strict = false, kinds = setOf(RegionKind.VIDEO)) }
+    }
+
+    /** A [Route] through [points] (one point is doubled: a line needs two) for [CorridorPlanner]. */
+    private fun routeThrough(points: List<GeoPoint>): Route {
+        val line = if (points.size == 1) points + points else points
+        val cumulative = DoubleArray(line.size)
+        for (i in 1 until line.size) cumulative[i] = cumulative[i - 1] + GeoMath.distanceM(line[i - 1], line[i])
+        return Route(
+            points = line,
+            cumulativeM = cumulative.toList(),
+            instructions = emptyList(),
+            stopPointIndices = listOf(line.lastIndex),
+            summary = RouteSummary(cumulative.last(), 0, 0.0, RouteProfile.BALANCED),
+        )
     }
 
     /**
@@ -176,7 +236,7 @@ class MapLibreOfflineController(
             mutex.withLock {
                 when (decide(tripId)) {
                     DownloadDecision.SKIP -> return
-                    DownloadDecision.REPLACE -> removeTripRegions(tripId, strict = true)
+                    DownloadDecision.REPLACE -> removeTripRegions(tripId, strict = true, kinds = RegionKind.TRIP_MAP)
                     DownloadDecision.DOWNLOAD -> Unit
                 }
                 val estimatedBytes = plan.estimatedTiles * ESTIMATED_BYTES_PER_TILE
@@ -186,7 +246,7 @@ class MapLibreOfflineController(
                 val corridor = OfflineGeometryRegionDefinition(
                     tileSource.styleUrl, corridorGeometry(plan), CORRIDOR_MIN_ZOOM, CORRIDOR_MAX_ZOOM, pixelRatio, false,
                 )
-                downloadRegion(tripId, RegionKind.CORRIDOR, plan.truncated, corridor) { status ->
+                downloadRegion(tripId, RegionKind.CORRIDOR, plan.truncated, corridor, stallMs = null) { status ->
                     _progress.value = OfflineProgress(
                         tripId, status.completedResourceCount, status.requiredResourceCount, estimatedBytes,
                         started = true,
@@ -198,7 +258,7 @@ class MapLibreOfflineController(
                     LatLngBounds.from(box.north, box.east, box.south, box.west),
                     OVERVIEW_MIN_ZOOM, OVERVIEW_MAX_ZOOM, pixelRatio, false,
                 )
-                downloadRegion(tripId, RegionKind.OVERVIEW, plan.truncated, overview) { }
+                downloadRegion(tripId, RegionKind.OVERVIEW, plan.truncated, overview, stallMs = null) { }
             }
         } catch (e: CancellationException) {
             throw e
@@ -224,6 +284,7 @@ class MapLibreOfflineController(
         kind: RegionKind,
         truncated: Boolean,
         definition: OfflineRegionDefinition,
+        stallMs: Long?,
         onStatus: (OfflineRegionStatus) -> Unit,
     ) {
         val region = withContext(NonCancellable) {
@@ -231,15 +292,29 @@ class MapLibreOfflineController(
             refs.insert(OfflineRegionRefEntity(0, tripId, created.id, kind.name, clock()))
             created
         }
-        awaitComplete(region, onStatus)
+        awaitComplete(region, stallMs, onStatus)
     }
 
-    private suspend fun awaitComplete(region: OfflineRegion, onStatus: (OfflineRegionStatus) -> Unit) {
+    /**
+     * Downloads [region] to the end. With [stallMs], gives up quietly (keeping what arrived) once no resource has
+     * completed for that long: MapLibre retries a failing resource forever.
+     */
+    private suspend fun awaitComplete(
+        region: OfflineRegion,
+        stallMs: Long? = null,
+        onStatus: (OfflineRegionStatus) -> Unit,
+    ) {
         withContext(Dispatchers.Main) {
             val done = CompletableDeferred<Unit>()
+            var lastCount = -1L
+            var lastChangeAt = SystemClock.elapsedRealtime()
             region.setObserver(object : OfflineRegion.OfflineRegionObserver {
                 override fun onStatusChanged(status: OfflineRegionStatus) {
                     onStatus(status)
+                    if (status.completedResourceCount != lastCount) {
+                        lastCount = status.completedResourceCount
+                        lastChangeAt = SystemClock.elapsedRealtime()
+                    }
                     // An early 0/0 status can already say "complete"; only a precise count is final.
                     if (status.isComplete && status.isRequiredResourceCountPrecise) done.complete(Unit)
                 }
@@ -255,7 +330,16 @@ class MapLibreOfflineController(
             })
             region.setDownloadState(OfflineRegion.STATE_ACTIVE)
             try {
-                done.await()
+                if (stallMs == null) {
+                    done.await()
+                } else {
+                    while (withTimeoutOrNull(STALL_POLL_MS) { done.await() } == null) {
+                        if (SystemClock.elapsedRealtime() - lastChangeAt > stallMs) {
+                            log.warn("Offline region ${region.id} stalled at $lastCount resources; using what arrived", null)
+                            break
+                        }
+                    }
+                }
             } finally {
                 region.setDownloadState(OfflineRegion.STATE_INACTIVE)
             }
@@ -266,13 +350,21 @@ class MapLibreOfflineController(
 
     private class Found(val region: OfflineRegion, val meta: OfflineRegionMeta?)
 
-    private suspend fun findTripRegions(tripId: Long): List<Found> {
-        val refIds = refs.forTrip(tripId).map { it.mapLibreRegionId }.toSet()
+    /**
+     * The trip's regions (by metadata or by ref) of [kinds]. A region whose kind is unknown (no metadata and a ref
+     * with an unknown kind) counts as every kind, so it is always replaced or deleted.
+     */
+    private suspend fun findTripRegions(tripId: Long, kinds: Set<RegionKind> = ALL_KINDS): List<Found> {
+        val refKinds = refs.forTrip(tripId).associate { it.mapLibreRegionId to it.kind }
         return listRegions().mapNotNull { region ->
             val meta = OfflineRegionMeta.decode(region.metadata)
-            if (meta?.tripId == tripId || region.id in refIds) Found(region, meta) else null
+            if (meta?.tripId != tripId && region.id !in refKinds) return@mapNotNull null
+            val kind = meta?.kind ?: refKinds[region.id]?.let(::kindOf)
+            if (kind != null && kind !in kinds) null else Found(region, meta)
         }
     }
+
+    private fun kindOf(name: String): RegionKind? = RegionKind.entries.find { it.name == name }
 
     /** Every region this app created: identified by its metadata, or by a stored ref. */
     private suspend fun ownRegions(): List<OfflineRegion> {
@@ -281,12 +373,12 @@ class MapLibreOfflineController(
     }
 
     private suspend fun decide(tripId: Long): DownloadDecision {
-        val found = findTripRegions(tripId)
+        val found = findTripRegions(tripId, RegionKind.TRIP_MAP)
         if (found.isEmpty()) return DownloadDecision.DOWNLOAD
         if (found.any { it.meta == null }) return DownloadDecision.REPLACE
         val existing = found.map { ExistingRegion(it.meta!!.kind, it.meta.truncated, isComplete(it.region)) }
         val decision = decideDownload(existing)
-        val refIds = refs.forTrip(tripId).map { it.mapLibreRegionId }.toSet()
+        val refIds = refs.forTrip(tripId).filter { kindOf(it.kind) in RegionKind.TRIP_MAP }.map { it.mapLibreRegionId }.toSet()
         return if (decision == DownloadDecision.SKIP && refIds != found.map { it.region.id }.toSet()) {
             DownloadDecision.REPLACE
         } else {
@@ -295,13 +387,14 @@ class MapLibreOfflineController(
     }
 
     /**
-     * Deletes the trip's regions (by ref or by metadata) and their refs. A region that cannot be deleted is
-     * logged and its refs are kept; with [strict] that also throws, so a download never creates new regions
+     * Deletes the trip's regions of [kinds] (by ref or by metadata) and their refs. A region that cannot be deleted
+     * is logged and its refs are kept; with [strict] that also throws, so a download never creates new regions
      * next to stale ones.
      */
-    private suspend fun removeTripRegions(tripId: Long, strict: Boolean) {
+    private suspend fun removeTripRegions(tripId: Long, strict: Boolean, kinds: Set<RegionKind> = ALL_KINDS) {
         var allDeleted = true
-        for (found in findTripRegions(tripId)) {
+        val tripRegions = findTripRegions(tripId, kinds)
+        for (found in tripRegions) {
             try {
                 deleteRegion(found.region)
             } catch (e: CancellationException) {
@@ -312,7 +405,13 @@ class MapLibreOfflineController(
             }
         }
         if (allDeleted) {
-            refs.deleteForTrip(tripId)
+            if (kinds == ALL_KINDS) {
+                refs.deleteForTrip(tripId)
+            } else {
+                val gone = tripRegions.map { it.region.id }.toSet()
+                refs.forTrip(tripId).filter { it.mapLibreRegionId in gone || kindOf(it.kind) in kinds }
+                    .forEach { refs.deleteByRegionId(it.mapLibreRegionId) }
+            }
         } else if (strict) {
             throw OfflineException("could not delete the previous offline regions of trip $tripId")
         }
@@ -400,6 +499,16 @@ class MapLibreOfflineController(
         const val DEFAULT_MAX_TILES = 15_000L
         const val AMBIENT_CACHE_BYTES = 100L * 1024 * 1024
         const val ESTIMATED_BYTES_PER_TILE = 15_000L
+        private val ALL_KINDS: Set<RegionKind> = RegionKind.entries.toSet()
+        private const val STALL_POLL_MS = 1_000L
+
+        /** A video map download that has made no progress for this long is used as it is (spec §3.4). */
+        const val VIDEO_STALL_MS = 30_000L
+
+        /** Pixel ratio of the VIDEO regions: the same as the video's map snapshots (sprites are per ratio). */
+        const val VIDEO_PIXEL_RATIO = 1f
+        private const val VIDEO_MIN_ZOOM = 13.0
+        private const val VIDEO_MAX_ZOOM = 16.0
         private const val CORRIDOR_MIN_ZOOM = 10.0
         private const val CORRIDOR_MAX_ZOOM = 14.0
         private const val OVERVIEW_MIN_ZOOM = 5.0

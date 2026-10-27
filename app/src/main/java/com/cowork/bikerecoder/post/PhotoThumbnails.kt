@@ -33,16 +33,23 @@ class PhotoThumbnails(
         contentResolver.loadThumbnail(photoSource.uri(mediaId), Size(sizePx, sizePx), null)
     }
 
-    /** The photo itself (EXIF orientation applied), scaled down so its long side is at most [maxPx]. */
-    suspend fun full(mediaId: Long, maxPx: Int = 2048): ImageBitmap? = cached(fulls, "$mediaId@$maxPx", mediaId) {
-        val source = ImageDecoder.createSource(contentResolver, photoSource.uri(mediaId))
-        ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
-            val width = info.size.width
-            val height = info.size.height
-            val longest = max(width, height)
-            if (longest > maxPx) {
-                val scale = maxPx.toDouble() / longest
-                decoder.setTargetSize(max(1, (width * scale).roundToInt()), max(1, (height * scale).roundToInt()))
+    /**
+     * The photo itself (EXIF orientation applied), scaled down so its long side is at most [maxPx]. [software]: decoded
+     * into ordinary memory, for drawing on a software Canvas (the video frames, ruling V7), not as a hardware bitmap.
+     */
+    suspend fun full(mediaId: Long, maxPx: Int = 2048, software: Boolean = false): ImageBitmap? {
+        val key = "$mediaId@$maxPx${if (software) "/sw" else ""}"
+        return cached(fulls, key, mediaId) {
+            val source = ImageDecoder.createSource(contentResolver, photoSource.uri(mediaId))
+            ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                if (software) decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                val width = info.size.width
+                val height = info.size.height
+                val longest = max(width, height)
+                if (longest > maxPx) {
+                    val scale = maxPx.toDouble() / longest
+                    decoder.setTargetSize(max(1, (width * scale).roundToInt()), max(1, (height * scale).roundToInt()))
+                }
             }
         }
     }

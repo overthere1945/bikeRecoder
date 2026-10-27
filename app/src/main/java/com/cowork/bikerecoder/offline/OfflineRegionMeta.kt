@@ -1,10 +1,21 @@
 package com.cowork.bikerecoder.offline
 
-enum class RegionKind { CORRIDOR, OVERVIEW }
+/** CORRIDOR + OVERVIEW are a trip's navigation map; VIDEO is the map around a finished trip's track for its video (spec §3.1①). */
+enum class RegionKind {
+    CORRIDOR,
+    OVERVIEW,
+    VIDEO,
+    ;
+
+    companion object {
+        /** The kinds that make up a trip's navigation map ([decideDownload]). */
+        val TRIP_MAP: Set<RegionKind> = setOf(CORRIDOR, OVERVIEW)
+    }
+}
 
 /**
  * The metadata stored with every MapLibre offline region the app creates:
- * `{"tripId":N,"kind":"CORRIDOR"|"OVERVIEW","truncated":true|false}` (UTF-8). Regions without it
+ * `{"tripId":N,"kind":"CORRIDOR"|"OVERVIEW"|"VIDEO","truncated":true|false}` (UTF-8). Regions without it
  * (or with anything else) are not ours and are never touched.
  */
 data class OfflineRegionMeta(val tripId: Long, val kind: RegionKind, val truncated: Boolean) {
@@ -44,10 +55,14 @@ enum class DownloadDecision {
     REPLACE,
 }
 
-fun decideDownload(existing: List<ExistingRegion>): DownloadDecision = when {
-    existing.isEmpty() -> DownloadDecision.DOWNLOAD
-    existing.size == RegionKind.entries.size &&
-        existing.map { it.kind }.toSet().size == RegionKind.entries.size &&
-        existing.all { !it.truncated && it.complete } -> DownloadDecision.SKIP
-    else -> DownloadDecision.REPLACE
+/** The trip's navigation map only: VIDEO regions are left out (they come and go with a video). */
+fun decideDownload(existing: List<ExistingRegion>): DownloadDecision {
+    val tripMap = existing.filter { it.kind in RegionKind.TRIP_MAP }
+    return when {
+        tripMap.isEmpty() -> DownloadDecision.DOWNLOAD
+        tripMap.size == RegionKind.TRIP_MAP.size &&
+            tripMap.map { it.kind }.toSet() == RegionKind.TRIP_MAP &&
+            tripMap.all { !it.truncated && it.complete } -> DownloadDecision.SKIP
+        else -> DownloadDecision.REPLACE
+    }
 }

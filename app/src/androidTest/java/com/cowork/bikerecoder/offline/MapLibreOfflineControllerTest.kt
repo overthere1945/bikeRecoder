@@ -61,13 +61,14 @@ class MapLibreOfflineControllerTest {
         }
     }
 
-    private fun controller(maxTiles: Long = MapLibreOfflineController.DEFAULT_MAX_TILES) = MapLibreOfflineController(
+    private fun controller(maxTiles: Long = MapLibreOfflineController.DEFAULT_MAX_TILES, online: Boolean = true) = MapLibreOfflineController(
         context,
         OpenFreeMapSource(okhttp3.OkHttpClient(), cacheFile = null),
         refs,
         SettingsRepository(context),
         object : NetworkWaiter(context) {
             override suspend fun awaitUnmetered() = Unit
+            override fun isOnline() = online
         },
         clock = System::currentTimeMillis,
         maxTiles = maxTiles,
@@ -246,6 +247,52 @@ class MapLibreOfflineControllerTest {
         assertTrue(refs.all().isEmpty())
         kotlinx.coroutines.delay(1_000)
         assertTrue("no region is created after the cancel", ourRegions().isEmpty())
+    }
+
+    @Test
+    fun trackDownloadAddsAVideoRegionThatIsDeletedAlone() = runBlocking {
+        val c = controller()
+        download(c)
+        val tripMap = ourRegions().map { it.id }.toSet()
+
+        assertTrue(withTimeout(DOWNLOAD_TIMEOUT_MS) { c.downloadForTrack(TRIP, shortRoute().points) })
+
+        val regions = ourRegions()
+        assertEquals(listOf(RegionKind.CORRIDOR, RegionKind.OVERVIEW, RegionKind.VIDEO).sorted(), metas(regions).map { it.kind }.sorted())
+        val video = regions.single { OfflineRegionMeta.decode(it.metadata)!!.kind == RegionKind.VIDEO }
+        assertTrue("video region complete", status(video).isComplete)
+        assertEquals(setOf("CORRIDOR", "OVERVIEW", "VIDEO"), refs.forTrip(TRIP).map { it.kind }.toSet())
+
+        // The trip map is still complete: a second trip download skips, the video region does not count.
+        download(c)
+        assertEquals(tripMap + video.id, ourRegions().map { it.id }.toSet())
+        // Asked again, the complete video region is used as it is.
+        assertTrue(c.downloadForTrack(TRIP, shortRoute().points))
+        assertEquals(tripMap + video.id, ourRegions().map { it.id }.toSet())
+
+        c.deleteVideoRegions(TRIP)
+
+        assertEquals(tripMap, ourRegions().map { it.id }.toSet())
+        assertEquals(setOf("CORRIDOR", "OVERVIEW"), refs.forTrip(TRIP).map { it.kind }.toSet())
+    }
+
+    @Test
+    fun trackDownloadWithoutInternetOrMapIsRefused() = runBlocking {
+        assertFalse(controller(online = false).downloadForTrack(TRIP, shortRoute().points))
+        assertTrue(ourRegions().isEmpty())
+        assertTrue(refs.forTrip(TRIP).isEmpty())
+    }
+
+    @Test
+    fun deleteForTripAlsoRemovesTheVideoRegion() = runBlocking {
+        val c = controller()
+        assertTrue(withTimeout(DOWNLOAD_TIMEOUT_MS) { c.downloadForTrack(TRIP, shortRoute().points) })
+        assertEquals(1, ourRegions().size)
+
+        c.deleteForTrip(TRIP)
+
+        assertTrue(ourRegions().isEmpty())
+        assertTrue(refs.forTrip(TRIP).isEmpty())
     }
 
     private companion object {
