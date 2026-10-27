@@ -11,6 +11,8 @@ import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.nav.FakeTripStore
+import com.cowork.bikerecoder.nav.RecordingLog
+import com.cowork.bikerecoder.nav.RecordingOfflineMaps
 import com.cowork.bikerecoder.post.FakeHeartRateSource
 import com.cowork.bikerecoder.post.FakePhotoSource
 import com.cowork.bikerecoder.post.FakePostStore
@@ -38,13 +40,16 @@ class SummaryExtrasTest {
     private val store = FakePostStore { rides.segments(TRIP) }
     private val heartRate = FakeHeartRateSource()
     private val shown = MutableStateFlow<Long?>(null)
+    private val offline = RecordingOfflineMaps()
+    private val shortRides = ShortRides(rides, trips, offline, RecordingLog())
 
-    /** A finished one-minute ride ([totals] and [endedAt] for a longer one). */
+    /** A finished one-minute ride ([totals] and [endedAt] for a longer one) of a trip with [status]. */
     private suspend fun TestScope.setup(
         totals: SegmentTotals = TOTALS,
         endedAt: Long = 60_000L,
+        status: TripStatus = TripStatus.COMPLETED,
     ): Pair<Long, SummaryExtras> {
-        trips.trips[TRIP] = Trip(TRIP, TripType.SINGLE_DAY, TripStatus.COMPLETED, RouteProfile.CYCLEWAY_FIRST, 0L, 0L, null)
+        trips.trips[TRIP] = Trip(TRIP, TripType.SINGLE_DAY, status, RouteProfile.CYCLEWAY_FIRST, 0L, 0L, null)
         val id = rides.openSegment(TRIP, 0L, LocalDate.of(2026, 10, 18))
         rides.appendPoints(id, listOf(TrackPoint(0L, GeoPoint(37.5, 127.0), null, 5f, 5f)), totals)
         rides.closeSegment(id, endedAt, totals)
@@ -52,7 +57,7 @@ class SummaryExtrasTest {
             rides, store, FakePhotoSource(), heartRate, clock = { testScheduler.currentTime }, scope = backgroundScope,
             warnLog = { _, _ -> },
         )
-        return id to SummaryExtras(shown, store, processor, backgroundScope)
+        return id to SummaryExtras(shown, store, processor, shortRides, backgroundScope)
     }
 
     /** Reads of the heart-rate source other than the one pass the summary asks for when it appears. */
@@ -225,9 +230,117 @@ class SummaryExtrasTest {
         assertEquals(1, refetches(), "[다시 가져오기]")
     }
 
+    /** Spec §6.10: a summary of a ride under 10 m asks "거의 움직이지 않은 기록입니다. 저장할까요?" once per segment. */
+    @Test
+    fun shortSummaryAsksOnce() = runTest {
+        val (id, extras) = setup(SHORT)
+        // The guidance screen's summary of the same segment (both view models can be alive at once).
+        val guidance = SummaryExtras(shown, store, PostProcessor(
+            rides, store, FakePhotoSource(), heartRate, clock = { 0L }, scope = backgroundScope, warnLog = { _, _ -> },
+        ), shortRides, backgroundScope)
+        assertEquals(false, extras.state.value.askShort, "no summary: nothing to ask")
+        shown.value = id
+        runCurrent()
+        assertEquals(true, extras.state.value.askShort)
+        assertEquals(true, guidance.state.value.askShort)
+
+        extras.keepShort()
+        runCurrent()
+        assertEquals(false, extras.state.value.askShort, "answered")
+        assertEquals(false, guidance.state.value.askShort, "answered on the other screen")
+        shown.value = null
+        runCurrent()
+        shown.value = id
+        runCurrent()
+        assertEquals(false, extras.state.value.askShort, "not asked again for that segment")
+    }
+
+    @Test
+    fun aLongRideIsNotAskedAboutNorDiscarded() = runTest {
+        val (id, extras) = setup(SHORT.copy(distanceM = 10.0))
+        shown.value = id
+        runCurrent()
+        assertEquals(false, extras.state.value.askShort, "10 m is a ride")
+
+        var closed = 0
+        extras.discardShort { closed++ }
+        runCurrent()
+        assertEquals(emptyList<Long>(), rides.deletedSegments, "never deletes a ride of 10 m or more")
+        assertEquals(1, closed)
+    }
+
+    @Test
+    fun discardDeletesSegmentAndEmptyFinishedTrip() = runTest {
+        val (id, extras) = setup(SHORT)
+        shown.value = id
+        runCurrent()
+
+        var closed = 0
+        extras.discardShort { closed++ }
+        extras.discardShort { closed++ } // a second tap before the dialog goes
+        runCurrent()
+
+        assertEquals(false, extras.state.value.askShort)
+        assertEquals(listOf(id), rides.deletedSegments)
+        assertEquals(listOf(TRIP), rides.deletedTrips)
+        assertEquals(listOf(TRIP), offline.deleted, "the trip's offline maps go with it")
+        assertEquals(1, closed, "then the summary closes")
+    }
+
+    @Test
+    fun discardKeepsTripWithOtherSegments() = runTest {
+        val (id, extras) = setup(SHORT)
+        val earlier = rides.openSegment(TRIP, -100_000L, LocalDate.of(2026, 10, 18))
+        rides.closeSegment(earlier, -50_000L, TOTALS)
+        shown.value = id
+        runCurrent()
+
+        var closed = 0
+        extras.discardShort { closed++ }
+        runCurrent()
+
+        assertEquals(listOf(id), rides.deletedSegments)
+        assertEquals(emptyList<Long>(), rides.deletedTrips)
+        assertEquals(listOf(earlier), rides.segments(TRIP).map { it.id })
+        assertEquals(1, closed)
+    }
+
+    @Test
+    fun discardKeepsActiveTrip() = runTest {
+        val (id, extras) = setup(SHORT, status = TripStatus.ACTIVE)
+        shown.value = id
+        runCurrent()
+
+        var closed = 0
+        extras.discardShort { closed++ }
+        runCurrent()
+
+        assertEquals(listOf(id), rides.deletedSegments)
+        assertEquals(emptyList<Long>(), rides.deletedTrips, "an ACTIVE trip is never deleted")
+        assertEquals(emptyList<Long>(), offline.deleted)
+        assertEquals(true, trips.trips.containsKey(TRIP))
+        assertEquals(1, closed)
+    }
+
+    @Test
+    fun keepLeavesEverything() = runTest {
+        val (id, extras) = setup(SHORT)
+        shown.value = id
+        runCurrent()
+
+        extras.keepShort()
+        runCurrent()
+
+        assertEquals(false, extras.state.value.askShort)
+        assertEquals(emptyList<Long>(), rides.deletedSegments)
+        assertEquals(emptyList<Long>(), rides.deletedTrips)
+        assertEquals(listOf(id), rides.segments(TRIP).map { it.id })
+    }
+
     private companion object {
         const val TRIP = 1L
         const val MINUTE = 60_000L
         val TOTALS = SegmentTotals.ZERO.copy(distanceM = 100.0, movingTimeMs = 60_000)
+        val SHORT = SegmentTotals.ZERO.copy(distanceM = 0.27, movingTimeMs = 0)
     }
 }

@@ -24,6 +24,7 @@ import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.ride.ScreenNotice
 import com.cowork.bikerecoder.ride.recordingTripId
 import com.cowork.bikerecoder.tts.VoiceOutput
+import com.cowork.bikerecoder.ui.record.ShortRides
 import com.cowork.bikerecoder.ui.record.SummaryExtras
 import com.cowork.bikerecoder.ui.record.SummaryExtrasState
 import com.cowork.bikerecoder.ui.trip.EndAction
@@ -72,6 +73,7 @@ class NavigateViewModel(
     /** With [postProcessor]: the segment summary's extras ([summaryExtras], ruling R9). */
     postStore: PostStore,
     postProcessor: PostProcessor,
+    shortRides: ShortRides,
 ) : ViewModel() {
 
     val ui: StateFlow<NavUiState> = controller.ui
@@ -80,6 +82,7 @@ class NavigateViewModel(
         summarySegment = combine(controller.ui, rideUi) { nav, ride -> shownSummary(nav, ride)?.segment?.id },
         postStore = postStore,
         postProcessor = postProcessor,
+        shortRides = shortRides,
         scope = viewModelScope,
     )
 
@@ -95,6 +98,22 @@ class NavigateViewModel(
 
     /** The segment summary is (or no longer is) on a started screen ([SummaryExtras.onScreen]). */
     fun summaryOnScreen(shown: Boolean) = extras.onScreen(shown)
+
+    /**
+     * [버리기] on a short ride's summary (spec §6.10): deletes it, then closes the finished screen as [confirmFinished]
+     * does — only what is still that summary and that finished guidance.
+     */
+    fun discardShortRide() {
+        val nav = ui.value
+        val shown = shownSummary() ?: return
+        extras.discardShort {
+            dismissSummary(shown)
+            if (ui.value === nav) close()
+        }
+    }
+
+    /** [저장] (or dismissed) on a short ride's summary: it stays. */
+    fun keepShortRide() = extras.keepShort()
 
     /** A recording is starting or running: [종료] offers to end the guidance only, and the recording goes on. */
     val recording: StateFlow<Boolean> = rideUi.map(::isRecording)
@@ -254,6 +273,7 @@ class NavigateViewModel(
                     rideNotice = container.ride.notice,
                     postStore = container.postStore,
                     postProcessor = container.postProcessor,
+                    shortRides = container.shortRides,
                 )
             }
         }

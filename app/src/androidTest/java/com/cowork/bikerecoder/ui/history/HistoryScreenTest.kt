@@ -155,6 +155,74 @@ class HistoryScreenTest {
         composeRule.onNodeWithText(CONFIRM_DELETE_TRIP).assertDoesNotExist()
     }
 
+    /** Spec §6.10: "짧은 기록 N개 숨김" [정리] under the list, then "짧은 기록 N개를 삭제할까요?" [삭제] [취소]. */
+    @Test
+    fun hiddenShortTripsOfferCleanup() {
+        var dialog by mutableStateOf<HistoryDialog?>(null)
+        var hidden by mutableStateOf(2)
+        var cleanups = 0
+        composeRule.setContent {
+            MaterialTheme {
+                HistoryContent(
+                    trips = listOf(summary),
+                    dialog = dialog,
+                    onOpenTrip = {},
+                    onRequestDelete = {},
+                    onConfirmDelete = { confirmed++ },
+                    onDismiss = { dialog = null },
+                    onBack = {},
+                    hiddenShortCount = hidden,
+                    onRequestCleanup = { dialog = HistoryDialog.ConfirmCleanup(hidden) },
+                    onConfirmCleanup = {
+                        cleanups++
+                        dialog = null
+                        hidden = 0
+                    },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("짧은 기록 2개 숨김").assertIsDisplayed()
+        composeRule.onNodeWithText("정리").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("짧은 기록 2개를 삭제할까요?").assertIsDisplayed()
+        composeRule.onNodeWithText("취소").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("짧은 기록 2개를 삭제할까요?").assertDoesNotExist()
+        assertEquals(0, cleanups)
+
+        composeRule.onNodeWithText("정리").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("삭제").performClick()
+        composeRule.waitForIdle()
+        assertEquals(1, cleanups)
+        assertEquals("not the single-trip delete", 0, confirmed)
+        composeRule.onNodeWithText("짧은 기록", substring = true).assertDoesNotExist()
+    }
+
+    /** Only short trips: the list says it is empty and still offers [정리]. */
+    @Test
+    fun onlyShortTripsStillOfferCleanup() {
+        composeRule.setContent {
+            MaterialTheme {
+                HistoryContent(
+                    trips = emptyList(),
+                    dialog = null,
+                    onOpenTrip = {},
+                    onRequestDelete = {},
+                    onConfirmDelete = {},
+                    onDismiss = {},
+                    onBack = {},
+                    hiddenShortCount = 3,
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("기록이 없습니다").assertIsDisplayed()
+        composeRule.onNodeWithText("짧은 기록 3개 숨김").assertIsDisplayed()
+        composeRule.onNodeWithText("정리").assertIsDisplayed()
+    }
+
     @Test
     fun notDeletableShowsWhy() {
         composeRule.setContent {

@@ -308,4 +308,91 @@ class HistoryViewModelTest {
         assertEquals(1_000.0, vm.total.value.distanceM)
         assertEquals(0L, vm.total.value.elapsedMs, "the hidden segment's time is not in the totals")
     }
+
+    /** Spec §6.10: a trip under 10 m in all that is not in progress is hidden and counted for [정리]. */
+    @Test
+    fun historyHidesShortTrips() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        trip(2, TripStatus.COMPLETED)
+        trip(3, TripStatus.ACTIVE)
+        trip(4, TripStatus.COMPLETED)
+        trip(5, TripStatus.COMPLETED)
+        segment(1, startedAt = 100, totals = short(0.27))
+        segment(2, startedAt = 200)
+        segment(3, startedAt = 300, totals = short(0.08)) // ACTIVE: in progress, shown
+        segment(4, startedAt = 400, totals = short(4.0))
+        segment(4, startedAt = 450, totals = short(5.0)) // 9 m in all: still short
+        segment(5, startedAt = 500, totals = short(6.0))
+        segment(5, startedAt = 550, totals = short(4.0)) // 10 m in all: a ride
+        val vm = history()
+        advanceUntilIdle()
+
+        assertEquals(listOf(5L, 3L, 2L), vm.trips.value.map { it.trip.id })
+        assertEquals(2, vm.hiddenShortCount.value)
+    }
+
+    @Test
+    fun aShortTripBeingRecordedIsShown() = runTest(dispatcher) {
+        // Guidance arrival completed the trip while its recording runs: the closed short segment's trip is in progress.
+        trip(1, TripStatus.COMPLETED)
+        segment(1, startedAt = 100, totals = short(1.0))
+        segment(1, startedAt = 200, open = true)
+        val vm = history()
+        advanceUntilIdle()
+
+        assertEquals(listOf(1L), vm.trips.value.map { it.trip.id })
+        assertEquals(0, vm.hiddenShortCount.value)
+        vm.requestCleanup()
+        advanceUntilIdle()
+        assertNull(vm.dialog.value, "nothing hidden: nothing to clean up")
+    }
+
+    @Test
+    fun cleanupDeletesOnlyHiddenShortTrips() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        trip(2, TripStatus.COMPLETED)
+        trip(3, TripStatus.ACTIVE)
+        trip(4, TripStatus.COMPLETED)
+        segment(1, startedAt = 100, totals = short(0.27))
+        segment(2, startedAt = 200)
+        segment(3, startedAt = 300, totals = short(0.08))
+        segment(4, startedAt = 400, totals = short(3.0))
+        val vm = history()
+        advanceUntilIdle()
+
+        vm.requestCleanup()
+        advanceUntilIdle()
+        assertEquals(HistoryDialog.ConfirmCleanup(2), vm.dialog.value)
+        assertEquals(emptyList<Long>(), rides.deletedTrips, "asks first")
+
+        // Trip 4 started again meanwhile (now ACTIVE): it is not deleted.
+        trips.trips[4] = trips.trips.getValue(4).copy(status = TripStatus.ACTIVE)
+        vm.confirmCleanup()
+        advanceUntilIdle()
+
+        assertEquals(listOf(1L), rides.deletedTrips)
+        assertEquals(listOf(1L), offline.deleted)
+        assertEquals(listOf(4L, 3L, 2L), vm.trips.value.map { it.trip.id })
+        assertEquals(0, vm.hiddenShortCount.value)
+        assertNull(vm.dialog.value)
+    }
+
+    @Test
+    fun cancelledCleanupKeepsEverything() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        segment(1, startedAt = 100, totals = short(0.27))
+        val vm = history()
+        advanceUntilIdle()
+
+        vm.requestCleanup()
+        advanceUntilIdle()
+        vm.dismiss()
+        vm.confirmCleanup()
+        advanceUntilIdle()
+
+        assertEquals(emptyList<Long>(), rides.deletedTrips)
+        assertEquals(1, vm.hiddenShortCount.value)
+    }
+
+    private fun short(distance: Double) = SegmentTotals.ZERO.copy(distanceM = distance, movingTimeMs = 1_000)
 }

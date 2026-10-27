@@ -119,6 +119,7 @@ class RecordViewModelTest {
         val navState = MutableStateFlow<NavUiState>(NavUiState.Idle)
         val vm = RecordViewModel(
             ride, navState, flowOf(true), SavedStateHandle(args), serviceStatus.warning, postStore, postProcessor,
+            ShortRides(rideStore, trips, com.cowork.bikerecoder.nav.RecordingOfflineMaps(), log),
         )
         val setup = Setup(vm, tripManager, navState, ride, postStore, heartRate)
         postStore.beforeList = { setup.passes++ }

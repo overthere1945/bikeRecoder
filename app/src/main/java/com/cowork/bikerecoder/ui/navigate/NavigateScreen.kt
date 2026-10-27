@@ -254,6 +254,8 @@ fun NavigateScreen(
                             SummaryExtrasContent(
                                 summaryExtras, photoPrompt, heartRateGate, viewModel::refetchHeartRate,
                                 viewModel::summaryOnScreen,
+                                onDiscard = viewModel::discardShortRide,
+                                onKeep = viewModel::keepShortRide,
                             )
                             if (view.completed) Text(TRIP_COMPLETED, style = MaterialTheme.typography.headlineSmall)
                             if (view.canConvert) {

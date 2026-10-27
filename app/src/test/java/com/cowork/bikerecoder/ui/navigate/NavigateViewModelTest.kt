@@ -34,6 +34,7 @@ import com.cowork.bikerecoder.ride.RideControls
 import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.ride.ScreenNotice
 import com.cowork.bikerecoder.tts.VoiceOutput
+import com.cowork.bikerecoder.ui.record.ShortRides
 import com.cowork.bikerecoder.ui.trip.EndAction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -144,6 +145,7 @@ class NavigateViewModelTest {
                 rides, postStore, FakePhotoSource(), heartRate, clock = { testScheduler.currentTime },
                 scope = backgroundScope, warnLog = { _, _ -> },
             ),
+            shortRides = ShortRides(rides, store, offline, com.cowork.bikerecoder.nav.RecordingLog()),
         )
         return Setup(vm, tripManager, controller)
     }

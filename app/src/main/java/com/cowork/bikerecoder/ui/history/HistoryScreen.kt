@@ -34,6 +34,7 @@ import com.cowork.bikerecoder.ui.common.GlyphIcon
 @Composable
 fun HistoryScreen(viewModel: HistoryViewModel, onOpenTrip: (Long) -> Unit, onOpenCumulative: () -> Unit, onBack: () -> Unit) {
     val trips by viewModel.trips.collectAsStateWithLifecycle()
+    val hiddenShortCount by viewModel.hiddenShortCount.collectAsStateWithLifecycle()
     val dialog by viewModel.dialog.collectAsStateWithLifecycle()
     // Back from a trip whose segments were deleted.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refresh() }
@@ -46,10 +47,16 @@ fun HistoryScreen(viewModel: HistoryViewModel, onOpenTrip: (Long) -> Unit, onOpe
         onDismiss = viewModel::dismiss,
         onBack = onBack,
         onOpenCumulative = onOpenCumulative,
+        hiddenShortCount = hiddenShortCount,
+        onRequestCleanup = viewModel::requestCleanup,
+        onConfirmCleanup = viewModel::confirmCleanup,
     )
 }
 
-/** [누적 지도] (spec §4), then the trip cards, newest first (spec §3.5); a long press asks to delete the trip. */
+/**
+ * [누적 지도] (spec §4), then the trip cards, newest first (spec §3.5); a long press asks to delete the trip. Below them,
+ * when short trips are hidden ([hiddenShortCount] > 0, spec §6.10), "짧은 기록 N개 숨김" with [정리] ([onRequestCleanup]).
+ */
 @Composable
 fun HistoryContent(
     trips: List<TripRideSummary>,
@@ -60,22 +67,31 @@ fun HistoryContent(
     onDismiss: () -> Unit,
     onBack: () -> Unit,
     onOpenCumulative: () -> Unit = {},
+    hiddenShortCount: Int = 0,
+    onRequestCleanup: () -> Unit = {},
+    onConfirmCleanup: () -> Unit = {},
 ) {
     HistoryScaffold(title = "기록", onBack = onBack) {
         Column(modifier = Modifier.fillMaxSize()) {
             OutlinedButton(onClick = onOpenCumulative, modifier = Modifier.padding(horizontal = 16.dp)) { Text("누적 지도") }
-            if (trips.isEmpty()) {
+            if (trips.isEmpty() && hiddenShortCount == 0) {
                 EmptyText()
             } else {
-                TripCards(trips, onOpenTrip, onRequestDelete)
+                TripCards(trips, hiddenShortCount, onOpenTrip, onRequestDelete, onRequestCleanup)
             }
         }
     }
-    HistoryDialogs(dialog, CONFIRM_DELETE_TRIP, onConfirmDelete, onDismiss)
+    HistoryDialogs(dialog, CONFIRM_DELETE_TRIP, onConfirmDelete, onDismiss, onConfirmCleanup)
 }
 
 @Composable
-private fun TripCards(trips: List<TripRideSummary>, onOpenTrip: (Long) -> Unit, onRequestDelete: (Long) -> Unit) {
+private fun TripCards(
+    trips: List<TripRideSummary>,
+    hiddenShortCount: Int,
+    onOpenTrip: (Long) -> Unit,
+    onRequestDelete: (Long) -> Unit,
+    onRequestCleanup: () -> Unit,
+) {
     LazyColumn(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -91,6 +107,25 @@ private fun TripCards(trips: List<TripRideSummary>, onOpenTrip: (Long) -> Unit, 
                 Text(tripCardText(summary), modifier = Modifier.padding(16.dp))
             }
         }
+        if (trips.isEmpty()) {
+            item(key = "empty") { Text("기록이 없습니다", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+        if (hiddenShortCount > 0) {
+            item(key = "hiddenShort") { HiddenShortRow(hiddenShortCount, onRequestCleanup) }
+        }
+    }
+}
+
+/** "짧은 기록 N개 숨김" [정리] at the bottom of the list (spec §6.10). */
+@Composable
+private fun HiddenShortRow(count: Int, onRequestCleanup: () -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            "짧은 기록 ${count}개 숨김",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onRequestCleanup) { Text("정리") }
     }
 }
 
@@ -115,9 +150,18 @@ internal fun EmptyText() {
     }
 }
 
-/** "Cannot delete" ([확인]) or "[question]" ([삭제]/[취소]). */
+/**
+ * "Cannot delete" ([확인]) or "[question]" ([삭제]/[취소]); on the list also "짧은 기록 N개를 삭제할까요?" ([삭제] =
+ * [onConfirmCleanup]/[취소]).
+ */
 @Composable
-internal fun HistoryDialogs(dialog: HistoryDialog?, question: String, onConfirmDelete: () -> Unit, onDismiss: () -> Unit) {
+internal fun HistoryDialogs(
+    dialog: HistoryDialog?,
+    question: String,
+    onConfirmDelete: () -> Unit,
+    onDismiss: () -> Unit,
+    onConfirmCleanup: () -> Unit = {},
+) {
     when (dialog) {
         null -> Unit
         is HistoryDialog.Message -> AlertDialog(
@@ -129,6 +173,12 @@ internal fun HistoryDialogs(dialog: HistoryDialog?, question: String, onConfirmD
             onDismissRequest = onDismiss,
             text = { Text(question) },
             confirmButton = { TextButton(onClick = onConfirmDelete) { Text("삭제") } },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+        )
+        is HistoryDialog.ConfirmCleanup -> AlertDialog(
+            onDismissRequest = onDismiss,
+            text = { Text("짧은 기록 ${dialog.count}개를 삭제할까요?") },
+            confirmButton = { TextButton(onClick = onConfirmCleanup) { Text("삭제") } },
             dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
         )
     }

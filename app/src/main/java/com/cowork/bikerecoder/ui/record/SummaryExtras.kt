@@ -1,7 +1,10 @@
 package com.cowork.bikerecoder.ui.record
 
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
@@ -15,6 +18,7 @@ import com.cowork.bikerecoder.ui.health.HeartRateSection
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,10 +30,12 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** What a segment summary shows besides its totals (spec §2.3, §3.3). */
 data class SummaryExtrasState(
@@ -37,6 +43,8 @@ data class SummaryExtrasState(
     val photoCount: Int = 0,
     /** The segment's heart rate as stored; null while there is no summary or nothing stored yet (read as PENDING). */
     val heartRate: SegmentExtras? = null,
+    /** "거의 움직이지 않은 기록입니다. 저장할까요?" (spec §6.10): a ride under 10 m, not answered yet. */
+    val askShort: Boolean = false,
 )
 
 /**
@@ -47,12 +55,16 @@ data class SummaryExtrasState(
  * While the summary is also really on screen ([onScreen]), its heart rate is read again every minute, at most
  * [REFETCH_TIMES] times per segment (spec §3.2: "1분마다(최대 15분)"), until it is READY and detailed. Closing the summary or
  * leaving the screen stops that; coming back goes on with the reads left, at the time the next one was due.
+ *
+ * A segment shorter than 10 m is asked about once ([SummaryExtrasState.askShort], spec §6.10): [discardShort] deletes it
+ * (and its trip when nothing else is left of it, [ShortRides.discard]), [keepShort] keeps it.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SummaryExtras(
     summarySegment: Flow<Long?>,
     private val postStore: PostStore,
     private val postProcessor: PostProcessor,
+    private val shortRides: ShortRides,
     private val scope: CoroutineScope,
 ) {
     private val segment = summarySegment.distinctUntilChanged().stateIn(scope, SharingStarted.Eagerly, null)
@@ -75,7 +87,8 @@ class SummaryExtras(
                 combine(
                     postStore.observePhotos(listOf(id)).map { photos -> photos.count { !it.hidden } }.catch { emit(0) },
                     postStore.observeExtras(listOf(id)).map { it.firstOrNull() }.catch { emit(null) },
-                ) { photoCount, heartRate -> SummaryExtrasState(photoCount, heartRate) }
+                    askShort(id),
+                ) { photoCount, heartRate, askShort -> SummaryExtrasState(photoCount, heartRate, askShort) }
             }
         }
         .stateIn(scope, SharingStarted.Eagerly, SummaryExtrasState())
@@ -99,6 +112,31 @@ class SummaryExtras(
         val id = segment.value ?: return
         scope.launch { postProcessor.refetchHeartRate(id) }
     }
+
+    /**
+     * [버리기]: deletes the summary's short segment ([ShortRides.discard]), then [close]s the summary. Once per segment:
+     * a second tap before the dialog goes does nothing.
+     */
+    fun discardShort(close: () -> Unit) {
+        val id = segment.value ?: return
+        if (id in shortRides.answered.value) return
+        shortRides.answer(id)
+        scope.launch {
+            // Once started, the deletion finishes even if the screen goes away; the summary is closed only if it stays.
+            withContext(NonCancellable) { shortRides.discard(id) }
+            close()
+        }
+    }
+
+    /** [저장], or the dialog dismissed: the segment stays and is not asked about again. */
+    fun keepShort() {
+        segment.value?.let(shortRides::answer)
+    }
+
+    private fun askShort(id: Long): Flow<Boolean> = combine(
+        flow { emit(shortRides.isShort(id)) }.catch { emit(false) },
+        shortRides.answered,
+    ) { short, answered -> short && id !in answered }
 
     private suspend fun refetchWhileShown(id: Long) {
         while ((refetched[id] ?: 0) < REFETCH_TIMES) {
@@ -136,7 +174,8 @@ class SummaryExtras(
 /**
  * The summary's extras above its other footer lines: "사진 N장" (nothing without photos), [photoPrompt], and the heart
  * rate ([HeartRateSection] with [heartRateGate]; [onRefetch] = [다시 가져오기]). [onScreen] is told while this is on a
- * started screen (it drives [SummaryExtras.onScreen]).
+ * started screen (it drives [SummaryExtras.onScreen]). A short ride ([SummaryExtrasState.askShort]) is asked about
+ * over the summary: [onDiscard] = [버리기], [onKeep] = [저장] or the dialog dismissed (spec §6.10).
  */
 @Composable
 fun SummaryExtrasContent(
@@ -145,6 +184,8 @@ fun SummaryExtrasContent(
     heartRateGate: HeartRateGate? = null,
     onRefetch: () -> Unit = {},
     onScreen: (Boolean) -> Unit = {},
+    onDiscard: () -> Unit = {},
+    onKeep: () -> Unit = {},
 ) {
     val currentOnScreen by rememberUpdatedState(onScreen)
     LifecycleStartEffect(Unit) {
@@ -154,6 +195,18 @@ fun SummaryExtrasContent(
     SummaryPhotoCount(state.photoCount)
     photoPrompt()
     HeartRateSection(state.heartRate, onRefetch, heartRateGate)
+    if (state.askShort) ShortRideDialog(onDiscard, onKeep)
+}
+
+/** "거의 움직이지 않은 기록입니다. 저장할까요?" with [버리기] (emphasized, the default) and [저장]. */
+@Composable
+private fun ShortRideDialog(onDiscard: () -> Unit, onKeep: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onKeep,
+        text = { Text("거의 움직이지 않은 기록입니다. 저장할까요?") },
+        confirmButton = { Button(onClick = onDiscard) { Text("버리기") } },
+        dismissButton = { TextButton(onClick = onKeep) { Text("저장") } },
+    )
 }
 
 /** "사진 N장" under the summary's map; nothing without photos. */

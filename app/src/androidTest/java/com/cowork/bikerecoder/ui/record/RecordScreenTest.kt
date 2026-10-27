@@ -301,4 +301,50 @@ class RecordScreenTest {
         assertEquals(1, refetches)
         assertEquals(listOf(true), onScreen)
     }
+
+    /** Spec §6.10: a short ride's summary asks "거의 움직이지 않은 기록입니다. 저장할까요?" [버리기] [저장]. */
+    @Test
+    fun shortRideSummaryAsksToDiscard() {
+        var state by mutableStateOf(SummaryExtrasState(askShort = true))
+        var discards = 0
+        var keeps = 0
+        composeRule.setContent {
+            MaterialTheme {
+                SegmentSummaryContent(
+                    segment = RideSegment(
+                        id = 1,
+                        tripId = 1,
+                        startedAt = 0L,
+                        endedAt = 60_000L,
+                        localDate = LocalDate.of(2026, 10, 27),
+                        totals = SegmentTotals.ZERO.copy(distanceM = 0.27),
+                    ),
+                    map = {},
+                    onConfirm = {},
+                    footer = {
+                        SummaryExtrasContent(
+                            state,
+                            photoPrompt = {},
+                            onDiscard = { discards++ },
+                            onKeep = {
+                                keeps++
+                                state = state.copy(askShort = false)
+                            },
+                        )
+                    },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("거의 움직이지 않은 기록입니다. 저장할까요?").assertIsDisplayed()
+        composeRule.onNodeWithText("버리기").assertIsDisplayed()
+        composeRule.onNodeWithText("버리기").performClick()
+        composeRule.waitForIdle()
+        assertEquals(1, discards)
+
+        composeRule.onNodeWithText("저장").performClick()
+        composeRule.waitForIdle()
+        assertEquals(1, keeps)
+        composeRule.onNodeWithText("거의 움직이지 않은 기록입니다. 저장할까요?").assertDoesNotExist()
+    }
 }

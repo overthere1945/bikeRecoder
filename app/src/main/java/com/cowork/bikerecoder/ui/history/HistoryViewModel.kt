@@ -8,6 +8,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.TripRideSummary
 import com.cowork.bikerecoder.core.trip.OfflineMapController
@@ -27,12 +28,18 @@ sealed interface HistoryDialog {
 
     /** "Delete?" for a trip or a segment id. */
     data class ConfirmDelete(val id: Long) : HistoryDialog
+
+    /** "짧은 기록 {count}개를 삭제할까요?" for [정리] (spec §6.10). */
+    data class ConfirmCleanup(val count: Int) : HistoryDialog
 }
 
 /**
  * The ride history (spec §3.5): trips with a recording, newest first. A trip in progress (ACTIVE, or still being
  * recorded) cannot be deleted; otherwise deleting asks first and then removes the trip with its stops, segments and
  * points, and its offline maps (whose refs have no foreign key to the trip).
+ *
+ * Short trips (spec §6.10: under [MIN_RIDE_DISTANCE_M] in all, not in progress) are not listed but counted
+ * ([hiddenShortCount]); [정리] deletes them after asking. Nothing is deleted without asking.
  */
 class HistoryViewModel(
     private val rideStore: RideStore,
@@ -42,6 +49,17 @@ class HistoryViewModel(
 
     private val _trips = MutableStateFlow<List<TripRideSummary>>(emptyList())
     val trips: StateFlow<List<TripRideSummary>> = _trips.asStateFlow()
+
+    /** The short trips not listed, as last read. */
+    private var hiddenShort: List<Long> = emptyList()
+
+    private val _hiddenShortCount = MutableStateFlow(0)
+
+    /** "짧은 기록 N개 숨김": the short trips not listed. */
+    val hiddenShortCount: StateFlow<Int> = _hiddenShortCount.asStateFlow()
+
+    /** The short trips the cleanup question counted (only these may be deleted by [confirmCleanup]). */
+    private var cleanupIds: List<Long> = emptyList()
 
     private val _dialog = MutableStateFlow<HistoryDialog?>(null)
     val dialog: StateFlow<HistoryDialog?> = _dialog.asStateFlow()
@@ -89,6 +107,35 @@ class HistoryViewModel(
         }
     }
 
+    /** [정리]: asks "짧은 기록 N개를 삭제할까요?" when short trips are hidden. */
+    fun requestCleanup() {
+        val ids = hiddenShort
+        if (ids.isEmpty()) return
+        cleanupIds = ids
+        _dialog.value = HistoryDialog.ConfirmCleanup(ids.size)
+    }
+
+    /**
+     * [삭제] on the cleanup question: deletes the short trips it counted that are still short and not in progress (checked
+     * again — one may have started meanwhile), with their offline maps, then reads the list again.
+     */
+    fun confirmCleanup() {
+        if (_dialog.value !is HistoryDialog.ConfirmCleanup) return
+        _dialog.value = null
+        val counted = cleanupIds.toSet()
+        cleanupIds = emptyList()
+        viewModelScope.launch {
+            mutex.withLock {
+                val now = guarded("Could not read the ride history") { split() } ?: return@withLock
+                for (tripId in now.hidden.filter { it in counted }) {
+                    guarded("Could not delete the offline maps of trip $tripId") { offlineMaps.deleteForTrip(tripId) }
+                    guarded("Could not delete trip $tripId") { rideStore.deleteTrip(tripId) }
+                }
+                load()
+            }
+        }
+    }
+
     fun dismiss() {
         _dialog.value = null
     }
@@ -100,8 +147,25 @@ class HistoryViewModel(
     }
 
     private suspend fun load() {
-        guarded("Could not read the ride history") { _trips.value = rideStore.tripSummaries() }
+        guarded("Could not read the ride history") {
+            val split = split()
+            _trips.value = split.shown
+            hiddenShort = split.hidden
+            _hiddenShortCount.value = split.hidden.size
+        }
     }
+
+    /** The listed trips and the short ones hidden (under [MIN_RIDE_DISTANCE_M] in all, not ACTIVE, nothing open). */
+    private suspend fun split(): HistorySplit {
+        val all = rideStore.tripSummaries()
+        val open = rideStore.openSegments().mapTo(HashSet()) { it.tripId }
+        val (hidden, shown) = all.partition {
+            it.distanceM < MIN_RIDE_DISTANCE_M && it.trip.status != TripStatus.ACTIVE && it.trip.id !in open
+        }
+        return HistorySplit(shown, hidden.map { it.trip.id })
+    }
+
+    private class HistorySplit(val shown: List<TripRideSummary>, val hidden: List<Long>)
 
     /** [block]'s result, or null when it failed (logged). */
     private suspend fun <T> guarded(message: String, block: suspend () -> T): T? = try {

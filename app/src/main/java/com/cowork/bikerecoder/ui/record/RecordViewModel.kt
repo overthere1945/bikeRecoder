@@ -43,6 +43,7 @@ class RecordViewModel(
     val serviceWarning: StateFlow<String?> = MutableStateFlow(null),
     postStore: PostStore,
     postProcessor: PostProcessor,
+    shortRides: ShortRides,
 ) : ViewModel() {
 
     val ui: StateFlow<RideUiState> = ride.ui
@@ -51,6 +52,7 @@ class RecordViewModel(
         summarySegment = ride.ui.map { (it as? RideUiState.Finished)?.segment?.id },
         postStore = postStore,
         postProcessor = postProcessor,
+        shortRides = shortRides,
         scope = viewModelScope,
     )
 
@@ -65,6 +67,18 @@ class RecordViewModel(
 
     /** The summary is (or no longer is) on a started screen ([SummaryExtras.onScreen]). */
     fun summaryOnScreen(shown: Boolean) = extras.onScreen(shown)
+
+    /**
+     * [버리기] on a short ride's summary (spec §6.10): deletes it, then [close]s the summary the screen's usual way — only
+     * if that summary is still the one shown.
+     */
+    fun discardShortRide(close: () -> Unit) {
+        val shown = ui.value as? RideUiState.Finished ?: return
+        extras.discardShort { if (ui.value === shown) close() }
+    }
+
+    /** [저장] (or dismissed) on a short ride's summary: it stays. */
+    fun keepShortRide() = extras.keepShort()
 
     /** Guidance is starting or running: [정지] then ends only the recording. */
     val navigating: StateFlow<Boolean> = navigation.map(NavNotifications::isGuiding)
@@ -122,6 +136,7 @@ class RecordViewModel(
                     serviceWarning = container.guidanceService.warning,
                     postStore = container.postStore,
                     postProcessor = container.postProcessor,
+                    shortRides = container.shortRides,
                 )
             }
         }

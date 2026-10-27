@@ -46,6 +46,7 @@ import com.cowork.bikerecoder.search.PlaceSearch
 import com.cowork.bikerecoder.search.RecentPlaceStore
 import com.cowork.bikerecoder.tts.AndroidTtsVoiceOutput
 import com.cowork.bikerecoder.tts.VoiceOutput
+import com.cowork.bikerecoder.ui.record.ShortRides
 import com.cowork.bikerecoder.core.model.LocationFix
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -212,6 +213,9 @@ class AppContainer(context: Context) {
     val postProcessor: PostProcessor = PostProcessor(
         rideStore, postStore, photoSource, heartRateSource, clock = System::currentTimeMillis, scope = postScope,
     )
+
+    /** Short rides asked about at the summaries (spec §6.10), shared so a segment is asked about once. */
+    val shortRides: ShortRides = ShortRides(rideStore, tripStore, offline, androidWarnLog("ShortRides"))
 
     private companion object {
         const val TAG = "AppContainer"

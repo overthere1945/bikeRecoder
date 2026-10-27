@@ -168,6 +168,8 @@ fun RecordScreen(
                 footer = {
                     SummaryExtrasContent(
                         summaryExtras, photoPrompt, heartRateGate, viewModel::refetchHeartRate, viewModel::summaryOnScreen,
+                        onDiscard = { viewModel.discardShortRide(closeSummary) },
+                        onKeep = viewModel::keepShortRide,
                     )
                 },
             )
