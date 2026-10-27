@@ -147,6 +147,26 @@ class VideoJobStoreTest {
     }
 
     @Test
+    fun `the half-written gallery item of a pending job survives reopening`() = runTest {
+        val store = VideoJobStore(dataStore())
+        val job = PendingJob(4, MediaKind.VIDEO, "{}", 6_000L, outputUri = "content://media/external_primary/video/media/77")
+
+        store.setPending(job)
+
+        assertEquals(job, reopen().pending())
+    }
+
+    @Test
+    fun `a pending job saved before the gallery item was recorded reads without one`() = runTest {
+        val ds = dataStore()
+        ds.edit {
+            it[stringPreferencesKey("pending_job")] = "{\"tripId\":8,\"kind\":\"VIDEO\",\"optionsJson\":\"{}\",\"startedAt\":9}"
+        }
+
+        assertEquals(PendingJob(8, MediaKind.VIDEO, "{}", 9L, outputUri = null), VideoJobStore(ds).pending())
+    }
+
+    @Test
     fun `a broken pending job reads as none`() = runTest {
         val ds = dataStore()
         ds.edit { it[stringPreferencesKey("pending_job")] = "{\"tripId\":1,\"kind\":\"GIF\"}" }

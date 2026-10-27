@@ -30,9 +30,11 @@ object VideoTestTrip {
         GeoPoint(37.5318, 126.9420),
         GeoPoint(37.5290, 126.9470),
     )
-    private val START = LocalDate.of(2026, 10, 25).atTime(9, 0).atZone(ZoneId.of("Asia/Seoul")).toInstant().toEpochMilli()
+    /** 2026-10-25 09:00 Seoul, the first point. */
+    val START: Long = LocalDate.of(2026, 10, 25).atTime(9, 0).atZone(ZoneId.of("Asia/Seoul")).toInstant().toEpochMilli()
 
-    private fun points(): List<TrackPoint> {
+    /** The track: one point a second at 5 m/s through [WAYPOINTS]. */
+    fun points(): List<TrackPoint> {
         val out = ArrayList<TrackPoint>()
         var t = START
         for (leg in 0 until WAYPOINTS.lastIndex) {

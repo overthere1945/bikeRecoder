@@ -18,6 +18,13 @@ class VideoEstimateTest {
     }
 
     @Test
+    fun remainingFramesByCount() {
+        // 작업 중 남은 시간: 같은 식을 프레임 수로 — ⌈(1240 × 0.5 + 200 × 0.03) / 60⌉ = 11
+        assertEquals(11, VideoEstimate.minutes(mapFrames = 1240, reusedFrames = 200, secondsPerFrame = 0.5))
+        assertEquals(1, VideoEstimate.minutes(mapFrames = 0, reusedFrames = 0, secondsPerFrame = 0.5))
+    }
+
+    @Test
     fun estimateIsAtLeastOneMinute() {
         assertEquals(1, VideoEstimate.minutes(List(10) { frame(it, reuse = false) }))
         assertEquals(1, VideoEstimate.minutes(emptyList()))

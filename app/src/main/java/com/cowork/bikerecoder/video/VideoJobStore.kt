@@ -22,8 +22,17 @@ import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import java.io.IOException
 
-/** 끝나지 못한 작업(스펙 §3.3, §5.1): 앱이 강제 종료되면 다음 실행 때 같은 옵션으로 다시 만들기를 제안한다. */
-data class PendingJob(val tripId: Long, val kind: MediaKind, val optionsJson: String, val startedAt: Long)
+/**
+ * 끝나지 못한 작업(스펙 §3.3, §5.1): 앱이 강제 종료되면 다음 실행 때 같은 옵션으로 다시 만들기를 제안한다. [outputUri] = 쓰던
+ * 갤러리 임시 항목(`IS_PENDING`, 만들기 전이면 null) — 다시 제안하거나 닫을 때 지운다(ruling V6). 예전 기록은 null로 읽는다.
+ */
+data class PendingJob(
+    val tripId: Long,
+    val kind: MediaKind,
+    val optionsJson: String,
+    val startedAt: Long,
+    val outputUri: String? = null,
+)
 
 /**
  * 영상 작업이 휴대폰에 남기는 것(DataStore): 마지막으로 고른 옵션(스펙 §1.2, 음악 제외), 이 휴대폰에서 마지막으로 만든 영상의
@@ -34,7 +43,13 @@ class VideoJobStore(private val dataStore: DataStore<Preferences>) {
     constructor(context: Context) : this(context.applicationContext.videoJobDataStore)
 
     @Serializable
-    private class PendingEntry(val tripId: Long, val kind: String, val optionsJson: String, val startedAt: Long)
+    private class PendingEntry(
+        val tripId: Long,
+        val kind: String,
+        val optionsJson: String,
+        val startedAt: Long,
+        val outputUri: String? = null,
+    )
 
     val lastOptions: Flow<VideoOptions> = dataStore.data
         .map { prefs -> prefs[LAST_OPTIONS]?.let(VideoOptionsJson::decode) ?: VideoOptions() }
@@ -59,7 +74,7 @@ class VideoJobStore(private val dataStore: DataStore<Preferences>) {
             if (p == null) {
                 prefs.remove(PENDING_JOB)
             } else {
-                prefs[PENDING_JOB] = json.encodeToString(PendingEntry(p.tripId, p.kind.name, p.optionsJson, p.startedAt))
+                prefs[PENDING_JOB] = json.encodeToString(PendingEntry(p.tripId, p.kind.name, p.optionsJson, p.startedAt, p.outputUri))
             }
         }
     }
@@ -69,7 +84,7 @@ class VideoJobStore(private val dataStore: DataStore<Preferences>) {
         return try {
             val e = json.decodeFromString<PendingEntry>(text)
             val kind = MediaKind.entries.firstOrNull { it.name == e.kind } ?: return null
-            PendingJob(e.tripId, kind, e.optionsJson, e.startedAt)
+            PendingJob(e.tripId, kind, e.optionsJson, e.startedAt, e.outputUri)
         } catch (_: SerializationException) {
             null
         }

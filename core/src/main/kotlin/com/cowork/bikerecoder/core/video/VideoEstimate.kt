@@ -14,7 +14,12 @@ object VideoEstimate {
     /** 예상 시간(분, 올림, 최소 1분). [secondsPerFrame] = 지도를 찍는 프레임 한 장의 시간(기본 0.25초, 이 휴대폰의 실제 값이 있으면 그것). */
     fun minutes(frames: List<FramePlan>, secondsPerFrame: Double = 0.25): Int {
         val reused = frames.count { it.reuseMap }
-        val seconds = (frames.size - reused) * secondsPerFrame + reused * REUSED_SECONDS_PER_FRAME
+        return minutes(frames.size - reused, reused, secondsPerFrame)
+    }
+
+    /** 같은 식을 프레임 수로(만드는 중 남은 시간): 지도를 찍는 [mapFrames]장 × [secondsPerFrame] + 재사용 [reusedFrames]장 × 0.03초. */
+    fun minutes(mapFrames: Int, reusedFrames: Int, secondsPerFrame: Double): Int {
+        val seconds = mapFrames * secondsPerFrame + reusedFrames * REUSED_SECONDS_PER_FRAME
         return ceil(seconds / 60.0).toInt().coerceAtLeast(1)
     }
 
