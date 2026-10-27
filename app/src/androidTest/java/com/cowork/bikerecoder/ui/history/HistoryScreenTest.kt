@@ -207,7 +207,7 @@ class HistoryScreenTest {
     }
 
     @Test
-    fun tripWithoutPermissionHasNoRefetchButton() {
+    fun tripWithoutRefetchCallbackHasNoButton() {
         composeRule.setContent {
             MaterialTheme {
                 TripDetailContent(

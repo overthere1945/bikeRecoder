@@ -163,7 +163,7 @@ V1.2.0 개발 중 실사용에서 나온 문제 수정(성긴 심박, 걷기 운
 | `ui.health.HeartRateRowTest` | 4 | 자세하지 않을 때 안내 문구 "워치에서 운동을 시작하면 자세한 심박이 기록됩니다"(R19) | 4/4 통과 |
 | `ui.history.SegmentDetailScreenTest` | 7 | 구간 상세 심박·칼로리 표시와 [다시 가져오기] | 7/7 통과 |
 | `ui.cumulative.CumulativeMapScreenTest` | 12 | 주행별 색·주행 목록·눌러서 강조와 [기록 보기]·[주 ▾]·[이번 주](기록 없는 주도 "5주 ▾")·[이번 달]·"이 기간에 기록이 없습니다" | 12/12 통과 |
-| `ui.history.HistoryScreenTest` | 6 | 목록 → 여행 → 구간, 누적 지도 버튼, 길게 눌러 삭제, 여행 기록 [다시 가져오기] 버튼(보임·누르면 콜백·도는 동안 비활성·권한 없으면 없음) | 6/6 통과 |
+| `ui.history.HistoryScreenTest` | 6 | 목록 → 여행 → 구간, 누적 지도 버튼, 길게 눌러 삭제, 여행 기록 [다시 가져오기] 버튼(보임·누르면 콜백·도는 동안 비활성·콜백이 없으면 없음. 권한·Health Connect에 따라 보이는 판단은 PC 테스트 `theRefetchButtonIsOfferedOnlyWhenHeartRateMayBeRead`) | 6/6 통과 |
 | `ui.settings.SettingsScreenTest` | 11 | 설정 화면과 맨 아래 버전 표기 `V1.2.1` | 11/11 통과 |
 
 이 여섯 클래스 54개가 통과했습니다(`HistoryScreenTest`는 여행 기록 [다시 가져오기]를 넣은 뒤 2026-10-27에 다시 실행)(`CumulativeMapScreenTest`는 최종 리뷰 수정 뒤 다시 실행). 그 밖의 클래스는 이번에 바뀌지 않아 V1.2.0 표의 결과를 그대로 둡니다. 기기 전체 `@Test`는 지금 196개(33개 클래스)입니다. 출시 전에 전체를 한 번 더 하나씩 돌려 보는 것이 좋습니다.

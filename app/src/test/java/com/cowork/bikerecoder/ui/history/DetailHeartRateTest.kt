@@ -7,6 +7,8 @@ import com.cowork.bikerecoder.core.post.HeartRateColor
 import com.cowork.bikerecoder.core.post.HeartRateSample
 import com.cowork.bikerecoder.core.post.HrRead
 import com.cowork.bikerecoder.core.post.HrStatus
+import com.cowork.bikerecoder.core.recording.RideSegment
+import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.core.trip.Trip
@@ -21,6 +23,7 @@ import com.cowork.bikerecoder.post.FakePostStore
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.SegmentExtras
 import com.cowork.bikerecoder.ride.FakeRideStore
+import com.cowork.bikerecoder.ui.health.HeartRateAccess
 import com.cowork.bikerecoder.ui.health.TrackColorMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -260,16 +263,21 @@ class DetailHeartRateTest {
 
     @Test
     fun tripTotalsFollowRefetchedExtras() = runTest(dispatcher) {
-        val a = segment(startedAt = 0, date = day1)
+        val a = segment(startedAt = 0, date = day1, movingTimeMs = 60_000)
+        val b = segment(startedAt = 100_000, date = day2, movingTimeMs = 180_000)
         ready(a, listOf(HeartRateSample(0L, 100)), avg = 100, max = 110, calories = null)
+        ready(b, listOf(HeartRateSample(100_000L, 160)), avg = 160, max = 175, calories = 200.0)
         val vm = tripDetail()
         advanceUntilIdle()
-        assertEquals(100, vm.heartRate.value.avgBpm)
-        assertEquals(110, vm.heartRate.value.maxBpm)
-        assertNull(vm.heartRate.value.calories)
+        // (100·1 + 160·3) / 4 = 145
+        assertEquals(145, vm.heartRate.value.avgBpm)
+        assertEquals(175, vm.heartRate.value.maxBpm)
+        assertEquals(200.0, vm.heartRate.value.calories)
 
+        // Only the first segment has more to read now (100, 160, 170: average 143, highest 170, 42 kcal); R7/R17 keep the second.
         heartRate.reads = { from, _ ->
-            HrRead.Samples(
+            if (from >= 100_000L) HrRead.Empty
+            else HrRead.Samples(
                 listOf(HeartRateSample(from, 100), HeartRateSample(from + 1_000L, 160), HeartRateSample(from + 2_000L, 170)),
                 calories = 42.0,
             )
@@ -278,9 +286,50 @@ class DetailHeartRateTest {
         advanceUntilIdle()
 
         val hr = vm.heartRate.value
-        assertEquals(170, hr.maxBpm, "the totals follow the new samples")
-        assertTrue(hr.avgBpm!! > 100, "average rose with the new samples: ${hr.avgBpm}")
-        assertEquals(42.0, hr.calories)
+        // (143·1 + 160·3) / 4 = 155.75
+        assertEquals(156, hr.avgBpm, "time-weighted over the refetched and the kept segment")
+        assertEquals(175, hr.maxBpm)
+        assertEquals(242.0, hr.calories, "42 + 200")
+        assertEquals(mapOf(day1 to 143, day2 to 160), hr.avgByDate)
+    }
+
+    @Test
+    fun tripRefetchSurvivesAFailingSegmentRead() = runTest(dispatcher) {
+        segment(startedAt = 0, date = day1)
+        segment(startedAt = 100_000, date = day2)
+        var failing = false
+        val flaky = object : RideStore by rides {
+            override suspend fun segments(tripId: Long): List<RideSegment> {
+                if (failing) throw IllegalStateException("database busy")
+                return rides.segments(tripId)
+            }
+        }
+        val vm = TripDetailViewModel(flaky, TRIP, store, processor(), log, compute = dispatcher)
+        advanceUntilIdle()
+        val before = heartRate.calls.size
+
+        failing = true
+        vm.refetchHeartRate()
+        advanceUntilIdle()
+        assertEquals(before, heartRate.calls.size, "nothing could be read")
+        assertFalse(vm.refetching.value, "not stuck busy")
+
+        failing = false
+        vm.refetchHeartRate()
+        advanceUntilIdle()
+        assertEquals(before + 2, heartRate.calls.size, "the next press works")
+        assertFalse(vm.refetching.value)
+    }
+
+    @Test
+    fun theRefetchButtonIsOfferedOnlyWhenHeartRateMayBeRead() {
+        var pressed = 0
+        val press = { pressed++; Unit }
+        assertNull(tripRefetchAction(HeartRateAccess.NO_PERMISSION, press), "the permission card instead")
+        assertNull(tripRefetchAction(HeartRateAccess.UNAVAILABLE, press))
+        assertNull(tripRefetchAction(HeartRateAccess.CHECKING, press), "not before the access is known")
+        tripRefetchAction(HeartRateAccess.GRANTED, press)!!.invoke()
+        assertEquals(1, pressed)
     }
 
     @Test

@@ -116,14 +116,10 @@ fun HeartRateSection(
     HeartRateNotice(access, permissionCard)
 }
 
-/** Only the card or the line of [HeartRateSection], e.g. for the trip detail (spec §3.4). */
-@Composable
-fun HeartRateNotice(gate: HeartRateGate?) {
-    if (gate == null) return
-    HeartRateNotice(gate, rememberHeartRateAccess(gate))
-}
-
-/** The same for a screen that also needs the [access] itself (one state, so the permission flow runs once). */
+/**
+ * Only the card or the line of [HeartRateSection], e.g. for the trip detail (spec §3.4); [access] is the screen's one
+ * state (so the permission flow runs once and the screen can read it too).
+ */
 @Composable
 fun HeartRateNotice(gate: HeartRateGate?, access: HeartRateAccessState) {
     if (gate == null) return

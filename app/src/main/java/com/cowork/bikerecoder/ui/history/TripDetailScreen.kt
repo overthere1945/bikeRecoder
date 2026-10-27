@@ -104,11 +104,18 @@ fun TripDetailScreen(
             HeartRateNotice(heartRateGate, access)
         },
         heartRate = heartRate,
-        onRefetchHeartRate = viewModel::refetchHeartRate.takeIf { access.value == HeartRateAccess.GRANTED },
+        onRefetchHeartRate = tripRefetchAction(access.value, viewModel::refetchHeartRate),
         refetching = refetching,
     )
     PhotoViewerHost(viewer, photos, thumbnails, onToggleHidden = { viewModel.setHidden(it, hidden = !it.hidden) })
 }
+
+/**
+ * What [다시 가져오기] does on the trip's totals (spec §6.9): [refetch] only while heart rate may be read; without the
+ * permission (the card is shown instead) or Health Connect, and while the access is still being checked, no button.
+ */
+internal fun tripRefetchAction(access: HeartRateAccess, refetch: () -> Unit): (() -> Unit)? =
+    refetch.takeIf { access == HeartRateAccess.GRANTED }
 
 /**
  * The trip's map ([map], every day's track and photos; outside the scrolling part, so it keeps its drags), then
