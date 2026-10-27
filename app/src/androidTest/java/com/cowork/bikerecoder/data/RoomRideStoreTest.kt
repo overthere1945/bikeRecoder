@@ -232,6 +232,8 @@ class RoomRideStoreTest {
         assertNull(trips.trip(long))
 
         val emptied = completedTrip()
+        val refused = store.deleteTripIf(emptied, TripDeleteCondition.SHORT_NOT_RECORDING)
+        assertFalse("no segment: not a short ride", refused)
         assertTrue(store.deleteTripIf(emptied, TripDeleteCondition.NO_SEGMENTS))
         assertNull(trips.trip(emptied))
         assertFalse("already gone", store.deleteTripIf(emptied, TripDeleteCondition.NO_SEGMENTS))

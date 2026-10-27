@@ -80,7 +80,10 @@ enum class TripDeleteCondition {
     /** No open segment (the history's delete of a finished trip, spec §3.5). */
     NOT_RECORDING,
 
-    /** No open segment and under [com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M] in all ([정리], spec §6.10). */
+    /**
+     * At least one segment, none open, and under [com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M] in all ([정리],
+     * spec §6.10).
+     */
     SHORT_NOT_RECORDING,
 }
 

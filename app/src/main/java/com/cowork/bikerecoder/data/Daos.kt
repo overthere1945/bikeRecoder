@@ -44,6 +44,7 @@ abstract class TripDao {
     @Query(
         "DELETE FROM trip WHERE id = :id AND status = 'COMPLETED' " +
             "AND NOT EXISTS (SELECT 1 FROM ride_segment WHERE tripId = :id AND endedAt IS NULL) " +
+            "AND EXISTS (SELECT 1 FROM ride_segment WHERE tripId = :id) " +
             "AND (SELECT COALESCE(SUM(distanceM), 0) FROM ride_segment WHERE tripId = :id) < :maxDistanceM",
     )
     abstract suspend fun deleteShortCompletedNotRecording(id: Long, maxDistanceM: Double): Int

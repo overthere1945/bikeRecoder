@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.ui.history
 
+import androidx.lifecycle.viewModelScope
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.Route
 import com.cowork.bikerecoder.core.model.RouteProfile
@@ -8,9 +9,11 @@ import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.post.PhotoPositionSource
 import com.cowork.bikerecoder.core.post.PlacedPhoto
 import com.cowork.bikerecoder.core.post.RideColors
+import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
+import com.cowork.bikerecoder.core.recording.TripDeleteCondition
 import com.cowork.bikerecoder.core.trip.OfflineMapController
 import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripStatus
@@ -22,11 +25,13 @@ import com.cowork.bikerecoder.post.FakeHeartRateSource
 import com.cowork.bikerecoder.post.FakePhotoSource
 import com.cowork.bikerecoder.post.FakePostStore
 import com.cowork.bikerecoder.post.PostProcessor
+import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.post.SegmentExtras
 import com.cowork.bikerecoder.ride.FakeRideStore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -35,6 +40,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -77,9 +83,20 @@ class HistoryViewModelTest {
         return id
     }
 
-    private fun history(offlineMaps: OfflineMapController = offline) = HistoryViewModel(rides, postStore, offlineMaps, log)
+    private fun TestScope.history(
+        offlineMaps: OfflineMapController = offline,
+        processor: PostProcessor = postProcessor(),
+    ) = HistoryViewModel(rides, postStore, processor, offlineMaps, log)
 
     private val postStore = FakePostStore { trips.trips.keys.flatMap { rides.segments(it) } }
+
+    /** A pass that finds nothing to do: it only counts [PostProcessor.finishedRuns] up. */
+    private fun TestScope.idleProcessor() = PostProcessor(
+        rides, object : PostStore by postStore {
+            override suspend fun segmentsNeedingWork(now: Long): List<RideSegment> = emptyList()
+        },
+        FakePhotoSource(), FakeHeartRateSource(), clock = { 0L }, scope = backgroundScope, warnLog = { _, _ -> },
+    )
 
     private fun TestScope.postProcessor() = PostProcessor(
         rides, postStore, FakePhotoSource(), FakeHeartRateSource(), clock = { 0L }, scope = backgroundScope,
@@ -479,7 +496,7 @@ class HistoryViewModelTest {
                 if (flipOnNextOpenRead) trips.trips[1] = trips.trips.getValue(1).copy(status = TripStatus.ACTIVE)
             }
         }
-        val vm = HistoryViewModel(slow, postStore, offline, log)
+        val vm = HistoryViewModel(slow, postStore, postProcessor(), offline, log)
         advanceUntilIdle()
         vm.requestDelete(1)
         advanceUntilIdle()
@@ -493,6 +510,89 @@ class HistoryViewModelTest {
         assertEquals(emptyList<Long>(), rides.deletedTrips)
         assertEquals(emptyList<Long>(), offline.deleted)
         assertEquals(HistoryDialog.Message(MSG_ACTIVE_TRIP_NOT_DELETABLE), vm.dialog.value)
+    }
+
+    /**
+     * A trip with no segment (guidance only) is never counted as short, and the [정리] statement itself refuses it —
+     * not only the caller that picks the ids (final review FIX-NOW 4, like the Room DAO).
+     */
+    @Test
+    fun aTripWithoutSegmentsIsNeitherCountedNorCleanedUp() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        trip(2, TripStatus.COMPLETED)
+        segment(2, startedAt = 200, totals = short(0.27))
+        val vm = history()
+        advanceUntilIdle()
+
+        assertEquals(emptyList<Long>(), vm.trips.value.map { it.trip.id })
+        assertEquals(1, vm.hiddenShortCount.value)
+        vm.requestCleanup()
+        advanceUntilIdle()
+        vm.confirmCleanup()
+        advanceUntilIdle()
+
+        assertEquals(listOf(2L), rides.deletedTrips)
+        assertFalse(rides.deleteTripIf(1, TripDeleteCondition.SHORT_NOT_RECORDING), "no segment: not a short ride")
+        assertEquals(setOf(1L), trips.trips.keys)
+    }
+
+    /**
+     * The trip row is gone: its offline maps are still deleted when the list is left while they wait (e.g. for a
+     * running download), so no map region is left behind (final review FIX-NOW 3).
+     */
+    @Test
+    fun mapDeleteFinishesWhenTheListIsLeft() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        segment(1, startedAt = 100)
+        val gate = CompletableDeferred<Unit>()
+        val mapsDeleted = mutableListOf<Long>()
+        val slowMaps = object : OfflineMapController {
+            override suspend fun deleteForTrip(tripId: Long) {
+                gate.await()
+                mapsDeleted += tripId
+            }
+            override suspend fun downloadForTrip(tripId: Long, route: Route, fromDistanceAlongM: Double) = Unit
+        }
+        val vm = history(slowMaps)
+        advanceUntilIdle()
+        vm.requestDelete(1)
+        advanceUntilIdle()
+        vm.confirmDelete()
+        advanceUntilIdle()
+        assertEquals(listOf(1L), rides.deletedTrips, "the row is gone; its maps are being deleted")
+
+        vm.viewModelScope.cancel() // the list is left
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(listOf(1L), mapsDeleted)
+    }
+
+    /** Spec §6.11: an open list shows what a pass saved once the pass ends, like the cumulative map (FIX-NOW 2). */
+    @Test
+    fun cardsRefreshWhenAPassFinishes() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        val id = segment(1, startedAt = 100)
+        val processor = idleProcessor()
+        val vm = history(processor = processor)
+        advanceUntilIdle()
+        assertEquals(emptyList<Pair<List<GeoPoint>, String>>(), vm.card(1).routes)
+
+        // The pass saves the route, the photo and the heart rate.
+        val p = GeoPoint(37.5, 127.0)
+        val q = GeoPoint(37.51, 127.01)
+        route(id, p, q)
+        postStore.upsertPhotos(id, listOf(photo(1)))
+        heartRate(id, 137)
+        advanceUntilIdle()
+        assertEquals(0, vm.card(1).photoCount, "not read again before the pass ends")
+
+        processor.runOnce()
+        advanceUntilIdle()
+
+        assertEquals(listOf(listOf(p, q) to RideColors.colorAt(0)), vm.card(1).routes)
+        assertEquals(1, vm.card(1).photoCount)
+        assertEquals(137, vm.card(1).avgBpm)
     }
 
     private fun short(distance: Double) = SegmentTotals.ZERO.copy(distanceM = distance, movingTimeMs = 1_000)

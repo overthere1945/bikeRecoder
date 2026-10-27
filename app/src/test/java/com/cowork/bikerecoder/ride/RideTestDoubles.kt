@@ -136,7 +136,8 @@ class FakeRideStore(private val trips: FakeTripStore, private val clock: () -> L
             TripDeleteCondition.NO_SEGMENTS -> segments.isEmpty()
             TripDeleteCondition.NOT_RECORDING -> segments.none { it.endedAt == null }
             TripDeleteCondition.SHORT_NOT_RECORDING ->
-                segments.none { it.endedAt == null } && segments.sumOf { it.totals.distanceM } < MIN_RIDE_DISTANCE_M
+                segments.isNotEmpty() && segments.none { it.endedAt == null } &&
+                    segments.sumOf { it.totals.distanceM } < MIN_RIDE_DISTANCE_M
         }
         if (allowed) deleteTrip(tripId)
         return allowed

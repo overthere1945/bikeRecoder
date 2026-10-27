@@ -18,13 +18,17 @@ import com.cowork.bikerecoder.core.recording.TripRideSummary
 import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.OfflineMapController
 import com.cowork.bikerecoder.core.trip.TripStatus
+import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.post.SegmentCard
 import com.cowork.bikerecoder.ride.TripDeleter
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -71,11 +75,13 @@ data class MonthGroup(val header: String, val cards: List<TripCard>)
  * conditional in the store ([TripDeleter], ruling R20).
  *
  * The listed trips are also shown as [months] of cards (spec §6.11), whose routes, photos and heart rate come from
- * one read of [postStore] per load (not one per trip); if that read fails the cards are shown without them.
+ * one read of [postStore] per load (not one per trip); if that read fails the cards are shown without them. The list is
+ * read again when a [postProcessor] pass ends or saves a route, so an open list shows what the pass saved.
  */
 class HistoryViewModel(
     private val rideStore: RideStore,
     private val postStore: PostStore,
+    private val postProcessor: PostProcessor,
     private val offlineMaps: OfflineMapController,
     private val log: WarnLog,
 ) : ViewModel() {
@@ -109,7 +115,17 @@ class HistoryViewModel(
     private val mutex = Mutex()
 
     init {
-        refresh()
+        // The first value reads the list; each pass that ends (or route it saves) reads it again, so an open list
+        // shows new previews, 📷 and ♥ like the cumulative map does — spaced, so a pass saving many routes is not
+        // read for each one.
+        viewModelScope.launch {
+            combine(postProcessor.finishedRuns, postProcessor.routesSaved) { _, _ -> }
+                .conflate()
+                .collect {
+                    mutex.withLock { load() }
+                    delay(REREAD_SPACING_MS)
+                }
+        }
     }
 
     /** Reads the list again (e.g. back from a trip whose segments were deleted). */
@@ -232,9 +248,18 @@ class HistoryViewModel(
     }
 
     companion object {
+        /** The least time between two reads after passes, as on the cumulative map. */
+        const val REREAD_SPACING_MS = 500L
+
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer {
-                HistoryViewModel(container.rideStore, container.postStore, container.offline, androidWarnLog("History"))
+                HistoryViewModel(
+                    container.rideStore,
+                    container.postStore,
+                    container.postProcessor,
+                    container.offline,
+                    androidWarnLog("History"),
+                )
             }
         }
     }
