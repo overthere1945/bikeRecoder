@@ -26,16 +26,14 @@ class HistoryFormatTest {
     )
 
     @Test
-    fun `card text`() {
-        assertEquals("2026년 10월 12일 · 당일 · 32.10km · 1시간 45분", tripCardText(summary(TripType.SINGLE_DAY, 1)))
-        assertEquals(
-            "2026년 10월 12일 · 여러 날(3일) · 32.10km · 1시간 45분",
-            tripCardText(summary(TripType.MULTI_DAY, 3)),
-        )
-        assertEquals(
-            "2026년 10월 12일 · 여러 날(1일) · 32.10km · 1시간 45분",
-            tripCardText(summary(TripType.MULTI_DAY, 1)),
-        )
+    fun `card texts`() {
+        assertEquals("10월 25일 (일)", cardDateText(LocalDate.of(2026, 10, 25)))
+        assertEquals("당일", cardBadgeText(summary(TripType.SINGLE_DAY, 1)))
+        assertEquals("여러 날 · 3일", cardBadgeText(summary(TripType.MULTI_DAY, 3)))
+        assertEquals("여러 날 · 1일", cardBadgeText(summary(TripType.MULTI_DAY, 1)))
+        // 32.1 km in 1 h 45 min = 18.3 km/h.
+        assertEquals("32.10km · 1시간 45분 · 18.3km/h", cardLine2Text(summary(TripType.SINGLE_DAY, 1)))
+        assertEquals("2026년 10월 · 3.45km · 2회", monthHeaderText(2026, 10, 3_450.0, 2))
     }
 
     @Test

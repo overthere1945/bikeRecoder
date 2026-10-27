@@ -7,6 +7,7 @@ import com.cowork.bikerecoder.androidWarnLog
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.CumulativeEntry
 import com.cowork.bikerecoder.core.post.HeartRateSample
+import com.cowork.bikerecoder.core.post.HeartRateStats
 import com.cowork.bikerecoder.core.post.HrRetryPolicy
 import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.post.PhotoPositionSource
@@ -15,6 +16,7 @@ import com.cowork.bikerecoder.core.post.PolylineCodec
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.post.RidePhoto
+import com.cowork.bikerecoder.post.SegmentCard
 import com.cowork.bikerecoder.post.SegmentExtras
 import com.cowork.bikerecoder.post.SegmentGone
 import kotlinx.coroutines.CoroutineDispatcher
@@ -81,6 +83,12 @@ class RoomPostStore(
     override suspend fun cumulativeEntries(): List<CumulativeEntry> {
         val rows = dao.simplifiedRoutes()
         return withContext(compute) { rows.toEntries(log) }
+    }
+
+    /** One query for every listed segment; an unreadable route is left out (and reported), not the segment. */
+    override suspend fun segmentCards(): List<SegmentCard> {
+        val rows = dao.segmentCards()
+        return withContext(compute) { rows.map { it.toModel(log) } }
     }
 
     /** 구간 행이 없어 외래 키가 막으면 [SegmentGone]. */
@@ -174,6 +182,22 @@ internal fun List<SegmentRouteSimplifiedEntity>.toEntries(log: WarnLog): List<Cu
         null
     }
 }
+
+internal fun SegmentCardRow.toModel(log: WarnLog) = SegmentCard(
+    segmentId = segmentId,
+    tripId = tripId,
+    movingTimeMs = movingTimeMs,
+    route = points?.let { encoded ->
+        try {
+            PolylineCodec.decode(encoded)
+        } catch (e: IllegalArgumentException) {
+            log.warn("Skipping the unreadable simplified route of segment $segmentId", e)
+            null
+        }
+    },
+    photoCount = photoCount,
+    heartRate = if (avgBpm != null && maxBpm != null) HeartRateStats(avgBpm, maxBpm, hrDetailed) else null,
+)
 
 internal fun SegmentRouteSimplifiedEntity.toModel() = CumulativeEntry(
     segmentId = segmentId,

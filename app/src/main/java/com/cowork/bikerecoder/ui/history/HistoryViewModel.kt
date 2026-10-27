@@ -8,11 +8,16 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.model.GeoPoint
+import com.cowork.bikerecoder.core.post.HeartRateSummary
 import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
+import com.cowork.bikerecoder.core.post.RideColors
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.TripRideSummary
 import com.cowork.bikerecoder.core.trip.OfflineMapController
 import com.cowork.bikerecoder.core.trip.TripStatus
+import com.cowork.bikerecoder.post.PostStore
+import com.cowork.bikerecoder.post.SegmentCard
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,6 +25,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.time.YearMonth
 
 /** The dialog over the history list or the trip detail. */
 sealed interface HistoryDialog {
@@ -34,21 +40,49 @@ sealed interface HistoryDialog {
 }
 
 /**
+ * A trip's card in the history (spec §6.11): [date] "M월 d일 (E)" of its first day, [badge] "당일" / "여러 날 · N일",
+ * [line2] "{거리} · {이동 시간} · {평균}km/h", the photos not hidden ([photoCount]), the average heart rate weighted by
+ * moving time ([avgBpm], null if no segment has one), and each segment's simplified route with the colour of its place
+ * in the trip ([routes]; segments without a route yet are left out).
+ */
+data class TripCard(
+    val tripId: Long,
+    val date: String,
+    val badge: String,
+    val line2: String,
+    val photoCount: Int,
+    val avgBpm: Int?,
+    val routes: List<Pair<List<GeoPoint>, String>>,
+)
+
+/** A month of cards under "YYYY년 M월 · {거리} · {n}회" (spec §6.11). */
+data class MonthGroup(val header: String, val cards: List<TripCard>)
+
+/**
  * The ride history (spec §3.5): trips with a recording, newest first. A trip in progress (ACTIVE, or still being
  * recorded) cannot be deleted; otherwise deleting asks first and then removes the trip with its stops, segments and
  * points, and its offline maps (whose refs have no foreign key to the trip).
  *
  * Short trips (spec §6.10: under [MIN_RIDE_DISTANCE_M] in all, not in progress) are not listed but counted
  * ([hiddenShortCount]); [정리] deletes them after asking. Nothing is deleted without asking.
+ *
+ * The listed trips are also shown as [months] of cards (spec §6.11), whose routes, photos and heart rate come from
+ * one read of [postStore] per load (not one per trip); if that read fails the cards are shown without them.
  */
 class HistoryViewModel(
     private val rideStore: RideStore,
+    private val postStore: PostStore,
     private val offlineMaps: OfflineMapController,
     private val log: WarnLog,
 ) : ViewModel() {
 
     private val _trips = MutableStateFlow<List<TripRideSummary>>(emptyList())
     val trips: StateFlow<List<TripRideSummary>> = _trips.asStateFlow()
+
+    private val _months = MutableStateFlow<List<MonthGroup>>(emptyList())
+
+    /** The listed trips' cards by month of their first date, newest month first; the cards newest first. */
+    val months: StateFlow<List<MonthGroup>> = _months.asStateFlow()
 
     /** The short trips not listed, as last read. */
     private var hiddenShort: List<Long> = emptyList()
@@ -149,7 +183,11 @@ class HistoryViewModel(
     private suspend fun load() {
         guarded("Could not read the ride history") {
             val split = split()
+            val segments = guarded("Could not read the history cards' routes, photos and heart rate") {
+                postStore.segmentCards()
+            }.orEmpty()
             _trips.value = split.shown
+            _months.value = historyMonths(split.shown, segments)
             hiddenShort = split.hidden
             _hiddenShortCount.value = split.hidden.size
         }
@@ -179,7 +217,35 @@ class HistoryViewModel(
 
     companion object {
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
-            initializer { HistoryViewModel(container.rideStore, container.offline, androidWarnLog("History")) }
+            initializer {
+                HistoryViewModel(container.rideStore, container.postStore, container.offline, androidWarnLog("History"))
+            }
         }
     }
 }
+
+/**
+ * [shown] (newest first) as cards grouped by the month of their first date, newest month first (a trip that began in
+ * an earlier month stays there even if it is newer than the next month's trips). [segments]: the listed segments of
+ * every trip in trip and start order ([PostStore.segmentCards]).
+ */
+internal fun historyMonths(shown: List<TripRideSummary>, segments: List<SegmentCard>): List<MonthGroup> {
+    val byTrip = segments.groupBy { it.tripId }
+    return shown.groupBy { YearMonth.from(it.firstDate) }.toSortedMap(reverseOrder())
+        .map { (month, trips) ->
+            MonthGroup(
+                header = monthHeaderText(month.year, month.monthValue, trips.sumOf { it.distanceM }, trips.size),
+                cards = trips.map { tripCard(it, byTrip[it.trip.id].orEmpty()) },
+            )
+        }
+}
+
+private fun tripCard(summary: TripRideSummary, segments: List<SegmentCard>) = TripCard(
+    tripId = summary.trip.id,
+    date = cardDateText(summary.firstDate),
+    badge = cardBadgeText(summary),
+    line2 = cardLine2Text(summary),
+    photoCount = segments.sumOf { it.photoCount },
+    avgBpm = HeartRateSummary.tripAverage(segments.mapNotNull { s -> s.heartRate?.let { it to s.movingTimeMs } }),
+    routes = segments.mapIndexedNotNull { index, s -> s.route?.let { it to RideColors.colorAt(index) } },
+)

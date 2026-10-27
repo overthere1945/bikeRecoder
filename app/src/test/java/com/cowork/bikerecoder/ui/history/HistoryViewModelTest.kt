@@ -3,6 +3,11 @@ package com.cowork.bikerecoder.ui.history
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.Route
 import com.cowork.bikerecoder.core.model.RouteProfile
+import com.cowork.bikerecoder.core.post.CumulativeEntry
+import com.cowork.bikerecoder.core.post.HrStatus
+import com.cowork.bikerecoder.core.post.PhotoPositionSource
+import com.cowork.bikerecoder.core.post.PlacedPhoto
+import com.cowork.bikerecoder.core.post.RideColors
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.core.trip.OfflineMapController
@@ -16,6 +21,7 @@ import com.cowork.bikerecoder.post.FakeHeartRateSource
 import com.cowork.bikerecoder.post.FakePhotoSource
 import com.cowork.bikerecoder.post.FakePostStore
 import com.cowork.bikerecoder.post.PostProcessor
+import com.cowork.bikerecoder.post.SegmentExtras
 import com.cowork.bikerecoder.ride.FakeRideStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -69,7 +75,7 @@ class HistoryViewModelTest {
         return id
     }
 
-    private fun history(offlineMaps: OfflineMapController = offline) = HistoryViewModel(rides, offlineMaps, log)
+    private fun history(offlineMaps: OfflineMapController = offline) = HistoryViewModel(rides, postStore, offlineMaps, log)
 
     private val postStore = FakePostStore { trips.trips.keys.flatMap { rides.segments(it) } }
 
@@ -395,4 +401,151 @@ class HistoryViewModelTest {
     }
 
     private fun short(distance: Double) = SegmentTotals.ZERO.copy(distanceM = distance, movingTimeMs = 1_000)
+
+    private fun ride(distance: Double, movingMs: Long = 60_000) =
+        SegmentTotals.ZERO.copy(distanceM = distance, movingTimeMs = movingMs)
+
+    private suspend fun route(segmentId: Long, vararg points: GeoPoint) =
+        postStore.saveSimplified(segmentId, CumulativeEntry(segmentId, day2, 0.0, 0L, points.toList()))
+
+    private suspend fun heartRate(segmentId: Long, avg: Int?, status: HrStatus = HrStatus.READY) =
+        postStore.saveExtras(SegmentExtras(segmentId, hrStatus = status, avgBpm = avg, maxBpm = avg?.plus(20)))
+
+    private fun HistoryViewModel.cards() = months.value.flatMap { it.cards }
+
+    private fun HistoryViewModel.card(tripId: Long) = cards().single { it.tripId == tripId }
+
+    /** Spec §6.11: "YYYY년 M월 · {거리} · {n}회" over the shown trips of the month of their first date, newest month first. */
+    @Test
+    fun monthHeadersAndTotals() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        trip(2, TripStatus.COMPLETED, TripType.MULTI_DAY)
+        trip(3, TripStatus.COMPLETED)
+        trip(4, TripStatus.COMPLETED)
+        segment(1, startedAt = 100, date = LocalDate.of(2026, 9, 30), totals = ride(1_000.0))
+        // Trip 2 began in September and went on into October: it belongs to September, its first date's month.
+        segment(2, startedAt = 200, date = LocalDate.of(2026, 9, 30), totals = ride(500.0))
+        segment(2, startedAt = 300, date = LocalDate.of(2026, 10, 1), totals = ride(500.0))
+        segment(3, startedAt = 400, date = LocalDate.of(2026, 10, 3), totals = ride(1_000.0))
+        segment(3, startedAt = 450, date = LocalDate.of(2026, 10, 3), totals = ride(2_450.0))
+        segment(4, startedAt = 500, date = LocalDate.of(2026, 10, 25), totals = short(3.0)) // hidden: not counted
+        val vm = history()
+        advanceUntilIdle()
+
+        assertEquals(listOf("2026년 10월 · 3.45km · 1회", "2026년 9월 · 2.00km · 2회"), vm.months.value.map { it.header })
+        assertEquals(listOf(listOf(3L), listOf(2L, 1L)), vm.months.value.map { g -> g.cards.map { it.tripId } })
+    }
+
+    @Test
+    fun badgeSameDayAndMultiDay() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        trip(2, TripStatus.COMPLETED, TripType.MULTI_DAY)
+        trip(3, TripStatus.COMPLETED, TripType.MULTI_DAY)
+        segment(1, startedAt = 100, date = day1)
+        segment(2, startedAt = 200, date = day1)
+        segment(2, startedAt = 300, date = day2)
+        segment(3, startedAt = 400, date = day2)
+        val vm = history()
+        advanceUntilIdle()
+
+        assertEquals("당일", vm.card(1).badge)
+        assertEquals("여러 날 · 2일", vm.card(2).badge)
+        assertEquals("여러 날 · 1일", vm.card(3).badge, "the trip's kind, as before")
+        assertEquals("10월 11일 (일)", vm.card(2).date, "the first date")
+        assertEquals("10월 12일 (월)", vm.card(3).date)
+    }
+
+    @Test
+    fun line2WithAverageSpeed() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        trip(2, TripStatus.COMPLETED)
+        segment(1, startedAt = 100, totals = ride(1_000.0, movingMs = 300_000))
+        segment(1, startedAt = 200, totals = ride(580.0, movingMs = 420_000))
+        segment(2, startedAt = 300, totals = ride(20.0, movingMs = 0)) // no moving time: 0.0
+        val vm = history()
+        advanceUntilIdle()
+
+        // 1.58 km in 12 min = 7.9 km/h (distance / moving time).
+        assertEquals("1.58km · 12분 · 7.9km/h", vm.card(1).line2)
+        assertEquals("0.02km · 0분 · 0.0km/h", vm.card(2).line2)
+    }
+
+    @Test
+    fun photoAndHeartRateOnlyWhenPresent() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        trip(2, TripStatus.COMPLETED)
+        val a = segment(1, startedAt = 100, totals = ride(1_000.0, movingMs = 60_000))
+        val b = segment(1, startedAt = 200, totals = ride(1_000.0, movingMs = 180_000))
+        val c = segment(2, startedAt = 300)
+        val d = segment(2, startedAt = 400)
+        postStore.upsertPhotos(a, listOf(photo(1), photo(2)))
+        postStore.upsertPhotos(b, listOf(photo(3)))
+        postStore.setHidden(postStore.photos.value.single { it.mediaId == 3L }.id, true) // hidden: not counted
+        heartRate(a, 130)
+        heartRate(b, 150)
+        heartRate(c, 140, HrStatus.PENDING) // not READY: not counted
+        heartRate(d, null)
+        val vm = history()
+        advanceUntilIdle()
+
+        assertEquals(2, vm.card(1).photoCount)
+        // Weighted by moving time: (130 × 1 min + 150 × 3 min) / 4 min = 145.
+        assertEquals(145, vm.card(1).avgBpm)
+        assertEquals(0, vm.card(2).photoCount)
+        assertNull(vm.card(2).avgBpm)
+    }
+
+    @Test
+    fun cardWithoutRouteHasEmptyPreview() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        trip(2, TripStatus.COMPLETED)
+        val first = segment(1, startedAt = 100)
+        segment(1, startedAt = 200) // no simplified route yet
+        val third = segment(1, startedAt = 300)
+        segment(2, startedAt = 400)
+        val p = GeoPoint(37.5, 127.0)
+        val q = GeoPoint(37.51, 127.01)
+        route(first, p, q)
+        route(third, q, p)
+        val vm = history()
+        advanceUntilIdle()
+
+        // Each segment keeps the colour of its place in the trip, also when one before it has no route yet.
+        assertEquals(
+            listOf(listOf(p, q) to RideColors.colorAt(0), listOf(q, p) to RideColors.colorAt(2)),
+            vm.card(1).routes,
+        )
+        assertEquals(emptyList<Pair<List<GeoPoint>, String>>(), vm.card(2).routes)
+    }
+
+    @Test
+    fun manyTripsLoad() = runTest(dispatcher) {
+        val count = 1_200 // more than SQLite's 999 bound variables
+        for (id in 1L..count) {
+            trip(id, TripStatus.COMPLETED)
+            route(segment(id, startedAt = id), GeoPoint(37.5, 127.0), GeoPoint(37.5 + id * 1e-5, 127.0))
+        }
+        val vm = history()
+        advanceUntilIdle()
+
+        assertEquals(count, vm.cards().size)
+        assertEquals(count, vm.cards().count { it.routes.size == 1 })
+        assertEquals(1, postStore.segmentCardReads, "one read for all the cards, not one per trip")
+    }
+
+    @Test
+    fun cardsStillListedWhenExtrasCannotBeRead() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        segment(1, startedAt = 100)
+        postStore.failSegmentCards = true
+        val vm = history()
+        advanceUntilIdle()
+
+        assertEquals(listOf(1L), vm.cards().map { it.tripId })
+        assertEquals(emptyList<Pair<List<GeoPoint>, String>>(), vm.card(1).routes)
+        assertEquals(1, log.messages.size)
+    }
+
+    private fun photo(mediaId: Long) =
+        PlacedPhoto(mediaId, takenAt = mediaId, GeoPoint(37.5, 127.0), PhotoPositionSource.TRACK)
 }

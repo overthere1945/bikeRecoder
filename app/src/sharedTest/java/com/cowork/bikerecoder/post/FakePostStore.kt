@@ -2,14 +2,18 @@ package com.cowork.bikerecoder.post
 
 import com.cowork.bikerecoder.core.post.CumulativeEntry
 import com.cowork.bikerecoder.core.post.HeartRateSample
+import com.cowork.bikerecoder.core.post.HeartRateStats
 import com.cowork.bikerecoder.core.post.HrRetryPolicy
+import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.post.PlacedPhoto
 import com.cowork.bikerecoder.core.recording.RideSegment
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 // Shared by the JVM tests (src/test) and the device tests (src/androidTest). Thread-safe.
@@ -17,7 +21,8 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * In-memory [PostStore] like RoomPostStore. [segments] are the ride segments that exist (the ride_segment table):
  * writes for a segment not among them throw [SegmentGone] (the foreign key). [beforeList] runs at the start of every
- * [segmentsNeedingWork] (a hook to hold or count runs).
+ * [segmentsNeedingWork] (a hook to hold or count runs). [segmentCardReads] counts [segmentCards] calls; while
+ * [failSegmentCards] they throw.
  */
 class FakePostStore(private val segments: suspend () -> List<RideSegment>) : PostStore {
     val extrasById = MutableStateFlow<Map<Long, SegmentExtras>>(emptyMap())
@@ -27,6 +32,10 @@ class FakePostStore(private val segments: suspend () -> List<RideSegment>) : Pos
     private val nextPhotoId = AtomicLong(1L)
 
     @Volatile var beforeList: suspend () -> Unit = {}
+
+    @Volatile var failSegmentCards = false
+    private val cardReads = AtomicInteger()
+    val segmentCardReads: Int get() = cardReads.get()
 
     override suspend fun segmentsNeedingWork(now: Long): List<RideSegment> {
         beforeList()
@@ -90,6 +99,28 @@ class FakePostStore(private val segments: suspend () -> List<RideSegment>) : Pos
 
     override suspend fun cumulativeEntries(): List<CumulativeEntry> =
         simplified.values.sortedWith(compareBy({ it.localDate }, { it.segmentId }))
+
+    override suspend fun segmentCards(): List<SegmentCard> {
+        cardReads.incrementAndGet()
+        if (failSegmentCards) throw IOException("disk I/O error")
+        val extras = extrasById.value
+        val shown = photos.value.filterNot { it.hidden }.groupingBy { it.segmentId }.eachCount()
+        return segments().filter { it.totals.distanceM > 0.0 }
+            .sortedWith(compareBy({ it.tripId }, { it.startedAt }, { it.id }))
+            .map { s ->
+                val e = extras[s.id]?.takeIf { it.hrStatus == HrStatus.READY }
+                val avg = e?.avgBpm
+                val max = e?.maxBpm
+                SegmentCard(
+                    segmentId = s.id,
+                    tripId = s.tripId,
+                    movingTimeMs = s.totals.movingTimeMs,
+                    route = simplified[s.id]?.points,
+                    photoCount = shown[s.id] ?: 0,
+                    heartRate = if (avg != null && max != null) HeartRateStats(avg, max, e.hrDetailed) else null,
+                )
+            }
+    }
 
     private suspend fun requireSegment(segmentId: Long) {
         if (segments().none { it.id == segmentId }) throw SegmentGone(segmentId)

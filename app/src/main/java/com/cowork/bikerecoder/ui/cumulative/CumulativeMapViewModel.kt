@@ -20,6 +20,7 @@ import com.cowork.bikerecoder.map.CameraFit
 import com.cowork.bikerecoder.map.RideLine
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.PostStore
+import com.cowork.bikerecoder.ui.history.cardDateText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -289,19 +290,13 @@ internal fun cumulativeStateOf(
     )
 }
 
-private const val WEEKDAYS = "월화수목금토일"
-
 /** [entry]'s row in [color] (spec §6.8): "M월 d일 (E)", e.g. "10월 25일 (일)", and "{거리} · {이동 시간}", e.g. "1.58km · 12분". */
-internal fun rideRowOf(entry: CumulativeEntry, color: String): RideRow {
-    val date = entry.localDate
-    val weekday = WEEKDAYS[date.dayOfWeek.value - 1]
-    return RideRow(
-        segmentId = entry.segmentId,
-        color = color,
-        date = "${date.monthValue}월 ${date.dayOfMonth}일 ($weekday)",
-        detail = "${RideFormat.distance(entry.distanceM)} · ${RideFormat.duration(entry.movingTimeMs)}",
-    )
-}
+internal fun rideRowOf(entry: CumulativeEntry, color: String): RideRow = RideRow(
+    segmentId = entry.segmentId,
+    color = color,
+    date = cardDateText(entry.localDate),
+    detail = "${RideFormat.distance(entry.distanceM)} · ${RideFormat.duration(entry.movingTimeMs)}",
+)
 
 /** The south-west and north-east corners of every point of [entries] (one point if they are the same); null if none. */
 internal fun fitOf(entries: List<CumulativeEntry>): CameraFit? {

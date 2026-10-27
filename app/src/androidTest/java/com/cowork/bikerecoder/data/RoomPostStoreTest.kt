@@ -2,12 +2,14 @@ package com.cowork.bikerecoder.data
 
 import android.content.Context
 import androidx.room.Room
+import androidx.room.withTransaction
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.post.CumulativeEntry
 import com.cowork.bikerecoder.core.post.HeartRateSample
+import com.cowork.bikerecoder.core.post.HeartRateStats
 import com.cowork.bikerecoder.core.post.HrRetryPolicy
 import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.post.PhotoPositionSource
@@ -367,6 +369,47 @@ class RoomPostStoreTest {
 
         assertEquals(listOf(goodEntry), logging.cumulativeEntries())
         assertEquals(1, warnings.size)
+    }
+
+    /** Spec §6.11: every listed segment's route, visible photos and READY heart rate in one query, trip and start order. */
+    @Test
+    fun segmentCardsJoinRoutePhotosAndHeartRate() = runTest {
+        val trip = newTrip()
+        val other = newTrip()
+        val late = segment(trip, 3_000L, 4_000L)
+        val early = segment(trip, 1_000L, 2_000L)
+        val pending = segment(other, 5_000L, 6_000L)
+        val empty = rides.openSegment(other, 7_000L, day) // 0 m: not listed
+        rides.closeSegment(empty, 8_000L, totals.copy(distanceM = 0.0))
+        val points = listOf(GeoPoint(37.5, 127.0), GeoPoint(37.51, 127.02))
+        store.saveSimplified(early, CumulativeEntry(early, day, 1_000.0, 60_000L, points))
+        store.upsertPhotos(early, listOf(photo(1, 1_100L), photo(2, 1_200L), photo(3, 1_300L)))
+        val hidden = store.observePhotos(listOf(early)).first().single { it.mediaId == 3L }
+        store.setHidden(hidden.id, true)
+        store.saveExtras(done(early).copy(avgBpm = 130, maxBpm = 160))
+        store.saveExtras(done(pending, HrStatus.PENDING).copy(avgBpm = 120, maxBpm = 140))
+
+        val cards = store.segmentCards()
+
+        assertEquals(listOf(early, late, pending), cards.map { it.segmentId })
+        assertEquals(listOf(trip, trip, other), cards.map { it.tripId })
+        assertEquals(points, cards[0].route)
+        assertEquals(2, cards[0].photoCount)
+        assertEquals(HeartRateStats(130, 160, detailed = true), cards[0].heartRate)
+        assertNull(cards[1].route)
+        assertEquals(0, cards[1].photoCount)
+        assertNull(cards[1].heartRate)
+        assertNull("not READY", cards[2].heartRate)
+        assertEquals(60_000L, cards[2].movingTimeMs)
+    }
+
+    @Test
+    fun segmentCardsReadMoreThanSqliteBoundVariables() = runTest {
+        val trip = newTrip()
+        val count = 1_200
+        db.withTransaction { repeat(count) { i -> segment(trip, i * 10L, i * 10L + 5) } }
+
+        assertEquals(count, store.segmentCards().size)
     }
 
     @Test

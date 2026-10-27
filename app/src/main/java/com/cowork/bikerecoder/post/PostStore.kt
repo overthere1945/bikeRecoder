@@ -3,6 +3,7 @@ package com.cowork.bikerecoder.post
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.CumulativeEntry
 import com.cowork.bikerecoder.core.post.HeartRateSample
+import com.cowork.bikerecoder.core.post.HeartRateStats
 import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.post.PhotoPositionSource
 import com.cowork.bikerecoder.core.post.PlacedPhoto
@@ -33,6 +34,19 @@ data class SegmentExtras(
     val maxBpm: Int? = null,
     val calories: Double? = null,
     val simplifiedDone: Boolean = false,
+)
+
+/**
+ * 기록 목록 카드(스펙 §6.11)에 쓰는 구간 하나: 단순화 경로(아직 없거나 읽을 수 없으면 null), 숨기지 않은 사진 수,
+ * 심박(READY이고 평균·최고가 있을 때만).
+ */
+data class SegmentCard(
+    val segmentId: Long,
+    val tripId: Long,
+    val movingTimeMs: Long,
+    val route: List<GeoPoint>?,
+    val photoCount: Int,
+    val heartRate: HeartRateStats?,
 )
 
 /** 쓰려는 구간이 이미 지워졌다(외래 키 위반). 후처리는 그 구간을 건너뛴다. */
@@ -77,4 +91,7 @@ interface PostStore {
 
     /** 저장된 단순화 경로 전체, 날짜·구간 순. */
     suspend fun cumulativeEntries(): List<CumulativeEntry>
+
+    /** 빈 구간이 아닌(distanceM > 0) 구간 전부의 [SegmentCard], 여행 id·시작 순. 여행마다 따로 읽지 않고 한 번에 읽는다. */
+    suspend fun segmentCards(): List<SegmentCard>
 }
