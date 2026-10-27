@@ -121,8 +121,8 @@ class CumulativeMapViewModelTest {
         settle()
 
         val state = vm.state.value
-        assertEquals(listOf(simplifiedA, simplifiedB), state.entries)
-        assertEquals(listOf(simplifiedA.points, simplifiedB.points), state.lines)
+        assertEquals(listOf(simplifiedB, simplifiedA), state.entries) // newest first
+        assertEquals(listOf(simplifiedB.points, simplifiedA.points), state.lines)
         assertTrue(state.lines.flatten().none { p -> tracks.flatten().contains(p) }, "no track point is drawn")
         assertEquals(4_500.0, state.totals.distanceM)
         assertTrue(entryReads >= 1)
@@ -140,12 +140,12 @@ class CumulativeMapViewModelTest {
 
         assertEquals(PeriodFilter(), vm.state.value.period)
         assertEquals(CumulativeTotals(35_000.0, 3, 6_300_000L), vm.state.value.totals)
-        assertEquals(listOf(1L, 2L, 3L), vm.state.value.entries.map { it.segmentId })
+        assertEquals(listOf(3L, 2L, 1L), vm.state.value.entries.map { it.segmentId })
 
         vm.selectYear(2026)
         settle()
         assertEquals(PeriodFilter(2026), vm.state.value.period)
-        assertEquals(listOf(2L, 3L), vm.state.value.entries.map { it.segmentId })
+        assertEquals(listOf(3L, 2L), vm.state.value.entries.map { it.segmentId })
         assertEquals(CumulativeTotals(25_000.0, 2, 4_500_000L), vm.state.value.totals)
         assertEquals(listOf(1, 3), vm.state.value.months)
         assertEquals(2, vm.state.value.lines.size)
