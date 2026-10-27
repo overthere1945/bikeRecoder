@@ -1,8 +1,10 @@
 package com.cowork.bikerecoder.video
 
+import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.provider.MediaStore
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.cowork.bikerecoder.core.post.RideColors
@@ -70,9 +72,38 @@ class SummaryImageRendererTest {
         assertSoftware(image, Aspect.PORTRAIT)
         val layout = SummaryImageLayout.layout(Aspect.PORTRAIT, 0)
         assertTrue("route on the map", image.routePixels(layout.map) > 500)
-        // Where a photo row would be: plain background.
-        val below = layout.stats.last().let { (it.y + it.h + 30).toInt() }
-        val plain = VideoTestTrip.count(image, 100, below, 980, below + 200) { VideoTestTrip.near(it, Color.WHITE, 3) }
-        assertEquals(880 * 200, plain)
+        // No photo row: the map takes its height, and only a thin plain band is left above "bikeRecoder".
+        assertTrue(layout.map.h > SummaryImageLayout.layout(Aspect.PORTRAIT, 3).map.h)
+        val below = layout.stats.last().let { (it.y + it.h + 2).toInt() }
+        val above = (layout.footer.y - 2).toInt()
+        assertTrue("band ${above - below}", above - below in 1..48)
+        val plain = VideoTestTrip.count(image, 100, below, 980, above) { VideoTestTrip.near(it, Color.WHITE, 3) }
+        assertEquals(880 * (above - below), plain)
+        save(image, "image-nophoto-portrait")
+    }
+
+    @Test
+    fun landscapeImageWithoutPhotos() {
+        val image = render(VideoTestTrip.inputs(withPhoto = false, withHeartRate = false), Aspect.LANDSCAPE, emptyList())
+
+        assertSoftware(image, Aspect.LANDSCAPE)
+        val layout = SummaryImageLayout.layout(Aspect.LANDSCAPE, 0)
+        assertTrue("route on the map", image.routePixels(layout.map) > 500)
+        // The right column is centred above the footer: as much room above the header as below the last row (+ gap).
+        val top = layout.header.y - 48f
+        val bottom = layout.footer.y - layout.stats.maxOf { it.y + it.h }
+        assertTrue("above $top below $bottom", kotlin.math.abs(bottom - top - 24f) <= 1f)
+        save(image, "image-nophoto-landscape")
+    }
+
+    /** For looking at: Download/bikeRecoderTest/[name].png (pulled and deleted by hand). */
+    private fun save(image: Bitmap, name: String) {
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, "$name.png")
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/bikeRecoderTest/")
+        }
+        val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return
+        context.contentResolver.openOutputStream(uri)!!.use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 }

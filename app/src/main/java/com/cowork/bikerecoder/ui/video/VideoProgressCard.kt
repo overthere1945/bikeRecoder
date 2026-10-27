@@ -42,10 +42,10 @@ import com.cowork.bikerecoder.video.MediaKind
 @Composable
 fun MediaEntry(viewModel: VideoViewModel, tripId: Long, modifier: Modifier = Modifier) {
     val progress by viewModel.progress.collectAsStateWithLifecycle()
-    val making by viewModel.makingTrip.collectAsStateWithLifecycle()
+    val running by viewModel.runningTripId.collectAsStateWithLifecycle()
     MediaEntryContent(
         // A job of another trip shows nothing here (its buttons then say "이미 영상을 만들고 있습니다").
-        progress = progress?.takeIf { making == null || making == tripId },
+        progress = progressFor(progress, running, tripId),
         onMake = { kind -> viewModel.open(tripId, kind) },
         onCancel = viewModel::cancel,
         modifier = modifier,

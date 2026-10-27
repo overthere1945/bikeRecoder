@@ -8,6 +8,7 @@ import android.widget.Toast
 import android.widget.VideoView
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,6 +39,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -80,7 +82,8 @@ fun MediaPreviewScreen(
     onShare: () -> Unit,
     onOpenGallery: () -> Unit,
     media: @Composable (Modifier) -> Unit = { modifier ->
-        if (kind == MediaKind.VIDEO) PreviewVideo(uri, modifier) else PreviewImage(uri, modifier)
+        // A new file in the same entry (launchSingleTop) starts over: new player, new size.
+        key(uri) { if (kind == MediaKind.VIDEO) PreviewVideo(uri, modifier) else PreviewImage(uri, modifier) }
     },
 ) {
     Surface(modifier = Modifier.fillMaxSize()) {
@@ -108,8 +111,6 @@ fun MediaPreviewScreen(
                     .weight(1f)
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp)
-                    .clip(MaterialTheme.shapes.large)
-                    .background(PREVIEW_BACKDROP)
                     .testTag(VideoTags.PREVIEW_MEDIA),
                 contentAlignment = Alignment.Center,
             ) { media(Modifier) }
@@ -173,10 +174,11 @@ private fun PreviewVideo(uri: String, modifier: Modifier) {
     var failed by remember { mutableStateOf(false) }
     var view by remember { mutableStateOf<VideoView?>(null) }
     if (failed) {
-        Text("영상을 열 수 없습니다", color = Color.White)
+        Text("영상을 열 수 없습니다", color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
     }
-    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    // Sized to the video (9:16 until it is prepared), so no bars around it.
+    Box(modifier = modifier.aspectRatio(ratio ?: (9f / 16f), matchHeightConstraintsFirst = true), contentAlignment = Alignment.Center) {
         AndroidView(
             factory = { context ->
                 VideoView(context).apply {
@@ -195,7 +197,7 @@ private fun PreviewVideo(uri: String, modifier: Modifier) {
             },
             onRelease = { it.stopPlayback() },
             modifier = Modifier
-                .aspectRatio(ratio ?: (9f / 16f), matchHeightConstraintsFirst = (ratio ?: 0f) < 1f)
+                .fillMaxSize()
                 .clickable {
                     val v = view ?: return@clickable
                     if (v.isPlaying) v.pause() else v.start()
@@ -219,10 +221,21 @@ private fun PreviewImage(uri: String, modifier: Modifier) {
     val context = LocalContext.current
     val image by produceState<Result<ImageBitmap>?>(null, uri) { value = withContext(Dispatchers.IO) { decode(context, uri) } }
     when (val r = image) {
-        null -> CircularProgressIndicator(color = Color.White)
+        null -> CircularProgressIndicator()
         else -> r.fold(
-            onSuccess = { Image(it, contentDescription = null, contentScale = ContentScale.Fit, modifier = modifier.fillMaxSize()) },
-            onFailure = { Text("이미지를 열 수 없습니다", color = Color.White) },
+            // Sized to the image, with a hairline frame: the white summary image stands out from the screen.
+            onSuccess = {
+                Image(
+                    it,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = modifier
+                        .aspectRatio(it.width.toFloat() / it.height, matchHeightConstraintsFirst = true)
+                        .clip(MaterialTheme.shapes.medium)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.medium),
+                )
+            },
+            onFailure = { Text("이미지를 열 수 없습니다", color = MaterialTheme.colorScheme.onSurfaceVariant) },
         )
     }
 }
@@ -267,6 +280,3 @@ private fun Context.startOrTell(intent: Intent) {
 }
 
 private const val PREVIEW_MAX_PX = 2048
-
-/** Behind the media: dark, as a viewer. */
-private val PREVIEW_BACKDROP = Color(0xFF121212)

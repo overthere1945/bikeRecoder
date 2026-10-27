@@ -50,7 +50,9 @@ class MainActivity : ComponentActivity() {
 
     private fun Intent.launchRequest(): LaunchRequest? {
         val tripId = getLongExtra(NavNotifications.EXTRA_RESUME_TRIP_ID, -1L)
-        val previewUri = getStringExtra(VideoNotifications.EXTRA_PREVIEW_URI)
+        // Reopened from the recent apps with the notification's old intent: that preview was already shown.
+        val fromHistory = flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
+        val previewUri = getStringExtra(VideoNotifications.EXTRA_PREVIEW_URI)?.takeUnless { fromHistory }
         val previewKind = MediaKind.entries.firstOrNull { it.name == getStringExtra(VideoNotifications.EXTRA_PREVIEW_KIND) }
         return when {
             previewUri != null && previewKind != null -> LaunchRequest.Preview(

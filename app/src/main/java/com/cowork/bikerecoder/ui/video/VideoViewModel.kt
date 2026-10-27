@@ -121,10 +121,8 @@ class VideoViewModel(
     private val _dialog = MutableStateFlow<VideoDialog?>(null)
     val dialog: StateFlow<VideoDialog?> = _dialog.asStateFlow()
 
-    private val _makingTrip = MutableStateFlow<Long?>(null)
-
-    /** The trip this screen started the running job for; null when unknown (e.g. after the activity was recreated). */
-    val makingTrip: StateFlow<Long?> = _makingTrip.asStateFlow()
+    /** The trip the running job makes (from the job itself, so it survives the activity), else null. */
+    val runningTripId: StateFlow<Long?> = job.runningTripId
 
     val progress: StateFlow<VideoProgress?> = job.state.map(::progressOf)
         .stateIn(viewModelScope, SharingStarted.Eagerly, progressOf(job.state.value))
@@ -263,11 +261,13 @@ class VideoViewModel(
 
     /**
      * The [outcome] was taken on screen (the preview opened): the job goes back to idle. A failure's message is shown
-     * here, as the other dialogs.
+     * here, as the other dialogs — except a job stopped by a recording (or any failure while one runs): spec §3.2 says
+     * that by the notification only, and a dialog would cover the record screen of the ride that just started.
      */
     fun outcomeShown() {
         val shown = outcome.value
-        if (shown is VideoOutcome.Message && _dialog.value == null) _dialog.value = VideoDialog.Message(shown.text)
+        val byRecording = shown is VideoOutcome.Message && (shown.text == VideoJob.MSG_RECORDING_STARTED || recording())
+        if (shown is VideoOutcome.Message && !byRecording && _dialog.value == null) _dialog.value = VideoDialog.Message(shown.text)
         job.acknowledge()
     }
 
@@ -339,10 +339,7 @@ class VideoViewModel(
             }
             when (result) {
                 null -> show(if (request.kind == MediaKind.VIDEO) VideoJob.MSG_VIDEO_FAILED else VideoJob.MSG_IMAGE_FAILED)
-                StartResult.STARTED -> {
-                    _makingTrip.value = request.tripId
-                    closeSheet()
-                }
+                StartResult.STARTED -> closeSheet()
                 StartResult.MUSIC_UNREADABLE -> {
                     waiting = request
                     _dialog.value = VideoDialog.MusicUnreadable
@@ -453,6 +450,10 @@ internal fun progressOf(state: VideoJobState): VideoProgress? {
         else -> VideoProgress(MediaKind.VIDEO, 100, text)
     }
 }
+
+/** The card on trip [tripId]'s screens: only while the job makes that very trip (I1). */
+fun progressFor(progress: VideoProgress?, runningTripId: Long?, tripId: Long): VideoProgress? =
+    progress?.takeIf { runningTripId != null && runningTripId == tripId }
 
 internal fun outcomeOf(state: VideoJobState): VideoOutcome? = when (state) {
     is VideoJobState.Done -> VideoOutcome.Preview(state.media.uri, state.media.kind, state.downscaled)

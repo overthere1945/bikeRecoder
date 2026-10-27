@@ -79,6 +79,9 @@ enum class StartResult {
 /** What the screens use of [VideoJob] (replaceable in the UI's tests). */
 interface VideoJobControl {
     val state: StateFlow<VideoJobState>
+
+    /** The trip being made while a job runs (its screens show the progress card), else null. */
+    val runningTripId: StateFlow<Long?>
     val isRunning: Boolean
     suspend fun startVideo(tripId: Long, options: VideoOptions): StartResult
     suspend fun startImage(tripId: Long, aspect: Aspect): StartResult
@@ -116,6 +119,9 @@ class VideoJob(
 ) : VideoJobControl {
     private val _state = MutableStateFlow<VideoJobState>(VideoJobState.Idle)
     override val state: StateFlow<VideoJobState> = _state.asStateFlow()
+
+    private val _runningTripId = MutableStateFlow<Long?>(null)
+    override val runningTripId: StateFlow<Long?> = _runningTripId.asStateFlow()
 
     /** Held from the start checks until the job has ended (and by [unfinished]). */
     private val claimed = AtomicBoolean(false)
@@ -234,6 +240,7 @@ class VideoJob(
     @OptIn(DelicateCoroutinesApi::class)
     private fun launch(kind: MediaKind, inputs: VideoInputs, optionsJson: String, neededBytes: Long, make: suspend (uri: String) -> Made) {
         stoppedByRecording = false
+        _runningTripId.value = inputs.tripId
         _state.value = VideoJobState.Preparing(kind)
         val job = scope.launch(start = CoroutineStart.ATOMIC) { run(kind, inputs, optionsJson, neededBytes, make) }
         running = job
@@ -296,6 +303,7 @@ class VideoJob(
                 attempt("Could not delete the video map") { maps.deleteVideoRegions(tripId) }
             }
             _state.value = result
+            _runningTripId.value = null
             if (running === currentCoroutineContext()[Job]) running = null
             claimed.set(false)
         }

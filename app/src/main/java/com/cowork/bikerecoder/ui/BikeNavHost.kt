@@ -86,6 +86,7 @@ import com.cowork.bikerecoder.ui.video.galleryThumbnail
 import com.cowork.bikerecoder.ui.video.shareMedia
 import com.cowork.bikerecoder.ui.video.viewMedia
 import com.cowork.bikerecoder.video.MediaKind
+import com.cowork.bikerecoder.video.VideoNotifications
 import android.net.Uri
 import androidx.core.net.toUri
 import kotlinx.coroutines.Dispatchers
@@ -292,6 +293,8 @@ fun BikeNavHost(
         val outcome = videoOutcome ?: return@LaunchedEffect
         if (outcome is VideoOutcome.Preview && navController.currentDestination?.route != Routes.ONBOARDING) {
             navController.openPreview(outcome.uri, outcome.kind, outcome.downscaled)
+            // Seen here: "영상을 만들었습니다" would only open it again.
+            VideoNotifications.cancelResult(context)
         }
         videoViewModel.outcomeShown()
     }

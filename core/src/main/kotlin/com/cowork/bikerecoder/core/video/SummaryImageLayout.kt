@@ -27,8 +27,10 @@ object SummaryImageLayout {
     private const val LANDSCAPE_HEADER_H = 140f
 
     /**
-     * 세로: 머리 → 지도(폭 전체, 높이 절반) → 숫자 2줄×3칸 → 사진 줄(있을 때만) → 바닥 "bikeRecoder".
-     * 가로: 왼쪽 60% 지도(높이 전체), 오른쪽 40%에 머리·숫자·사진 줄·바닥. [photoCount]는 0~3으로 자른다.
+     * 세로: 머리 → 지도(폭 전체, 높이 절반) → 숫자 2줄×3칸 → 사진 줄(있을 때만) → 바닥 "bikeRecoder". 사진이 없으면 사진 줄의
+     * 높이만큼 지도가 길어진다(바닥 위에 빈 띠를 남기지 않는다).
+     * 가로: 왼쪽 60% 지도(높이 전체), 오른쪽 40%에 머리·숫자·사진 줄을 바닥 위 공간의 세로 가운데에, 맨 아래 바닥.
+     * [photoCount]는 0~3으로 자른다.
      */
     fun layout(aspect: Aspect, photoCount: Int): ImageLayout {
         val w = aspect.width.toFloat()
@@ -38,7 +40,9 @@ object SummaryImageLayout {
             Aspect.PORTRAIT -> {
                 val contentW = w - 2 * MARGIN
                 val header = Box(MARGIN, MARGIN, contentW, PORTRAIT_HEADER_H)
-                val map = Box(0f, header.bottom + GAP, w, h * PORTRAIT_MAP_SHARE)
+                // No photo row: its height (and its gap) goes to the map.
+                val extra = if (photos == 0) PORTRAIT_PHOTO_H + GAP else 0f
+                val map = Box(0f, header.bottom + GAP, w, h * PORTRAIT_MAP_SHARE + extra)
                 val stats = statGrid(MARGIN, map.bottom + GAP, contentW)
                 val photoRow = photoRow(MARGIN, stats.last().bottom + GAP, contentW, PORTRAIT_PHOTO_H, photos)
                 ImageLayout(header, map, stats, photoRow, Box(MARGIN, h - MARGIN - FOOTER_H, contentW, FOOTER_H))
@@ -47,11 +51,16 @@ object SummaryImageLayout {
                 val map = Box(0f, 0f, w * LANDSCAPE_MAP_SHARE, h)
                 val left = map.x + map.w + MARGIN
                 val contentW = w - left - MARGIN
-                val header = Box(left, MARGIN, contentW, LANDSCAPE_HEADER_H)
-                val stats = statGrid(left, header.bottom + GAP, contentW)
+                val footer = Box(left, h - MARGIN - FOOTER_H, contentW, FOOTER_H)
                 val photoH = cellWidth(contentW)
+                // Header … last row as one block, centred between the top margin and the footer (keeping GAP above it).
+                val block = LANDSCAPE_HEADER_H + GAP + 2 * STAT_ROW_H + CELL_GAP + (if (photos > 0) GAP + photoH else 0f)
+                val room = footer.y - GAP - MARGIN
+                val top = MARGIN + ((room - block) / 2).coerceAtLeast(0f)
+                val header = Box(left, top, contentW, LANDSCAPE_HEADER_H)
+                val stats = statGrid(left, header.bottom + GAP, contentW)
                 val photoRow = photoRow(left, stats.last().bottom + GAP, contentW, photoH, photos)
-                ImageLayout(header, map, stats, photoRow, Box(left, h - MARGIN - FOOTER_H, contentW, FOOTER_H))
+                ImageLayout(header, map, stats, photoRow, footer)
             }
         }
     }

@@ -46,4 +46,32 @@ class SummaryImageLayoutTest {
         assertEquals(2, l.stats.map { it.y }.distinct().size)
         assertEquals(3, l.stats.map { it.x }.distinct().size)
     }
+
+    /** The empty space between the last content (stats or photos) and the footer. */
+    private fun ImageLayout.footerGap(): Float = footer.y - (stats + photos).maxOf { it.y + it.h }
+
+    /**
+     * No photo row: its height goes back to the layout, no large empty band above "bikeRecoder". Portrait: the map grows by
+     * that height and the footer gap stays as with photos. Landscape: the right column is centred above the footer.
+     */
+    @Test
+    fun withoutPhotosNothingIsLeftEmptyAboveTheFooter() {
+        val portrait = SummaryImageLayout.layout(Aspect.PORTRAIT, 0)
+        val portraitWith = SummaryImageLayout.layout(Aspect.PORTRAIT, 3)
+        assertTrue(portrait.map.h > portraitWith.map.h, "지도 ${portrait.map} vs ${portraitWith.map}")
+        assertTrue(portrait.footerGap() <= 48f, "세로 빈 띠 ${portrait.footerGap()}")
+        assertEquals(portraitWith.footerGap(), portrait.footerGap())
+
+        for (count in 0..3) {
+            val l = SummaryImageLayout.layout(Aspect.LANDSCAPE, count)
+            val top = l.header.y
+            val bottomGap = l.footerGap()
+            // The block (header … last row) sits in the middle of the column above the footer: the space above it and the
+            // space below it differ by at most the gap kept to the footer.
+            assertTrue(top >= 48f, "가로 위 $top")
+            assertTrue(kotlin.math.abs(bottomGap - (top - 48f) - 24f) <= 1f, "가로 $count: 위 $top 아래 $bottomGap")
+        }
+        val l0 = SummaryImageLayout.layout(Aspect.LANDSCAPE, 0)
+        assertTrue(l0.footerGap() < 300f, "가로 빈 띠 ${l0.footerGap()}")
+    }
 }

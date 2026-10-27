@@ -243,7 +243,6 @@ class VideoViewModelTest {
         assertEquals(listOf(TRIP to chosen), job.videos)
         assertNull(vm.sheet.value, "the sheet closes once started")
         assertNull(vm.dialog.value)
-        assertEquals(TRIP, vm.makingTrip.value)
     }
 
     @Test
@@ -408,14 +407,45 @@ class VideoViewModelTest {
         advanceUntilIdle()
         assertNull(vm.outcome.value)
 
-        job.state.value = VideoJobState.Failed("기록이 시작되어 영상 만들기를 멈췄습니다")
+        job.state.value = VideoJobState.Failed("저장 공간이 부족합니다(약 36 MB 필요)")
         advanceUntilIdle()
-        assertEquals(VideoOutcome.Message("기록이 시작되어 영상 만들기를 멈췄습니다"), vm.outcome.value)
+        assertEquals(VideoOutcome.Message("저장 공간이 부족합니다(약 36 MB 필요)"), vm.outcome.value)
         vm.outcomeShown()
         advanceUntilIdle()
-        assertEquals(VideoDialog.Message("기록이 시작되어 영상 만들기를 멈췄습니다"), vm.dialog.value)
+        assertEquals(VideoDialog.Message("저장 공간이 부족합니다(약 36 MB 필요)"), vm.dialog.value)
         assertEquals(VideoJobState.Idle, job.state.value)
         assertNull(vm.outcome.value)
+    }
+
+    /** Spec §3.2: said by the notification only — no dialog over the record screen of the ride that just started. */
+    @Test
+    fun `a job stopped by a recording is not told on screen`() = runTest(dispatcher) {
+        val vm = vm()
+        job.state.value = VideoJobState.Failed("기록이 시작되어 영상 만들기를 멈췄습니다")
+        advanceUntilIdle()
+        vm.outcomeShown()
+        advanceUntilIdle()
+        assertNull(vm.dialog.value)
+        assertEquals(VideoJobState.Idle, job.state.value)
+
+        // Any failure while a recording runs: the same.
+        recording = true
+        job.state.value = VideoJobState.Failed("영상을 만들지 못했습니다")
+        advanceUntilIdle()
+        vm.outcomeShown()
+        advanceUntilIdle()
+        assertNull(vm.dialog.value)
+        assertEquals(VideoJobState.Idle, job.state.value)
+    }
+
+    /** I1: the card (and its [취소]) only on the trip being made; other trips keep their buttons. */
+    @Test
+    fun `the progress card shows only for the trip being made`() {
+        val progress = VideoProgress(MediaKind.VIDEO, 42, "영상 만드는 중 42% · 약 2분 남음")
+        assertEquals(progress, progressFor(progress, runningTripId = TRIP, tripId = TRIP))
+        assertNull(progressFor(progress, runningTripId = TRIP, tripId = 8L))
+        assertNull(progressFor(progress, runningTripId = null, tripId = TRIP))
+        assertNull(progressFor(null, runningTripId = TRIP, tripId = TRIP))
     }
 
     @Test
@@ -529,6 +559,7 @@ class VideoViewModelTest {
 
     private class FakeJob : VideoJobControl {
         override val state = MutableStateFlow<VideoJobState>(VideoJobState.Idle)
+        override val runningTripId = MutableStateFlow<Long?>(null)
         var running = false
         override val isRunning: Boolean get() = running
         var videoResult = StartResult.STARTED

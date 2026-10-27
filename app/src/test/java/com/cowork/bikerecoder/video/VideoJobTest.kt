@@ -117,6 +117,26 @@ class VideoJobTest {
         assertEquals(listOf("finish", "close"), sink.events.takeLast(2))
     }
 
+    /** The trip being made, for its progress card (only that trip's screens show it); none before or after. */
+    @Test
+    fun theRunningTripIsKnownWhileTheJobRuns() = runBlocking {
+        assertNull(job.runningTripId.value)
+        backend.gateAt = 3
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
+        backend.reached.await()
+        assertEquals(TRIP, job.runningTripId.value)
+
+        job.cancel()
+        awaitEnd()
+        awaitIdle()
+        assertNull(job.runningTripId.value)
+
+        // A refused start never names a trip.
+        recording.value = true
+        assertEquals(StartResult.RECORDING, job.startVideo(TRIP, short))
+        assertNull(job.runningTripId.value)
+    }
+
     @Test
     fun busyRefuses() = runBlocking {
         backend.gateAt = 3

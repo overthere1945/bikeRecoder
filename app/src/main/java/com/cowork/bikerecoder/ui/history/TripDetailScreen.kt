@@ -116,9 +116,14 @@ fun TripDetailScreen(
         heartRate = heartRate,
         onRefetchHeartRate = tripRefetchAction(access.value, viewModel::refetchHeartRate),
         refetching = refetching,
-        videos = {
-            if (canMakeMedia) mediaEntry()
-            TripMediaRow(media, mediaThumbnail, onOpenMedia)
+        // Nothing to offer nor show: no item (and no gap) at all.
+        videos = if (canMakeMedia || media.isNotEmpty()) {
+            {
+                if (canMakeMedia) mediaEntry()
+                TripMediaRow(media, mediaThumbnail, onOpenMedia)
+            }
+        } else {
+            null
         },
     )
     PhotoViewerHost(viewer, photos, thumbnails, onToggleHidden = { viewModel.setHidden(it, hidden = !it.hidden) })
@@ -152,7 +157,7 @@ fun TripDetailContent(
     heartRate: TripHeartRate = TripHeartRate(),
     onRefetchHeartRate: (() -> Unit)? = null,
     refetching: Boolean = false,
-    videos: @Composable () -> Unit = {},
+    videos: (@Composable () -> Unit)? = null,
 ) {
     HistoryScaffold(title = "여행 기록", onBack = onBack) {
         if (segmentsByDate.isEmpty()) {
@@ -177,7 +182,7 @@ private fun TripDetailList(
     heartRate: TripHeartRate,
     onOpenSegment: (Long) -> Unit,
     onRequestDelete: (Long) -> Unit,
-    videos: @Composable () -> Unit,
+    videos: (@Composable () -> Unit)?,
     photos: @Composable () -> Unit,
     onRefetchHeartRate: (() -> Unit)?,
     refetching: Boolean,
@@ -188,8 +193,10 @@ private fun TripDetailList(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = modifier.fillMaxWidth(),
     ) {
-        item(key = "videos") {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { videos() }
+        if (videos != null) {
+            item(key = "videos") {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { videos() }
+            }
         }
         item(key = "photos") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { photos() }
