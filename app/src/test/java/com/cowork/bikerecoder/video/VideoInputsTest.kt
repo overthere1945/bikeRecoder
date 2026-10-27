@@ -54,8 +54,8 @@ class VideoInputsTest {
 
     /** A segment with [points]; closed unless [open]. */
     private suspend fun segment(date: LocalDate, points: List<TrackPoint>, distanceM: Double, open: Boolean = false,
-                                maxSpeed: Double = 6.0, ascent: Double = 10.0): Long {
-        val id = rides.openSegment(TRIP, points.first().timeMillis, date)
+                                maxSpeed: Double = 6.0, ascent: Double = 10.0, startedAt: Long = points.first().timeMillis): Long {
+        val id = rides.openSegment(TRIP, startedAt, date)
         val t = totals(distanceM, points.last().timeMillis - points.first().timeMillis, maxSpeed, ascent)
         rides.appendPoints(id, points, t)
         if (!open) rides.closeSegment(id, points.last().timeMillis, t)
@@ -114,6 +114,17 @@ class VideoInputsTest {
         posts.upsertPhotos(b, listOf(photo))
 
         assertEquals(listOf(21L), loader.load(TRIP)!!.photos.map { it.mediaId })
+    }
+
+    @Test
+    fun theFirstStartIsTheFirstTargetSegmentsStartNotItsFirstFix() = runTest {
+        trip(TripType.SINGLE_DAY)
+        segment(sunday, track(at(sunday, 8), 1), distanceM = 5.0) // too short: not a target
+        val pressedStart = at(sunday, 9) - 90_000 // 08:58:30; the first GPS fix came at 09:00
+        segment(sunday, track(at(sunday, 9), 100), distanceM = 500.0, startedAt = pressedStart)
+        segment(sunday, track(at(sunday, 11), 100), distanceM = 500.0)
+
+        assertEquals(pressedStart, loader.load(TRIP)!!.firstStartedAt)
     }
 
     @Test

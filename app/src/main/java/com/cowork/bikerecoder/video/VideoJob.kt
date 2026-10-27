@@ -123,14 +123,16 @@ class VideoJob(
             if (backend.freeBytes() < needed) return StartResult.NO_SPACE
             val plans = VideoTimeline.plan(inputs.timeline, inputs.photos, options, inputs.dayStarts)
             if (plans.isEmpty()) return StartResult.NOTHING_TO_MAKE
+            // The map first: offline it answers at once, the music takes seconds.
+            if (!mapReachable(inputs)) return StartResult.NO_INTERNET
             val music = options.musicUri?.let { uri ->
                 backend.loadMusic(uri, plans.size * 1_000_000L / FPS) ?: return StartResult.MUSIC_UNREADABLE
             }
-            if (!mapReachable(inputs)) return StartResult.NO_INTERNET
             launch(MediaKind.VIDEO, inputs, VideoOptionsJson.encode(options), needed) { uri ->
                 makeVideo(uri, inputs, options, plans, music)
             }
             launched = true
+            startForeground()
             return StartResult.STARTED
         } finally {
             if (!launched) claimed.set(false)
@@ -150,6 +152,7 @@ class VideoJob(
                 Made(downscaled = false, secondsPerFrame = null)
             }
             launched = true
+            startForeground()
             return StartResult.STARTED
         } finally {
             if (!launched) claimed.set(false)
@@ -229,7 +232,15 @@ class VideoJob(
             job.cancel()
         }
         job.invokeOnCompletion { watcher.cancel() }
-        startService()
+    }
+
+    /** The job runs (and keeps its claim) even when the service cannot start. */
+    private fun startForeground() {
+        try {
+            startService()
+        } catch (e: Exception) {
+            log.warn("Could not start the video service", e)
+        }
     }
 
     private suspend fun run(kind: MediaKind, inputs: VideoInputs, optionsJson: String, neededBytes: Long, make: suspend (String) -> Made) {
@@ -240,16 +251,20 @@ class VideoJob(
         try {
             store.setPending(PendingJob(tripId, kind, optionsJson, clock()))
             if (!maps.downloadForTrack(tripId, inputs.points())) throw Stop(MSG_NO_INTERNET)
-            val base = MediaNaming.baseName(inputs.timeline.points.first().timeMillis, zone)
+            val base = MediaNaming.baseName(inputs.firstStartedAt, zone)
             val name = MediaNaming.unique(base, kind.extension, backend.existingNames(kind))
-            val item = backend.createPending(kind, name)
-            uri = item
+            // Not cancellable, and kept inside the block: a cancel that lands as the item is made must not lose its uri.
+            withContext(NonCancellable) { uri = backend.createPending(kind, name) }
+            val item = checkNotNull(uri)
             store.setPending(PendingJob(tripId, kind, optionsJson, clock(), outputUri = item))
             val made = make(item)
             // Finished: kept even if [취소] comes now.
             withContext(NonCancellable) {
+                // Forget the item before it is public: a kill from here on can never make [unfinished] delete a finished file.
+                store.setPending(PendingJob(tripId, kind, optionsJson, clock()))
                 backend.publish(item)
                 published = true
+                store.setPending(null)
                 val media = TripMedia(0, tripId, kind, item, clock(), optionsJson)
                 val id = tripMedia.add(media)
                 made.secondsPerFrame?.let { store.recordSpeed(it) }
@@ -257,7 +272,8 @@ class VideoJob(
             }
         } catch (e: CancellationException) {
             if (!published) result = if (stoppedByRecording) VideoJobState.Failed(MSG_RECORDING_STARTED) else VideoJobState.Cancelled
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            // Errors too (an OutOfMemoryError on a frame bitmap): a failure, not a silent "cancelled".
             log.warn("Making the ${kind.name.lowercase()} of trip $tripId failed", e)
             result = VideoJobState.Failed(failureMessage(e, kind, neededBytes))
         } finally {
@@ -273,9 +289,14 @@ class VideoJob(
         }
     }
 
-    /** The encoder and renderer are closed when this returns or throws — only here, never while a frame is drawn. */
-    private suspend fun makeVideo(uri: String, inputs: VideoInputs, options: VideoOptions, plans: List<FramePlan>, music: MusicTrack?): Made =
-        backend.openVideo(uri, inputs, options).use { sink ->
+    /** The encoder and renderer are closed when this returns or throws — only here, never while a frame is drawn (carry). */
+    private suspend fun makeVideo(uri: String, inputs: VideoInputs, options: VideoOptions, plans: List<FramePlan>, music: MusicTrack?): Made {
+        // Opened without cancellation and kept outside the block (a result handed back across dispatchers is dropped if
+        // the job was cancelled meanwhile), so the encoder is closed below whatever happens.
+        var opened: VideoSink? = null
+        try {
+            withContext(NonCancellable) { opened = backend.openVideo(uri, inputs, options) }
+            val sink = checkNotNull(opened)
             // The encoder's final size (720p fallback included) decides the overview and the closing camera.
             val w = sink.width
             val h = sink.height
@@ -308,11 +329,14 @@ class VideoJob(
             }
             _state.value = VideoJobState.Encoding
             sink.finish()
-            Made(sink.downscaled, if (mapFrames > 0) mapNanos / 1e9 / mapFrames else null)
+            return Made(sink.downscaled, if (mapFrames > 0) mapNanos / 1e9 / mapFrames else null)
+        } finally {
+            opened?.close()
         }
+    }
 
     /** After a failure: a disk that is too full now says so (spec §3.4, "중간 실패 포함"). */
-    private fun failureMessage(e: Exception, kind: MediaKind, neededBytes: Long): String {
+    private fun failureMessage(e: Throwable, kind: MediaKind, neededBytes: Long): String {
         if (e is Stop) return e.message
         val free = try {
             backend.freeBytes()

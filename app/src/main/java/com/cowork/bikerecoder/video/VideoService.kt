@@ -31,10 +31,14 @@ class VideoService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var mirror: Job? = null
 
+    /** The latest start: stopping with it never stops a service a newer start still needs. */
+    private var lastStartId = 0
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val job = (application as BikeApp).container.videoJob
+        lastStartId = startId
         if (intent?.action == ACTION_CANCEL) {
             job.cancel()
             if (mirror == null) stopSelf(startId)
@@ -49,34 +53,46 @@ class VideoService : Service() {
         } catch (e: Exception) {
             // Not allowed now (e.g. started from the background): the job still runs while the app is alive.
             Log.w(TAG, "startForeground failed", e)
-            stopSelf()
+            if (mirror == null) stopSelf(startId)
             return START_NOT_STICKY
         }
 
         if (mirror == null) {
             mirror = scope.launch {
                 var posted = text
-                // The first state without progress is how the job ended (re-posted only when the text changes).
-                val ended = job.state.first { state ->
-                    val shown = VideoNotifications.progressText(state)
-                    if (shown != null && shown != posted) {
-                        VideoNotifications.notifyProgress(this@VideoService, shown)
-                        posted = shown
+                do {
+                    // The first state without progress is how the job ended (re-posted only when the text changes).
+                    val ended = job.state.first { state ->
+                        val shown = VideoNotifications.progressText(state)
+                        if (shown != null && shown != posted) {
+                            VideoNotifications.notifyProgress(this@VideoService, shown)
+                            posted = shown
+                        }
+                        shown == null
                     }
-                    shown == null
-                }
-                VideoNotifications.showResult(this@VideoService, ended)
+                    VideoNotifications.showResult(this@VideoService, ended)
+                    // A next job may already have started (same instance): keep mirroring it.
+                } while (VideoNotifications.progressText(job.state.value) != null)
+                // On Main, so no start command comes between these lines.
+                mirror = null
                 ServiceCompat.stopForeground(this@VideoService, ServiceCompat.STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                stopSelf(lastStartId)
             }
         }
         return START_NOT_STICKY
     }
 
-    /** Android 15+: a `mediaProcessing` service may run 6 hours a day; past that the job is cancelled. */
+    /**
+     * Android 15+: a `mediaProcessing` service may run 6 hours a day. Past that the job is cancelled and the service
+     * leaves the foreground and stops at once (required within seconds); the job's cleanup goes on in the app scope.
+     */
     override fun onTimeout(startId: Int, fgsType: Int) {
         Log.w(TAG, "Foreground time limit reached; cancelling the video job")
         (application as BikeApp).container.videoJob.cancel()
+        mirror?.cancel()
+        mirror = null
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     override fun onDestroy() {

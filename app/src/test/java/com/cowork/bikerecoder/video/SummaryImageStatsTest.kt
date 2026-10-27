@@ -25,6 +25,7 @@ class SummaryImageStatsTest {
         badge = "여러 날 · 2일",
         totals = TripTotals(12_345.0, 3_600_000L, 3.43, 9.0, 120.4, avgBpm, null),
         canColorByHeart = false,
+        firstStartedAt = 0L,
     )
 
     @Test

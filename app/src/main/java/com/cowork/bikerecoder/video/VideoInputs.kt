@@ -38,7 +38,8 @@ data class TripTotals(
  * at their moving time; [heartRate] the target segments' samples in time order; [dayStarts] the "N일째 · M월 d일"
  * captions; [segmentColors] one colour per target segment (its day's [RideColors] colour, spec §2.2);
  * [title] "10월 25일 (일)" or "10월 17일 ~ 18일", [badge] "당일" or "여러 날 · N일"; [canColorByHeart] some target
- * segment has detailed heart rate (the [심박] option).
+ * segment has detailed heart rate (the [심박] option); [firstStartedAt] when the first target segment was started (the file
+ * name, spec §3.5 — not its first GPS fix).
  */
 data class VideoInputs(
     val tripId: Long,
@@ -51,6 +52,7 @@ data class VideoInputs(
     val badge: String,
     val totals: TripTotals,
     val canColorByHeart: Boolean,
+    val firstStartedAt: Long,
 )
 
 class VideoInputsLoader(
@@ -107,6 +109,7 @@ class VideoInputsLoader(
                 calories = hr.calories,
             ),
             canColorByHeart = hr.canColor,
+            firstStartedAt = targets.first().startedAt,
         )
     }
 

@@ -73,6 +73,7 @@ object VideoTestTrip {
             totals = TripTotals(totals.distanceM, totals.movingTimeMs, totals.avgSpeedMps, totals.maxSpeedMps, totals.ascentM,
                 avgBpm = if (withHeartRate) 132 else null, calories = if (withHeartRate) 210.0 else null),
             canColorByHeart = withHeartRate,
+            firstStartedAt = START,
         )
     }
 

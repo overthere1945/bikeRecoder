@@ -176,13 +176,17 @@ class AndroidVideoBackend(
 
         override fun finish() = encoder.finish()
 
+        /** Each part is released even if an earlier one throws. */
         override fun close() {
             try {
                 renderer.close()
-                encoder.close()
             } finally {
-                bitmap.recycle()
-                pfd.close()
+                try {
+                    encoder.close()
+                } finally {
+                    bitmap.recycle()
+                    pfd.close()
+                }
             }
         }
     }

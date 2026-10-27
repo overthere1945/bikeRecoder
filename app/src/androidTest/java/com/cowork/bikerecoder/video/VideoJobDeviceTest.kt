@@ -39,7 +39,7 @@ import kotlin.math.abs
 
 /**
  * The whole job on the phone, through the app's own wiring ([AppContainer.videoJob]): a completed test trip (about
- * 1.85 km around Yeouido, no photos) is seeded into the app's database, then a real short portrait video (HUD on, no
+ * 1.85 km around Yeouido, no photos, started 90 s before its first fix) is seeded into the app's database, then a real short portrait video (HUD on, no
  * music) and a summary image are made — real map tiles, encoder and gallery. The gallery items and the trip are
  * deleted afterwards.
  */
@@ -55,7 +55,8 @@ class VideoJobDeviceTest {
     @Before
     fun seedTrip() = runBlocking {
         val track = VideoTestTrip.points()
-        val start = VideoTestTrip.START
+        // Started at 08:58:30, 90 s before the first GPS fix: the file is named after the start (spec §3.5).
+        val start = VideoTestTrip.START - 90_000
         val end = track.last().timeMillis
         val db = container.db
         tripId = db.tripDao().insertTrip(
@@ -139,7 +140,7 @@ class VideoJobDeviceTest {
         resolver.query(uri, arrayOf(MediaStore.MediaColumns.IS_PENDING, MediaStore.MediaColumns.DISPLAY_NAME), args, null)!!.use {
             assertTrue("$uri is not in the gallery", it.moveToFirst())
             assertEquals("still pending", 0, it.getInt(0))
-            assertTrue(it.getString(1), it.getString(1).startsWith("bikeRecoder_20261025_0900"))
+            assertTrue(it.getString(1), it.getString(1).startsWith("bikeRecoder_20261025_0858"))
         }
         assertNull(container.videoJobStore.pending())
     }

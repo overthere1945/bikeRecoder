@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -91,14 +92,14 @@ class VideoJobTest {
 
     @Test
     fun happyPathSavesAndRecords() = runBlocking {
-        backend.names += "bikeRecoder_20261025_0900.mp4"
+        backend.names += "bikeRecoder_20261025_0858.mp4"
         val options = short.copy(musicUri = "content://music/1")
 
         assertEquals(StartResult.STARTED, job.startVideo(TRIP, options))
         val done = awaitEnd() as VideoJobState.Done
 
         val uri = backend.created.single()
-        assertEquals("bikeRecoder_20261025_0900_2.mp4", backend.createdNames.single())
+        assertEquals("bikeRecoder_20261025_0858_2.mp4", backend.createdNames.single())
         assertEquals(listOf(uri), backend.published)
         assertEquals(emptyList<String>(), backend.deleted)
         val row = media.rows.single()
@@ -397,7 +398,7 @@ class VideoJobTest {
         assertEquals(VideoJobState.Preparing(MediaKind.IMAGE), backend.firstStateSeen)
 
         val uri = backend.created.single()
-        assertEquals("bikeRecoder_20261025_0900.png", backend.createdNames.single())
+        assertEquals("bikeRecoder_20261025_0858.png", backend.createdNames.single())
         assertEquals(listOf(uri to Aspect.LANDSCAPE), backend.images)
         assertEquals(listOf(uri), backend.published)
         assertEquals(TripMedia(done.media.id, TRIP, MediaKind.IMAGE, uri, NOW, VideoOptionsJson.encode(VideoOptions(aspect = Aspect.LANDSCAPE))), done.media)
@@ -422,6 +423,87 @@ class VideoJobTest {
         awaitEnd()
     }
 
+    @Test
+    fun cancelWhenTheGalleryItemIsJustMadeStillDeletesIt() = runBlocking {
+        backend.cancelInCreate = true
+
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
+
+        assertEquals(VideoJobState.Cancelled, awaitEnd())
+        awaitIdle()
+        assertEquals(1, backend.created.size)
+        assertEquals(backend.created, backend.deleted)
+        assertEquals(emptyList<FakeSink>(), backend.sinks)
+        assertNull(store.pending())
+    }
+
+    @Test
+    fun cancelWhenTheEncoderIsJustOpenedStillClosesItAndDeletes() = runBlocking {
+        backend.cancelInOpen = true
+
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
+
+        assertEquals(VideoJobState.Cancelled, awaitEnd())
+        awaitIdle()
+        val events = backend.sinks.single().events
+        assertEquals("close", events.last())
+        assertFalse("frame" in events || "finish" in events, events.toString())
+        assertEquals(backend.created, backend.deleted)
+        assertNull(store.pending())
+    }
+
+    @Test
+    fun aPublishedVideoIsNeverLeftForTheUnfinishedCleanup() = runBlocking {
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
+        assertTrue(awaitEnd() is VideoJobState.Done)
+
+        // A kill at publish time leaves a job to offer again, but without the item: nothing deletes the finished file.
+        assertEquals(PendingJob(TRIP, MediaKind.VIDEO, VideoOptionsJson.encode(short), NOW, outputUri = null), backend.pendingAtPublish)
+        // Cleared before the trip_media row and the speed are written.
+        assertEquals(listOf<PendingJob?>(null), media.pendingAtAdd)
+    }
+
+    @Test
+    fun anErrorFailsTheJobInsteadOfCancellingIt() = runBlocking {
+        backend.failAt = 5
+        backend.failWith = { OutOfMemoryError("frame bitmap") }
+
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
+
+        assertEquals(VideoJobState.Failed("영상을 만들지 못했습니다"), awaitEnd())
+        awaitIdle()
+        assertEquals(backend.created, backend.deleted)
+        assertEquals("close", backend.sinks.single().events.last())
+    }
+
+    @Test
+    fun theMapIsCheckedBeforeTheMusicIsMade() = runBlocking {
+        online = false
+        maps.available = false
+
+        assertEquals(StartResult.NO_INTERNET, job.startVideo(TRIP, short.copy(musicUri = "content://music/1")))
+
+        assertEquals(emptyList<Long>(), backend.musicDurations)
+        assertNothingStarted()
+    }
+
+    @Test
+    fun aServiceThatCannotStartLeavesTheRunningJobClaimed() = runBlocking {
+        val throwing = VideoJob(
+            loadInputs = { inputs }, store = store, tripMedia = media, maps = maps, backend = backend, recording = recording,
+            online = { true }, startService = { throw IllegalStateException("not allowed") }, scope = scope(),
+            log = { message, _ -> warnings += message }, clock = { NOW }, nanoTime = { backend.nanos },
+        )
+        backend.gateAt = 2
+
+        assertEquals(StartResult.STARTED, throwing.startVideo(TRIP, short))
+        backend.reached.await()
+
+        assertTrue(throwing.isRunning)
+        assertEquals(StartResult.BUSY, throwing.startVideo(TRIP, short))
+        throwing.cancel()
+    }
+
     private suspend fun assertNothingStarted() {
         assertEquals(emptyList<String>(), backend.created)
         assertEquals(emptyList<FakeSink>(), backend.sinks)
@@ -438,6 +520,10 @@ class VideoJobTest {
         var downscale = false
         var failAt = -1
         var onFail: () -> Unit = {}
+        var failWith: () -> Throwable = { IllegalStateException("video encoding failed") }
+        var cancelInCreate = false
+        var cancelInOpen = false
+        var pendingAtPublish: PendingJob? = null
         var gateAt = -1
         var reached = CompletableDeferred<Unit>()
         val names = mutableSetOf<String>()
@@ -459,13 +545,16 @@ class VideoJobTest {
 
         override suspend fun existingNames(kind: MediaKind): Set<String> = names.toSet()
 
-        override suspend fun createPending(kind: MediaKind, displayName: String): String {
+        /** On another dispatcher like the real one; [cancelInCreate] cancels while the item is being made. */
+        override suspend fun createPending(kind: MediaKind, displayName: String): String = withContext(Dispatchers.IO) {
             firstStateSeen = job.state.value
             createdNames += displayName
-            return "content://gallery/${created.size + 1}".also { created += it }
+            if (cancelInCreate) job.cancel()
+            "content://gallery/${created.size + 1}".also { created += it }
         }
 
         override suspend fun publish(uri: String) {
+            pendingAtPublish = store.pending()
             published += uri
         }
 
@@ -473,8 +562,10 @@ class VideoJobTest {
             deleted += uri
         }
 
-        override suspend fun openVideo(uri: String, inputs: VideoInputs, options: VideoOptions): VideoSink =
+        override suspend fun openVideo(uri: String, inputs: VideoInputs, options: VideoOptions): VideoSink = withContext(Dispatchers.IO) {
+            if (cancelInOpen) job.cancel()
             FakeSink(if (downscale) 720 else 1080, if (downscale) 1280 else 1920, downscale).also { sinks += it }
+        }
 
         override suspend fun writeImage(uri: String, inputs: VideoInputs, aspect: Aspect) {
             images += uri to aspect
@@ -501,7 +592,7 @@ class VideoJobTest {
             }
             if (index == backend.failAt) {
                 backend.onFail()
-                throw IllegalStateException("video encoding failed")
+                throw backend.failWith()
             }
             states += job.state.value
             plans += plan
@@ -534,10 +625,14 @@ class VideoJobTest {
         }
     }
 
-    private class FakeTripMedia : TripMediaStore {
+    private inner class FakeTripMedia : TripMediaStore {
         val rows: MutableList<TripMedia> = Collections.synchronizedList(mutableListOf())
+        val pendingAtAdd = mutableListOf<PendingJob?>()
         override fun observe(tripId: Long): Flow<List<TripMedia>> = flowOf(rows.filter { it.tripId == tripId })
-        override suspend fun add(m: TripMedia): Long = (rows.size + 100L).also { rows += m.copy(id = it) }
+        override suspend fun add(m: TripMedia): Long {
+            pendingAtAdd += store.pending()
+            return (rows.size + 100L).also { rows += m.copy(id = it) }
+        }
         override suspend fun remove(ids: Collection<Long>) {
             rows.removeAll { it.id in ids }
         }
@@ -548,12 +643,16 @@ class VideoJobTest {
         const val NOW = 1_800_000_000_000L
         val SEOUL: ZoneId = ZoneId.of("Asia/Seoul")
 
-        /** 2 minutes at 5 m/s from 2026-10-25 09:00 Seoul, one point a second. */
+        /**
+         * 2 minutes at 5 m/s from 2026-10-25 09:00 Seoul, one point a second. The segment was started at 08:58:30, before
+         * the first GPS fix: the file is named after the start (spec §3.5).
+         */
         fun testInputs(): VideoInputs {
             val start = LocalDate.of(2026, 10, 25).atTime(9, 0).atZone(SEOUL).toInstant().toEpochMilli()
+            val pressed = start - 90_000
             val track = List(121) { TrackPoint(start + it * 1_000L, GeoPoint(37.52, 126.93 + it * 0.0000565), 20.0, 5f, 5f) }
             val totals = SegmentTotals(600.0, 120_000, 120_000, 5.5, 3.0, 3.0, 20.0, 23.0)
-            val segment = RideSegment(1, TRIP, start, track.last().timeMillis, LocalDate.of(2026, 10, 25), totals)
+            val segment = RideSegment(1, TRIP, pressed, track.last().timeMillis, LocalDate.of(2026, 10, 25), totals)
             val timeline = RideTimelineBuilder.build(listOf(segment to track), SEOUL)
             return VideoInputs(
                 tripId = TRIP,
@@ -566,6 +665,7 @@ class VideoJobTest {
                 badge = "당일",
                 totals = TripTotals(600.0, 120_000, 5.0, 5.5, 3.0, avgBpm = null, calories = null),
                 canColorByHeart = false,
+                firstStartedAt = pressed,
             )
         }
     }
