@@ -85,8 +85,15 @@ class RoomPostStoreTest {
         return id
     }
 
-    private fun done(segmentId: Long, status: HrStatus = HrStatus.READY) =
-        SegmentExtras(segmentId, photosScannedAt = 1L, photoScanDone = true, hrStatus = status, simplifiedDone = true)
+    /** 할 일이 끝난 extras. READY는 자세한 심박(자세하지 않은 READY는 하루 동안 다시 읽을 일이 남는다 — 스펙 §6.1). */
+    private fun done(segmentId: Long, status: HrStatus = HrStatus.READY) = SegmentExtras(
+        segmentId,
+        photosScannedAt = 1L,
+        photoScanDone = true,
+        hrStatus = status,
+        hrDetailed = status == HrStatus.READY,
+        simplifiedDone = true,
+    )
 
     private fun photo(mediaId: Long, takenAt: Long, point: GeoPoint = GeoPoint(37.5, 127.0)) =
         PlacedPhoto(mediaId, takenAt, point, PhotoPositionSource.TRACK)
@@ -197,6 +204,39 @@ class RoomPostStoreTest {
         assertEquals(listOf(backlog), store.segmentsNeedingWork(now = endedAt + 60_000L + day + 1).map { it.id })
         assertEquals(listOf(backlog), store.segmentsNeedingWork(now = firstTry + day).map { it.id }) // 한도 포함
         assertEquals(emptyList<Long>(), store.segmentsNeedingWork(now = firstTry + day + 1).map { it.id })
+    }
+
+    /** 스펙 §6.1: 자세하지 않은 READY는 구간 끝 + 24시간(포함)까지 할 일이 남은 구간이다. */
+    @Test
+    fun sparseReadyIsWorkWithinTwentyFourHours() = runTest {
+        val trip = newTrip()
+        val endedAt = 10_000L
+        val sparse = segment(trip, 1_000L, endedAt)
+        store.saveExtras(done(sparse).copy(hrDetailed = false, hrFirstTriedAt = endedAt + 60_000L))
+
+        assertEquals(listOf(sparse), store.segmentsNeedingWork(now = endedAt + 60 * 60_000L).map { it.id })
+        assertEquals(listOf(sparse), store.segmentsNeedingWork(now = endedAt + HrRetryPolicy.GIVE_UP_MS).map { it.id })
+    }
+
+    @Test
+    fun sparseReadyLeavesWorkListAfterTwentyFourHours() = runTest {
+        val trip = newTrip()
+        val endedAt = 10_000L
+        val sparse = segment(trip, 1_000L, endedAt)
+        // 처음 읽은 시각이 늦어도 한도는 구간 끝 + 24시간
+        store.saveExtras(done(sparse).copy(hrDetailed = false, hrFirstTriedAt = endedAt + 3 * HrRetryPolicy.GIVE_UP_MS))
+
+        assertEquals(emptyList<Long>(), store.segmentsNeedingWork(now = endedAt + HrRetryPolicy.GIVE_UP_MS + 1).map { it.id })
+    }
+
+    @Test
+    fun detailedReadyIsNotWork() = runTest {
+        val trip = newTrip()
+        val endedAt = 10_000L
+        val detailed = segment(trip, 1_000L, endedAt)
+        store.saveExtras(done(detailed).copy(hrDetailed = true))
+
+        assertEquals(emptyList<Long>(), store.segmentsNeedingWork(now = endedAt + 60_000L).map { it.id })
     }
 
     /** 판정 R13 정리: 한 구간의 사진만 지우고, 다른 구간의 같은 사진은 남긴다. */

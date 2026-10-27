@@ -137,6 +137,25 @@ class SummaryExtrasTest {
         assertEquals(95, extras.state.value.heartRate?.avgBpm)
     }
 
+    /** Spec §6.1: the summary's reads replace the heart rate only when they bring more samples than are stored. */
+    @Test
+    fun aSummaryReadWithNoMoreSamplesKeepsTheStoredHeartRate() = runTest {
+        val (id, extras) = setup(TOTALS.copy(movingTimeMs = 10 * MINUTE), endedAt = 10 * MINUTE)
+        val sparse = listOf(HeartRateSample(2 * MINUTE, 90), HeartRateSample(8 * MINUTE, 110))
+        heartRate.reads = { _, _ -> HrRead.Samples(sparse, calories = null) }
+        extras.onScreen(true)
+        shown.value = id
+        runCurrent()
+        assertEquals(100, extras.state.value.heartRate?.avgBpm)
+
+        heartRate.reads = { _, _ -> HrRead.Samples(listOf(HeartRateSample(5 * MINUTE, 150)), calories = 30.0) }
+        advanceTimeBy(2 * MINUTE + 1)
+        assertEquals(2, refetches(), "sparse READY: still read")
+        assertEquals(100, extras.state.value.heartRate?.avgBpm, "one sample does not replace two")
+        assertEquals(null, extras.state.value.heartRate?.calories)
+        assertEquals(sparse, store.samples(id))
+    }
+
     @Test
     fun stopsWhenTheSummaryCloses() = runTest {
         val (id, extras) = setup()

@@ -115,7 +115,9 @@ class SummaryExtras(
     /**
      * READY from a few all-day samples (not [SegmentExtras.hrDetailed]) is not the end: the watch workout's detailed
      * heart rate can still arrive minutes later (I5), and [PostProcessor.refetchHeartRate] keeps the stored heart rate
-     * when a read brings nothing (R7).
+     * when a read brings nothing or no more samples (R7, spec §6.1). The same stop as
+     * [com.cowork.bikerecoder.core.post.HrRetryPolicy.shouldTry] within the ride's day, the only time a summary shows;
+     * after these reads the post-processing pass goes on reading a sparse READY until the ride's end + 24 h.
      */
     private suspend fun isDetailedReady(id: Long): Boolean = try {
         postStore.extras(id)?.let { it.hrStatus == HrStatus.READY && it.hrDetailed } == true

@@ -177,13 +177,15 @@ interface FavoriteDao {
 abstract class PostDao {
     /**
      * extras가 없거나 할 일이 남은 끝난 구간, 최근 시작 순. FAILED는 max(구간 끝, 처음 읽은 시각) + [giveUpMs] 안일 때만
-     * (판정 R14, `HrRetryPolicy.failedRetryUntil`과 같은 식).
+     * (판정 R14, `HrRetryPolicy.failedRetryUntil`과 같은 식). 자세하지 않은 READY는 구간 끝 + [giveUpMs] 안일 때만
+     * (스펙 §6.1). `HrRetryPolicy.shouldTry`와 같은 조건.
      */
     @Query(
         "SELECT s.* FROM ride_segment s LEFT JOIN segment_extras e ON e.segmentId = s.id " +
             "WHERE s.endedAt IS NOT NULL AND (e.segmentId IS NULL OR e.photoScanDone = 0 OR e.simplifiedDone = 0 " +
             "OR e.hrStatus = 'PENDING' OR (e.hrStatus = 'FAILED' " +
-            "AND :now <= MAX(s.endedAt, COALESCE(e.hrFirstTriedAt, s.endedAt)) + :giveUpMs)) " +
+            "AND :now <= MAX(s.endedAt, COALESCE(e.hrFirstTriedAt, s.endedAt)) + :giveUpMs) " +
+            "OR (e.hrStatus = 'READY' AND e.hrDetailed = 0 AND :now <= s.endedAt + :giveUpMs)) " +
             "ORDER BY s.startedAt DESC, s.id DESC",
     )
     abstract suspend fun segmentsNeedingWork(now: Long, giveUpMs: Long): List<RideSegmentEntity>

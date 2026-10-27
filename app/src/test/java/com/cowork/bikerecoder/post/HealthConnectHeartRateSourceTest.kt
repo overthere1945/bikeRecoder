@@ -95,6 +95,41 @@ class HealthConnectHeartRateSourceTest {
         assertEquals(HrRead.Samples(expectedSamples, calories = 300.0), read)
     }
 
+    /** Spec §6.2: the watch workout was "걷기", not biking — its calories count all the same. */
+    @Test
+    fun walkingWorkoutCaloriesCount() = runTest {
+        // walking 15–45 min with 200 kcal, ride 0–30 min: half of the walk overlaps → 100 kcal
+        val walking = ExerciseSessionRecord(
+            startTime = at(15 * min),
+            startZoneOffset = null,
+            endTime = at(45 * min),
+            endZoneOffset = null,
+            metadata = Metadata.unknownRecordingMethod(),
+            exerciseType = ExerciseSessionRecord.EXERCISE_TYPE_WALKING,
+        )
+        val walkKcal = TotalCaloriesBurnedRecord(
+            startTime = at(15 * min),
+            startZoneOffset = null,
+            endTime = at(45 * min),
+            endZoneOffset = null,
+            energy = Energy.kilocalories(200.0),
+            metadata = Metadata.unknownRecordingMethod(),
+        )
+        val r = FakeReader(
+            setOf(heartRate, exercise, calories),
+            mapOf(
+                HeartRateRecord::class to listOf(hrRecord),
+                ExerciseSessionRecord::class to listOf(walking),
+                TotalCaloriesBurnedRecord::class to listOf(walkKcal),
+            ),
+        )
+
+        val read = source(r).read(0, 30 * min)
+
+        assertEquals(HrRead.Samples(expectedSamples, calories = 100.0), read)
+        assertTrue(r.reads.contains(Triple<KClass<*>, Long, Long>(TotalCaloriesBurnedRecord::class, 15 * min, 45 * min)))
+    }
+
     @Test
     fun `heart rate alone is enough - calories are null and never read`() = runTest {
         val r = reader(heartRate)

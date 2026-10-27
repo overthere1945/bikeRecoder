@@ -19,7 +19,7 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlin.reflect.KClass
 
 /**
- * 삼성 헬스가 Health Connect에 쓴 심박·자전거 운동·총 칼로리를 읽는다.
+ * 삼성 헬스가 Health Connect에 쓴 심박·운동(종류와 관계없이)·총 칼로리를 읽는다.
  * 심박은 `READ_HEART_RATE`만 있으면 읽고, 칼로리는 `READ_EXERCISE`·`READ_TOTAL_CALORIES_BURNED`가 둘 다 있을 때만 읽는다(판정 R6).
  */
 class HealthConnectHeartRateSource internal constructor(
@@ -66,15 +66,15 @@ class HealthConnectHeartRateSource internal constructor(
             val (hrFrom, hrTo) = HealthConnectMapping.readWindow(from, to, sessions)
             val samples = HealthConnectMapping.samples(reader.readAll(HeartRateRecord::class, hrFrom, hrTo), from, to)
             val calories = if (caloriesPermission in granted) {
-                HealthConnectMapping.bikingOverlapping(sessions, from, to)
+                HealthConnectMapping.workoutsOverlapping(sessions, from, to)
                     .takeIf { it.isNotEmpty() }
-                    ?.let { biking ->
+                    ?.let { workouts ->
                         val records = reader.readAll(
                             TotalCaloriesBurnedRecord::class,
-                            biking.minOf { it.startTime.toEpochMilli() },
-                            biking.maxOf { it.endTime.toEpochMilli() },
+                            workouts.minOf { it.startTime.toEpochMilli() },
+                            workouts.maxOf { it.endTime.toEpochMilli() },
                         )
-                        HealthConnectMapping.calories(biking, records, from, to)
+                        HealthConnectMapping.calories(workouts, records, from, to)
                     }
             } else {
                 null
@@ -165,16 +165,16 @@ internal object HealthConnectMapping {
         return start to end
     }
 
-    /** [from, to]와 겹치는 자전거(BIKING) 운동. */
-    fun bikingOverlapping(sessions: List<ExerciseSessionRecord>, from: Long, to: Long): List<ExerciseSessionRecord> =
-        sessions.filter {
-            it.exerciseType == ExerciseSessionRecord.EXERCISE_TYPE_BIKING && overlap(it.startMs, it.endMs, from, to) > 0
-        }
+    /**
+     * [from, to]와 겹치는 운동, 종류와 관계없이(스펙 §6.2: 워치에서 "걷기"로 시작한 운동도 주행의 칼로리를 담는다).
+     */
+    fun workoutsOverlapping(sessions: List<ExerciseSessionRecord>, from: Long, to: Long): List<ExerciseSessionRecord> =
+        sessions.filter { overlap(it.startMs, it.endMs, from, to) > 0 }
 
     /**
-     * 겹치는 자전거 운동마다 (운동 안의 총 칼로리) × (구간과 겹친 시간 / 운동 시간)을 더한다.
-     * 칼로리 기록이 운동 밖으로 걸치면 운동 안에 든 비율만 센다.
-     * 겹치는 자전거 운동이 없거나 그 운동들에 칼로리 기록이 없으면 null.
+     * 겹치는 운동마다 (운동 안의 총 칼로리) × (구간과 겹친 시간 / 운동 시간)을 더한다 — 운동이 주행보다 늦게 끝나도
+     * 겹친 부분만큼만. 칼로리 기록이 운동 밖으로 걸치면 운동 안에 든 비율만 센다.
+     * 겹치는 운동이 없거나 그 운동들에 칼로리 기록이 없으면 null.
      */
     fun calories(
         sessions: List<ExerciseSessionRecord>,
@@ -184,7 +184,7 @@ internal object HealthConnectMapping {
     ): Double? {
         var total = 0.0
         var any = false
-        for (s in bikingOverlapping(sessions, from, to)) {
+        for (s in workoutsOverlapping(sessions, from, to)) {
             val sessionMs = s.endMs - s.startMs
             if (sessionMs <= 0) continue
             var sessionKcal = 0.0

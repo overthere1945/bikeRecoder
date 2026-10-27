@@ -3,7 +3,6 @@ package com.cowork.bikerecoder.post
 import com.cowork.bikerecoder.core.post.CumulativeEntry
 import com.cowork.bikerecoder.core.post.HeartRateSample
 import com.cowork.bikerecoder.core.post.HrRetryPolicy
-import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.post.PlacedPhoto
 import com.cowork.bikerecoder.core.recording.RideSegment
 import kotlinx.coroutines.flow.Flow
@@ -35,8 +34,8 @@ class FakePostStore(private val segments: suspend () -> List<RideSegment>) : Pos
         return segments().filter { s ->
             val endedAt = s.endedAt ?: return@filter false
             val e = extras[s.id] ?: return@filter true
-            !e.photoScanDone || !e.simplifiedDone || e.hrStatus == HrStatus.PENDING ||
-                (e.hrStatus == HrStatus.FAILED && now <= HrRetryPolicy.failedRetryUntil(endedAt, e.hrFirstTriedAt))
+            !e.photoScanDone || !e.simplifiedDone ||
+                HrRetryPolicy.shouldTry(e.hrStatus, e.hrDetailed, endedAt, e.hrFirstTriedAt, now)
         }.sortedWith(compareByDescending<RideSegment> { it.startedAt }.thenByDescending { it.id })
     }
 

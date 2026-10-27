@@ -216,6 +216,112 @@ class PostProcessorTest {
         assertFalse(e.hrDetailed)
     }
 
+    /**
+     * Spec §6.1 (the S25 ride): the first read a minute after the end finds one all-day sample, READY but not detailed.
+     * The watch workout's heart rate arrives later and the next pass reads it.
+     */
+    @Test
+    fun sparseReadyIsReadAgainAndBecomesDetailed() = runTest {
+        val segment = ride()
+        heartRate.reads = { _, _ -> HrRead.Samples(listOf(HeartRateSample(START + 5 * 60_000L, 131)), null) }
+        val p = processor()
+        val firstTry = END + 60_000L
+        now = firstTry
+        p.runOnce()
+        var e = extras(segment)!!
+        assertEquals(HrStatus.READY, e.hrStatus)
+        assertFalse(e.hrDetailed)
+        assertEquals(131, e.avgBpm)
+
+        val workout = (0 until 30).map { HeartRateSample(START + it * 20_000L, 120 + it) }
+        heartRate.reads = { _, _ -> HrRead.Samples(workout, 95.0) }
+        now = END + 2 * 60 * 60_000L
+        p.runOnce()
+
+        assertEquals(2, heartRate.calls.size)
+        e = extras(segment)!!
+        assertEquals(HrStatus.READY, e.hrStatus)
+        assertTrue(e.hrDetailed)
+        assertEquals(135, e.avgBpm) // (120 + … + 149) / 30 = 134.5, rounded
+        assertEquals(149, e.maxBpm)
+        assertEquals(95.0, e.calories)
+        assertEquals(firstTry, e.hrFirstTriedAt)
+        assertEquals(now, e.hrLastTriedAt)
+        assertEquals(workout, store.samples(segment.id))
+
+        // detailed READY is not read again
+        now += 60_000L
+        p.runOnce()
+        assertEquals(2, heartRate.calls.size)
+    }
+
+    @Test
+    fun fewerSamplesNeverReplaceStoredHeartRate() = runTest {
+        val segment = ride()
+        val stored = (0 until 30).map { HeartRateSample(START + it * 20_000L, 120 + it) }
+        heartRate.reads = { _, _ -> HrRead.Samples(stored, 95.0) }
+        val p = processor()
+        now = END + 60_000L
+        p.runOnce()
+        val ready = extras(segment)!!
+        assertTrue(ready.hrDetailed)
+
+        // fewer, then as many: only the read time changes
+        for (count in listOf(5, 30)) {
+            val read = (0 until count).map { HeartRateSample(START + it * 20_000L, 60) }
+            heartRate.reads = { _, _ -> HrRead.Samples(read, 10.0) }
+            now += 60_000L
+            p.refetchHeartRate(segment.id)
+
+            assertEquals(ready.copy(hrLastTriedAt = now), extras(segment))
+            assertEquals(stored, store.samples(segment.id))
+        }
+    }
+
+    @Test
+    fun aPassKeepsSparseHeartRateWhenAReadBringsNoMoreSamples() = runTest {
+        val segment = ride()
+        val sparse = listOf(START, START + 4 * 60_000L, END).map { HeartRateSample(it, 100) }
+        heartRate.reads = { _, _ -> HrRead.Samples(sparse, null) }
+        val p = processor()
+        now = END + 60_000L
+        p.runOnce()
+        val ready = extras(segment)!!
+        assertFalse(ready.hrDetailed)
+
+        for (read in listOf(sparse.take(2), sparse.map { it.copy(bpm = 70) })) {
+            heartRate.reads = { _, _ -> HrRead.Samples(read, 40.0) }
+            now += 60_000L
+            p.runOnce()
+
+            // the pass rescans photos too (within the day)
+            assertEquals(ready.copy(hrLastTriedAt = now, photosScannedAt = now), extras(segment))
+            assertEquals(sparse, store.samples(segment.id))
+        }
+        assertEquals(3, heartRate.calls.size)
+    }
+
+    @Test
+    fun sparseReadyStopsAfterTwentyFourHours() = runTest {
+        val segment = ride()
+        heartRate.reads = { _, _ -> HrRead.Samples(listOf(HeartRateSample(START + 5 * 60_000L, 131)), null) }
+        val p = processor()
+        now = END + 60_000L
+        p.runOnce()
+        assertEquals(1, heartRate.calls.size)
+
+        heartRate.reads = { _, _ -> HrRead.Samples(samples(), null) }
+        now = END + DAY + 60 * 60_000L // the ride's end + 25 h: still listed for its photos, but not read
+        p.runOnce()
+
+        assertEquals(1, heartRate.calls.size)
+        val e = extras(segment)!!
+        assertEquals(HrStatus.READY, e.hrStatus)
+        assertFalse(e.hrDetailed)
+        assertEquals(131, e.avgBpm)
+        assertEquals(emptyList<RideSegment>(), store.segmentsNeedingWork(now))
+    }
+
     @Test
     fun heartRateEmptyAfterLimitIsNone() = runTest {
         val segment = ride()
@@ -397,7 +503,8 @@ class PostProcessorTest {
         p.runOnce()
         assertEquals(HrStatus.READY, extras(segment)!!.hrStatus)
 
-        val newer = samples { 150 }
+        // more samples than stored (spec §6.1: fewer or as many never replace the stored heart rate)
+        val newer = (0 until 20).map { HeartRateSample(START + it * 30_000L, 150) }
         heartRate.reads = { _, _ -> HrRead.Samples(newer, 70.0) }
         now = END + 3 * DAY
 

@@ -63,7 +63,7 @@ class HealthConnectMappingTest {
     }
 
     @Test
-    fun `calories are the overlapping share of each biking session`() {
+    fun `calories are the overlapping share of each workout`() {
         // Session A 0–60 min with 600 kcal, ride 30–90 min → half of A = 300.
         // Session B 80–100 min with 200 kcal → 10 of 20 min overlap = 100.
         val sessions = listOf(session(0, 60 * min), session(80 * min, 100 * min))
@@ -88,16 +88,36 @@ class HealthConnectMappingTest {
     }
 
     @Test
-    fun `no overlapping biking session means no calories`() {
-        val running = session(0, 60 * min, ExerciseSessionRecord.EXERCISE_TYPE_RUNNING)
-        val bikingBefore = session(0, 10 * min)
+    fun `no overlapping workout means no calories`() {
+        val runningBefore = session(0, 10 * min, ExerciseSessionRecord.EXERCISE_TYPE_RUNNING)
+        val bikingAfter = session(50 * min, 60 * min)
         val calories = listOf(kcal(0, 60 * min, 600.0))
 
-        assertNull(HealthConnectMapping.calories(listOf(running, bikingBefore), calories, from = 20 * min, to = 40 * min))
+        assertNull(HealthConnectMapping.calories(listOf(runningBefore, bikingAfter), calories, from = 20 * min, to = 40 * min))
+    }
+
+    /** Spec §6.2: any workout type counts, by its overlapping share (V1.2.0 took biking only). */
+    @Test
+    fun anyWorkoutTypeCounts() {
+        val running = session(0, 60 * min, ExerciseSessionRecord.EXERCISE_TYPE_RUNNING)
+        val calories = listOf(kcal(0, 60 * min, 600.0))
+
+        assertEquals(200.0, HealthConnectMapping.calories(listOf(running), calories, from = 20 * min, to = 40 * min)!!, 1e-9)
+    }
+
+    /** The S25 ride: a 15-minute ride inside a walking workout that ended much later — only the overlap counts. */
+    @Test
+    fun workoutEndingLongAfterRideCountsOnlyOverlap() {
+        val walking = session(0, 75 * min, ExerciseSessionRecord.EXERCISE_TYPE_WALKING)
+        val calories = listOf(kcal(0, 75 * min, 300.0))
+
+        val total = HealthConnectMapping.calories(listOf(walking), calories, from = 0, to = 15 * min)
+
+        assertEquals(60.0, total!!, 1e-9) // 15 of 75 min
     }
 
     @Test
-    fun `biking session without calorie records means no calories`() {
+    fun `workout without calorie records means no calories`() {
         assertNull(HealthConnectMapping.calories(listOf(session(0, 60 * min)), emptyList(), from = 0, to = 60 * min))
     }
 

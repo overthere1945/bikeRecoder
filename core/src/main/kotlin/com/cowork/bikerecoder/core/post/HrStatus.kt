@@ -18,14 +18,18 @@ object HrRetryPolicy {
 
     /**
      * PENDING은 언제나 읽는다(한도를 넘겨 [HrRead.Empty]면 NONE이 되도록 — 업그레이드 뒤 처음 보는 오래된 구간 포함).
-     * FAILED는 [failedRetryUntil](포함) 안일 때만 다시 읽는다. READY·NONE은 읽지 않는다.
+     * FAILED는 [failedRetryUntil](포함) 안일 때만 다시 읽는다. 자세하지 않은 READY([detailed] = false, 평소 심박 몇 개)는
+     * 구간 끝 + [GIVE_UP_MS](포함)까지 다시 읽는다 — 워치 운동의 자세한 심박이 늦게 들어온다(스펙 §6.1).
+     * 자세한 READY·NONE은 읽지 않는다. 저장소의 `segmentsNeedingWork`도 같은 조건을 쓴다.
      * [firstTriedAt]: 처음 실제로 읽은 시각(`hrFirstTriedAt`), 아직 없으면 null.
      */
-    fun shouldTry(status: HrStatus, endedAt: Long, firstTriedAt: Long?, now: Long): Boolean = when (status) {
-        HrStatus.PENDING -> true
-        HrStatus.FAILED -> now <= failedRetryUntil(endedAt, firstTriedAt)
-        HrStatus.READY, HrStatus.NONE -> false
-    }
+    fun shouldTry(status: HrStatus, detailed: Boolean, endedAt: Long, firstTriedAt: Long?, now: Long): Boolean =
+        when (status) {
+            HrStatus.PENDING -> true
+            HrStatus.FAILED -> now <= failedRetryUntil(endedAt, firstTriedAt)
+            HrStatus.READY -> !detailed && now <= endedAt + GIVE_UP_MS
+            HrStatus.NONE -> false
+        }
 
     /**
      * FAILED를 다시 읽는 마지막 시각(판정 R14): max(구간 끝, 처음 읽은 시각) + [GIVE_UP_MS]. 업그레이드 뒤 처음 읽다

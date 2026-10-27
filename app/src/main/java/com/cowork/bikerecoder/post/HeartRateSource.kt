@@ -16,7 +16,7 @@ interface HeartRateSource {
     val permissions: Set<String>
 
     /**
-     * [from, to] 의 심박 샘플(시간순)과 겹치는 자전거 운동의 칼로리.
+     * [from, to] 의 심박 샘플(시간순)과 겹치는 운동(종류와 관계없이)의 칼로리.
      * 샘플이 없으면 [HrRead.Empty](빈 [HrRead.Samples]는 돌려주지 않는다),
      * Health Connect 없음·권한 없음·오류는 [HrRead.Failed].
      */

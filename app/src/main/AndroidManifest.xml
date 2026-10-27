@@ -21,7 +21,7 @@
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
-    <!-- Health Connect: 워치 심박·자전거 운동·총 칼로리 읽기. -->
+    <!-- Health Connect: 워치 심박·운동·총 칼로리 읽기. -->
     <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
     <uses-permission android:name="android.permission.health.READ_EXERCISE" />
     <uses-permission android:name="android.permission.health.READ_TOTAL_CALORIES_BURNED" />

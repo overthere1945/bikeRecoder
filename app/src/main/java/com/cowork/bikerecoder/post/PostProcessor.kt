@@ -104,8 +104,9 @@ class PostProcessor(
     }
 
     /**
-     * [다시 가져오기]: 재시도 한도와 상관없이 지금 그 구간의 심박을 읽는다. 샘플이 있으면 저장된 심박을 덮어쓴다.
-     * 이미 READY인 구간은 읽기가 실패하거나 비어도 저장된 심박을 지우지 않는다(판정 R7). 열린 구간·없는 구간은 그대로 둔다.
+     * [다시 가져오기]: 재시도 한도와 상관없이 지금 그 구간의 심박을 읽는다. 샘플이 있으면 저장된 심박을 덮어쓴다 — 이미
+     * READY인 구간은 저장된 것보다 샘플이 많을 때만(스펙 §6.1). READY인 구간은 읽기가 실패하거나 비어도 저장된 심박을
+     * 지우지 않는다(판정 R7). 열린 구간·없는 구간은 그대로 둔다.
      */
     suspend fun refetchHeartRate(segmentId: Long) {
         try {
@@ -185,7 +186,8 @@ class PostProcessor(
                 }
             }
         }
-        if (HrRetryPolicy.shouldTry(extras.hrStatus, endedAt, extras.hrFirstTriedAt, now) && canReadHeartRate()) {
+        val tryHeartRate = HrRetryPolicy.shouldTry(extras.hrStatus, extras.hrDetailed, endedAt, extras.hrFirstTriedAt, now)
+        if (tryHeartRate && canReadHeartRate()) {
             step("Heart rate read", segment) { saveHeartRate(segment, endedAt, now, readSource(segment, endedAt)) }
         }
         if (!extras.simplifiedDone) {
@@ -271,6 +273,9 @@ class PostProcessor(
      * [read]를 저장한다. null은 읽을 수 없었다는 뜻([다시 가져오기]에서만): 상태는 그대로 두고 hrLastTriedAt만 —
      * 판정 R8. 권한을 나중에 주면 오래된 PENDING 구간도 그때 READY·NONE이 된다. FAILED는 쓸 수 있고 허용된 출처의
      * 실제 읽기 실패뿐.
+     *
+     * READY인 구간(자세하지 않아 다시 읽은 것, 또는 [다시 가져오기])은 새 샘플이 저장된 샘플보다 많을 때만 덮어쓴다
+     * (스펙 §6.1). 같거나 적거나, 실패하거나 비면 저장된 심박을 지키고 hrLastTriedAt만 바꾼다(판정 R7).
      */
     private suspend fun saveHeartRate(segment: RideSegment, endedAt: Long, now: Long, read: HrRead?) {
         // Not cancellable once begun: new samples are never left stored under the old summary and state.
@@ -279,6 +284,8 @@ class PostProcessor(
                 val current = store.extras(segment.id) ?: SegmentExtras(segment.id)
                 val next = when {
                     read == null -> current.copy(hrLastTriedAt = now)
+                    read is HrRead.Samples && current.hrStatus == HrStatus.READY &&
+                        read.samples.size <= store.samples(segment.id).size -> current.tried(now)
                     read is HrRead.Samples -> {
                         store.replaceSamples(segment.id, read.samples)
                         val stats = HeartRateSummary.of(read.samples, segment.totals.movingTimeMs)
@@ -290,7 +297,7 @@ class PostProcessor(
                             calories = read.calories,
                         )
                     }
-                    // keep heart rate already read (R7; only [refetchHeartRate] reads a READY segment)
+                    // keep heart rate already read (R7)
                     current.hrStatus == HrStatus.READY -> current.tried(now)
                     else -> current.tried(now).copy(hrStatus = HrRetryPolicy.after(read, endedAt, now))
                 }
