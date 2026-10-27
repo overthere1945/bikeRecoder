@@ -66,12 +66,12 @@ class HeartRateRowTest {
     fun heartRateThatIsNotDetailedSaysHowToGetMore() {
         extras = extras(HrStatus.READY, detailed = false)
         row()
-        composeRule.onNodeWithText("워치에서 자전거 운동을 시작하면 자세한 심박이 기록됩니다").assertIsDisplayed()
+        composeRule.onNodeWithText("워치에서 운동을 시작하면 자세한 심박이 기록됩니다").assertIsDisplayed()
 
         extras = extras(HrStatus.READY, detailed = true)
-        composeRule.onNodeWithText("워치에서 자전거 운동을 시작하면 자세한 심박이 기록됩니다").assertDoesNotExist()
+        composeRule.onNodeWithText("워치에서 운동을 시작하면 자세한 심박이 기록됩니다").assertDoesNotExist()
         extras = extras(HrStatus.NONE, detailed = false)
-        composeRule.onNodeWithText("워치에서 자전거 운동을 시작하면 자세한 심박이 기록됩니다").assertDoesNotExist()
+        composeRule.onNodeWithText("워치에서 운동을 시작하면 자세한 심박이 기록됩니다").assertDoesNotExist()
     }
 
     @Test

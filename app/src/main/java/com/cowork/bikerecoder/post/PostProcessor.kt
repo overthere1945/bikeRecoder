@@ -276,6 +276,8 @@ class PostProcessor(
      *
      * READY인 구간(자세하지 않아 다시 읽은 것, 또는 [다시 가져오기])은 새 샘플이 저장된 샘플보다 많을 때만 덮어쓴다
      * (스펙 §6.1). 같거나 적거나, 실패하거나 비면 저장된 심박을 지키고 hrLastTriedAt만 바꾼다(판정 R7).
+     * 칼로리는 심박 샘플과 다른 기록에서 오므로 따로 합친다(판정 R17): 샘플을 지킬 때는 저장된 칼로리가 없으면 새 값으로
+     * 채우고, 덮어쓸 때는 새 읽기에 칼로리가 없으면 저장된 값을 지킨다 — 이미 있는 칼로리를 지우지 않는다.
      */
     private suspend fun saveHeartRate(segment: RideSegment, endedAt: Long, now: Long, read: HrRead?) {
         // Not cancellable once begun: new samples are never left stored under the old summary and state.
@@ -285,7 +287,8 @@ class PostProcessor(
                 val next = when {
                     read == null -> current.copy(hrLastTriedAt = now)
                     read is HrRead.Samples && current.hrStatus == HrStatus.READY &&
-                        read.samples.size <= store.samples(segment.id).size -> current.tried(now)
+                        read.samples.size <= store.samples(segment.id).size ->
+                        current.tried(now).copy(calories = current.calories ?: read.calories)
                     read is HrRead.Samples -> {
                         store.replaceSamples(segment.id, read.samples)
                         val stats = HeartRateSummary.of(read.samples, segment.totals.movingTimeMs)
@@ -294,7 +297,7 @@ class PostProcessor(
                             hrDetailed = stats?.detailed ?: false,
                             avgBpm = stats?.avgBpm,
                             maxBpm = stats?.maxBpm,
-                            calories = read.calories,
+                            calories = read.calories ?: current.calories,
                         )
                     }
                     // keep heart rate already read (R7)

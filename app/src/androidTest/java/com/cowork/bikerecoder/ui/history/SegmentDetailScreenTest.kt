@@ -104,7 +104,7 @@ class SegmentDetailScreenTest {
         show()
 
         composeRule.onNodeWithText("평균 심박 130 · 최고 165 bpm · 54 kcal").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("워치에서 자전거 운동을 시작하면 자세한 심박이 기록됩니다").assertExists()
+        composeRule.onNodeWithText("워치에서 운동을 시작하면 자세한 심박이 기록됩니다").assertExists()
         composeRule.onNodeWithTag(TrackColorTags.HEART_RATE).assertDoesNotExist()
         composeRule.onNodeWithTag(TrackColorTags.DEFAULT).assertDoesNotExist()
         assertEquals(null, content?.trackColors)

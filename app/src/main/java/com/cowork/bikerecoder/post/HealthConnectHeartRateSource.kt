@@ -174,6 +174,8 @@ internal object HealthConnectMapping {
     /**
      * 겹치는 운동마다 (운동 안의 총 칼로리) × (구간과 겹친 시간 / 운동 시간)을 더한다 — 운동이 주행보다 늦게 끝나도
      * 겹친 부분만큼만. 칼로리 기록이 운동 밖으로 걸치면 운동 안에 든 비율만 센다.
+     * 같은 시간에 기록된 운동들은 두 번 세지 않는다(판정 R18): 먼저 시작한 운동부터, 각 운동은 구간 중 앞선 운동들이
+     * 아직 차지하지 않은 시간만 센다.
      * 겹치는 운동이 없거나 그 운동들에 칼로리 기록이 없으면 null.
      */
     fun calories(
@@ -184,9 +186,16 @@ internal object HealthConnectMapping {
     ): Double? {
         var total = 0.0
         var any = false
-        for (s in workoutsOverlapping(sessions, from, to)) {
+        // Taken in start order, the ride time that earlier workouts cover from a later workout's start on is one
+        // stretch ending at coveredUntil, so that workout counts [max(its start, coveredUntil), min(its end, to)].
+        var coveredUntil = from
+        val ordered = workoutsOverlapping(sessions, from, to).sortedWith(compareBy({ it.startMs }, { -it.endMs }))
+        for (s in ordered) {
             val sessionMs = s.endMs - s.startMs
             if (sessionMs <= 0) continue
+            val countedEnd = minOf(s.endMs, to)
+            val counted = (countedEnd - maxOf(s.startMs, coveredUntil)).coerceAtLeast(0L)
+            coveredUntil = maxOf(coveredUntil, countedEnd)
             var sessionKcal = 0.0
             for (c in calories) {
                 val inside = overlap(c.startMs, c.endMs, s.startMs, s.endMs)
@@ -194,7 +203,7 @@ internal object HealthConnectMapping {
                 any = true
                 sessionKcal += c.energy.inKilocalories * inside / (c.endMs - c.startMs)
             }
-            total += sessionKcal * overlap(s.startMs, s.endMs, from, to) / sessionMs
+            total += sessionKcal * counted / sessionMs
         }
         return if (any) total else null
     }

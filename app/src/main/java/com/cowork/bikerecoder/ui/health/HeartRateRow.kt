@@ -19,7 +19,7 @@ const val HR_PENDING = "심박 가져오는 중"
 const val HR_NONE = "심박 기록 없음"
 const val HR_FAILED = "심박을 가져오지 못했습니다"
 const val HR_REFETCH = "다시 가져오기"
-const val HR_NOT_DETAILED = "워치에서 자전거 운동을 시작하면 자세한 심박이 기록됩니다"
+const val HR_NOT_DETAILED = "워치에서 운동을 시작하면 자세한 심박이 기록됩니다"
 
 /**
  * A segment's heart rate (spec §3.2, §3.3) for its [extras] (null = not known yet, read as PENDING): the numbers

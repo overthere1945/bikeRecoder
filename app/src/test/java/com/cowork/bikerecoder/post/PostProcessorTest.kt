@@ -294,11 +294,106 @@ class PostProcessorTest {
             now += 60_000L
             p.runOnce()
 
-            // the pass rescans photos too (within the day)
-            assertEquals(ready.copy(hrLastTriedAt = now, photosScannedAt = now), extras(segment))
+            // the pass rescans photos too (within the day); R17: calories missing so far are filled in
+            assertEquals(ready.copy(hrLastTriedAt = now, photosScannedAt = now, calories = 40.0), extras(segment))
             assertEquals(sparse, store.samples(segment.id))
         }
         assertEquals(3, heartRate.calls.size)
+    }
+
+    /** Review minor 2: a pass that re-reads a sparse READY and fails or finds nothing keeps it (R7), never FAILED. */
+    @Test
+    fun aPassKeepsSparseHeartRateOnFailedOrEmpty() = runTest {
+        val segment = ride()
+        val sparse = listOf(HeartRateSample(START + 5 * 60_000L, 131))
+        heartRate.reads = { _, _ -> HrRead.Samples(sparse, 20.0) }
+        val p = processor()
+        now = END + 60_000L
+        p.runOnce()
+        val ready = extras(segment)!!
+        assertFalse(ready.hrDetailed)
+
+        for (read in listOf(HrRead.Failed, HrRead.Empty, HrRead.Failed)) {
+            heartRate.reads = { _, _ -> read }
+            now += 60 * 60_000L
+            p.runOnce()
+
+            assertEquals(ready.copy(hrLastTriedAt = now, photosScannedAt = now), extras(segment), "after $read")
+            assertEquals(sparse, store.samples(segment.id))
+        }
+        assertEquals(4, heartRate.calls.size, "still READY and sparse: read on every pass of the day")
+    }
+
+    /** R17: a READY re-read that keeps the samples still fills calories that were missing. */
+    @Test
+    fun aKeptReadFillsMissingCaloriesButNeverChangesStoredOnes() = runTest {
+        val segment = ride()
+        val sparse = listOf(HeartRateSample(START + 5 * 60_000L, 131))
+        heartRate.reads = { _, _ -> HrRead.Samples(sparse, null) }
+        val p = processor()
+        now = END + 60_000L
+        p.runOnce()
+        assertNull(extras(segment)!!.calories)
+
+        heartRate.reads = { _, _ -> HrRead.Samples(sparse, 42.0) }
+        now += 60_000L
+        p.runOnce()
+        assertEquals(42.0, extras(segment)!!.calories)
+        assertEquals(131, extras(segment)!!.avgBpm)
+        assertEquals(sparse, store.samples(segment.id))
+
+        // stored calories are not replaced by a read that keeps the samples
+        heartRate.reads = { _, _ -> HrRead.Samples(sparse, 99.0) }
+        now += 60_000L
+        p.runOnce()
+        assertEquals(42.0, extras(segment)!!.calories)
+    }
+
+    /** R17: replacing the samples keeps the stored calories when the new read has none (e.g. calorie access withdrawn). */
+    @Test
+    fun replacedSamplesKeepStoredCaloriesWhenTheReadHasNone() = runTest {
+        val segment = ride()
+        heartRate.reads = { _, _ -> HrRead.Samples(listOf(HeartRateSample(START + 5 * 60_000L, 131)), 50.0) }
+        val p = processor()
+        now = END + 60_000L
+        p.runOnce()
+
+        val workout = (0 until 30).map { HeartRateSample(START + it * 20_000L, 120 + it) }
+        heartRate.reads = { _, _ -> HrRead.Samples(workout, null) }
+        now += 60_000L
+        p.runOnce()
+
+        val e = extras(segment)!!
+        assertTrue(e.hrDetailed)
+        assertEquals(135, e.avgBpm)
+        assertEquals(50.0, e.calories)
+        assertEquals(workout, store.samples(segment.id))
+
+        // a replacing read with calories uses them
+        val more = (0 until 40).map { HeartRateSample(START + it * 15_000L, 130) }
+        heartRate.reads = { _, _ -> HrRead.Samples(more, 77.0) }
+        p.refetchHeartRate(segment.id)
+        assertEquals(77.0, extras(segment)!!.calories)
+    }
+
+    /** R17 (review important 1): [다시 가져오기] with as many samples still brings in calories that arrived later. */
+    @Test
+    fun manualRefetchFillsCaloriesWhenSamplesAreEqual() = runTest {
+        val segment = ride()
+        heartRate.reads = { _, _ -> HrRead.Samples(samples(), null) }
+        val p = processor()
+        now = END + 60_000L
+        p.runOnce()
+        val ready = extras(segment)!!
+        assertTrue(ready.hrDetailed)
+        assertNull(ready.calories)
+
+        heartRate.reads = { _, _ -> HrRead.Samples(samples { 150 }, 70.0) }
+        now = END + 3 * DAY
+        p.refetchHeartRate(segment.id)
+
+        assertEquals(ready.copy(hrLastTriedAt = now, calories = 70.0), extras(segment))
+        assertEquals(samples(), store.samples(segment.id))
     }
 
     @Test

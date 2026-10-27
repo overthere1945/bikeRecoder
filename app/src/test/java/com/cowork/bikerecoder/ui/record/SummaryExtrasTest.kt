@@ -152,7 +152,7 @@ class SummaryExtrasTest {
         advanceTimeBy(2 * MINUTE + 1)
         assertEquals(2, refetches(), "sparse READY: still read")
         assertEquals(100, extras.state.value.heartRate?.avgBpm, "one sample does not replace two")
-        assertEquals(null, extras.state.value.heartRate?.calories)
+        assertEquals(30.0, extras.state.value.heartRate?.calories, "R17: calories missing so far are filled in")
         assertEquals(sparse, store.samples(id))
     }
 

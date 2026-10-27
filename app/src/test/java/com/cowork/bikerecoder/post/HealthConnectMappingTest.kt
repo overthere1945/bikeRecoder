@@ -105,6 +105,28 @@ class HealthConnectMappingTest {
         assertEquals(200.0, HealthConnectMapping.calories(listOf(running), calories, from = 20 * min, to = 40 * min)!!, 1e-9)
     }
 
+    /** R18: workouts recorded at the same time count the ride's time once (the earlier-starting one first). */
+    @Test
+    fun overlappingWorkoutsAreNotCountedTwice() {
+        val a = session(0, 60 * min, ExerciseSessionRecord.EXERCISE_TYPE_WALKING)
+        val b = session(10 * min, 50 * min)
+        val calories = listOf(kcal(0, 60 * min, 600.0)) // A holds 600, B holds 400 of it
+
+        assertEquals(600.0, HealthConnectMapping.calories(listOf(b, a), calories, from = 0, to = 60 * min)!!, 1e-9)
+    }
+
+    /** R18: a later-starting workout counts only the ride time the earlier one left uncovered. */
+    @Test
+    fun aLaterWorkoutCountsOnlyTheRideTimeLeftUncovered() {
+        // ride 0–60; A 0–30 (300 kcal), B 20–60 (400 kcal, 10 kcal/min) → A 300 + B's 30–60 part 300 = 600
+        val a = session(0, 30 * min)
+        val b = session(20 * min, 60 * min, ExerciseSessionRecord.EXERCISE_TYPE_RUNNING)
+        val calories = listOf(kcal(0, 30 * min, 300.0), kcal(30 * min, 60 * min, 300.0))
+        // B holds 100 of the first record (20–30) and all 300 of the second → 400 kcal over 40 min
+
+        assertEquals(600.0, HealthConnectMapping.calories(listOf(a, b), calories, from = 0, to = 60 * min)!!, 1e-9)
+    }
+
     /** The S25 ride: a 15-minute ride inside a walking workout that ended much later — only the overlap counts. */
     @Test
     fun workoutEndingLongAfterRideCountsOnlyOverlap() {
