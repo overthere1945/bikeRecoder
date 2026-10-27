@@ -36,7 +36,15 @@ class SummaryImageRenderer(private val context: Context, private val tileSource:
 
         drawMap(canvas, inputs, layout.map, unit)
         drawHeader(canvas, inputs, layout.header, unit)
-        stats(inputs).zip(layout.stats).forEach { (stat, box) -> drawStat(canvas, stat, box, unit) }
+        val stats = stats(inputs)
+        // One value size for all six cells: the largest that fits every one of them.
+        val value = text(unit, 20f, DARK, bold = true, align = Paint.Align.LEFT)
+        stats.zip(layout.stats).forEach { (stat, box) ->
+            val room = box.w - 20 * unit
+            val wide = value.measureText(stat.second)
+            if (wide > room) value.textSize *= room / wide
+        }
+        stats.zip(layout.stats).forEach { (stat, box) -> drawStat(canvas, stat, box, unit, value) }
         shown.zip(layout.photos).forEach { (photo, box) -> drawPhoto(canvas, MapSnapshots.software(photo), box, unit) }
         val footer = layout.footer
         canvas.drawText(BRAND, footer.x + footer.w / 2, footer.y + footer.h * 0.7f, text(unit, 14f, GREY, bold = true))
@@ -51,7 +59,12 @@ class SummaryImageRenderer(private val context: Context, private val tileSource:
         val camera = CameraPath.overview(points.map { it.point }, w, h)
         val colors = inputs.segmentColors.map(Color::parseColor)
         val overlay = RouteOverlay(timeline, IntArray(points.size) { colors.getOrElse(points[it].segmentIndex) { colors.last() } })
-        val shot = MapSnapshots(context, tileSource, w, h).take(camera)
+        val maps = MapSnapshots(context, tileSource, w, h)
+        val shot = try {
+            maps.take(camera)
+        } finally {
+            maps.close()
+        }
         val extras = listOf(points.first().point, points.last().point) + inputs.photos.map { timeline.at(it.moveMs).point }
         val projected = overlay.project(shot, camera, extras)
 
@@ -78,28 +91,10 @@ class SummaryImageRenderer(private val context: Context, private val tileSource:
         canvas.drawText(inputs.badge, box.x, box.y + box.h * 0.85f, text(unit, 14f, GREY, align = Paint.Align.LEFT))
     }
 
-    /** Distance, moving time, average speed / top speed, ascent, average heart rate or "주행 N회" (spec §4 ③). */
-    private fun stats(inputs: VideoInputs): List<Pair<String, String>> {
-        val t = inputs.totals
-        return listOf(
-            "거리" to RideFormat.distance(t.distanceM),
-            "이동 시간" to RideFormat.duration(t.movingTimeMs),
-            "평균 속도" to "${RideFormat.speedKmh(t.avgSpeedMps)}km/h",
-            "최고 속도" to "${RideFormat.speedKmh(t.maxSpeedMps)}km/h",
-            "상승 고도" to RideFormat.altitude(t.ascentM),
-            t.avgBpm?.let { "평균 심박" to "${it}bpm" } ?: ("주행" to "${inputs.segmentColors.size}회"),
-        )
-    }
-
-    private fun drawStat(canvas: Canvas, stat: Pair<String, String>, box: Box, unit: Float) {
+    private fun drawStat(canvas: Canvas, stat: Pair<String, String>, box: Box, unit: Float, value: Paint) {
         canvas.drawRoundRect(RectF(box.x, box.y, box.x + box.w, box.y + box.h), 10 * unit, 10 * unit, fill(CELL))
         val x = box.x + 10 * unit
         canvas.drawText(stat.first, x, box.y + 18 * unit, text(unit, 11f, GREY, align = Paint.Align.LEFT))
-        val value = text(unit, 20f, DARK, bold = true, align = Paint.Align.LEFT)
-        // A long value ("12시간 30분" in a narrow landscape cell) is shrunk to fit.
-        val room = box.w - 20 * unit
-        val wide = value.measureText(stat.second)
-        if (wide > room) value.textSize *= room / wide
         canvas.drawText(stat.second, x, box.y + 40 * unit, value)
     }
 
@@ -138,11 +133,28 @@ class SummaryImageRenderer(private val context: Context, private val tileSource:
         strokeWidth = width
     }
 
-    private companion object {
-        const val BRAND = "bikeRecoder"
-        val DARK = Color.rgb(33, 33, 33)
-        val GREY = Color.rgb(117, 117, 117)
-        val CELL = Color.rgb(245, 245, 245)
-        val START_COLOR = Color.rgb(67, 160, 71)
+    companion object {
+        /**
+         * Distance, moving time, average speed / top speed, ascent, and the average heart rate or "주행 N회" (spec §4 ③),
+         * N = the target segments (the timeline's segments are numbered 0…N−1).
+         */
+        internal fun stats(inputs: VideoInputs): List<Pair<String, String>> {
+            val t = inputs.totals
+            val rides = (inputs.timeline.points.lastOrNull()?.segmentIndex ?: -1) + 1
+            return listOf(
+                "거리" to RideFormat.distance(t.distanceM),
+                "이동 시간" to RideFormat.duration(t.movingTimeMs),
+                "평균 속도" to "${RideFormat.speedKmh(t.avgSpeedMps)}km/h",
+                "최고 속도" to "${RideFormat.speedKmh(t.maxSpeedMps)}km/h",
+                "상승 고도" to RideFormat.altitude(t.ascentM),
+                t.avgBpm?.let { "평균 심박" to "${it}bpm" } ?: ("주행" to "${rides}회"),
+            )
+        }
+
+        private const val BRAND = "bikeRecoder"
+        private const val DARK = 0xFF212121.toInt()
+        private const val GREY = 0xFF757575.toInt()
+        private const val CELL = 0xFFF5F5F5.toInt()
+        private const val START_COLOR = 0xFF43A047.toInt()
     }
 }

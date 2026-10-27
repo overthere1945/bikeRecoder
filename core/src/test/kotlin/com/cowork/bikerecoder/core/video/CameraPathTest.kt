@@ -182,6 +182,39 @@ class CameraPathTest {
     }
 
     @Test
+    fun outroFitsTheRouteAboveTheCard() {
+        val tall = listOf(at(0.0, 0.0), at(20_000.0, -3_000.0), at(8_000.0, 5_000.0), at(-1_000.0, 1_000.0))
+        val wide = listOf(at(0.0, 0.0), at(2_000.0, 30_000.0), at(-3_000.0, 12_000.0))
+        for ((w, h) in listOf(1080 to 1920, 1920 to 1080, 720 to 1280)) for (points in listOf(tall, wide)) {
+            val cardTop = OutroCardLayout.card(w, h, 7).y
+            val cam = CameraPath.outro(points, w, h, cardTop)
+            assertEquals(0.0, cam.tilt)
+            assertEquals(0.0, cam.bearing)
+            // Zoom fitted to the box above the card, the route centred in that box (10 % margins inside it).
+            assertEquals(CameraPath.overview(points, w, cardTop.toInt()).zoom, cam.zoom, 1e-9)
+            val world = 512.0 * 2.0.pow(cam.zoom)
+            val xs = points.map { (mercX(it.lon) - mercX(cam.center.lon)) * world + w / 2.0 }
+            val ys = points.map { (mercY(it.lat) - mercY(cam.center.lat)) * world + h / 2.0 }
+            val eps = 1e-6
+            xs.forEach { assertTrue(it >= 0.1 * w - eps && it <= 0.9 * w + eps, "${w}x$h x $it") }
+            ys.forEach { assertTrue(it >= 0.1 * cardTop - 1 && it <= 0.9 * cardTop + 1, "${w}x$h y $it above $cardTop") }
+        }
+    }
+
+    @Test
+    fun outroCameraIsUsedForTheOutroOnly() {
+        val timeline = lPath()
+        val plans = VideoTimeline.plan(timeline, emptyList(), VideoOptions(length = VideoLength.SHORT), emptyList())
+        val points = timeline.points.map { it.point }
+        val overview = CameraPath.overview(points, Aspect.PORTRAIT)
+        val outro = CameraPath.outro(points, 1080, 1920, OutroCardLayout.card(1080, 1920, 7).y)
+        val cameras = CameraPath.cameras(plans, timeline, overview, outro)
+
+        plans.filter { it.kind == SceneKind.OUTRO }.forEach { assertEquals(outro, cameras[it.index]) }
+        plans.filter { it.kind == SceneKind.INTRO_OVERVIEW }.forEach { assertEquals(overview, cameras[it.index]) }
+    }
+
+    @Test
     fun bearingTurnsShortWayAcrossNorth() {
         // 350°로 300 m 뒤 10°로 300 m: 0/360을 지나 20°만 돈다.
         val first = listOf(0.0 to 0.0) + walk(0.0 to 0.0, 350.0, 60)

@@ -9,6 +9,7 @@ import kotlin.math.cos
 import kotlin.math.ln
 import kotlin.math.log2
 import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sinh
 import kotlin.math.tan
@@ -39,9 +40,9 @@ object CameraPath {
     /**
      * [plans]와 같은 길이. INTRO_OVERVIEW·OUTRO = [overview], INTRO_DESCENT = overview → 첫 주행 카메라를 부드럽게(smoothstep) 보간,
      * RIDE = 그 이동 시각의 위치에서 경로를 따라 150 m 앞을 보는 방향을 평활·초당 60° 상한으로 따라감(첫 주행 프레임은 바로 그 방향),
-     * PHOTO = 바로 앞 프레임 카메라 그대로.
+     * PHOTO = 바로 앞 프레임 카메라 그대로. [outro]를 주면 OUTRO는 그 카메라(요약 카드 위에 경로를 맞춘 [outro] 함수의 결과).
      */
-    fun cameras(plans: List<FramePlan>, timeline: RideTimeline, overview: Camera): List<Camera> {
+    fun cameras(plans: List<FramePlan>, timeline: RideTimeline, overview: Camera, outro: Camera = overview): List<Camera> {
         val route = timeline.routeDistance
         val segmentEnd = segmentEnds(timeline)
         val maxStep = MAX_TURN_DEG_PER_S / FPS
@@ -61,7 +62,8 @@ object CameraPath {
         var bearing: Double? = null
         for (plan in plans) {
             out += when (plan.kind) {
-                SceneKind.INTRO_OVERVIEW, SceneKind.OUTRO -> overview
+                SceneKind.INTRO_OVERVIEW -> overview
+                SceneKind.OUTRO -> outro
                 SceneKind.INTRO_DESCENT -> interpolate(overview, firstRide, smoothstep(plan.sceneProgress.toDouble()))
                 SceneKind.PHOTO -> out.lastOrNull() ?: overview
                 SceneKind.RIDE -> {
@@ -97,6 +99,20 @@ object CameraPath {
         val zoom = min(min(fit(spanX, widthPx), fit(spanY, heightPx)), ZOOM).coerceAtLeast(0.0)
         val center = GeoPoint(latitudeOf((ys.max() + ys.min()) / 2), longitudeOf((xs.max() + xs.min()) / 2))
         return Camera(center, zoom, bearing = 0.0, tilt = 0.0)
+    }
+
+    /**
+     * 끝 장면 카메라: [widthPx]×[heightPx] 화면에서 요약 카드 위쪽 칸(0 ~ [cardTopPx])에 전체 경로가 [overview]처럼
+     * 각 변 10% 여백을 두고 들어오게 한다. 확대는 그 칸 크기로 맞추고, 중심은 카드 높이만큼(픽셀 → 메르카토르) 남쪽으로
+     * 옮겨 경로가 칸 가운데 오게 한다. 기울기 0, 북쪽 위.
+     */
+    fun outro(points: List<GeoPoint>, widthPx: Int, heightPx: Int, cardTopPx: Float): Camera {
+        val boxHeight = cardTopPx.toInt().coerceIn(1, heightPx)
+        val fitted = overview(points, widthPx, boxHeight)
+        val world = TILE_SIZE * 2.0.pow(fitted.zoom)
+        val shiftPx = (heightPx - boxHeight) / 2.0
+        val center = GeoPoint(latitudeOf(mercatorY(fitted.center.lat) + shiftPx / world), fitted.center.lon)
+        return fitted.copy(center = center)
     }
 
     /** 지점마다 그 지점이 속한 구간의 마지막 지점 인덱스(앞을 볼 때 다음 구간으로 건너가지 않는다). */

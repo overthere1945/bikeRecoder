@@ -7,6 +7,7 @@ import android.graphics.Color
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.cowork.bikerecoder.core.post.RideColors
+import com.cowork.bikerecoder.core.video.Aspect
 import com.cowork.bikerecoder.core.video.CameraPath
 import com.cowork.bikerecoder.core.video.FramePlan
 import com.cowork.bikerecoder.core.video.SceneKind
@@ -15,6 +16,9 @@ import com.cowork.bikerecoder.core.video.VideoOptions
 import com.cowork.bikerecoder.core.video.VideoTimeline
 import com.cowork.bikerecoder.map.OpenFreeMapSource
 import com.cowork.bikerecoder.map.TileSource
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import org.junit.After
@@ -45,9 +49,13 @@ class FrameRendererTest {
     @After
     fun tearDown() = renderers.forEach { it.close() }
 
-    private fun renderer(opts: VideoOptions = options, source: TileSource = tiles) =
-        FrameRenderer(context, source, inputs, opts, W, H) { id -> if (id == 1L) VideoTestTrip.photo() else null }
-            .also { renderers += it }
+    private fun renderer(
+        opts: VideoOptions = options,
+        source: TileSource = tiles,
+        width: Int = W,
+        height: Int = H,
+        loadPhoto: suspend (Long) -> Bitmap? = { id -> if (id == 1L) VideoTestTrip.photo() else null },
+    ) = FrameRenderer(context, source, inputs, opts, width, height, loadPhoto).also { renderers += it }
 
     private fun FrameRenderer.frame(plan: FramePlan): Bitmap = runBlocking {
         Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888).also { render(plan, cameras[plan.index], Canvas(it)) }
@@ -99,6 +107,74 @@ class FrameRendererTest {
         // 80 % of the width: the photo spans x ≈ 108..972 (its own dark frame is about 43 px wide), and no further.
         assertTrue("inside the card", VideoTestTrip.near(frame.getPixel(W / 2 - 380, H / 2), VideoTestTrip.PHOTO_COLOR, 30))
         assertTrue("outside the card", !VideoTestTrip.near(frame.getPixel(W / 2 - 480, H / 2), VideoTestTrip.PHOTO_COLOR, 60))
+    }
+
+    /** The OUTRO frame in the middle of the scene (card fully in, no fade) at [width]×[height], with the outro camera. */
+    private fun outroFrame(width: Int, height: Int): Bitmap {
+        val aspect = if (width > height) Aspect.LANDSCAPE else Aspect.PORTRAIT
+        val opts = options.copy(aspect = aspect)
+        val plans = VideoTimeline.plan(inputs.timeline, inputs.photos, opts, inputs.dayStarts)
+        val points = inputs.timeline.points.map { it.point }
+        val cameras = CameraPath.cameras(
+            plans, inputs.timeline, CameraPath.overview(points, width, height), FrameRenderer.outroCamera(inputs, width, height),
+        )
+        val plan = plans.filter { it.kind == SceneKind.OUTRO }.minBy { abs(it.sceneProgress - 0.5f) }
+        assertEquals(0f, plan.fade)
+        return runBlocking {
+            Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                .also { renderer(opts, width = width, height = height).render(plan, cameras[plan.index], Canvas(it)) }
+        }
+    }
+
+    private fun assertWholeRouteAboveTheCard(width: Int, height: Int) {
+        val frame = outroFrame(width, height)
+        val card = FrameRenderer.outroCard(inputs, width, height)
+        val done = Color.parseColor(RideColors.colorAt(0))
+        val above = VideoTestTrip.count(frame, 0, 0, width, card.y.toInt()) { VideoTestTrip.near(it, done) }
+        val inside = VideoTestTrip.count(
+            frame, card.x.toInt(), card.y.toInt(), (card.x + card.w).toInt(), (card.y + card.h).toInt(),
+        ) { VideoTestTrip.near(it, done) }
+        assertTrue("${width}x$height route above the card: $above", above > 1_000)
+        assertEquals("${width}x$height route under the card", 0, inside)
+    }
+
+    @Test
+    fun outroCardLeavesTheWholeRouteAboveItPortrait() = assertWholeRouteAboveTheCard(W, H)
+
+    @Test
+    fun outroCardLeavesTheWholeRouteAboveItLandscape() = assertWholeRouteAboveTheCard(H, W)
+
+    @Test
+    fun cancellingARenderFromAnotherThreadIsSafe() {
+        val renderer = renderer()
+        val rides = plans.filter { it.kind == SceneKind.RIDE }
+        renderer.frame(rides.first()) // the style and the snapshotter are ready
+        // Cancel while a snapshot is under way, from this (instrumentation) thread: MapLibre must only be touched on Main.
+        for (k in 1..3) {
+            val plan = rides[rides.size * k / 4]
+            val job = CoroutineScope(Dispatchers.Default).launch {
+                renderer.render(plan, cameras[plan.index], Canvas(Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)))
+            }
+            Thread.sleep(80)
+            job.cancel()
+            runBlocking { job.join() }
+        }
+        // Still usable afterwards.
+        val frame = renderer.frame(planOf(SceneKind.RIDE, 0.25f))
+        val done = Color.parseColor(RideColors.colorAt(0))
+        assertTrue(VideoTestTrip.count(frame, W / 2 - 100, H / 2 + 40, W / 2 + 100, H / 2 + 240) { VideoTestTrip.near(it, done) } > 300)
+    }
+
+    @Test
+    fun unreadablePhotoShowsTheMapOnly() {
+        val photo = planOf(SceneKind.PHOTO, 0.5f)
+        for (loader in listOf<suspend (Long) -> Bitmap?>({ null }, { throw IOException("gone") })) {
+            val frame = renderer(loadPhoto = loader).frame(photo)
+            val centre = VideoTestTrip.count(frame, W / 2 - 100, H / 2 - 100, W / 2 + 100, H / 2 + 100) {
+                VideoTestTrip.near(it, VideoTestTrip.PHOTO_COLOR, 40)
+            }
+            assertEquals(0, centre)
+        }
     }
 
     @Test

@@ -7,18 +7,24 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
+import com.cowork.bikerecoder.WarnLog
+import com.cowork.bikerecoder.androidWarnLog
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.post.HeartRateColor
 import com.cowork.bikerecoder.core.recording.TrackPoint
+import com.cowork.bikerecoder.core.video.Box
 import com.cowork.bikerecoder.core.video.Camera
+import com.cowork.bikerecoder.core.video.CameraPath
 import com.cowork.bikerecoder.core.video.FramePlan
 import com.cowork.bikerecoder.core.video.Hud
+import com.cowork.bikerecoder.core.video.OutroCardLayout
 import com.cowork.bikerecoder.core.video.HudValues
 import com.cowork.bikerecoder.core.video.RouteColoring
 import com.cowork.bikerecoder.core.video.SceneKind
 import com.cowork.bikerecoder.core.video.VideoOptions
 import com.cowork.bikerecoder.core.video.VideoTimeline
 import com.cowork.bikerecoder.map.TileSource
+import kotlinx.coroutines.CancellationException
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -31,8 +37,8 @@ import kotlin.math.roundToInt
  * Canvas the route (ridden / still ahead), the current point, the number band ([VideoOptions.hud]), the photo card,
  * the day caption, the opening title, the closing summary card with "bikeRecoder", and the fade to black.
  *
- * A plan with [FramePlan.reuseMap] draws over the previous snapshot (when its camera is the same). Photos come from [loadPhoto] (null = unreadable,
- * the photo scene then shows the map alone); a hardware bitmap is copied to software (ruling V7). Frames are drawn one
+ * A plan with [FramePlan.reuseMap] draws over the previous snapshot (when its camera is the same). Photos come from [loadPhoto] (null or
+ * an exception = unreadable, the photo scene then shows the map alone); a hardware bitmap is copied to software (ruling V7). Frames are drawn one
  * at a time, in order; [close] when done.
  */
 class FrameRenderer(
@@ -44,6 +50,8 @@ class FrameRenderer(
     private val height: Int,
     private val loadPhoto: suspend (mediaId: Long) -> Bitmap?,
 ) : AutoCloseable {
+
+    private val log: WarnLog = androidWarnLog("FrameRenderer")
 
     private val maps = MapSnapshots(context, tileSource, width, height)
     private val attribution = tileSource.attribution
@@ -104,6 +112,7 @@ class FrameRenderer(
     }
 
     override fun close() {
+        maps.close()
         shot?.bitmap?.recycle()
         shot = null
         projected = null
@@ -126,7 +135,14 @@ class FrameRenderer(
     private suspend fun photoOf(mediaId: Long): Bitmap? {
         if (photoId == mediaId) return photo
         // Not recycled: the loader may hand out a bitmap it keeps (a cache).
-        photo = loadPhoto(mediaId)?.let(MapSnapshots::software)
+        photo = try {
+            loadPhoto(mediaId)?.let(MapSnapshots::software)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn("Could not read photo $mediaId; showing the map only", e)
+            null
+        }
         photoId = mediaId
         return photo
     }
@@ -243,15 +259,51 @@ class FrameRenderer(
     }
 
     /**
-     * The closing card (spec §2.4): total distance, moving time, average / top speed, ascent, and the average heart rate
-     * and calories when known, "bikeRecoder" small below. It sits low (two columns upright, four lying) so the whole
-     * route above it stays in view, and fades in over the first half second.
+     * The closing card (spec §2.4) at [OutroCardLayout.card]: date and badge, total distance, moving time, average / top
+     * speed, ascent, and the average heart rate and calories when known, "bikeRecoder" small below. Nearly opaque: the
+     * outro camera ([outroCamera]) keeps the route above it. It fades in over the first half second.
      */
     private fun drawSummary(canvas: Canvas, progress: Float) {
         val a = (progress * VideoTimeline.OUTRO_FRAMES / SUMMARY_FADE_FRAMES).coerceIn(0f, 1f)
         if (a <= 0f) return
-        val totals = inputs.totals
-        val cells = buildList {
+        val cells = summaryCells(inputs.totals)
+        val card = OutroCardLayout.card(width, height, cells.size)
+        val columns = OutroCardLayout.columns(width, height)
+        val alphaInt = (255 * a).roundToInt()
+        canvas.drawRoundRect(RectF(card.x, card.y, card.x + card.w, card.y + card.h), 18 * unit, 18 * unit,
+            fill(Color.argb((SUMMARY_OPACITY * a).roundToInt(), 255, 255, 255)))
+        val dark = Color.rgb(33, 33, 33)
+        val top = card.y
+        canvas.drawText(inputs.title, width / 2f, top + 30 * unit, text(18f, dark, bold = true).apply { alpha = alphaInt })
+        canvas.drawText(inputs.badge, width / 2f, top + 47 * unit, text(11f, Color.rgb(97, 97, 97)).apply { alpha = alphaInt })
+        val label = text(10f, Color.rgb(97, 97, 97), align = Paint.Align.LEFT).apply { alpha = alphaInt }
+        val value = text(18f, dark, bold = true, align = Paint.Align.LEFT).apply { alpha = alphaInt }
+        val room = (OutroCardLayout.COLUMN - 12) * unit
+        cells.forEach { (_, number) -> fitted(value, number, room) }
+        cells.forEachIndexed { i, (name, number) ->
+            val x = card.x + (OutroCardLayout.SIDE + (i % columns) * OutroCardLayout.COLUMN) * unit
+            val y = top + (OutroCardLayout.HEAD + (i / columns) * OutroCardLayout.ROW) * unit
+            canvas.drawText(name, x, y + 16 * unit, label)
+            canvas.drawText(number, x, y + 38 * unit, value)
+        }
+        canvas.drawText(BRAND, width / 2f, card.y + card.h - 12 * unit,
+            text(11f, Color.rgb(120, 120, 120), bold = true).apply { alpha = alphaInt })
+    }
+
+    companion object {
+        /**
+         * The OUTRO camera for a [width]×[height] frame (the encoder's size, 720p fallback included): the whole route fitted
+         * above the closing card ([CameraPath.outro]). Pass it to `CameraPath.cameras(plans, timeline, overview, outro)`.
+         */
+        fun outroCamera(inputs: VideoInputs, width: Int, height: Int): Camera =
+            CameraPath.outro(inputs.timeline.points.map { it.point }, width, height, outroCard(inputs, width, height).y)
+
+        /** Where the closing card is drawn on a [width]×[height] frame. */
+        fun outroCard(inputs: VideoInputs, width: Int, height: Int): Box =
+            OutroCardLayout.card(width, height, summaryCells(inputs.totals).size)
+
+        /** The closing card's numbers: five always, the average heart rate and calories when known. */
+        internal fun summaryCells(totals: TripTotals): List<Pair<String, String>> = buildList {
             add("거리" to RideFormat.distance(totals.distanceM))
             add("이동 시간" to RideFormat.duration(totals.movingTimeMs))
             add("평균 속도" to "${RideFormat.speedKmh(totals.avgSpeedMps)}km/h")
@@ -260,44 +312,20 @@ class FrameRenderer(
             totals.avgBpm?.let { add("평균 심박" to "${it}bpm") }
             totals.calories?.let { add("칼로리" to "${it.roundToInt()}kcal") }
         }
-        val columns = if (width > height) 4 else 2
-        val rows = (cells.size + columns - 1) / columns
-        val cardW = (48 + columns * SUMMARY_COLUMN - 20) * unit
-        val cardH = (SUMMARY_HEAD + rows * SUMMARY_ROW + SUMMARY_FOOT) * unit
-        val left = (width - cardW) / 2
-        val top = height - cardH - 24 * unit
-        val alphaInt = (255 * a).roundToInt()
-        canvas.drawRoundRect(RectF(left, top, left + cardW, top + cardH), 18 * unit, 18 * unit,
-            fill(Color.argb((215 * a).roundToInt(), 255, 255, 255)))
-        val dark = Color.rgb(33, 33, 33)
-        canvas.drawText(inputs.title, width / 2f, top + 30 * unit, text(18f, dark, bold = true).apply { alpha = alphaInt })
-        canvas.drawText(inputs.badge, width / 2f, top + 47 * unit, text(11f, Color.rgb(97, 97, 97)).apply { alpha = alphaInt })
-        val label = text(10f, Color.rgb(97, 97, 97), align = Paint.Align.LEFT).apply { alpha = alphaInt }
-        val value = text(18f, dark, bold = true, align = Paint.Align.LEFT).apply { alpha = alphaInt }
-        cells.forEachIndexed { i, (name, number) ->
-            val x = left + (24 + (i % columns) * SUMMARY_COLUMN) * unit
-            val y = top + (SUMMARY_HEAD + (i / columns) * SUMMARY_ROW) * unit
-            canvas.drawText(name, x, y + 16 * unit, label)
-            canvas.drawText(number, x, y + 38 * unit, fitted(Paint(value), number, (SUMMARY_COLUMN - 12) * unit))
-        }
-        canvas.drawText(BRAND, width / 2f, top + cardH - 12 * unit, text(11f, Color.rgb(120, 120, 120), bold = true).apply { alpha = alphaInt })
-    }
 
-    private companion object {
-        const val BRAND = "bikeRecoder"
-        const val HUD_HEIGHT = 64f
-        const val TITLE_FADE_SHARE = 0.5f
-        const val PHOTO_SECONDS = 2.5f
-        const val PHOTO_FADE_SECONDS = 0.4f
-        const val PHOTO_WIDTH_SHARE = 0.8f
-        const val PHOTO_HEIGHT_SHARE = 0.7f
-        const val PHOTO_START_SCALE = 0.85f
-        const val SUMMARY_FADE_FRAMES = 12f
-        const val SUMMARY_COLUMN = 140
-        const val SUMMARY_HEAD = 56
-        const val SUMMARY_ROW = 48
-        const val SUMMARY_FOOT = 30
-        val SEOUL: ZoneId = ZoneId.of("Asia/Seoul")
-        val TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("a h:mm", Locale.KOREAN)
+        private const val BRAND = "bikeRecoder"
+        private const val HUD_HEIGHT = 64f
+        private const val TITLE_FADE_SHARE = 0.5f
+        private const val PHOTO_SECONDS = 2.5f
+        private const val PHOTO_FADE_SECONDS = 0.4f
+        private const val PHOTO_WIDTH_SHARE = 0.8f
+        private const val PHOTO_HEIGHT_SHARE = 0.7f
+        private const val PHOTO_START_SCALE = 0.85f
+        private const val SUMMARY_FADE_FRAMES = 12f
+
+        /** Nearly opaque (≥ 240): nothing of the map shows through the numbers. */
+        private const val SUMMARY_OPACITY = 248f
+        private val SEOUL: ZoneId = ZoneId.of("Asia/Seoul")
+        private val TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("a h:mm", Locale.KOREAN)
     }
 }

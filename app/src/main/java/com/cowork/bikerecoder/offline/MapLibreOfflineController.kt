@@ -267,7 +267,7 @@ class MapLibreOfflineController(
             log.warn("Offline map download for trip $tripId failed; removing its partial regions", e)
             withContext(NonCancellable) {
                 try {
-                    mutex.withLock { removeTripRegions(tripId, strict = false) }
+                    mutex.withLock { removeTripRegions(tripId, strict = false, kinds = RegionKind.TRIP_MAP) }
                 } catch (cleanup: Exception) {
                     log.warn("Could not remove the partial offline regions of trip $tripId", cleanup)
                 }
