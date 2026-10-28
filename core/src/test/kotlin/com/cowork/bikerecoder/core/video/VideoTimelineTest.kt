@@ -19,6 +19,8 @@ class VideoTimelineTest {
         assertEquals(60 * 24, normal.size)
         assertEquals(normal.indices.toList(), normal.map { it.index })
         assertEquals(72, normal.count(SceneKind.INTRO_OVERVIEW) + normal.count(SceneKind.INTRO_DESCENT))
+        assertEquals(29, normal.count(SceneKind.INTRO_OVERVIEW))
+        assertEquals(43, normal.count(SceneKind.INTRO_DESCENT))
         assertEquals(96, normal.count(SceneKind.OUTRO))
         assertEquals(30 * 24, VideoTimeline.plan(timeline, emptyList(), VideoOptions(length = VideoLength.SHORT), emptyList()).size)
         assertEquals(120 * 24, VideoTimeline.plan(timeline, emptyList(), VideoOptions(length = VideoLength.LONG), emptyList()).size)
@@ -137,19 +139,21 @@ class VideoTimelineTest {
     }
 
     @Test
-    fun introAndOutroReuseMap() {
+    fun onlyTheOutroHoldReusesTheMap() {
         val timeline = simpleTimeline(600)
         val frames = VideoTimeline.plan(timeline, listOf(cue(1, 300_000)), VideoOptions(), emptyList())
         val overview = frames.filter { it.kind == SceneKind.INTRO_OVERVIEW }
-        assertEquals(36, overview.size)
-        assertEquals(listOf(false) + List(35) { true }, overview.map { it.reuseMap })
+        assertEquals(29, overview.size)
+        // The camera turns over the overview, orbits during a photo and rises at the start of the outro: a new map every frame there.
+        assertTrue(overview.all { !it.reuseMap })
         assertTrue(overview.all { it.moveMs == 0L })
         assertTrue(frames.filter { it.kind == SceneKind.INTRO_DESCENT }.all { !it.reuseMap })
         assertTrue(frames.filter { it.kind == SceneKind.RIDE }.all { !it.reuseMap })
         val photo = frames.filter { it.kind == SceneKind.PHOTO }
-        assertEquals(listOf(false) + List(59) { true }, photo.map { it.reuseMap })
+        assertEquals(60, photo.size)
+        assertTrue(photo.all { !it.reuseMap })
         val outro = frames.filter { it.kind == SceneKind.OUTRO }
-        assertEquals(listOf(false) + List(95) { true }, outro.map { it.reuseMap })
+        assertEquals(List(36) { false } + List(60) { true }, outro.map { it.reuseMap })
         assertTrue(outro.all { it.moveMs == timeline.totalMoveMs })
         assertEquals(0f, overview.first().sceneProgress)
         assertEquals(1f, outro.last().sceneProgress)
