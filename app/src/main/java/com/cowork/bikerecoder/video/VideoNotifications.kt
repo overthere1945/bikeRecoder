@@ -26,7 +26,7 @@ object VideoNotifications {
     private const val RESULT_ID = 1102
 
     /**
-     * MainActivity extras of the "영상을 만들었습니다" tap — open the preview of the made file (wired by the UI, Task 7):
+     * MainActivity extras of the "영상을 만들었습니다" tap — open the preview of the made file (wired in MainActivity → BikeNavHost):
      * [EXTRA_PREVIEW_URI] gallery uri, [EXTRA_PREVIEW_KIND] [MediaKind] name, [EXTRA_PREVIEW_TRIP_ID],
      * [EXTRA_PREVIEW_MEDIA_ID] the `trip_media` id, [EXTRA_PREVIEW_DOWNSCALED] made at 720p,
      * [EXTRA_PREVIEW_SATELLITE_FALLBACK] made on the plain map instead of the satellite one (V1.3.1 spec §4).

@@ -26,10 +26,12 @@ import com.cowork.bikerecoder.video.VideoJobControl
 import com.cowork.bikerecoder.video.VideoJobState
 import com.cowork.bikerecoder.video.VideoOptionsJson
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -58,6 +60,8 @@ class VideoViewModelTest {
     private var last = VideoOptions()
     private val saved = mutableListOf<VideoOptions>()
     private var secondsPerFrame: Double? = null
+    private var bytesPerFrame: Double? = null
+    private var cellular = false
     private var recording = false
     private var battery: BatteryLevel? = BatteryLevel(80, charging = false)
     private var inputs: VideoInputs? = inputs(canColorByHeart = false)
@@ -76,6 +80,8 @@ class VideoViewModelTest {
         lastOptions = { last },
         saveOptions = { saved += it },
         secondsPerFrame = { secondsPerFrame },
+        bytesPerFrame = { bytesPerFrame },
+        cellular = { cellular },
         recording = { recording },
         battery = { battery },
         musicName = { uri -> if (uri == MUSIC) "여의도 산책.mp3" else null },
@@ -152,6 +158,42 @@ class VideoViewModelTest {
         vm.open(TRIP, MediaKind.VIDEO)
         advanceUntilIdle()
         assertEquals(expectedMinutes(VideoOptions(), 0.25), vm.sheet.value!!.minutes)
+    }
+
+    /**
+     * V1.3.1 spec §1.4: "위성 지도 데이터 약 N MB가 듭니다 (Wi-Fi 권장)" only on cellular and only for the video — the length's
+     * default (짧게 20) until a satellite video was measured, then that video's bytes per frame × this one's frames.
+     */
+    @Test
+    fun dataNoticeOnlyOnCellular() = runTest(dispatcher) {
+        last = VideoOptions(length = VideoLength.SHORT)
+        val vm = vm()
+        vm.open(TRIP, MediaKind.VIDEO)
+        advanceUntilIdle()
+        assertNull(vm.sheet.value!!.dataNoticeMb, "Wi-Fi: no notice")
+
+        cellular = true
+        vm.closeSheet()
+        vm.open(TRIP, MediaKind.VIDEO)
+        advanceUntilIdle()
+        assertEquals(20, vm.sheet.value!!.dataNoticeMb, "cellular, nothing measured, 짧게")
+        vm.setOptions(vm.sheet.value!!.options.copy(length = VideoLength.LONG))
+        advanceUntilIdle()
+        assertEquals(60, vm.sheet.value!!.dataNoticeMb, "follows the length")
+
+        bytesPerFrame = 50_000.0
+        vm.closeSheet()
+        last = VideoOptions(length = VideoLength.SHORT)
+        vm.open(TRIP, MediaKind.VIDEO)
+        advanceUntilIdle()
+        val i = inputs!!
+        assertEquals(720, VideoTimeline.plan(i.timeline, i.photos, VideoOptions(length = VideoLength.SHORT), i.dayStarts).size)
+        assertEquals(36, vm.sheet.value!!.dataNoticeMb, "50,000 B × 720 frames")
+
+        vm.closeSheet()
+        vm.open(TRIP, MediaKind.IMAGE)
+        advanceUntilIdle()
+        assertNull(vm.sheet.value!!.dataNoticeMb, "the image: no notice")
     }
 
     @Test
@@ -275,6 +317,25 @@ class VideoViewModelTest {
             assertEquals(VideoDialog.Message(text), vm.dialog.value, "$result")
             assertTrue(vm.sheet.value != null && !vm.sheet.value!!.starting, "$result keeps the sheet")
         }
+    }
+
+    /** V1.3.1: the satellite check may wait 10 s for VWorld; [만들기] stays busy (not pressable) the whole time. */
+    @Test
+    fun startStaysBusyThroughASlowSatelliteCheck() = runTest(dispatcher) {
+        job.startDelayMs = 10_000
+        for (kind in MediaKind.entries) {
+            val vm = vm()
+            vm.open(TRIP, kind)
+            advanceUntilIdle()
+            vm.make()
+            advanceTimeBy(9_900)
+            assertTrue(vm.sheet.value!!.starting, "$kind busy")
+            assertFalse(vm.sheet.value!!.canMake, "$kind not pressable")
+            advanceUntilIdle()
+            assertNull(vm.sheet.value, "$kind started: the sheet closes")
+        }
+        assertEquals(1, job.videos.size)
+        assertEquals(1, job.images.size)
     }
 
     @Test
@@ -401,7 +462,7 @@ class VideoViewModelTest {
         val media = TripMedia(5, TRIP, MediaKind.VIDEO, "content://media/external/video/media/5", 0L, "{}")
         job.state.value = VideoJobState.Done(media, downscaled = true)
         advanceUntilIdle()
-        assertEquals(VideoOutcome.Preview(media.uri, MediaKind.VIDEO, downscaled = true), vm.outcome.value)
+        assertEquals(VideoOutcome.Preview(media.uri, MediaKind.VIDEO, downscaled = true, satelliteFallback = false), vm.outcome.value)
         vm.outcomeShown()
         advanceUntilIdle()
         assertNull(vm.outcome.value)
@@ -416,6 +477,17 @@ class VideoViewModelTest {
         assertNull(vm.outcome.value)
     }
 
+    /** V1.3.1 spec §4: a job made on the plain map instead of the satellite one says so in its preview. */
+    @Test
+    fun previewCarriesFallback() = runTest(dispatcher) {
+        val vm = vm()
+        val media = TripMedia(5, TRIP, MediaKind.IMAGE, "content://media/external/images/media/5", 0L, "{}")
+        job.state.value = VideoJobState.Done(media, downscaled = false, satelliteFallback = true)
+        advanceUntilIdle()
+        assertEquals(VideoOutcome.Preview(media.uri, MediaKind.IMAGE, downscaled = false, satelliteFallback = true), vm.outcome.value)
+        assertEquals(true, vm.previewToOpen(vm.outcome.value!!)?.satelliteFallback)
+    }
+
     /**
      * Final review M2: a job that ends as a recording starts (its last seconds of encoding cannot be stopped) is not
      * opened over the record screen; "영상을 만들었습니다" opens it later. Still taken, so the job goes back to idle.
@@ -424,7 +496,7 @@ class VideoViewModelTest {
     fun `done while recording is not opened on screen`() = runTest(dispatcher) {
         val vm = vm()
         val media = TripMedia(5, TRIP, MediaKind.VIDEO, "content://media/external/video/media/5", 0L, "{}")
-        val preview = VideoOutcome.Preview(media.uri, MediaKind.VIDEO, downscaled = false)
+        val preview = VideoOutcome.Preview(media.uri, MediaKind.VIDEO, downscaled = false, satelliteFallback = false)
         job.state.value = VideoJobState.Done(media, downscaled = false)
         advanceUntilIdle()
         assertEquals(preview, vm.previewToOpen(vm.outcome.value!!))
@@ -586,6 +658,8 @@ class VideoViewModelTest {
         var videoResult = StartResult.STARTED
         var imageResult = StartResult.STARTED
         var videoError: Exception? = null
+        /** How long the start checks take (the satellite check waits up to 10 s for VWorld). */
+        var startDelayMs = 0L
         val videos = mutableListOf<Pair<Long, VideoOptions>>()
         val images = mutableListOf<Pair<Long, Aspect>>()
         var cancels = 0
@@ -593,12 +667,14 @@ class VideoViewModelTest {
         var dismissed = 0
 
         override suspend fun startVideo(tripId: Long, options: VideoOptions): StartResult {
+            delay(startDelayMs)
             videoError?.let { throw it }
             videos += tripId to options
             return videoResult
         }
 
         override suspend fun startImage(tripId: Long, aspect: Aspect): StartResult {
+            delay(startDelayMs)
             images += tripId to aspect
             return imageResult
         }

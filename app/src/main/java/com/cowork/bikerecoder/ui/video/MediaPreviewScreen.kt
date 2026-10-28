@@ -60,6 +60,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.net.toUri
 import com.cowork.bikerecoder.ui.common.GlyphIcon
 import com.cowork.bikerecoder.video.MediaKind
+import com.cowork.bikerecoder.video.VideoJob
 import com.cowork.bikerecoder.video.mimeType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -70,13 +71,15 @@ import kotlin.math.roundToInt
 /**
  * The made file (spec §3.5): "영상을 만들었습니다" / "이미지를 만들었습니다" with its gallery name ([fileName], read back
  * from MediaStore, null = not shown), the video playing (looped, a tap pauses) or the image, "이 휴대폰은 720p로
- * 만들었습니다" when [downscaled], then [공유] (the share sheet) and [갤러리에서 보기]. [media] is replaceable in tests.
+ * 만들었습니다" when [downscaled] and "위성 지도를 받지 못해 일반 지도로 만들었습니다" when [satelliteFallback] (V1.3.1 §4; both:
+ * two lines), then [공유] (the share sheet) and [갤러리에서 보기]. [media] is replaceable in tests.
  */
 @Composable
 fun MediaPreviewScreen(
     uri: String,
     kind: MediaKind,
     downscaled: Boolean,
+    satelliteFallback: Boolean,
     fileName: String?,
     onBack: () -> Unit,
     onShare: () -> Unit,
@@ -118,29 +121,9 @@ fun MediaPreviewScreen(
                 modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                if (downscaled) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(MaterialTheme.shapes.medium)
-                            .background(MaterialTheme.colorScheme.secondaryContainer)
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            Icons.Filled.Info,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            "이 휴대폰은 720p로 만들었습니다",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        )
-                    }
-                }
+                // One line each, stacked (V1.3.1 spec §4).
+                if (downscaled) Notice("이 휴대폰은 720p로 만들었습니다")
+                if (satelliteFallback) Notice(VideoJob.MSG_SATELLITE_FALLBACK)
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
                         onClick = onShare,
@@ -163,6 +146,32 @@ fun MediaPreviewScreen(
                 }
             }
         }
+    }
+}
+
+/** A note above the buttons: ⓘ and [text]. */
+@Composable
+private fun Notice(text: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Filled.Info,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+        )
     }
 }
 

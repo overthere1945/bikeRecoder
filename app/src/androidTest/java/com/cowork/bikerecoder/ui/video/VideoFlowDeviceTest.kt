@@ -4,7 +4,9 @@ import android.content.ContentValues
 import android.graphics.Bitmap
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.net.TrafficStats
 import android.net.Uri
+import android.os.Process
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.util.Log
@@ -33,6 +35,12 @@ import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripType
+import com.cowork.bikerecoder.core.video.Aspect
+import com.cowork.bikerecoder.core.video.SceneKind
+import com.cowork.bikerecoder.core.video.VideoLength
+import com.cowork.bikerecoder.core.video.VideoOptions
+import com.cowork.bikerecoder.core.video.VideoTimeline
+import com.cowork.bikerecoder.data.RidePhotoEntity
 import com.cowork.bikerecoder.data.TripEntity
 import com.cowork.bikerecoder.data.toEntity
 import com.cowork.bikerecoder.ui.history.TripDetailScreen
@@ -42,6 +50,8 @@ import com.cowork.bikerecoder.ui.record.SummaryExtrasContent
 import com.cowork.bikerecoder.ui.record.SummaryExtrasState
 import com.cowork.bikerecoder.ui.record.SummaryMap
 import com.cowork.bikerecoder.video.MediaKind
+import com.cowork.bikerecoder.video.VideoInputsLoader
+import com.cowork.bikerecoder.video.VideoJob
 import com.cowork.bikerecoder.video.VideoTestTrip
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -49,6 +59,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -59,10 +71,12 @@ import kotlin.math.abs
 /**
  * The whole making on the phone through the screens, wired as the app wires them (the activity's [VideoViewModel] with
  * [VideoHost] over the trip detail; the preview when the job is done): a completed test trip (about 1.85 km around
- * Yeouido) is seeded, then [영상 만들기] → 세로 · 짧게 → [만들기] → the progress card → the preview of a real 30 s video,
- * back, [이미지 만들기] → [만들기] → the image's preview, back → "만든 영상·이미지" with both. Real map tiles, encoder and
- * gallery. Screenshots of each step go to Download/bikeRecoderTest (pulled by hand). The gallery files and the trip are
- * deleted afterwards, unless the instrumentation argument `keepMedia=true` (to pull the MP4, then delete it by hand).
+ * Yeouido, with one photo at 40 % of the ride) is seeded, then [영상 만들기] → 세로 · 짧게 → [만들기] → the progress card
+ * → the preview of a real 30 s video, back, [이미지 만들기] → [만들기] → the image's preview, back → "만든 영상·이미지"
+ * with both. Real map tiles (V1.3.1: the VWorld satellite map with the build's key, so no fallback note), encoder and
+ * gallery; the wall time and the bytes the app received for the video are logged. Screenshots of each step go to
+ * Download/bikeRecoderTest (pulled by hand). The gallery files, the test photo and the trip are deleted afterwards,
+ * unless the instrumentation argument `keepMedia=true` (to pull the MP4 and PNG, then delete them by hand).
  */
 class VideoFlowDeviceTest {
     @get:Rule
@@ -74,6 +88,7 @@ class VideoFlowDeviceTest {
     private val keepMedia = InstrumentationRegistry.getArguments().getString("keepMedia") == "true"
     private var tripId = 0L
     private val made = mutableListOf<Uri>()
+    private var photoUri: Uri? = null
 
     @Before
     fun seedTrip() = runBlocking {
@@ -87,7 +102,27 @@ class VideoFlowDeviceTest {
         val totals = SegmentTotals(1_850.0, end - start, end - start, 6.5, 24.0, 20.0, 20.0, 49.0)
         val segmentId = db.rideDao().insertSegment(RideSegment(0, tripId, start, end, LocalDate.of(2026, 10, 25), totals).toEntity())
         db.rideDao().insertPoints(track.map { it.toEntity(segmentId) })
+        // One photo at 40 % of the ride (the photo scene), the app's own gallery item.
+        val at = track[track.size * 2 / 5]
+        val photo = insertPhoto(at.timeMillis)
+        photoUri = photo
+        db.postDao().insertPhotos(
+            listOf(RidePhotoEntity(0, segmentId, android.content.ContentUris.parseId(photo), at.timeMillis, at.point.lat, at.point.lon, "TRACK", false)),
+        )
         container.videoJob.acknowledge()
+    }
+
+    private fun insertPhoto(takenAt: Long): Uri {
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, "v131-flow-photo.jpg")
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/bikeRecoderTest/")
+            put(MediaStore.Images.Media.DATE_TAKEN, takenAt)
+        }
+        val resolver = app.contentResolver
+        val uri = resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)!!
+        resolver.openOutputStream(uri)!!.use { VideoTestTrip.photo().compress(Bitmap.CompressFormat.JPEG, 90, it) }
+        return uri
     }
 
     @After
@@ -97,6 +132,7 @@ class VideoFlowDeviceTest {
         if (!keepMedia) {
             for (uri in made.distinct()) container.mediaStoreWriter.delete(uri)
         }
+        photoUri?.let { app.contentResolver.delete(it, null, null) }
         Log.i(TAG, "made ${made.distinct()} (kept: $keepMedia)")
         container.db.tripDao().deleteTrip(tripId)
         container.videoJob.acknowledge()
@@ -134,7 +170,7 @@ class VideoFlowDeviceTest {
                     )
                 } else {
                     val name = remember(shown.uri) { container.mediaStoreWriter.displayName(Uri.parse(shown.uri)) }
-                    MediaPreviewScreen(shown.uri, shown.kind, shown.downscaled, name, onBack = { preview = null }, onShare = {}, onOpenGallery = {})
+                    MediaPreviewScreen(shown.uri, shown.kind, shown.downscaled, shown.satelliteFallback, name, onBack = { preview = null }, onShare = {}, onOpenGallery = {})
                 }
                 VideoHost(video)
             }
@@ -156,20 +192,32 @@ class VideoFlowDeviceTest {
         SystemClock.sleep(800)
         screenshot("ui-options-sheet")
 
+        logPhotoScene()
+        val pressed = SystemClock.elapsedRealtime()
+        val receivedBefore = receivedBytes()
         composeRule.onNodeWithTag(VideoTags.MAKE).performClick()
         answerLowBattery()
         waitFor(60_000) { exists(hasTestTag(VideoTags.PROGRESS)) }
         val started = SystemClock.elapsedRealtime()
+        Log.i(TAG, "start checks took ${(started - pressed) / 1000.0} s")
         // Mid-render: a percentage of a third or more.
         waitFor(10 * 60_000L) { exists(hasText("영상 만드는 중 ", substring = true) and hasText("남음", substring = true)) && percent() >= 30 }
         screenshot("ui-progress")
 
         waitFor(15 * 60_000L) { exists(hasText("영상을 만들었습니다")) }
-        Log.i(TAG, "video made in ${(SystemClock.elapsedRealtime() - started) / 1000.0} s")
+        val done = SystemClock.elapsedRealtime()
+        val receivedAfter = receivedBytes()
+        Log.i(TAG, "video made in ${(done - started) / 1000.0} s (${(done - pressed) / 1000.0} s from 만들기)")
+        if (receivedBefore != null && receivedAfter != null) {
+            Log.i(TAG, "video received ${receivedAfter - receivedBefore} bytes = ${"%.1f".format((receivedAfter - receivedBefore) / 1e6)} MB")
+        }
+        Log.i(TAG, "stored bytes per frame ${runBlocking { container.videoJobStore.bytesPerFrame() }}")
         composeRule.onNodeWithTag(VideoTags.SHARE).assertIsDisplayed()
         composeRule.onNodeWithTag(VideoTags.GALLERY).assertIsDisplayed()
+        // The build's key: the satellite map, no fallback note.
+        assertFalse(exists(hasText(VideoJob.MSG_SATELLITE_FALLBACK)))
         SystemClock.sleep(4_000)
-        screenshot("video-preview")
+        screenshot("v131-video-preview")
         val videoMedia = runBlocking { container.tripMedia.observe(tripId).first() }.single { it.kind == MediaKind.VIDEO }
         val videoUri = Uri.parse(videoMedia.uri).also { made += it }
         assertVideo(videoUri)
@@ -183,8 +231,9 @@ class VideoFlowDeviceTest {
         composeRule.onNodeWithTag(VideoTags.MAKE).performClick()
         answerLowBattery()
         waitFor(5 * 60_000L) { exists(hasText("이미지를 만들었습니다")) }
+        assertFalse(exists(hasText(VideoJob.MSG_SATELLITE_FALLBACK)))
         SystemClock.sleep(2_000)
-        screenshot("image-preview")
+        screenshot("v131-image-preview")
         val imageMedia = runBlocking { container.tripMedia.observe(tripId).first() }.single { it.kind == MediaKind.IMAGE }
         made += Uri.parse(imageMedia.uri)
 
@@ -227,6 +276,24 @@ class VideoFlowDeviceTest {
         // The map's tiles.
         SystemClock.sleep(8_000)
         screenshot("ui-summary")
+    }
+
+    /** Bytes this app has received so far (as the job counts them), null when the phone does not count them. */
+    private fun receivedBytes(): Long? =
+        TrafficStats.getUidRxBytes(Process.myUid()).takeIf { it != TrafficStats.UNSUPPORTED.toLong() }
+
+    /** Where the seeded photo's scene falls in the short video (for pulling its frame). */
+    private fun logPhotoScene() {
+        val inputs = runBlocking {
+            VideoInputsLoader(container.rideStore, container.postStore, container.tripStore).load(tripId)
+        }
+        assertNotNull(inputs)
+        assertEquals(1, inputs!!.photos.size)
+        val options = VideoOptions(aspect = Aspect.PORTRAIT, length = VideoLength.SHORT)
+        val plans = VideoTimeline.plan(inputs.timeline, inputs.photos, options, inputs.dayStarts)
+        val first = plans.indexOfFirst { it.kind == SceneKind.PHOTO }
+        val last = plans.indexOfLast { it.kind == SceneKind.PHOTO }
+        Log.i(TAG, "frames ${plans.size}; photo scene frames $first..$last = ${first / 24.0}..${(last + 1) / 24.0} s")
     }
 
     private fun answerLowBattery() {

@@ -64,8 +64,13 @@ data class VideoSheet(
     val minutes: Int? = null,
     /** The picked music's file name, while [VideoOptions.musicUri] is set. */
     val musicName: String? = null,
-    /** [만들기] was pressed and the start checks run (with music, it is encoded meanwhile). */
+    /**
+     * [만들기] was pressed and the start checks run (with music, it is encoded meanwhile; the satellite check may take
+     * up to 10 s when VWorld does not answer).
+     */
     val starting: Boolean = false,
+    /** "위성 지도 데이터 약 N MB가 듭니다 (Wi-Fi 권장)" (V1.3.1 spec §1.4): only for the video on a cellular network, else null. */
+    val dataNoticeMb: Int? = null,
 ) {
     /** The video needs its estimate first (the trip is read meanwhile); the image can start at once. */
     val canMake: Boolean get() = !starting && (kind == MediaKind.IMAGE || minutes != null)
@@ -91,7 +96,8 @@ data class VideoProgress(val kind: MediaKind, val percent: Int?, val text: Strin
 
 /** A finished job, shown once: the preview of the made file, or the failure's message. */
 sealed interface VideoOutcome {
-    data class Preview(val uri: String, val kind: MediaKind, val downscaled: Boolean) : VideoOutcome
+    /** [satelliteFallback]: made on the plain map because VWorld failed (V1.3.1 spec §4). */
+    data class Preview(val uri: String, val kind: MediaKind, val downscaled: Boolean, val satelliteFallback: Boolean) : VideoOutcome
     data class Message(val text: String) : VideoOutcome
 }
 
@@ -108,6 +114,10 @@ class VideoViewModel(
     private val lastOptions: suspend () -> VideoOptions,
     private val saveOptions: suspend (VideoOptions) -> Unit,
     private val secondsPerFrame: suspend () -> Double?,
+    /** The last satellite video's received bytes per frame (spec §1.4), null until one is made. */
+    private val bytesPerFrame: suspend () -> Double?,
+    /** The active network is cellular (spec §1.4). */
+    private val cellular: () -> Boolean,
     private val recording: () -> Boolean,
     private val battery: () -> BatteryLevel?,
     private val musicName: suspend (uri: String) -> String?,
@@ -369,11 +379,21 @@ class VideoViewModel(
         estimateJob = viewModelScope.launch {
             val perFrame = guarded("Could not read this phone's seconds per frame") { secondsPerFrame() }
                 ?: VideoJob.DEFAULT_SECONDS_PER_FRAME
-            val options = s.options
-            val minutes = withContext(compute) {
-                VideoEstimate.minutes(VideoTimeline.plan(loaded.timeline, loaded.photos, options, loaded.dayStarts), perFrame)
+            val onCellular = try {
+                cellular()
+            } catch (e: Exception) {
+                log.warn("Could not read the active network", e)
+                false
             }
-            _sheet.update { if (it?.tripId == s.tripId && it.kind == MediaKind.VIDEO) it.copy(minutes = minutes) else it }
+            val measured = if (onCellular) guarded("Could not read the satellite bytes per frame") { bytesPerFrame() } else null
+            val options = s.options
+            val plans = withContext(compute) { VideoTimeline.plan(loaded.timeline, loaded.photos, options, loaded.dayStarts) }
+            val minutes = VideoEstimate.minutes(plans, perFrame)
+            // Spec §1.4: on cellular only; it does not block [만들기].
+            val dataMb = if (onCellular) VideoEstimate.satelliteMb(options.length, plans.size, measured) else null
+            _sheet.update {
+                if (it?.tripId == s.tripId && it.kind == MediaKind.VIDEO) it.copy(minutes = minutes, dataNoticeMb = dataMb) else it
+            }
         }
     }
 
@@ -425,6 +445,8 @@ class VideoViewModel(
                     lastOptions = { container.videoJobStore.lastOptions.first() },
                     saveOptions = container.videoJobStore::saveOptions,
                     secondsPerFrame = container.videoJobStore::secondsPerFrame,
+                    bytesPerFrame = container.videoJobStore::bytesPerFrame,
+                    cellular = container.network::isCellular,
                     recording = { container.rideState.let { it is RideUiState.Starting || it is RideUiState.Active } },
                     battery = { batteryLevel(context) },
                     musicName = { uri -> withContext(Dispatchers.IO) { displayName(context, uri) } },
@@ -463,7 +485,7 @@ fun progressFor(progress: VideoProgress?, runningTripId: Long?, tripId: Long): V
     progress?.takeIf { runningTripId != null && runningTripId == tripId }
 
 internal fun outcomeOf(state: VideoJobState): VideoOutcome? = when (state) {
-    is VideoJobState.Done -> VideoOutcome.Preview(state.media.uri, state.media.kind, state.downscaled)
+    is VideoJobState.Done -> VideoOutcome.Preview(state.media.uri, state.media.kind, state.downscaled, state.satelliteFallback)
     is VideoJobState.Failed -> VideoOutcome.Message(state.message)
     else -> null
 }

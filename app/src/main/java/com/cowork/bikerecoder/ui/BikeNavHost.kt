@@ -117,10 +117,14 @@ object Routes {
     const val ARG_URI = "uri"
     const val ARG_KIND = "kind"
     const val ARG_DOWNSCALED = "downscaled"
-    const val MEDIA_PREVIEW = "media-preview?$ARG_URI={$ARG_URI}&$ARG_KIND={$ARG_KIND}&$ARG_DOWNSCALED={$ARG_DOWNSCALED}"
+    /** Made on the plain map because VWorld failed (V1.3.1 spec §4). */
+    const val ARG_SATELLITE_FALLBACK = "satelliteFallback"
+    const val MEDIA_PREVIEW = "media-preview?$ARG_URI={$ARG_URI}&$ARG_KIND={$ARG_KIND}&$ARG_DOWNSCALED={$ARG_DOWNSCALED}" +
+        "&$ARG_SATELLITE_FALLBACK={$ARG_SATELLITE_FALLBACK}"
 
-    fun mediaPreview(uri: String, kind: MediaKind, downscaled: Boolean) =
-        "media-preview?$ARG_URI=${Uri.encode(uri)}&$ARG_KIND=${kind.name}&$ARG_DOWNSCALED=$downscaled"
+    fun mediaPreview(uri: String, kind: MediaKind, downscaled: Boolean, satelliteFallback: Boolean) =
+        "media-preview?$ARG_URI=${Uri.encode(uri)}&$ARG_KIND=${kind.name}&$ARG_DOWNSCALED=$downscaled" +
+            "&$ARG_SATELLITE_FALLBACK=$satelliteFallback"
 
     fun tripDetail(tripId: Long) = "history/trip/$tripId"
 
@@ -152,8 +156,8 @@ sealed interface LaunchRequest {
     /** The progress notification: show the running guidance or recording ([rideRoute]). */
     data object ShowNavigation : LaunchRequest
 
-    /** "영상을 만들었습니다": the preview of the made file. */
-    data class Preview(val uri: String, val kind: MediaKind, val downscaled: Boolean) : LaunchRequest
+    /** "영상을 만들었습니다": the preview of the made file ([satelliteFallback]: made on the plain map, V1.3.1 §4). */
+    data class Preview(val uri: String, val kind: MediaKind, val downscaled: Boolean, val satelliteFallback: Boolean) : LaunchRequest
 }
 
 /**
@@ -279,7 +283,7 @@ fun BikeNavHost(
             is LaunchRequest.ResumeTrip -> Routes.navigate(request.tripId)
             LaunchRequest.ShowNavigation -> rideRoute(container.navigationState, container.rideState)
             is LaunchRequest.Preview -> {
-                if (!onboarding) navController.openPreview(request.uri, request.kind, request.downscaled)
+                if (!onboarding) navController.openPreview(request.uri, request.kind, request.downscaled, request.satelliteFallback)
                 null
             }
         }?.let { route -> if (!onboarding) navController.openOnMain(route) }
@@ -293,7 +297,7 @@ fun BikeNavHost(
         val outcome = videoOutcome ?: return@LaunchedEffect
         val preview = videoViewModel.previewToOpen(outcome)
         if (preview != null && navController.currentDestination?.route != Routes.ONBOARDING) {
-            navController.openPreview(preview.uri, preview.kind, preview.downscaled)
+            navController.openPreview(preview.uri, preview.kind, preview.downscaled, preview.satelliteFallback)
             // Seen here: "영상을 만들었습니다" would only open it again.
             VideoNotifications.cancelResult(context)
         }
@@ -637,11 +641,16 @@ fun BikeNavHost(
                     type = NavType.BoolType
                     defaultValue = false
                 },
+                navArgument(Routes.ARG_SATELLITE_FALLBACK) {
+                    type = NavType.BoolType
+                    defaultValue = false
+                },
             ),
         ) { entry ->
             val uri = entry.arguments?.getString(Routes.ARG_URI).orEmpty()
             val kind = MediaKind.entries.firstOrNull { it.name == entry.arguments?.getString(Routes.ARG_KIND) } ?: MediaKind.VIDEO
             val downscaled = entry.arguments?.getBoolean(Routes.ARG_DOWNSCALED) == true
+            val satelliteFallback = entry.arguments?.getBoolean(Routes.ARG_SATELLITE_FALLBACK) == true
             val isCurrent = { navController.currentBackStackEntry?.id == entry.id }
             // MediaStore's own name (it may differ from the one asked for); none when it cannot be read.
             val fileName by produceState<String?>(null, uri) {
@@ -657,6 +666,7 @@ fun BikeNavHost(
                 uri = uri,
                 kind = kind,
                 downscaled = downscaled,
+                satelliteFallback = satelliteFallback,
                 fileName = fileName,
                 onBack = { if (isCurrent()) navController.popBackStack() },
                 onShare = { context.shareMedia(uri, kind) },
@@ -718,8 +728,8 @@ fun BikeNavHost(
 }
 
 /** The made file's preview on top (a second one of the same file is not pushed). */
-private fun NavController.openPreview(uri: String, kind: MediaKind, downscaled: Boolean) {
-    navigate(Routes.mediaPreview(uri, kind, downscaled)) { launchSingleTop = true }
+private fun NavController.openPreview(uri: String, kind: MediaKind, downscaled: Boolean, satelliteFallback: Boolean) {
+    navigate(Routes.mediaPreview(uri, kind, downscaled, satelliteFallback)) { launchSingleTop = true }
 }
 
 /** The guidance or record screen on top of main (plan/search/ride entries are dropped). */

@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.AlertDialog
@@ -69,6 +70,7 @@ object VideoTags {
     const val SHEET = "video-sheet"
     const val MAKE = "video-make"
     const val ESTIMATE = "video-estimate"
+    const val DATA_NOTICE = "video-data-notice"
     const val MUSIC_NAME = "video-music-name"
     const val MAKE_VIDEO = "video-entry-video"
     const val MAKE_IMAGE = "video-entry-image"
@@ -140,7 +142,7 @@ fun VideoOptionsSheet(
 /**
  * The options (spec §1.2): 화면 비율, 길이, 사진 넣기, 숫자 표시, 경로 색 ([심박] only when [VideoSheet.canColorByHeart]),
  * 배경음악 (the picked file's name, [없음] goes back); the image asks for the aspect only (§1.3). The choices scroll;
- * "약 N분 걸립니다" and [만들기] stay at the bottom.
+ * "약 N분 걸립니다", on cellular the satellite data notice (V1.3.1 §1.4) and [만들기] stay at the bottom.
  */
 @Composable
 fun VideoOptionsContent(
@@ -239,6 +241,32 @@ fun VideoOptionsContent(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.testTag(VideoTags.ESTIMATE),
                 )
+            }
+            // V1.3.1 spec §1.4: cellular only, a word of warning, never a gate.
+            sheet.dataNoticeMb?.let { mb ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(MaterialTheme.shapes.small)
+                        .background(MaterialTheme.colorScheme.secondaryContainer)
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    Icon(
+                        Icons.Filled.Info,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        dataNoticeText(mb),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.testTag(VideoTags.DATA_NOTICE),
+                    )
+                }
             }
             Button(
                 onClick = onMake,
@@ -425,6 +453,9 @@ fun VideoDialogs(
         )
     }
 }
+
+/** V1.3.1 spec §1.4, verbatim. */
+internal fun dataNoticeText(mb: Int) = "위성 지도 데이터 약 $mb MB가 듭니다 (Wi-Fi 권장)"
 
 private val LENGTHS = listOf(
     "짧게(약 30초)" to VideoLength.SHORT,

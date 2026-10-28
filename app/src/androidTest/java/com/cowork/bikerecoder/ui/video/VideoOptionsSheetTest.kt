@@ -10,6 +10,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -21,6 +22,7 @@ import com.cowork.bikerecoder.core.video.VideoOptions
 import com.cowork.bikerecoder.video.MediaKind
 import com.cowork.bikerecoder.video.PendingJob
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -122,6 +124,27 @@ class VideoOptionsSheetTest {
         composeRule.onNodeWithTag(VideoTags.MAKE).assertIsNotEnabled()
     }
 
+    /** V1.3.1 spec §1.4: on cellular, the data notice sits under the estimate, right above [만들기]; none without it. */
+    @Test
+    fun dataNoticeText() {
+        var sheet by mutableStateOf(defaults.copy(dataNoticeMb = 20))
+        composeRule.setContent { MaterialTheme { VideoOptionsContent(sheet, {}, {}, {}, {}) } }
+
+        val notice = composeRule.onNodeWithTag(VideoTags.DATA_NOTICE)
+        notice.assertIsDisplayed().assertTextEquals("위성 지도 데이터 약 20 MB가 듭니다 (Wi-Fi 권장)")
+        val noticeBounds = notice.getUnclippedBoundsInRoot()
+        val estimate = composeRule.onNodeWithTag(VideoTags.ESTIMATE).getUnclippedBoundsInRoot()
+        val make = composeRule.onNodeWithTag(VideoTags.MAKE).getUnclippedBoundsInRoot()
+        assertTrue("under the estimate: $estimate / $noticeBounds", noticeBounds.top >= estimate.bottom)
+        assertTrue("above 만들기: $noticeBounds / $make", noticeBounds.bottom <= make.top)
+        // Not a gate.
+        composeRule.onNodeWithTag(VideoTags.MAKE).assertIsEnabled()
+
+        sheet = sheet.copy(dataNoticeMb = null)
+        composeRule.onNodeWithTag(VideoTags.DATA_NOTICE).assertDoesNotExist()
+        composeRule.onNodeWithText("Wi-Fi 권장", substring = true).assertDoesNotExist()
+    }
+
     @Test
     fun theImageSheetAsksOnlyForTheAspect() {
         val image = VideoSheet(TRIP, MediaKind.IMAGE, VideoOptions(aspect = Aspect.LANDSCAPE))
@@ -143,10 +166,12 @@ class VideoOptionsSheetTest {
             canColorByHeart = true,
             options = VideoOptions(musicUri = "content://music/1"),
             musicName = "아주 긴 이름의 배경음악 파일 - 한강 자전거길 여의도에서 반포까지.mp3",
+            dataNoticeMb = 60,
         )
         composeRule.setContent { MaterialTheme { VideoOptionsSheet(longest, {}, {}, {}, {}, {}) } }
         composeRule.onNodeWithTag(VideoTags.MAKE).assertIsDisplayed()
         composeRule.onNodeWithTag(VideoTags.ESTIMATE).assertIsDisplayed()
+        composeRule.onNodeWithTag(VideoTags.DATA_NOTICE).assertIsDisplayed()
     }
 
     @Test

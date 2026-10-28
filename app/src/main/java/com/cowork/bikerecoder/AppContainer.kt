@@ -115,7 +115,7 @@ class AppContainer(context: Context) {
     /** The style survives restarts in filesDir so an offline cold start still shows the corridor maps. */
     val tileSource: TileSource = OpenFreeMapSource(okHttp, File(appContext.filesDir, "map-style/liberty-ko.json"))
     val tripStore: TripStore = RoomTripStore(db)
-    private val network = NetworkWaiter(appContext)
+    internal val network = NetworkWaiter(appContext)
     val offlineMaps: MapLibreOfflineController = MapLibreOfflineController(
         appContext, tileSource, db.offlineRegionRefDao(), settings, network, clock = System::currentTimeMillis,
     )

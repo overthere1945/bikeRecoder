@@ -56,7 +56,10 @@ class MainActivity : ComponentActivity() {
         val previewKind = MediaKind.entries.firstOrNull { it.name == getStringExtra(VideoNotifications.EXTRA_PREVIEW_KIND) }
         return when {
             previewUri != null && previewKind != null -> LaunchRequest.Preview(
-                previewUri, previewKind, getBooleanExtra(VideoNotifications.EXTRA_PREVIEW_DOWNSCALED, false),
+                previewUri,
+                previewKind,
+                downscaled = getBooleanExtra(VideoNotifications.EXTRA_PREVIEW_DOWNSCALED, false),
+                satelliteFallback = getBooleanExtra(VideoNotifications.EXTRA_PREVIEW_SATELLITE_FALLBACK, false),
             )
             tripId >= 0 -> LaunchRequest.ResumeTrip(tripId)
             getBooleanExtra(NavNotifications.EXTRA_SHOW_NAVIGATION, false) -> LaunchRequest.ShowNavigation
