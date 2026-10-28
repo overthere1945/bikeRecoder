@@ -2,7 +2,6 @@ package com.cowork.bikerecoder.video
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import com.cowork.bikerecoder.core.model.GeoPoint
-import com.cowork.bikerecoder.core.post.RideColors
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
@@ -745,7 +744,6 @@ class VideoJobTest {
                 photos = emptyList(),
                 heartRate = emptyList(),
                 dayStarts = emptyList(),
-                segmentColors = listOf(RideColors.colorAt(0)),
                 title = "10월 25일 (일)",
                 rideTitle = "아침 라이딩",
                 totals = TripTotals(600.0, 120_000, 5.0, 5.5, 3.0, avgBpm = null, calories = null),

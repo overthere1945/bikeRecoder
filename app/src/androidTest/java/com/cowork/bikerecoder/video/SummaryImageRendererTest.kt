@@ -164,6 +164,36 @@ class SummaryImageRendererTest {
         }
     }
 
+    /**
+     * The plain map's long attribution ("OpenFreeMap © OpenMapTiles Data from OpenStreetMap", the build without a key)
+     * stays in the header's box: in landscape inside the white column, its left end right of the map.
+     */
+    @Test
+    fun plainMapAttributionStaysInTheHeaderBox() {
+        assertEquals(OpenFreeMapSource.ATTRIBUTION, plainMap.attribution)
+        for (aspect in listOf(Aspect.LANDSCAPE, Aspect.PORTRAIT)) {
+            val image = render(VideoTestTrip.inputs(withPhoto = false), aspect, emptyList(), source = plainMap)
+            val u = minOf(aspect.width, aspect.height) / 360f
+            val layout = SummaryImageLayout.layout(aspect, 0)
+            val map = layout.map
+            val header = layout.header
+            // The rows of the attribution; in landscape from the map's right edge on (the map itself is not white).
+            val from = if (map.y < 18 * u) (map.x + map.w).toInt() else 0
+            var left = Int.MAX_VALUE
+            var right = Int.MIN_VALUE
+            for (y in 0 until (18 * u).toInt()) for (x in from until aspect.width) {
+                if (VideoTestTrip.near(image.getPixel(x, y), Color.WHITE, 8)) continue
+                left = minOf(left, x)
+                right = maxOf(right, x)
+            }
+            val message = "$aspect: words $left..$right, header ${header.x}..${header.x + header.w}, map right ${map.x + map.w}"
+            Log.i(TAG, message)
+            assertTrue(message, right > left)
+            if (aspect == Aspect.LANDSCAPE) assertTrue(message, left > map.x + map.w)
+            assertTrue(message, left >= header.x - 1 && right <= header.x + header.w + 1)
+        }
+    }
+
     /** Spec §3.9: the route glows orange (§3.1), with the green start and the black end (§3.2) in white borders. */
     @Test
     fun routeGlowAndStartEndDots() {
@@ -203,6 +233,7 @@ class SummaryImageRendererTest {
         save("v131-image-portrait", render(inputs, Aspect.PORTRAIT, listOf(photo, photo, photo)))
         save("v131-image-landscape", render(inputs, Aspect.LANDSCAPE, listOf(photo, photo)))
         save("v131-image-nophoto", render(VideoTestTrip.inputs(withPhoto = false, withHeartRate = false), Aspect.PORTRAIT, emptyList()))
+        save("v131-image-landscape-plain", render(inputs, Aspect.LANDSCAPE, listOf(photo, photo), source = plainMap))
     }
 
     private companion object {

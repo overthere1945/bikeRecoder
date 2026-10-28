@@ -2,7 +2,6 @@ package com.cowork.bikerecoder.video
 
 import com.cowork.bikerecoder.core.post.HeartRateSample
 import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
-import com.cowork.bikerecoder.core.post.RideColors
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.trip.TripStore
 import com.cowork.bikerecoder.core.video.PhotoCue
@@ -36,8 +35,7 @@ data class TripTotals(
  * What a video or summary image of trip [tripId] is made from. [timeline] joins the target segments (finished,
  * ≥ [MIN_RIDE_DISTANCE_M], spec §1.1) on one moving-time axis; [photos] are the shown photos (hidden ones left out)
  * at their moving time; [heartRate] the target segments' samples in time order; [dayStarts] the "N일째 · M월 d일"
- * captions; [segmentColors] one colour per target segment (its day's [RideColors] colour, spec §2.2);
- * [title] "10월 25일 (일)" or "10월 17일 ~ 18일"; [rideTitle] the automatic name
+ * captions; [title] "10월 25일 (일)" or "10월 17일 ~ 18일"; [rideTitle] the automatic name
  * (spec §3.8: "저녁 라이딩" from the first start, "N일 여행" over several days; the job may add the region); [canColorByHeart] some target
  * segment has detailed heart rate (the [심박] option); [firstStartedAt] when the first target segment was started (the file
  * name, spec §3.5 — not its first GPS fix).
@@ -48,7 +46,6 @@ data class VideoInputs(
     val photos: List<PhotoCue>,
     val heartRate: List<HeartRateSample>,
     val dayStarts: List<Pair<Long, String>>,
-    val segmentColors: List<String>,
     val title: String,
     val rideTitle: String,
     val totals: TripTotals,
@@ -86,7 +83,6 @@ class VideoInputsLoader(
         val hr = tripHeartRate(targets.groupBy { it.localDate }, extras)
         val totals = tripTotals(targets)
         val days = targets.map { it.localDate }.distinct().sorted()
-        val dayIndex = days.withIndex().associate { it.value to it.index }
 
         return VideoInputs(
             tripId = tripId,
@@ -94,7 +90,6 @@ class VideoInputsLoader(
             photos = photos,
             heartRate = heartRate,
             dayStarts = timeline.dayStarts,
-            segmentColors = targets.map { RideColors.colorAt(dayIndex.getValue(it.localDate)) },
             title = titleOf(days.first(), days.last()),
             rideTitle = RideTitle.base(targets.first().startedAt, days.size, zone),
             totals = TripTotals(

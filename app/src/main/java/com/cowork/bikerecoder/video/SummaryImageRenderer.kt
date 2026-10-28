@@ -37,16 +37,15 @@ class SummaryImageRenderer(private val context: Context, private val tileSource:
 
         drawMap(canvas, inputs, layout.map, unit)
         drawHeader(canvas, inputs, layout.header, unit)
-        drawAttribution(canvas, aspect.width, unit)
-        val stats = stats(inputs)
-        // One value size for all six cells: the largest that fits every one of them.
+        drawAttribution(canvas, layout.header, aspect.width, unit)
+        val stats = stats(inputs).map { (label, value) -> label to FrameRenderer.splitUnit(value) }
+        // One value size for all six cells: the largest that fits every number with its smaller unit.
         val value = text(unit, 20f, DARK, bold = true, align = Paint.Align.LEFT)
-        stats.zip(layout.stats).forEach { (stat, box) ->
-            val room = box.w - 20 * unit
-            val wide = value.measureText(stat.second)
-            if (wide > room) value.textSize *= room / wide
-        }
-        stats.zip(layout.stats).forEach { (stat, box) -> drawStat(canvas, stat, box, unit, value) }
+        val small = text(unit, 20f * FrameStyle.CARD_UNIT_SHARE, DARK, bold = true, align = Paint.Align.LEFT)
+        val shrink = stats.zip(layout.stats).minOf { (stat, box) -> min(1f, (box.w - 20 * unit) / valueWidth(stat.second, value, small, unit)) }
+        value.textSize *= shrink
+        small.textSize *= shrink
+        stats.zip(layout.stats).forEach { (stat, box) -> drawStat(canvas, stat, box, unit, value, small) }
         shown.zip(layout.photos).forEach { (photo, box) -> drawPhoto(canvas, MapSnapshots.software(photo), box, unit) }
         val footer = layout.footer
         canvas.drawText(BRAND, footer.x + footer.w / 2, footer.y + footer.h * 0.7f, text(unit, 14f, GREY, bold = true))
@@ -96,22 +95,31 @@ class SummaryImageRenderer(private val context: Context, private val tileSource:
 
     /**
      * The map's attribution in one line (spec §1.1), small in the image's top right corner, on the white above the
-     * header's date: off the map, so it never tangles with the map's own names.
+     * header's date: off the map, so it never tangles with the map's own names. Right-aligned with the [header] (the
+     * white column in landscape) and shrunk to fit it, and at most half the [width].
      */
-    private fun drawAttribution(canvas: Canvas, width: Int, unit: Float) {
-        val paint = text(unit, 9f, BRAND_GREY, align = Paint.Align.RIGHT)
-        val room = width / 2f
+    private fun drawAttribution(canvas: Canvas, header: Box, width: Int, unit: Float) {
+        val paint = text(unit, 9f, ATTRIBUTION_GREY, align = Paint.Align.RIGHT)
+        val room = min(width / 2f, header.w)
         val wide = paint.measureText(tileSource.attribution)
         if (wide > room) paint.textSize *= room / wide
-        canvas.drawText(tileSource.attribution, width - 16 * unit, 14 * unit, paint)
+        canvas.drawText(tileSource.attribution, header.x + header.w, 14 * unit, paint)
     }
 
-    private fun drawStat(canvas: Canvas, stat: Pair<String, String>, box: Box, unit: Float, value: Paint) {
+    /** A cell: its label in grey, then its number with the unit ("km/h", "bpm", …) smaller after it, as on the closing card. */
+    private fun drawStat(canvas: Canvas, stat: Pair<String, Pair<String, String>>, box: Box, unit: Float, value: Paint, small: Paint) {
         canvas.drawRoundRect(RectF(box.x, box.y, box.x + box.w, box.y + box.h), 10 * unit, 10 * unit, fill(CELL))
         val x = box.x + 10 * unit
         canvas.drawText(stat.first, x, box.y + 18 * unit, text(unit, 11f, GREY, align = Paint.Align.LEFT))
-        canvas.drawText(stat.second, x, box.y + 40 * unit, value)
+        val (number, unitText) = stat.second
+        val baseline = box.y + 40 * unit
+        canvas.drawText(number, x, baseline, value)
+        if (unitText.isNotEmpty()) canvas.drawText(unitText, x + value.measureText(number) + unit, baseline, small)
     }
+
+    /** How wide a [number and unit][value] is drawn: the number, a one-unit gap and the smaller unit. */
+    private fun valueWidth(value: Pair<String, String>, number: Paint, small: Paint, unit: Float): Float =
+        number.measureText(value.first) + if (value.second.isEmpty()) 0f else unit + small.measureText(value.second)
 
     /** Centre-cropped into [box], rounded. */
     private fun drawPhoto(canvas: Canvas, photo: Bitmap, box: Box, unit: Float) {
@@ -157,7 +165,7 @@ class SummaryImageRenderer(private val context: Context, private val tileSource:
         private const val BRAND = "bikeRecoder"
         private const val DARK = 0xFF212121.toInt()
         private const val GREY = 0xFF757575.toInt()
-        private const val BRAND_GREY = 0xFF9E9E9E.toInt()
+        private const val ATTRIBUTION_GREY = 0xFF757575.toInt()
         private const val CELL = 0xFFF5F5F5.toInt()
 
         /** The ride's title line sits this far (units) below the date's baseline. */

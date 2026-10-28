@@ -6,7 +6,6 @@ import com.cowork.bikerecoder.core.post.HeartRateSample
 import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.post.PhotoPositionSource
 import com.cowork.bikerecoder.core.post.PlacedPhoto
-import com.cowork.bikerecoder.core.post.RideColors
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.core.trip.Trip
@@ -74,7 +73,6 @@ class VideoInputsTest {
         assertEquals(101, inputs.timeline.points.size)
         assertTrue(inputs.timeline.points.all { it.segmentIndex == 0 })
         assertEquals(100_000L, inputs.timeline.totalMoveMs)
-        assertEquals(listOf(RideColors.colorAt(0)), inputs.segmentColors)
         assertEquals(TripTotals(500.0, 100_000L, 5.0, 7.0, 12.0, avgBpm = null, calories = null), inputs.totals)
         assertEquals(TRIP, inputs.tripId)
         assertEquals(ride, rides.segments(TRIP).first().id)
@@ -139,7 +137,7 @@ class VideoInputsTest {
     }
 
     @Test
-    fun multiDayTripHasDayCaptionsRangeTitleAndDayColours() = runTest {
+    fun multiDayTripHasDayCaptionsRangeTitle() = runTest {
         trip(TripType.MULTI_DAY)
         segment(day1, track(at(day1, 9), 100), distanceM = 500.0)
         segment(day1, track(at(day1, 14), 100), distanceM = 500.0)
@@ -150,7 +148,6 @@ class VideoInputsTest {
         assertEquals("10월 17일 ~ 18일", inputs.title)
         assertEquals(listOf(200_000L to "2일째 · 10월 18일"), inputs.dayStarts)
         assertEquals(inputs.timeline.dayStarts, inputs.dayStarts)
-        assertEquals(listOf(RideColors.colorAt(0), RideColors.colorAt(0), RideColors.colorAt(1)), inputs.segmentColors)
         assertEquals(1_500.0, inputs.totals.distanceM)
     }
 

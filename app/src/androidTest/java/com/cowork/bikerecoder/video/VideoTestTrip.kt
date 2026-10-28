@@ -6,7 +6,6 @@ import android.graphics.Color
 import android.graphics.Paint
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.HeartRateSample
-import com.cowork.bikerecoder.core.post.RideColors
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
@@ -70,7 +69,6 @@ object VideoTestTrip {
             photos = if (withPhoto) listOf(PhotoCue(1, timeline.moveMsAtTime(photoAt)!!, photoAt)) else emptyList(),
             heartRate = heart,
             dayStarts = emptyList(),
-            segmentColors = listOf(RideColors.colorAt(0)),
             title = "10월 25일 (일)",
             rideTitle = "아침 라이딩",
             totals = TripTotals(totals.distanceM, totals.movingTimeMs, totals.avgSpeedMps, totals.maxSpeedMps, totals.ascentM,
