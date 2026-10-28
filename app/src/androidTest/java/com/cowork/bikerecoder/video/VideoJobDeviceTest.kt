@@ -13,6 +13,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.BikeApp
+import com.cowork.bikerecoder.BuildConfig
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.SegmentTotals
@@ -23,6 +24,8 @@ import com.cowork.bikerecoder.core.video.VideoLength
 import com.cowork.bikerecoder.core.video.VideoOptions
 import com.cowork.bikerecoder.data.TripEntity
 import com.cowork.bikerecoder.data.toEntity
+import com.cowork.bikerecoder.search.KakaoLocalClient
+import com.cowork.bikerecoder.search.SearchResult
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -94,7 +97,13 @@ class VideoJobDeviceTest {
         assertTrue("ended with $end", end is VideoJobState.Done)
         val done = end as VideoJobState.Done
         val uri = Uri.parse(done.media.uri).also { made += it }
-        Log.i(TAG, "video made in $seconds s, ${container.videoJobStore.secondsPerFrame()} s per map frame, downscaled=${done.downscaled}")
+        Log.i(
+            TAG,
+            "video made in $seconds s, ${container.videoJobStore.secondsPerFrame()} s per map frame, downscaled=${done.downscaled}, " +
+                "${container.videoJobStore.bytesPerFrame()} satellite bytes per frame",
+        )
+        // The build's VWorld key: made on the satellite map.
+        assertFalse("satellite fallback", done.satelliteFallback)
 
         assertPublished(uri)
         val extractor = MediaExtractor()
@@ -126,13 +135,49 @@ class VideoJobDeviceTest {
         val uri = Uri.parse(done.media.uri).also { made += it }
         Log.i(TAG, "image made in ${(SystemClock.elapsedRealtime() - started) / 1000.0} s")
 
-        assertPublished(uri)
+        assertFalse("satellite fallback", done.satelliteFallback)
+        assertPortraitPng(uri)
+        assertRecorded(done.media, MediaKind.IMAGE)
+    }
+
+    /** VWorld refuses the key (spec §1.3): the plain map stands in, the image is made all the same and says so. */
+    @Test
+    fun wrongKeyFallsBackToPlain() = runBlocking {
+        assertTrue("this build has no VWorld key", BuildConfig.VWORLD_API_KEY.isNotBlank())
+        val job = container.videoJob(container.videoBackend(probeKey = "WRONGKEY"))
+
+        assertEquals(StartResult.STARTED, job.startImage(tripId, Aspect.PORTRAIT))
+        val end = withTimeout(5 * 60_000L) {
+            job.state.first { it is VideoJobState.Done || it is VideoJobState.Failed || it is VideoJobState.Cancelled }
+        }
+        assertTrue("ended with $end", end is VideoJobState.Done)
+        val done = end as VideoJobState.Done
+        val uri = Uri.parse(done.media.uri).also { made += it }
+
+        assertTrue("satellite fallback", done.satelliteFallback)
+        assertPortraitPng(uri)
+        assertRecorded(done.media, MediaKind.IMAGE)
+    }
+
+    /** The real Kakao answer for the test trip's start in Yeouido (spec §3.8). */
+    @Test
+    fun regionOfTheTestTripIsYeongdeungpo() = runBlocking {
+        val kakao = KakaoLocalClient(container.okHttp, BuildConfig.KAKAO_REST_API_KEY)
+
+        val region = kakao.regionOf(VideoTestTrip.points().first().point)
+
+        assertEquals(SearchResult.Ok<Pair<String, String>?>("서울특별시" to "영등포구"), region)
+    }
+
+    private fun assertPortraitPng(uri: Uri) {
+        assertPublishedBlocking(uri)
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         resolver.openInputStream(uri)!!.use { BitmapFactory.decodeStream(it, null, bounds) }
         assertEquals("image/png", bounds.outMimeType)
         assertEquals(1080 to 1920, bounds.outWidth to bounds.outHeight)
-        assertRecorded(done.media, MediaKind.IMAGE)
     }
+
+    private fun assertPublishedBlocking(uri: Uri) = runBlocking { assertPublished(uri) }
 
     /** In the gallery and no longer pending; the job left nothing pending behind. */
     private suspend fun assertPublished(uri: Uri) {

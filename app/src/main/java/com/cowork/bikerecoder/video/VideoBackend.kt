@@ -4,12 +4,15 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.net.TrafficStats
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.os.Process
 import android.os.StatFs
 import androidx.compose.ui.graphics.asAndroidBitmap
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.video.Aspect
 import com.cowork.bikerecoder.core.video.Camera
 import com.cowork.bikerecoder.core.video.FramePlan
@@ -45,6 +48,18 @@ interface VideoSink : AutoCloseable {
     fun finish()
 }
 
+/** The start check's look at the satellite map (spec §1.2, §1.3). */
+enum class SatelliteCheck {
+    /** A tile came: the satellite map. */
+    OK,
+
+    /** VWorld failed (error, not an image, time-out): the plain map, with "위성 지도를 받지 못해 일반 지도로 만들었습니다". */
+    FAILED,
+
+    /** A build without the VWorld key: the plain map, nothing said. */
+    NO_KEY,
+}
+
 /** What [VideoJob] does through Android (storage, gallery, music, encoder, renderers); a fake in the JVM test. */
 interface VideoBackend {
     /** Free bytes on the shared storage the gallery writes to. */
@@ -63,19 +78,34 @@ interface VideoBackend {
     /** Nothing happens when it is already gone. */
     suspend fun delete(uri: String)
 
-    /** Opens the encoder writing into gallery item [uri], then the renderer at the encoder's size. */
-    suspend fun openVideo(uri: String, inputs: VideoInputs, options: VideoOptions): VideoSink
+    /** Fetches the satellite tile under [at] (the ride's start); [SatelliteCheck.NO_KEY] without asking when there is no key. */
+    suspend fun probeSatellite(at: GeoPoint): SatelliteCheck
 
-    /** Renders the summary image of [inputs] (up to 3 photos) and writes it as PNG into gallery item [uri]. */
-    suspend fun writeImage(uri: String, inputs: VideoInputs, aspect: Aspect)
+    /** Bytes this app has received so far (all networks); null when the phone does not count them. */
+    fun receivedBytes(): Long?
+
+    /**
+     * Opens the encoder writing into gallery item [uri], then the renderer at the encoder's size, on the satellite map
+     * when [satellite], else the plain map.
+     */
+    suspend fun openVideo(uri: String, inputs: VideoInputs, options: VideoOptions, satellite: Boolean): VideoSink
+
+    /** Renders the summary image of [inputs] (up to 3 photos; the satellite map when [satellite]) and writes it as PNG into gallery item [uri]. */
+    suspend fun writeImage(uri: String, inputs: VideoInputs, aspect: Aspect, satellite: Boolean)
 }
 
-/** The real [VideoBackend]: MediaStore, [VideoEncoder], [AudioTrackMaker], [FrameRenderer], [SummaryImageRenderer]. */
+/**
+ * The real [VideoBackend]: MediaStore, [VideoEncoder], [AudioTrackMaker], [FrameRenderer], [SummaryImageRenderer].
+ * [tileSource] is the plain map; with [satelliteKey] (VWorld, blank in a build without it) the satellite map is
+ * [SatelliteTileSource] over it. [probe] checks that key at the start (a wrong key in the device test).
+ */
 class AndroidVideoBackend(
     private val context: Context,
     private val tileSource: TileSource,
     private val writer: MediaStoreWriter,
     private val thumbnails: PhotoThumbnails,
+    private val satelliteKey: String,
+    private val probe: SatelliteProbe,
     private val log: WarnLog = androidWarnLog("VideoBackend"),
 ) : VideoBackend {
 
@@ -107,14 +137,24 @@ class AndroidVideoBackend(
 
     override suspend fun delete(uri: String) = withContext(Dispatchers.IO) { writer.delete(Uri.parse(uri)) }
 
-    override suspend fun openVideo(uri: String, inputs: VideoInputs, options: VideoOptions): VideoSink = withContext(Dispatchers.IO) {
+    override suspend fun probeSatellite(at: GeoPoint): SatelliteCheck = when {
+        satelliteKey.isBlank() -> SatelliteCheck.NO_KEY
+        probe.check(at) -> SatelliteCheck.OK
+        else -> SatelliteCheck.FAILED
+    }
+
+    override fun receivedBytes(): Long? = TrafficStats.getUidRxBytes(Process.myUid()).takeIf { it != TrafficStats.UNSUPPORTED.toLong() }
+
+    private fun source(satellite: Boolean): TileSource = if (satellite) SatelliteTileSource(tileSource, satelliteKey) else tileSource
+
+    override suspend fun openVideo(uri: String, inputs: VideoInputs, options: VideoOptions, satellite: Boolean): VideoSink = withContext(Dispatchers.IO) {
         // MediaMuxer needs a seekable descriptor: "rw".
         val pfd = resolver.openFileDescriptor(Uri.parse(uri), "rw") ?: throw IllegalStateException("cannot open $uri")
         try {
             val (encoder, downscaled) = VideoEncoder.open(pfd.fileDescriptor, options.aspect)
             try {
                 // Built only now: the renderer, like the cameras, takes the encoder's final size (ruling V5).
-                val renderer = FrameRenderer(context, tileSource, inputs, options, encoder.width, encoder.height, ::photo)
+                val renderer = FrameRenderer(context, source(satellite), inputs, options, encoder.width, encoder.height, ::photo)
                 EncoderSink(pfd, encoder, downscaled, renderer)
             } catch (e: Throwable) {
                 encoder.close()
@@ -126,10 +166,10 @@ class AndroidVideoBackend(
         }
     }
 
-    override suspend fun writeImage(uri: String, inputs: VideoInputs, aspect: Aspect) {
+    override suspend fun writeImage(uri: String, inputs: VideoInputs, aspect: Aspect, satellite: Boolean) {
         val chosen = VideoTimeline.choosePhotos(inputs.photos, IMAGE_PHOTOS, inputs.timeline.totalMoveMs)
         val photos = chosen.mapNotNull { photo(it.mediaId) }
-        val image = SummaryImageRenderer(context, tileSource).render(inputs, aspect, photos)
+        val image = SummaryImageRenderer(context, source(satellite)).render(inputs, aspect, photos)
         try {
             withContext(Dispatchers.IO) {
                 val out = resolver.openOutputStream(Uri.parse(uri), "w") ?: throw IllegalStateException("cannot open $uri")

@@ -36,7 +36,7 @@ data class PendingJob(
 
 /**
  * 영상 작업이 휴대폰에 남기는 것(DataStore): 마지막으로 고른 옵션(스펙 §1.2, 음악 제외), 이 휴대폰에서 마지막으로 만든 영상의
- * 장당 시간(§3.6), 진행 중 작업(§5.1). 깨진 값은 없는 것으로 읽고, 읽기가 실패해도 영상 만들기를 막지 않는다.
+ * 장당 시간(§3.6), 위성 지도 데이터의 장당 바이트(V1.3.1 §1.4), 진행 중 작업(§5.1). 깨진 값은 없는 것으로 읽고, 읽기가 실패해도 영상 만들기를 막지 않는다.
  */
 class VideoJobStore(private val dataStore: DataStore<Preferences>) {
 
@@ -69,6 +69,15 @@ class VideoJobStore(private val dataStore: DataStore<Preferences>) {
         dataStore.edit { it[SECONDS_PER_FRAME] = s }
     }
 
+    /** 위성 지도로 만든 마지막 영상에서 앱이 받은 프레임 한 장당 바이트(스펙 §1.4), 아직 없으면 null. */
+    suspend fun bytesPerFrame(): Double? = read()?.get(BYTES_PER_FRAME)
+
+    /** 0보다 큰 유한한 값만 기록한다(0은 타일을 모두 캐시에서 읽은 경우라 다음 영상의 예상이 되지 못한다). */
+    suspend fun recordBytesPerFrame(v: Double) {
+        if (!v.isFinite() || v <= 0.0) return
+        dataStore.edit { it[BYTES_PER_FRAME] = v }
+    }
+
     suspend fun setPending(p: PendingJob?) {
         dataStore.edit { prefs ->
             if (p == null) {
@@ -99,6 +108,7 @@ class VideoJobStore(private val dataStore: DataStore<Preferences>) {
     private companion object {
         val LAST_OPTIONS = stringPreferencesKey("last_options")
         val SECONDS_PER_FRAME = doublePreferencesKey("seconds_per_frame")
+        val BYTES_PER_FRAME = doublePreferencesKey("satellite_bytes_per_frame")
         val PENDING_JOB = stringPreferencesKey("pending_job")
         val json = Json { ignoreUnknownKeys = true }
     }

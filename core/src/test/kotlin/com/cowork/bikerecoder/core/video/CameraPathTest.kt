@@ -59,7 +59,7 @@ class CameraPathTest {
     ): Triple<List<FramePlan>, List<Camera>, Camera> {
         val plans = VideoTimeline.plan(timeline, photos, VideoOptions(length = VideoLength.SHORT), emptyList())
         val overview = CameraPath.overview(timeline.points.map { it.point }, Aspect.PORTRAIT)
-        val cameras = CameraPath.cameras(plans, timeline, overview, outro ?: overview)
+        val cameras = CameraPath.cameras(plans, timeline, overview, outro ?: overview, heightPx = Aspect.PORTRAIT.height)
         assertEquals(plans.size, cameras.size)
         return Triple(plans, cameras, overview)
     }

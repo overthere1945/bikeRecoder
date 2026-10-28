@@ -18,13 +18,16 @@ import com.cowork.bikerecoder.offline.VideoMaps
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.AfterEach
@@ -75,6 +78,7 @@ class VideoJobTest {
             backend = backend,
             recording = recording,
             online = { online },
+            regionOf = { regionOf(it) },
             startService = { servicesStarted++ },
             scope = scope(),
             log = { message, _ -> warnings += message },
@@ -82,6 +86,9 @@ class VideoJobTest {
             nanoTime = { backend.nanos },
         )
     }
+
+    /** The region of the ride's first point (spec §3.8); none by default. */
+    private var regionOf: suspend (GeoPoint) -> String? = { null }
 
     private fun awaitEnd(): VideoJobState = runBlocking {
         withTimeout(20_000) { job.state.first { it is VideoJobState.Done || it is VideoJobState.Failed || it is VideoJobState.Cancelled } }
@@ -389,9 +396,8 @@ class VideoJobTest {
         val done = awaitEnd() as VideoJobState.Done
 
         assertTrue(done.downscaled)
-        val points = inputs.timeline.points.map { it.point }
-        val at720 = CameraPath.cameras(plans, inputs.timeline, CameraPath.overview(points, 720, 1280), FrameRenderer.outroCamera(inputs, 720, 1280))
-        val at1080 = CameraPath.cameras(plans, inputs.timeline, CameraPath.overview(points, 1080, 1920), FrameRenderer.outroCamera(inputs, 1080, 1920))
+        val at720 = camerasAt(720, 1280)
+        val at1080 = camerasAt(1080, 1920)
         assertEquals(at720, backend.sinks.single().cameras)
         assertNotEquals(at1080.last(), at720.last())
     }
@@ -401,12 +407,169 @@ class VideoJobTest {
         assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
         awaitEnd()
 
-        val points = inputs.timeline.points.map { it.point }
-        val overview = CameraPath.overview(points, 1080, 1920)
-        val expected = CameraPath.cameras(plans, inputs.timeline, overview, FrameRenderer.outroCamera(inputs, 1080, 1920))
+        val overview = FrameRenderer.introCamera(inputs, 1080, 1920)
         val cameras = backend.sinks.single().cameras
-        assertEquals(expected, cameras)
+        assertEquals(camerasAt(1080, 1920), cameras)
         assertNotEquals(overview, cameras.last())
+    }
+
+    /** Ruling C3: the sky view above the opening title, the outro above the closing card, the frame's own height. */
+    private fun camerasAt(w: Int, h: Int) = CameraPath.cameras(
+        plans, inputs.timeline, FrameRenderer.introCamera(inputs, w, h), FrameRenderer.outroCamera(inputs, w, h), heightPx = h,
+    )
+
+    @Test
+    fun satelliteOkMakesSatellite() = runBlocking {
+        backend.probe = SatelliteCheck.OK
+
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
+        val done = awaitEnd() as VideoJobState.Done
+
+        assertEquals(listOf(true), backend.videoSatellite)
+        assertFalse(done.satelliteFallback)
+        // Spec §1.3: the tile under the start.
+        assertEquals(listOf(inputs.timeline.points.first().point), backend.probed)
+    }
+
+    @Test
+    fun satelliteFailureFallsBack() = runBlocking {
+        backend.probe = SatelliteCheck.FAILED
+
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
+        val done = awaitEnd() as VideoJobState.Done
+
+        assertEquals(listOf(false), backend.videoSatellite)
+        assertTrue(done.satelliteFallback)
+    }
+
+    @Test
+    fun noKeyUsesPlainWithoutNotice() = runBlocking {
+        backend.probe = SatelliteCheck.NO_KEY
+
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
+        val done = awaitEnd() as VideoJobState.Done
+
+        assertEquals(listOf(false), backend.videoSatellite)
+        assertFalse(done.satelliteFallback)
+    }
+
+    @Test
+    fun offlineStillNoInternet() = runBlocking {
+        online = false
+        maps.available = false
+
+        assertEquals(StartResult.NO_INTERNET, job.startVideo(TRIP, short))
+        assertEquals(StartResult.NO_INTERNET, job.startImage(TRIP, Aspect.PORTRAIT))
+
+        assertEquals(emptyList<GeoPoint>(), backend.probed)
+        assertNothingStarted()
+    }
+
+    /** The probe comes after the map check and before the music (spec §1.3). */
+    @Test
+    fun theProbeComesBeforeTheMusic() = runBlocking {
+        backend.probe = SatelliteCheck.FAILED
+        backend.musicReadable = false
+
+        assertEquals(StartResult.MUSIC_UNREADABLE, job.startVideo(TRIP, short.copy(musicUri = "content://music/broken")))
+
+        assertEquals(1, backend.probed.size)
+        assertEquals(listOf("probe", "music"), backend.calls)
+    }
+
+    @Test
+    fun imageUsesTheSameCheck() = runBlocking {
+        backend.probe = SatelliteCheck.OK
+        assertEquals(StartResult.STARTED, job.startImage(TRIP, Aspect.PORTRAIT))
+        assertFalse((awaitEnd() as VideoJobState.Done).satelliteFallback)
+        awaitIdle()
+
+        backend.probe = SatelliteCheck.FAILED
+        assertEquals(StartResult.STARTED, job.startImage(TRIP, Aspect.PORTRAIT))
+        assertTrue((awaitEnd() as VideoJobState.Done).satelliteFallback)
+        awaitIdle()
+
+        backend.probe = SatelliteCheck.NO_KEY
+        assertEquals(StartResult.STARTED, job.startImage(TRIP, Aspect.PORTRAIT))
+        assertFalse((awaitEnd() as VideoJobState.Done).satelliteFallback)
+
+        assertEquals(listOf(true, false, false), backend.imageSatellite)
+        assertEquals(3, backend.probed.size)
+    }
+
+    @Test
+    fun rideTitleGetsRegion() = runBlocking {
+        val asked = mutableListOf<GeoPoint>()
+        regionOf = { asked += it; "서울 강서구" }
+
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
+        awaitEnd()
+        awaitIdle()
+        assertEquals(StartResult.STARTED, job.startImage(TRIP, Aspect.PORTRAIT))
+        awaitEnd()
+
+        assertEquals("아침 라이딩 · 서울 강서구", backend.videoInputs.single().rideTitle)
+        assertEquals("아침 라이딩 · 서울 강서구", backend.imageInputs.single().rideTitle)
+        assertEquals(List(2) { inputs.timeline.points.first().point }, asked)
+    }
+
+    /** Review Focus 3: a lookup that hangs is given up after 5 s; one that throws is ignored. Either way the job is made. */
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun slowRegionLookupGivesTitleWithoutRegion() = runTest {
+        regionOf = { delay(10_000); "서울 강서구" }
+        val slow = virtualTimeJob(backgroundScope)
+
+        assertEquals(StartResult.STARTED, slow.startVideo(TRIP, short))
+        val done = slow.state.first { it is VideoJobState.Done || it is VideoJobState.Failed }
+
+        assertTrue(done is VideoJobState.Done, done.toString())
+        assertEquals("아침 라이딩", backend.videoInputs.single().rideTitle)
+        assertEquals(5_000L, testScheduler.currentTime)
+
+        regionOf = { throw IllegalStateException("lookup failed") }
+        val failing = virtualTimeJob(backgroundScope)
+        assertEquals(StartResult.STARTED, failing.startImage(TRIP, Aspect.PORTRAIT))
+        val image = failing.state.first { it is VideoJobState.Done || it is VideoJobState.Failed }
+
+        assertTrue(image is VideoJobState.Done, image.toString())
+        assertEquals("아침 라이딩", backend.imageInputs.single().rideTitle)
+    }
+
+    /** A job on the test's virtual clock (its scope), so the 5 s limit passes at once. */
+    private fun virtualTimeJob(scope: CoroutineScope) = VideoJob(
+        loadInputs = { if (it == TRIP) inputs else null }, store = store, tripMedia = media, maps = maps, backend = backend,
+        recording = recording, online = { true }, regionOf = { regionOf(it) }, startService = {}, scope = scope,
+        log = { message, _ -> warnings += message }, clock = { NOW }, nanoTime = { backend.nanos },
+    )
+
+    @Test
+    fun bytesPerFrameRecordedOnlyForSatellite() = runBlocking {
+        assertEquals(720, plans.size)
+        backend.probe = SatelliteCheck.OK
+        backend.received.addAll(listOf(1_000_000L, 37_000_000L))
+
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
+        awaitEnd()
+        awaitIdle()
+
+        assertEquals(50_000.0, store.bytesPerFrame())
+
+        // Made on the plain map instead: its bytes say nothing about satellite tiles.
+        backend.probe = SatelliteCheck.FAILED
+        backend.received.addAll(listOf(1_000_000L, 2_000_000L))
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
+        awaitEnd()
+        awaitIdle()
+        assertEquals(50_000.0, store.bytesPerFrame())
+
+        // The counter unsupported on this phone.
+        backend.probe = SatelliteCheck.OK
+        backend.received.clear()
+        backend.received.addAll(listOf(null, null))
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
+        awaitEnd()
+        assertEquals(50_000.0, store.bytesPerFrame())
     }
 
     @Test
@@ -534,7 +697,7 @@ class VideoJobTest {
         val handler = kotlinx.coroutines.CoroutineExceptionHandler { _, e -> uncaught += e }
         val failing = VideoJob(
             loadInputs = { inputs }, store = store, tripMedia = media, maps = maps, backend = backend, recording = recording,
-            online = { true }, startService = {},
+            online = { true }, regionOf = { null }, startService = {},
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + handler).also { scopes += it },
             log = { message, _ -> warnings += message }, clock = { NOW }, nanoTime = { backend.nanos },
         )
@@ -570,7 +733,7 @@ class VideoJobTest {
     fun aServiceThatCannotStartLeavesTheRunningJobClaimed() = runBlocking {
         val throwing = VideoJob(
             loadInputs = { inputs }, store = store, tripMedia = media, maps = maps, backend = backend, recording = recording,
-            online = { true }, startService = { throw IllegalStateException("not allowed") }, scope = scope(),
+            online = { true }, regionOf = { null }, startService = { throw IllegalStateException("not allowed") }, scope = scope(),
             log = { message, _ -> warnings += message }, clock = { NOW }, nanoTime = { backend.nanos },
         )
         backend.gateAt = 2
@@ -614,10 +777,29 @@ class VideoJobTest {
         val sinks = mutableListOf<FakeSink>()
         val images = mutableListOf<Pair<String, Aspect>>()
         var firstStateSeen: VideoJobState? = null
+        var probe = SatelliteCheck.OK
+        val probed: MutableList<GeoPoint> = Collections.synchronizedList(mutableListOf())
+        val calls: MutableList<String> = Collections.synchronizedList(mutableListOf())
+
+        /** What [receivedBytes] answers, in turn; null once empty (unsupported). */
+        val received: MutableList<Long?> = Collections.synchronizedList(mutableListOf())
+        val videoSatellite = mutableListOf<Boolean>()
+        val imageSatellite = mutableListOf<Boolean>()
+        val videoInputs = mutableListOf<VideoInputs>()
+        val imageInputs = mutableListOf<VideoInputs>()
+
+        override suspend fun probeSatellite(at: GeoPoint): SatelliteCheck {
+            calls += "probe"
+            probed += at
+            return probe
+        }
+
+        override fun receivedBytes(): Long? = if (received.isEmpty()) null else received.removeAt(0)
 
         override fun freeBytes(): Long = free
 
         override suspend fun loadMusic(uri: String, durationUs: Long): MusicTrack? {
+            calls += "music"
             musicDurations += durationUs
             return if (musicReadable) FakeMusic(uri) else null
         }
@@ -641,13 +823,17 @@ class VideoJobTest {
             deleted += uri
         }
 
-        override suspend fun openVideo(uri: String, inputs: VideoInputs, options: VideoOptions): VideoSink = withContext(Dispatchers.IO) {
+        override suspend fun openVideo(uri: String, inputs: VideoInputs, options: VideoOptions, satellite: Boolean): VideoSink = withContext(Dispatchers.IO) {
             if (cancelInOpen) job.cancel()
+            videoSatellite += satellite
+            videoInputs += inputs
             FakeSink(if (downscale) 720 else 1080, if (downscale) 1280 else 1920, downscale).also { sinks += it }
         }
 
-        override suspend fun writeImage(uri: String, inputs: VideoInputs, aspect: Aspect) {
+        override suspend fun writeImage(uri: String, inputs: VideoInputs, aspect: Aspect, satellite: Boolean) {
             images += uri to aspect
+            imageSatellite += satellite
+            imageInputs += inputs
         }
     }
 

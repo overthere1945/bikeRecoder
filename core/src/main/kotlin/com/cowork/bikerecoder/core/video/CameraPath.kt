@@ -102,7 +102,7 @@ object CameraPath {
         timeline: RideTimeline,
         overview: Camera,
         outro: Camera = overview,
-        heightPx: Int = Aspect.PORTRAIT.height,
+        heightPx: Int,
     ): List<Camera> {
         val route = timeline.routeDistance
         val segmentEnd = segmentEnds(timeline)

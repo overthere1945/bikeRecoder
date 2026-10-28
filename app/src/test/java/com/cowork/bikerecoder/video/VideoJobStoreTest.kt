@@ -121,6 +121,22 @@ class VideoJobStoreTest {
         assertEquals(0.4, store.secondsPerFrame())
     }
 
+    /** Spec §1.4: the satellite bytes per frame of the last satellite video, kept like the speed. */
+    @Test
+    fun bytesPerFrameRoundTrip() = runTest {
+        val store = VideoJobStore(dataStore())
+        assertNull(store.bytesPerFrame())
+
+        store.recordBytesPerFrame(80_000.0)
+        store.recordBytesPerFrame(50_000.0)
+        store.recordBytesPerFrame(0.0)
+        store.recordBytesPerFrame(-1.0)
+        store.recordBytesPerFrame(Double.NaN)
+        store.recordBytesPerFrame(Double.POSITIVE_INFINITY)
+
+        assertEquals(50_000.0, reopen().bytesPerFrame())
+    }
+
     @Test
     fun `pending job round trips and clears`() = runTest {
         val store = VideoJobStore(dataStore())

@@ -28,13 +28,15 @@ object VideoNotifications {
     /**
      * MainActivity extras of the "영상을 만들었습니다" tap — open the preview of the made file (wired by the UI, Task 7):
      * [EXTRA_PREVIEW_URI] gallery uri, [EXTRA_PREVIEW_KIND] [MediaKind] name, [EXTRA_PREVIEW_TRIP_ID],
-     * [EXTRA_PREVIEW_MEDIA_ID] the `trip_media` id, [EXTRA_PREVIEW_DOWNSCALED] made at 720p.
+     * [EXTRA_PREVIEW_MEDIA_ID] the `trip_media` id, [EXTRA_PREVIEW_DOWNSCALED] made at 720p,
+     * [EXTRA_PREVIEW_SATELLITE_FALLBACK] made on the plain map instead of the satellite one (V1.3.1 spec §4).
      */
     const val EXTRA_PREVIEW_URI = "video_preview_uri"
     const val EXTRA_PREVIEW_KIND = "video_preview_kind"
     const val EXTRA_PREVIEW_TRIP_ID = "video_preview_trip_id"
     const val EXTRA_PREVIEW_MEDIA_ID = "video_preview_media_id"
     const val EXTRA_PREVIEW_DOWNSCALED = "video_preview_downscaled"
+    const val EXTRA_PREVIEW_SATELLITE_FALLBACK = "video_preview_satellite_fallback"
 
     /** The ongoing text; null once the job has ended (the service then stops). */
     fun progressText(state: VideoJobState): String? = when (state) {
@@ -50,6 +52,10 @@ object VideoNotifications {
         is VideoJobState.Failed -> state.message
         else -> null
     }
+
+    /** The result's second line: [VideoJob.MSG_SATELLITE_FALLBACK] when the plain map stood in (spec §4), else null. */
+    fun resultDetail(state: VideoJobState): String? =
+        if (state is VideoJobState.Done && state.satelliteFallback) VideoJob.MSG_SATELLITE_FALLBACK else null
 
     fun ensureChannel(context: Context) {
         val channel = NotificationChannel(CHANNEL_ID, "영상 만들기", NotificationManager.IMPORTANCE_LOW)
@@ -72,7 +78,7 @@ object VideoNotifications {
 
     fun notifyProgress(context: Context, text: String) = notify(context, PROGRESS_ID, progress(context, text))
 
-    /** "영상을 만들었습니다" (tap: preview) or the failure's message (tap: the app). */
+    /** "영상을 만들었습니다" (tap: preview; second line [resultDetail]) or the failure's message (tap: the app). */
     fun showResult(context: Context, state: VideoJobState) {
         val text = resultText(state) ?: return
         ensureChannel(context)
@@ -83,11 +89,13 @@ object VideoNotifications {
                 putExtra(EXTRA_PREVIEW_TRIP_ID, state.media.tripId)
                 putExtra(EXTRA_PREVIEW_MEDIA_ID, state.media.id)
                 putExtra(EXTRA_PREVIEW_DOWNSCALED, state.downscaled)
+                putExtra(EXTRA_PREVIEW_SATELLITE_FALLBACK, state.satelliteFallback)
             }
         }
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_video)
             .setContentTitle(text)
+            .setContentText(resultDetail(state))
             .setAutoCancel(true)
             .setContentIntent(intent)
             .build()

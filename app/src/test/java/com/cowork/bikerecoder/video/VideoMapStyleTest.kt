@@ -10,7 +10,10 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.IOException
 
@@ -144,6 +147,28 @@ class VideoMapStyleTest {
         assertEquals("nothing to hide", VideoMapStyle.redact("nothing to hide", "TESTKEY"))
         // A blank key (plain map) leaves the text alone.
         assertEquals("a b", VideoMapStyle.redact("a b", ""))
+    }
+
+    /** Ruling K1 for the job's log: the key leaves the message, the error and its causes; the stack trace stays. */
+    @Test
+    fun redactingLogHidesTheKeyInErrorsAndCauses() {
+        val seen = mutableListOf<Pair<String, Throwable?>>()
+        val log = VideoMapStyle.redacting({ message, error -> seen += message to error }, "TESTKEY")
+        val cause = IOException("GET https://api.vworld.kr/req/wmts/1.0.0/TESTKEY/Satellite/17/1/2.jpeg")
+        val error = IllegalStateException("snapshot failed", cause)
+
+        log.warn("Making TESTKEY failed", error)
+        val plain = IllegalStateException("no key here")
+        log.warn("plain", plain)
+
+        val (message, logged) = seen[0]
+        assertEquals("Making *** failed", message)
+        val text = logged!!.stackTraceToString()
+        assertFalse("TESTKEY" in text, text)
+        assertTrue("snapshot failed" in text && "/***/Satellite" in text, text)
+        assertEquals(error.stackTrace.toList(), logged.stackTrace.toList())
+        // Nothing to hide: the error itself.
+        assertSame(plain, seen[1].second)
     }
 
     @Test

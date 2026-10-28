@@ -2,11 +2,13 @@ package com.cowork.bikerecoder
 
 import android.content.Context
 import android.util.Log
+import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.routing.Router
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.trip.OfflineMapController
 import com.cowork.bikerecoder.core.trip.TripManager
 import com.cowork.bikerecoder.core.trip.TripStore
+import com.cowork.bikerecoder.core.video.RideTitle
 import com.cowork.bikerecoder.data.AppDatabase
 import com.cowork.bikerecoder.data.DataStoreDayDistances
 import com.cowork.bikerecoder.data.DataStoreRecentPlaces
@@ -44,11 +46,15 @@ import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.routing.BRouterRouter
 import com.cowork.bikerecoder.routing.ProfileInstaller
 import com.cowork.bikerecoder.search.KakaoLocalClient
+import com.cowork.bikerecoder.search.SearchResult
 import com.cowork.bikerecoder.search.PlaceSearch
 import com.cowork.bikerecoder.search.RecentPlaceStore
 import com.cowork.bikerecoder.tts.AndroidTtsVoiceOutput
 import com.cowork.bikerecoder.tts.VoiceOutput
 import com.cowork.bikerecoder.video.AndroidVideoBackend
+import com.cowork.bikerecoder.video.SatelliteProbe
+import com.cowork.bikerecoder.video.VideoBackend
+import com.cowork.bikerecoder.video.VideoMapStyle
 import com.cowork.bikerecoder.video.MediaStoreWriter
 import com.cowork.bikerecoder.video.TripMediaStore
 import com.cowork.bikerecoder.video.VideoInputsLoader
@@ -103,7 +109,8 @@ class AppContainer(context: Context) {
         )
     }
 
-    val placeSearch: PlaceSearch = KakaoLocalClient(okHttp, BuildConfig.KAKAO_REST_API_KEY)
+    private val kakao = KakaoLocalClient(okHttp, BuildConfig.KAKAO_REST_API_KEY)
+    val placeSearch: PlaceSearch = kakao
     val recentPlaces: RecentPlaceStore = DataStoreRecentPlaces(appContext)
     /** The style survives restarts in filesDir so an offline cold start still shows the corridor maps. */
     val tileSource: TileSource = OpenFreeMapSource(okHttp, File(appContext.filesDir, "map-style/liberty-ko.json"))
@@ -242,20 +249,37 @@ class AppContainer(context: Context) {
     )
 
     /** The one video or summary-image job (V1.3.0 spec §3); stops when a recording starts. */
-    val videoJob: VideoJob by lazy {
-        VideoJob(
-            loadInputs = VideoInputsLoader(rideStore, postStore, tripStore)::load,
-            store = videoJobStore,
-            tripMedia = tripMedia,
-            maps = offlineMaps,
-            backend = AndroidVideoBackend(appContext, tileSource, mediaStoreWriter, photoThumbnails),
-            recording = rideUi.map { it is RideUiState.Starting || it is RideUiState.Active },
-            online = network::isOnline,
-            startService = { VideoService.start(appContext) },
-            scope = videoScope,
-            log = androidWarnLog("VideoJob"),
-        )
-    }
+    val videoJob: VideoJob by lazy { videoJob(videoBackend()) }
+
+    /**
+     * The real backend: the satellite map with the build's VWorld key (V1.3.1 spec §1.2), checked at the start by a probe
+     * with [probeKey] — the same key, except in the device test of the fallback (a wrong key).
+     */
+    internal fun videoBackend(probeKey: String = BuildConfig.VWORLD_API_KEY): AndroidVideoBackend = AndroidVideoBackend(
+        appContext, tileSource, mediaStoreWriter, photoThumbnails,
+        satelliteKey = BuildConfig.VWORLD_API_KEY,
+        probe = SatelliteProbe(okHttp, probeKey),
+    )
+
+    /** A job wired like [videoJob] on [backend]; only [videoJob] itself runs in the app. */
+    internal fun videoJob(backend: VideoBackend): VideoJob = VideoJob(
+        loadInputs = VideoInputsLoader(rideStore, postStore, tripStore)::load,
+        store = videoJobStore,
+        tripMedia = tripMedia,
+        maps = offlineMaps,
+        backend = backend,
+        recording = rideUi.map { it is RideUiState.Starting || it is RideUiState.Active },
+        online = network::isOnline,
+        regionOf = ::videoRegion,
+        startService = { VideoService.start(appContext) },
+        scope = videoScope,
+        // Map errors may quote a tile URL, and so the key (ruling K1).
+        log = VideoMapStyle.redacting(androidWarnLog("VideoJob"), BuildConfig.VWORLD_API_KEY),
+    )
+
+    /** "서울 강서구" for the video title (V1.3.1 spec §3.8); null on any failure or when nothing is found. */
+    private suspend fun videoRegion(point: GeoPoint): String? =
+        (kakao.regionOf(point) as? SearchResult.Ok)?.value?.let { (d1, d2) -> RideTitle.shortRegion(d1, d2) }
 
     private companion object {
         const val TAG = "AppContainer"

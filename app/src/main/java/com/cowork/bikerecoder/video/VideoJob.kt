@@ -1,11 +1,13 @@
 package com.cowork.bikerecoder.video
 
 import com.cowork.bikerecoder.WarnLog
+import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.video.Aspect
 import com.cowork.bikerecoder.core.video.CameraPath
 import com.cowork.bikerecoder.core.video.FPS
 import com.cowork.bikerecoder.core.video.FramePlan
 import com.cowork.bikerecoder.core.video.MediaNaming
+import com.cowork.bikerecoder.core.video.RideTitle
 import com.cowork.bikerecoder.core.video.VideoEstimate
 import com.cowork.bikerecoder.core.video.VideoOptions
 import com.cowork.bikerecoder.core.video.VideoTimeline
@@ -25,6 +27,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.ZoneId
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.ceil
@@ -42,8 +45,11 @@ sealed interface VideoJobState {
     /** Every frame is drawn; the encoder writes the rest of the MP4. */
     data object Encoding : VideoJobState
 
-    /** Saved in the gallery and in `trip_media`; [downscaled] = made at 720p ("이 휴대폰은 720p로 만들었습니다"). */
-    data class Done(val media: TripMedia, val downscaled: Boolean) : VideoJobState
+    /**
+     * Saved in the gallery and in `trip_media`; [downscaled] = made at 720p ("이 휴대폰은 720p로 만들었습니다");
+     * [satelliteFallback] = made on the plain map because VWorld failed ([VideoJob.MSG_SATELLITE_FALLBACK]).
+     */
+    data class Done(val media: TripMedia, val downscaled: Boolean, val satelliteFallback: Boolean = false) : VideoJobState
 
     /** Stopped by a failure or by a recording that started; [message] is shown as is. */
     data class Failed(val message: String) : VideoJobState
@@ -94,11 +100,14 @@ interface VideoJobControl {
 /**
  * The one video or summary-image job (spec §3.1–3.4), outside any screen. One at a time; never while recording.
  *
- * Start checks (busy, recording, something to make, storage = [VideoEstimate.bytes] against what is free, the music
- * opened and encoded up front, a map: online or the trip's own) refuse with a [StartResult] before anything is
- * written. Then, in [scope]: pending job ([VideoJobStore.setPending]) → map around the track
+ * Start checks (busy, recording, something to make, storage = [VideoEstimate.bytes] against what is free, a map: online
+ * or the trip's own, then the satellite tile under the start ([VideoBackend.probeSatellite], V1.3.1 spec §1.3), the
+ * music opened and encoded up front) refuse with a [StartResult] before anything is written. A failed probe makes the
+ * job on the plain map ([VideoJobState.Done.satelliteFallback]). Then, in [scope]: pending job
+ * ([VideoJobStore.setPending]) → the region for the title ([regionOf], at most 5 s, §3.8) → map around the track
  * ([VideoMaps.downloadForTrack]) → gallery item (`IS_PENDING`) → frames ([VideoBackend.openVideo], cameras at the
- * encoder's final size) → finish → publish → [TripMediaStore.add] → this phone's seconds per frame → pending cleared.
+ * encoder's final size) → finish → publish → [TripMediaStore.add] → this phone's seconds per frame and, for a satellite
+ * video, the bytes it received per frame (§1.4) → pending cleared.
  * Cancel, failure or a recording that starts ([recording] true) delete the gallery item and the pending job. The
  * video map is deleted in every case. [startService] puts the foreground service ([VideoService]) up for the run.
  */
@@ -110,6 +119,8 @@ class VideoJob(
     private val backend: VideoBackend,
     private val recording: Flow<Boolean>,
     private val online: () -> Boolean,
+    /** "서울 강서구" for the ride's first point, or null (no key, failure, nothing found). */
+    private val regionOf: suspend (GeoPoint) -> String?,
     private val startService: () -> Unit,
     private val scope: CoroutineScope,
     private val log: WarnLog,
@@ -143,11 +154,12 @@ class VideoJob(
             if (plans.isEmpty()) return StartResult.NOTHING_TO_MAKE
             // The map first: offline it answers at once, the music takes seconds.
             if (!mapReachable(inputs)) return StartResult.NO_INTERNET
+            val satellite = backend.probeSatellite(inputs.start())
             val music = options.musicUri?.let { uri ->
                 backend.loadMusic(uri, plans.size * 1_000_000L / FPS) ?: return StartResult.MUSIC_UNREADABLE
             }
-            launch(MediaKind.VIDEO, inputs, VideoOptionsJson.encode(options), needed) { uri ->
-                makeVideo(uri, inputs, options, plans, music)
+            launch(MediaKind.VIDEO, inputs, VideoOptionsJson.encode(options), needed, satellite) { uri, titled ->
+                makeVideo(uri, titled, options, plans, music, satellite == SatelliteCheck.OK)
             }
             launched = true
             startForeground()
@@ -165,9 +177,10 @@ class VideoJob(
             val inputs = loadInputs(tripId) ?: return StartResult.NOTHING_TO_MAKE
             if (backend.freeBytes() < IMAGE_BYTES) return StartResult.NO_SPACE
             if (!mapReachable(inputs)) return StartResult.NO_INTERNET
-            launch(MediaKind.IMAGE, inputs, VideoOptionsJson.encode(VideoOptions(aspect = aspect)), IMAGE_BYTES) { uri ->
-                backend.writeImage(uri, inputs, aspect)
-                Made(downscaled = false, secondsPerFrame = null)
+            val satellite = backend.probeSatellite(inputs.start())
+            launch(MediaKind.IMAGE, inputs, VideoOptionsJson.encode(VideoOptions(aspect = aspect)), IMAGE_BYTES, satellite) { uri, titled ->
+                backend.writeImage(uri, titled, aspect, satellite == SatelliteCheck.OK)
+                Made(downscaled = false, secondsPerFrame = null, bytesPerFrame = null)
             }
             launched = true
             startForeground()
@@ -231,18 +244,27 @@ class VideoJob(
     private suspend fun mapReachable(inputs: VideoInputs): Boolean =
         online() || maps.downloadForTrack(inputs.tripId, inputs.points())
 
-    private class Made(val downscaled: Boolean, val secondsPerFrame: Double?)
+    /** [bytesPerFrame]: what a satellite video received per frame, null otherwise (spec §1.4). */
+    private class Made(val downscaled: Boolean, val secondsPerFrame: Double?, val bytesPerFrame: Double?)
 
     /** Raised for an expected stop whose [message] is shown as is. */
     private class Stop(override val message: String) : Exception(message)
 
     /** ATOMIC: even a job cancelled at once runs [run], whose `finally` ends the state and frees the claim. */
     @OptIn(DelicateCoroutinesApi::class)
-    private fun launch(kind: MediaKind, inputs: VideoInputs, optionsJson: String, neededBytes: Long, make: suspend (uri: String) -> Made) {
+    private fun launch(
+        kind: MediaKind,
+        inputs: VideoInputs,
+        optionsJson: String,
+        neededBytes: Long,
+        satellite: SatelliteCheck,
+        make: suspend (uri: String, titled: VideoInputs) -> Made,
+    ) {
         stoppedByRecording = false
         _runningTripId.value = inputs.tripId
         _state.value = VideoJobState.Preparing(kind)
-        val job = scope.launch(start = CoroutineStart.ATOMIC) { run(kind, inputs, optionsJson, neededBytes, make) }
+        val fallback = satellite == SatelliteCheck.FAILED
+        val job = scope.launch(start = CoroutineStart.ATOMIC) { run(kind, inputs, optionsJson, neededBytes, fallback, make) }
         running = job
         // A recording that starts stops the job (GPS recording first, spec §3.2).
         val watcher = scope.launch {
@@ -262,13 +284,22 @@ class VideoJob(
         }
     }
 
-    private suspend fun run(kind: MediaKind, inputs: VideoInputs, optionsJson: String, neededBytes: Long, make: suspend (String) -> Made) {
+    /** [fallback]: made on the plain map because the satellite probe failed. */
+    private suspend fun run(
+        kind: MediaKind,
+        inputs: VideoInputs,
+        optionsJson: String,
+        neededBytes: Long,
+        fallback: Boolean,
+        make: suspend (String, VideoInputs) -> Made,
+    ) {
         val tripId = inputs.tripId
         var uri: String? = null
         var published = false
         var result: VideoJobState = VideoJobState.Cancelled
         try {
             store.setPending(PendingJob(tripId, kind, optionsJson, clock()))
+            val titled = inputs.copy(rideTitle = RideTitle.withRegion(inputs.rideTitle, region(inputs)))
             if (!maps.downloadForTrack(tripId, inputs.points())) throw Stop(MSG_NO_INTERNET)
             val base = MediaNaming.baseName(inputs.firstStartedAt, zone)
             val name = MediaNaming.unique(base, kind.extension, backend.existingNames(kind))
@@ -276,7 +307,7 @@ class VideoJob(
             withContext(NonCancellable) { uri = backend.createPending(kind, name) }
             val item = checkNotNull(uri)
             store.setPending(PendingJob(tripId, kind, optionsJson, clock(), outputUri = item))
-            val made = make(item)
+            val made = make(item, titled)
             // Finished: kept even if [취소] comes now.
             withContext(NonCancellable) {
                 // Forget the item before it is public: a kill from here on can never make [unfinished] delete a finished file.
@@ -286,12 +317,13 @@ class VideoJob(
                 // In the gallery: made, whatever the steps below do (final review I2). A trip deleted meanwhile makes the
                 // trip_media row fail (foreign key); the file stays and is previewed, without a row (id 0).
                 val media = TripMedia(0, tripId, kind, item, clock(), optionsJson)
-                result = VideoJobState.Done(media, made.downscaled)
+                result = VideoJobState.Done(media, made.downscaled, fallback)
                 attempt("Could not clear the pending video job") { store.setPending(null) }
                 attempt("Could not add the trip_media row of the made ${kind.name.lowercase()}") {
-                    result = VideoJobState.Done(media.copy(id = tripMedia.add(media)), made.downscaled)
+                    result = VideoJobState.Done(media.copy(id = tripMedia.add(media)), made.downscaled, fallback)
                 }
                 made.secondsPerFrame?.let { attempt("Could not record this phone's seconds per frame") { store.recordSpeed(it) } }
+                made.bytesPerFrame?.let { attempt("Could not record the satellite bytes per frame") { store.recordBytesPerFrame(it) } }
             }
         } catch (e: CancellationException) {
             if (!published) result = if (stoppedByRecording) VideoJobState.Failed(MSG_RECORDING_STARTED) else VideoJobState.Cancelled
@@ -319,19 +351,46 @@ class VideoJob(
         }
     }
 
-    /** The encoder and renderer are closed when this returns or throws — only here, never while a frame is drawn (carry). */
-    private suspend fun makeVideo(uri: String, inputs: VideoInputs, options: VideoOptions, plans: List<FramePlan>, music: MusicTrack?): Made {
+    /**
+     * The region of the ride's first point for the title, or null: a lookup that fails or takes over [REGION_TIMEOUT_MS]
+     * is given up, and the job goes on (spec §3.8).
+     */
+    private suspend fun region(inputs: VideoInputs): String? = withTimeoutOrNull(REGION_TIMEOUT_MS) {
+        try {
+            regionOf(inputs.start())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn("Could not look up the region of trip ${inputs.tripId}", e)
+            null
+        }
+    }
+
+    /**
+     * The encoder and renderer are closed when this returns or throws — only here, never while a frame is drawn (carry).
+     * A [satellite] video measures the bytes the app received while it was made (spec §1.4).
+     */
+    private suspend fun makeVideo(
+        uri: String,
+        inputs: VideoInputs,
+        options: VideoOptions,
+        plans: List<FramePlan>,
+        music: MusicTrack?,
+        satellite: Boolean,
+    ): Made {
         // Opened without cancellation and kept outside the block (a result handed back across dispatchers is dropped if
         // the job was cancelled meanwhile), so the encoder is closed below whatever happens.
         var opened: VideoSink? = null
+        val receivedBefore = if (satellite) backend.receivedBytes() else null
         try {
-            withContext(NonCancellable) { opened = backend.openVideo(uri, inputs, options) }
+            withContext(NonCancellable) { opened = backend.openVideo(uri, inputs, options, satellite) }
             val sink = checkNotNull(opened)
-            // The encoder's final size (720p fallback included) decides the overview and the closing camera.
+            // The encoder's final size (720p fallback included, landscape too) decides the sky view, the closing camera
+            // and where the marker sits (ruling C3).
             val w = sink.width
             val h = sink.height
             val cameras = CameraPath.cameras(
-                plans, inputs.timeline, CameraPath.overview(inputs.points(), w, h), FrameRenderer.outroCamera(inputs, w, h),
+                plans, inputs.timeline, FrameRenderer.introCamera(inputs, w, h), FrameRenderer.outroCamera(inputs, w, h), heightPx = h,
             )
             sink.addAudio(music) // before the first frame (ruling V7)
 
@@ -359,7 +418,9 @@ class VideoJob(
             }
             _state.value = VideoJobState.Encoding
             sink.finish()
-            return Made(sink.downscaled, if (mapFrames > 0) mapNanos / 1e9 / mapFrames else null)
+            val receivedAfter = if (receivedBefore != null) backend.receivedBytes() else null
+            val bytesPerFrame = if (receivedBefore != null && receivedAfter != null) (receivedAfter - receivedBefore).toDouble() / plans.size else null
+            return Made(sink.downscaled, if (mapFrames > 0) mapNanos / 1e9 / mapFrames else null, bytesPerFrame)
         } finally {
             opened?.close()
         }
@@ -396,6 +457,10 @@ class VideoJob(
         const val MSG_RECORDING_STARTED = "기록이 시작되어 영상 만들기를 멈췄습니다"
         const val MSG_VIDEO_FAILED = "영상을 만들지 못했습니다"
         const val MSG_IMAGE_FAILED = "이미지를 만들지 못했습니다"
+        const val MSG_SATELLITE_FALLBACK = "위성 지도를 받지 못해 일반 지도로 만들었습니다"
+
+        /** The region lookup for the title is given up after this (spec §3.8). */
+        const val REGION_TIMEOUT_MS = 5_000L
 
         /** A summary PNG is a few MB; the space it asks for before starting. */
         const val IMAGE_BYTES = 20_000_000L
@@ -418,5 +483,8 @@ class VideoJob(
             }
 
         private fun VideoInputs.points() = timeline.points.map { it.point }
+
+        /** The ride's first point (a made trip has at least one). */
+        private fun VideoInputs.start(): GeoPoint = timeline.points.first().point
     }
 }

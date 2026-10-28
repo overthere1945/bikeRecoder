@@ -36,4 +36,23 @@ class VideoNotificationsTest {
         assertNull(VideoNotifications.resultText(VideoJobState.Idle))
         assertNull(VideoNotifications.resultText(VideoJobState.Rendering(1, 1)))
     }
+
+    /** Spec §4: the satellite fallback is the result's second line and goes to the preview with the tap. */
+    @Test
+    fun fallbackLineAndExtra() {
+        assertEquals("위성 지도를 받지 못해 일반 지도로 만들었습니다", VideoJob.MSG_SATELLITE_FALLBACK)
+        assertEquals(
+            VideoJob.MSG_SATELLITE_FALLBACK,
+            VideoNotifications.resultDetail(VideoJobState.Done(video, downscaled = false, satelliteFallback = true)),
+        )
+        assertEquals(
+            VideoJob.MSG_SATELLITE_FALLBACK,
+            VideoNotifications.resultDetail(VideoJobState.Done(video.copy(kind = MediaKind.IMAGE), downscaled = true, satelliteFallback = true)),
+        )
+        assertEquals("영상을 만들었습니다", VideoNotifications.resultText(VideoJobState.Done(video, false, satelliteFallback = true)))
+        assertNull(VideoNotifications.resultDetail(VideoJobState.Done(video, downscaled = true)))
+        assertNull(VideoNotifications.resultDetail(VideoJobState.Failed("x")))
+        assertNull(VideoNotifications.resultDetail(VideoJobState.Cancelled))
+        assertEquals("video_preview_satellite_fallback", VideoNotifications.EXTRA_PREVIEW_SATELLITE_FALLBACK)
+    }
 }

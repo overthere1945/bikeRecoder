@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.video
 
+import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.map.TileSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
@@ -46,6 +47,21 @@ object VideoMapStyle {
 
     /** [text] (a log line or error message that may hold a tile URL) with every [key] replaced by "***" (ruling K1). */
     fun redact(text: String, key: String): String = if (key.isBlank()) text else text.replace(key, "***")
+
+    /**
+     * [log] with [key] replaced by "***" in the message and in the error's text and its causes' (ruling K1) — for a log
+     * that sees errors from the map (the video job's). An error without the key is passed on as it is.
+     */
+    fun redacting(log: WarnLog, key: String): WarnLog = WarnLog { message, error ->
+        val hides = key.isNotBlank() && error != null && key in error.stackTraceToString()
+        log.warn(redact(message, key), if (hides) redacted(error!!, key) else error)
+    }
+
+    /** A copy of [error] (its text redacted, its stack trace kept), causes included. */
+    private fun redacted(error: Throwable, key: String): Throwable =
+        Redacted(redact(error.toString(), key), error.cause?.let { redacted(it, key) }).apply { stackTrace = error.stackTrace }
+
+    private class Redacted(text: String, cause: Throwable?) : Exception(text, cause)
 
     /** The style JSON for `Style.Builder().fromJson`; [vworldKey] is written into the tile URL only. */
     fun build(baseStyleJson: String?, vworldKey: String): String {
