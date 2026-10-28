@@ -107,7 +107,35 @@ class VideoMapStyleTest {
             json("""["interpolate",["linear"],["zoom"],12,18,17,26]"""),
             layer(style, "v-place")["layout"]!!.jsonObject["text-size"],
         )
-        assertEquals(20, layer(style, "v-road")["layout"]!!.jsonObject["text-size"]!!.jsonPrimitive.int)
+        assertEquals(24, layer(style, "v-road")["layout"]!!.jsonObject["text-size"]!!.jsonPrimitive.int)
+    }
+
+    /** Ruling L1: names stand up facing the viewer on the 60° camera instead of lying squashed on the ground. */
+    @Test
+    fun labelsFaceTheViewer() {
+        val style = parse(VideoMapStyle.build(base, "TESTKEY"))
+
+        for (id in listOf("v-place", "v-road")) {
+            assertEquals(json("\"viewport\""), layer(style, id)["layout"]!!.jsonObject["text-pitch-alignment"], id)
+        }
+        assertEquals(json("\"line\""), layer(style, "v-road")["layout"]!!.jsonObject["symbol-placement"])
+        assertNull(layer(style, "v-place")["layout"]!!.jsonObject["symbol-placement"])
+        // Road names follow the road but are written level on the screen, whatever the camera's bearing.
+        assertEquals(json("\"viewport\""), layer(style, "v-road")["layout"]!!.jsonObject["text-rotation-alignment"])
+        assertEquals(600, layer(style, "v-road")["layout"]!!.jsonObject["symbol-spacing"]!!.jsonPrimitive.int)
+    }
+
+    /** Ruling K1: log text that may carry a tile URL loses the key. */
+    @Test
+    fun redactHidesTheKey() {
+        val url = "https://api.vworld.kr/req/wmts/1.0.0/TESTKEY/Satellite/17/1234/5678.jpeg"
+        assertEquals(
+            "Failed https://api.vworld.kr/req/wmts/1.0.0/***/Satellite/17/1234/5678.jpeg (key ***)",
+            VideoMapStyle.redact("Failed $url (key TESTKEY)", "TESTKEY"),
+        )
+        assertEquals("nothing to hide", VideoMapStyle.redact("nothing to hide", "TESTKEY"))
+        // A blank key (plain map) leaves the text alone.
+        assertEquals("a b", VideoMapStyle.redact("a b", ""))
     }
 
     @Test

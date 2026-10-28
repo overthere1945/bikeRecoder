@@ -179,6 +179,24 @@ class VideoInputsTest {
     }
 
     @Test
+    fun rideTitleFromFirstStart() = runTest {
+        trip(TripType.SINGLE_DAY)
+        val evening = sunday.atTime(18, 30).atZone(seoul).toInstant().toEpochMilli()
+        segment(sunday, track(evening, 100), distanceM = 500.0)
+
+        assertEquals("저녁 라이딩", loader.load(TRIP)!!.rideTitle)
+    }
+
+    @Test
+    fun rideTitleOfTwoDaysIsATrip() = runTest {
+        trip(TripType.MULTI_DAY)
+        segment(day1, track(at(day1, 18), 100), distanceM = 500.0)
+        segment(day2, track(at(day2, 9), 100, startLat = 37.6), distanceM = 500.0)
+
+        assertEquals("2일 여행", loader.load(TRIP)!!.rideTitle)
+    }
+
+    @Test
     fun heartRateSamplesAverageAndColouring() = runTest {
         trip(TripType.SINGLE_DAY)
         val start = at(sunday, 9)

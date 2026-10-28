@@ -26,8 +26,13 @@ object VideoMapStyle {
 
     /** Place names 1.6× the base sizes, fixed: 18 at zoom 12 to 26 at zoom 17. */
     private val PLACE_SIZE = Json.parseToJsonElement("""["interpolate",["linear"],["zoom"],12,18,17,26]""")
-    private const val ROAD_SIZE = 20
+    /** Ruling L1: 24 rather than the plan's 20, as the names read small on the 60° camera. */
+    private const val ROAD_SIZE = 24
+    private const val ROAD_SPACING = 600
     private val KOREAN_NAME = Json.parseToJsonElement("""["coalesce",["get","name:ko"],["get","name"]]""")
+
+    /** [text] (a log line or error message that may hold a tile URL) with every [key] replaced by "***" (ruling K1). */
+    fun redact(text: String, key: String): String = if (key.isBlank()) text else text.replace(key, "***")
 
     /** The style JSON for `Style.Builder().fromJson`; [vworldKey] is written into the tile URL only. */
     fun build(baseStyleJson: String?, vworldKey: String): String {
@@ -113,7 +118,16 @@ object VideoMapStyle {
             put("text-field", KOREAN_NAME)
             putJsonArray("text-font") { add(JsonPrimitive(labels.font)) }
             put("text-size", size)
-            if (line) put("symbol-placement", "line")
+            if (line) {
+                put("symbol-placement", "line")
+                // Placed along the road but written level on the screen: line-aligned Korean names are stacked
+                // upright in map space, so they stand at odd angles once the camera turns (seen on the descent).
+                put("text-rotation-alignment", "viewport")
+                // Fewer repeats: on the 60° camera the far roads are squeezed and the default 250 crowds the horizon.
+                put("symbol-spacing", ROAD_SPACING)
+            }
+            // Upright and facing the viewer on the tilted camera, not lying squashed on the ground (ruling L1).
+            put("text-pitch-alignment", "viewport")
         })
         put("paint", buildJsonObject {
             put("text-color", "#FFFFFF")
@@ -129,7 +143,7 @@ object VideoMapStyle {
  * [base]'s labels over the VWorld satellite photo (spec §1.1). [styleUrl] stays the base's, so the vector maps are
  * still downloaded ahead for the labels (§1.3); the satellite tiles themselves are fetched while the video is made.
  */
-class SatelliteTileSource(private val base: TileSource, private val key: String) : TileSource {
+class SatelliteTileSource(private val base: TileSource, internal val key: String) : TileSource {
     override val styleUrl: String get() = base.styleUrl
     override val attribution: String = VideoMapStyle.ATTRIBUTION
 

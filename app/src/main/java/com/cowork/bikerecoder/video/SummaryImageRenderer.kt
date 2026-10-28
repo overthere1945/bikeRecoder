@@ -73,7 +73,7 @@ class SummaryImageRenderer(private val context: Context, private val tileSource:
         canvas.clipRect(0f, 0f, box.w, box.h)
         canvas.drawBitmap(shot.bitmap, 0f, 0f, null)
         shot.bitmap.recycle()
-        overlay.draw(canvas, projected, Double.POSITIVE_INFINITY, unit)
+        overlay.draw(canvas, projected, Double.POSITIVE_INFINITY, unit, split = null, style = RouteStyle.FULL)
         val xy = projected.extras
         for (i in 2 until extras.size) {
             canvas.drawCircle(xy[2 * i], xy[2 * i + 1], 5 * unit, fill(Color.WHITE))

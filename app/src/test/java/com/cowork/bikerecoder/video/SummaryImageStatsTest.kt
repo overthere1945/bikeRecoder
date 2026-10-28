@@ -23,6 +23,7 @@ class SummaryImageStatsTest {
         segmentColors = listOf("#E53935", "#1E88E5"),
         title = "10월 17일 ~ 18일",
         badge = "여러 날 · 2일",
+        rideTitle = "2일 여행",
         totals = TripTotals(12_345.0, 3_600_000L, 3.43, 9.0, 120.4, avgBpm, null),
         canColorByHeart = false,
         firstStartedAt = 0L,

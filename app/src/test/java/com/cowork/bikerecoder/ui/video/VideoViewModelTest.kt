@@ -648,6 +648,7 @@ class VideoViewModelTest {
                 segmentColors = listOf(RideColors.colorAt(0)),
                 title = "10월 25일 (일)",
                 badge = "당일",
+                rideTitle = "아침 라이딩",
                 totals = TripTotals(3_000.0, 600_000, 5.0, 5.5, 3.0, avgBpm = null, calories = null),
                 canColorByHeart = canColorByHeart,
                 firstStartedAt = start,

@@ -14,9 +14,11 @@ import com.cowork.bikerecoder.core.video.PhotoCue
 import com.cowork.bikerecoder.core.video.RideTimelineBuilder
 import java.time.LocalDate
 import java.time.ZoneId
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 /** A test trip around Yeouido, Seoul (about 1.85 km, 5 m/s, one point a second) with one photo and heart rate. */
 object VideoTestTrip {
@@ -33,8 +35,8 @@ object VideoTestTrip {
     /** 2026-10-25 09:00 Seoul, the first point. */
     val START: Long = LocalDate.of(2026, 10, 25).atTime(9, 0).atZone(ZoneId.of("Asia/Seoul")).toInstant().toEpochMilli()
 
-    /** The track: one point a second at 5 m/s through [WAYPOINTS]. */
-    fun points(): List<TrackPoint> {
+    /** The track: one point a second at 5 m/s through [WAYPOINTS], over a 35 m hill ([withAltitude]) or without heights. */
+    fun points(withAltitude: Boolean = true): List<TrackPoint> {
         val out = ArrayList<TrackPoint>()
         var t = START
         for (leg in 0 until WAYPOINTS.lastIndex) {
@@ -43,17 +45,18 @@ object VideoTestTrip {
             val steps = max(1, (com.cowork.bikerecoder.core.model.GeoMath.distanceM(a, b) / 5.0).roundToInt())
             for (k in 0 until steps) {
                 val f = k.toDouble() / steps
-                out += TrackPoint(t, GeoPoint(a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f), 20.0 + out.size % 30, 5f, 5f)
+                out += TrackPoint(t, GeoPoint(a.lat + (b.lat - a.lat) * f, a.lon + (b.lon - a.lon) * f), null, 5f, 5f)
                 t += 1_000
             }
         }
-        out += TrackPoint(t, WAYPOINTS.last(), 20.0, 5f, 5f)
-        return out
+        out += TrackPoint(t, WAYPOINTS.last(), null, 5f, 5f)
+        if (!withAltitude) return out
+        return out.mapIndexed { i, p -> p.copy(altitudeM = 20.0 + 35.0 * sin(PI * i / out.lastIndex)) }
     }
 
-    /** [withPhoto]: one photo at 40 % of the ride; [withHeartRate]: a sample every 10 s. */
-    fun inputs(withPhoto: Boolean = true, withHeartRate: Boolean = true): VideoInputs {
-        val track = points()
+    /** [withPhoto]: one photo at 40 % of the ride; [withHeartRate]: a sample every 10 s; [withAltitude]: heights on the track. */
+    fun inputs(withPhoto: Boolean = true, withHeartRate: Boolean = true, withAltitude: Boolean = true): VideoInputs {
+        val track = points(withAltitude)
         val totals = SegmentTotals(1_850.0, track.last().timeMillis - START, track.last().timeMillis - START, 6.5, 24.0, 20.0, 20.0, 49.0)
         val segment = RideSegment(1, 1, START, track.last().timeMillis, LocalDate.of(2026, 10, 25), totals)
         val timeline = RideTimelineBuilder.build(listOf(segment to track), ZoneId.of("Asia/Seoul"))
@@ -70,6 +73,7 @@ object VideoTestTrip {
             segmentColors = listOf(RideColors.colorAt(0)),
             title = "10월 25일 (일)",
             badge = "당일",
+            rideTitle = "아침 라이딩",
             totals = TripTotals(totals.distanceM, totals.movingTimeMs, totals.avgSpeedMps, totals.maxSpeedMps, totals.ascentM,
                 avgBpm = if (withHeartRate) 132 else null, calories = if (withHeartRate) 210.0 else null),
             canColorByHeart = withHeartRate,

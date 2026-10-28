@@ -39,6 +39,9 @@ internal class MapSnapshots(
     private val log: WarnLog = androidWarnLog(TAG),
 ) {
     private val appContext: Context = context.applicationContext
+
+    /** The VWorld key inside the satellite tile URLs, kept out of the log (ruling K1); blank for the plain map. */
+    private val secret: String = (tileSource as? SatelliteTileSource)?.key.orEmpty()
     private var styleJson: String? = null
     private var map: MapSnapshotter? = null
     private var plain: MapSnapshotter? = null
@@ -106,12 +109,12 @@ internal class MapSnapshots(
             snapshotter.cancel()
             throw e
         } catch (e: Exception) {
-            log.warn("Map snapshot failed", e)
+            warn("Map snapshot failed", e)
             return null
         }
         if (snapshot == null) {
             snapshotter.cancel()
-            log.warn("Map snapshot took longer than $timeoutMs ms", null)
+            warn("Map snapshot took longer than $timeoutMs ms", null)
             return null
         }
         return Shot(software(snapshot.bitmap), snapshot)
@@ -127,6 +130,17 @@ internal class MapSnapshots(
         }
         if (Looper.myLooper() == Looper.getMainLooper()) release() else Handler(Looper.getMainLooper()).post(release)
     }
+
+    /** Logs [message] and [error] with the key replaced by "***": MapLibre's errors may quote a tile URL. */
+    private fun warn(message: String, error: Throwable?) {
+        val text = error?.toString().orEmpty()
+        if (secret.isBlank() || secret !in text) return log.warn(VideoMapStyle.redact(message, secret), error)
+        val redacted = Redacted(VideoMapStyle.redact(text, secret)).apply { stackTrace = error!!.stackTrace }
+        log.warn(VideoMapStyle.redact(message, secret), redacted)
+    }
+
+    /** An error whose text had the key in it, with the key replaced; the stack trace is the original's. */
+    private class Redacted(text: String) : Exception(text)
 
     private fun newSnapshotter(json: String, position: CameraPosition): MapSnapshotter = MapSnapshotter(
         appContext,
@@ -144,7 +158,7 @@ internal class MapSnapshots(
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
-        log.warn("Map style unavailable; drawing over a plain background", e)
+        warn("Map style unavailable; drawing over a plain background", e)
         PLAIN_STYLE
     }.also { styleJson = it }
 

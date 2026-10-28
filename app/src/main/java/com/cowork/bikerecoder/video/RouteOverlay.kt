@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.video
 
+import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -11,15 +12,31 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.hypot
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
+import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.tan
 
+/** How [RouteOverlay.draw] draws the route (spec §3.1, §3.5). */
+enum class RouteStyle {
+    /** A ride frame: the stretch ridden glowing, its last [FrameStyle.TAIL_M] (the tail) brighter, the rest faint white. */
+    RIDE,
+
+    /** The title card: the whole route as ridden, [FrameStyle.TITLE_ROUTE_SCALE] as wide. */
+    TITLE,
+
+    /** The closing frames and the summary image: the whole route as ridden. */
+    FULL,
+}
+
 /**
- * The route drawn over a map snapshot (spec §2.2): the part ridden as a solid line (width 6, its point's colour) and
- * the rest faint (width 4, opacity 0.35), in units of [unit] pixels. Positions come from the snapshot's own
- * projection ([MapSnapshots.Shot.project]), so the line sits exactly on the tilted 3D map.
+ * The route drawn over a map snapshot (spec §3.1): the stretch ridden in three layers (a soft glow in its point's
+ * colour, a white casing, the colour line), the last 150 m before the current point thicker with a brighter glow, and
+ * the rest a thin faint white line, in units of [unit] pixels. Positions come from the snapshot's own projection
+ * ([MapSnapshots.Shot.project]), so the line sits exactly on the tilted 3D map. The glow is a blur mask filter: draw
+ * on a software Canvas only (ruling V7).
  *
  * Only what the camera can see is projected: points far from the view are skipped, and on a tilted camera the route is
  * cut where it passes behind the camera (a perspective projection of such points is meaningless). [colors] has one
@@ -36,6 +53,13 @@ internal class RouteOverlay(timeline: RideTimeline, private val colors: IntArray
     /** Local plane, metres east / north of (lat0, lon0): good enough to decide what is near the camera. */
     private val xs = DoubleArray(points.size) { (points[it].point.lon - lon0) * M_PER_DEG * cos0 }
     private val ys = DoubleArray(points.size) { (points[it].point.lat - lat0) * M_PER_DEG }
+
+    /** Metres along the route to each point in the local plane (a move between segments counts 0), for the tail. */
+    private val along = DoubleArray(points.size).also { d ->
+        for (i in 1 until points.size) {
+            d[i] = d[i - 1] + if (segment[i] == segment[i - 1]) hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1]) else 0.0
+        }
+    }
 
     init {
         require(colors.size == points.size) { "${colors.size} colours for ${points.size} points" }
@@ -68,14 +92,19 @@ internal class RouteOverlay(timeline: RideTimeline, private val colors: IntArray
     }
 
     /**
-     * Draws [projected]: up to position [doneUntil] (point index + fraction; [Double.POSITIVE_INFINITY] for all) solid,
-     * after it faint. [split] is the pixel where they meet (the current point), if known.
+     * Draws [projected] in [style]. For [RouteStyle.RIDE] the route is ridden up to position [doneUntil] (point index +
+     * fraction) and [split] is the pixel where ridden and faint meet (the current point), if known; the other styles
+     * draw it all as ridden.
      */
-    fun draw(canvas: Canvas, projected: Projected, doneUntil: Double, unit: Float, split: Pair<Float, Float>? = null) {
-        val done = HashMap<Int, Path>()
-        val left = HashMap<Int, Path>()
+    fun draw(canvas: Canvas, projected: Projected, doneUntil: Double, unit: Float, split: Pair<Float, Float>?, style: RouteStyle) {
+        val until = if (style == RouteStyle.RIDE) doneUntil else Double.POSITIVE_INFINITY
+        val tailFrom = if (style == RouteStyle.RIDE) positionAt(distanceAt(until) - FrameStyle.TAIL_M) else until
+        val done = HashMap<Int, Pen>()
+        // The tail in steps, so its line widens smoothly towards the current point.
+        val tail = List(TAIL_STEPS) { HashMap<Int, Pen>() }
+        val left = HashMap<Int, Pen>()
+        fun tailStep(k: Int) = tailFrom + (until - tailFrom) * k / TAIL_STEPS
         for (run in projected.runs) {
-            var lastPath: Path? = null
             for (j in 0 until run.s.size - 1) {
                 val s0 = run.s[j]
                 val s1 = run.s[j + 1]
@@ -84,45 +113,106 @@ internal class RouteOverlay(timeline: RideTimeline, private val colors: IntArray
                 val y0 = run.xy[2 * j + 1]
                 val x1 = run.xy[2 * j + 2]
                 val y1 = run.xy[2 * j + 3]
-                fun edge(target: HashMap<Int, Path>, ax: Float, ay: Float, bx: Float, by: Float) {
-                    val path = target.getOrPut(color) { Path() }
-                    if (path !== lastPath) path.moveTo(ax, ay)
-                    path.lineTo(bx, by)
-                    lastPath = path
+                /** The pixel at position [s] on this edge; the current point's own pixel at [until]. */
+                fun xAt(s: Double) = if (s == until && split != null) split.first else x0 + (x1 - x0) * ((s - s0) / (s1 - s0)).toFloat()
+                fun yAt(s: Double) = if (s == until && split != null) split.second else y0 + (y1 - y0) * ((s - s0) / (s1 - s0)).toFloat()
+                fun piece(target: HashMap<Int, Pen>, from: Double, to: Double) {
+                    if (to <= from) return
+                    val ax = if (from == s0) x0 else xAt(from)
+                    val ay = if (from == s0) y0 else yAt(from)
+                    val bx = if (to == s1) x1 else xAt(to)
+                    val by = if (to == s1) y1 else yAt(to)
+                    target.getOrPut(color) { Pen() }.line(ax, ay, bx, by)
                 }
-                when {
-                    s1 <= doneUntil -> edge(done, x0, y0, x1, y1)
-                    s0 >= doneUntil -> edge(left, x0, y0, x1, y1)
-                    else -> {
-                        val f = ((doneUntil - s0) / (s1 - s0)).toFloat()
-                        val mx = split?.first ?: (x0 + (x1 - x0) * f)
-                        val my = split?.second ?: (y0 + (y1 - y0) * f)
-                        edge(done, x0, y0, mx, my)
-                        lastPath = null
-                        edge(left, mx, my, x1, y1)
-                    }
+                piece(done, s0, min(s1, tailFrom))
+                if (style == RouteStyle.RIDE && s1 > tailFrom && s0 < until) {
+                    for (k in 0 until TAIL_STEPS) piece(tail[k], max(s0, tailStep(k)), min(s1, if (k == TAIL_STEPS - 1) until else tailStep(k + 1)))
                 }
+                piece(left, max(s0, until), s1)
             }
         }
+
+        val scale = if (style == RouteStyle.TITLE) FrameStyle.TITLE_ROUTE_SCALE else 1f
+        val u = unit * scale
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
+            this.style = Paint.Style.STROKE
             strokeCap = Paint.Cap.ROUND
             strokeJoin = Paint.Join.ROUND
         }
-        paint.strokeWidth = LEFT_WIDTH * unit
-        left.forEach { (color, path) ->
+        // The rest of the way: thin, faint white.
+        paint.strokeWidth = FrameStyle.LEFT_WIDTH * u
+        paint.color = Color.WHITE
+        paint.alpha = (FrameStyle.LEFT_ALPHA * 255).roundToInt()
+        left.values.forEach { canvas.drawPath(it.path, paint) }
+        // The glow under it all, in each stretch's own colour (heart-rate bands glow in theirs).
+        paint.strokeWidth = FrameStyle.GLOW_WIDTH * u
+        paint.maskFilter = BlurMaskFilter(FrameStyle.GLOW_BLUR * u, BlurMaskFilter.Blur.NORMAL)
+        fun glow(pens: Map<Int, Pen>, alpha: Float) = pens.forEach { (color, pen) ->
             paint.color = color
-            paint.alpha = (LEFT_OPACITY * 255).toInt()
-            canvas.drawPath(path, paint)
+            paint.alpha = (alpha * 255).roundToInt()
+            canvas.drawPath(pen.path, paint)
         }
-        paint.strokeWidth = (DONE_WIDTH + 2) * unit
-        paint.color = CASING
-        done.values.forEach { canvas.drawPath(it, paint) }
-        paint.strokeWidth = DONE_WIDTH * unit
-        done.forEach { (color, path) ->
+        glow(done, FrameStyle.GLOW_ALPHA)
+        // One glow for the whole tail: overlapping blurred steps would leave bright beads where they meet.
+        val tailGlow = HashMap<Int, Pen>()
+        tail.forEach { step -> step.forEach { (color, pen) -> tailGlow.getOrPut(color) { Pen() }.path.addPath(pen.path) } }
+        glow(tailGlow, FrameStyle.TAIL_GLOW_ALPHA)
+        paint.maskFilter = null
+        // The white casing (the same 1.5u border on each side all along), then the colour line, 7u widening to 9u
+        // over the tail.
+        val border = FrameStyle.CASING_WIDTH - FrameStyle.LINE_WIDTH
+        fun tailWidth(k: Int) = FrameStyle.LINE_WIDTH + (FrameStyle.TAIL_WIDTH - FrameStyle.LINE_WIDTH) * (k + 1f) / TAIL_STEPS
+        paint.color = Color.WHITE
+        paint.strokeWidth = FrameStyle.CASING_WIDTH * u
+        done.values.forEach { canvas.drawPath(it.path, paint) }
+        tail.forEachIndexed { k, step ->
+            paint.strokeWidth = (tailWidth(k) + border) * u
+            step.values.forEach { canvas.drawPath(it.path, paint) }
+        }
+        fun line(pens: Map<Int, Pen>, width: Float) = pens.forEach { (color, pen) ->
+            paint.strokeWidth = width * u
             paint.color = color
-            canvas.drawPath(path, paint)
+            canvas.drawPath(pen.path, paint)
         }
+        line(done, FrameStyle.LINE_WIDTH)
+        tail.forEachIndexed { k, step -> line(step, tailWidth(k)) }
+    }
+
+    /** A path drawn piece by piece: a piece that starts where the last ended continues it. */
+    private class Pen {
+        val path = Path()
+        private var x = Float.NaN
+        private var y = Float.NaN
+
+        fun line(ax: Float, ay: Float, bx: Float, by: Float) {
+            if (ax != x || ay != y) path.moveTo(ax, ay)
+            path.lineTo(bx, by)
+            x = bx
+            y = by
+        }
+    }
+
+    /** Metres along the route at position [s] (point index + fraction). */
+    private fun distanceAt(s: Double): Double {
+        if (points.isEmpty()) return 0.0
+        if (s >= points.lastIndex) return along.last()
+        val i = floor(s).toInt().coerceAtLeast(0)
+        return along[i] + (along[i + 1] - along[i]) * (s - i)
+    }
+
+    /** The position (point index + fraction) [metres] along the route; 0 before the start. */
+    private fun positionAt(metres: Double): Double {
+        if (points.isEmpty() || metres <= 0.0) return 0.0
+        var lo = 0
+        var hi = points.lastIndex
+        if (metres >= along[hi]) return hi.toDouble()
+        // The last point at or before [metres].
+        while (lo < hi) {
+            val mid = (lo + hi + 1) ushr 1
+            if (along[mid] <= metres) lo = mid else hi = mid - 1
+        }
+        val step = along[lo + 1] - along[lo]
+        return if (step <= 0.0) lo.toDouble() else lo + (metres - along[lo]) / step
     }
 
     /** Colour of the stretch at position [s]. */
@@ -217,11 +307,7 @@ internal class RouteOverlay(timeline: RideTimeline, private val colors: IntArray
     }
 
     companion object {
-        const val DONE_WIDTH = 6f
-        const val LEFT_WIDTH = 4f
-        const val LEFT_OPACITY = 0.35f
-        private val CASING = Color.argb(70, 0, 0, 0)
-
+        private const val TAIL_STEPS = 6
         private const val M_PER_DEG = 111_195.0
         private const val EARTH_CIRCUMFERENCE_M = 40_075_016.686
         private const val TILE_SIZE = 512.0
