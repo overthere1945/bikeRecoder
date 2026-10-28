@@ -35,4 +35,15 @@ class VideoEstimateTest {
         assertEquals(72_000_000L, VideoEstimate.bytes(60.0))
         assertEquals(36_000_000L, VideoEstimate.bytes(30.0))
     }
+
+    @Test
+    fun satelliteMb() {
+        assertEquals(20, VideoEstimate.satelliteMb(VideoLength.SHORT, frames = 720, bytesPerFrame = null))
+        assertEquals(35, VideoEstimate.satelliteMb(VideoLength.NORMAL, frames = 1440, bytesPerFrame = null))
+        assertEquals(60, VideoEstimate.satelliteMb(VideoLength.LONG, frames = 2880, bytesPerFrame = null))
+        // 실측: ⌈50_000 × 720 / 1_000_000⌉ = 36
+        assertEquals(36, VideoEstimate.satelliteMb(VideoLength.NORMAL, frames = 720, bytesPerFrame = 50_000.0))
+        // 올림
+        assertEquals(2, VideoEstimate.satelliteMb(VideoLength.NORMAL, frames = 11, bytesPerFrame = 100_000.0))
+    }
 }

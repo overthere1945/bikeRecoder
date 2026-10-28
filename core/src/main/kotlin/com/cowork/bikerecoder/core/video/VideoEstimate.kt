@@ -25,4 +25,19 @@ object VideoEstimate {
 
     /** 예상 저장 공간(바이트) = 8 Mbps × 길이 × 1.2. */
     fun bytes(lengthSeconds: Double): Long = (BITRATE_BPS / 8.0 * lengthSeconds * SIZE_MARGIN).roundToLong()
+
+    /**
+     * 위성 지도 데이터 예상(MB, 스펙 §1.4). 앱이 받은 실측 [bytesPerFrame](프레임 한 장당 바이트)이 있으면
+     * ⌈그 값 × [frames] / 1,000,000⌉, 없으면 길이별 기본값(짧게 20, 보통 35, 길게 60).
+     */
+    fun satelliteMb(length: VideoLength, frames: Int, bytesPerFrame: Double?): Int {
+        if (bytesPerFrame == null) {
+            return when (length) {
+                VideoLength.SHORT -> 20
+                VideoLength.NORMAL -> 35
+                VideoLength.LONG -> 60
+            }
+        }
+        return ceil(bytesPerFrame * frames / 1_000_000.0).toInt()
+    }
 }
