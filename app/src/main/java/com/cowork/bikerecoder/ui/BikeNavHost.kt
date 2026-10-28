@@ -37,11 +37,14 @@ import com.cowork.bikerecoder.ui.onboarding.OnboardingStep
 import com.cowork.bikerecoder.ui.onboarding.OnboardingViewModel
 import com.cowork.bikerecoder.ui.onboarding.effectiveOnboardingStep
 import com.cowork.bikerecoder.ui.onboarding.readPermissionState
+import com.cowork.bikerecoder.ui.cumulative.CumulativeMapScreen
+import com.cowork.bikerecoder.ui.cumulative.CumulativeMapViewModel
 import com.cowork.bikerecoder.ui.favorite.FavoriteChips
 import com.cowork.bikerecoder.ui.favorite.FavoriteDialogs
 import com.cowork.bikerecoder.ui.favorite.FavoriteEvent
 import com.cowork.bikerecoder.ui.favorite.FavoritesScreen
 import com.cowork.bikerecoder.ui.favorite.FavoritesViewModel
+import com.cowork.bikerecoder.ui.health.HeartRateGate
 import com.cowork.bikerecoder.ui.history.HistoryScreen
 import com.cowork.bikerecoder.ui.history.HistoryViewModel
 import com.cowork.bikerecoder.ui.history.SegmentDetailScreen
@@ -67,12 +70,26 @@ import com.cowork.bikerecoder.ui.navigate.NavigateScreen
 import com.cowork.bikerecoder.ui.navigate.NavigateViewModel
 import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.ui.main.RideTarget
+import com.cowork.bikerecoder.ui.post.PhotoPermissionPrompt
 import com.cowork.bikerecoder.ui.record.RecordScreen
 import com.cowork.bikerecoder.ui.record.RecordViewModel
 import com.cowork.bikerecoder.ui.trip.StartPlan
 import com.cowork.bikerecoder.ui.trip.TripStartDialogs
 import com.cowork.bikerecoder.ui.trip.TripStartState
 import com.cowork.bikerecoder.ui.trip.TripStartViewModel
+import com.cowork.bikerecoder.ui.video.MediaEntry
+import com.cowork.bikerecoder.ui.video.MediaPreviewScreen
+import com.cowork.bikerecoder.ui.video.VideoHost
+import com.cowork.bikerecoder.ui.video.VideoViewModel
+import com.cowork.bikerecoder.ui.video.galleryThumbnail
+import com.cowork.bikerecoder.ui.video.shareMedia
+import com.cowork.bikerecoder.ui.video.viewMedia
+import com.cowork.bikerecoder.video.MediaKind
+import com.cowork.bikerecoder.video.VideoNotifications
+import android.net.Uri
+import androidx.core.net.toUri
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 object Routes {
     const val ONBOARDING = "onboarding"
@@ -92,8 +109,22 @@ object Routes {
     const val RECORD = "record"
     const val RECORD_PATTERN = "$RECORD?${RecordViewModel.ARG_TRIP}={${RecordViewModel.ARG_TRIP}}"
     const val HISTORY = "history"
+    const val CUMULATIVE = "cumulative"
     const val TRIP_DETAIL = "history/trip/{${TripDetailViewModel.ARG_TRIP}}"
     const val SEGMENT_DETAIL = "history/segment/{${SegmentDetailViewModel.ARG_SEGMENT}}"
+
+    /** The made video or image (V1.3.0 spec §3.5). */
+    const val ARG_URI = "uri"
+    const val ARG_KIND = "kind"
+    const val ARG_DOWNSCALED = "downscaled"
+    /** Made on the plain map because VWorld failed (V1.3.1 spec §4). */
+    const val ARG_SATELLITE_FALLBACK = "satelliteFallback"
+    const val MEDIA_PREVIEW = "media-preview?$ARG_URI={$ARG_URI}&$ARG_KIND={$ARG_KIND}&$ARG_DOWNSCALED={$ARG_DOWNSCALED}" +
+        "&$ARG_SATELLITE_FALLBACK={$ARG_SATELLITE_FALLBACK}"
+
+    fun mediaPreview(uri: String, kind: MediaKind, downscaled: Boolean, satelliteFallback: Boolean) =
+        "media-preview?$ARG_URI=${Uri.encode(uri)}&$ARG_KIND=${kind.name}&$ARG_DOWNSCALED=$downscaled" +
+            "&$ARG_SATELLITE_FALLBACK=$satelliteFallback"
 
     fun tripDetail(tripId: Long) = "history/trip/$tripId"
 
@@ -124,6 +155,9 @@ sealed interface LaunchRequest {
 
     /** The progress notification: show the running guidance or recording ([rideRoute]). */
     data object ShowNavigation : LaunchRequest
+
+    /** "영상을 만들었습니다": the preview of the made file ([satelliteFallback]: made on the plain map, V1.3.1 §4). */
+    data class Preview(val uri: String, val kind: MediaKind, val downscaled: Boolean, val satelliteFallback: Boolean) : LaunchRequest
 }
 
 /**
@@ -157,9 +191,15 @@ fun BikeNavHost(
     container: AppContainer,
     launchRequest: LaunchRequest? = null,
     onLaunchRequestHandled: () -> Unit = {},
+    /** A fresh start: offer the video job a forced kill left unfinished (spec §3.3). */
+    offerUnfinishedVideo: Boolean = false,
 ) {
     val navController = rememberNavController()
     val context = LocalContext.current
+    // The heart-rate permission flow of the summaries and the detail screens; heart rate allowed → a pass.
+    val heartRateGate = remember(container) {
+        HeartRateGate(container.heartRateSource, container.settings, onGranted = container.postProcessor::request)
+    }
     // Activity-scoped so main, search and plan edit one shared plan.
     val planViewModel: PlanViewModel = viewModel(
         viewModelStoreOwner = context.findActivity(),
@@ -228,16 +268,48 @@ fun BikeNavHost(
         navController.openPlan()
     }
 
+    // Activity-scoped: the video sheet, its dialogs and the job's result over every screen (V1.3.0 spec §1, §3).
+    val videoViewModel: VideoViewModel = viewModel(
+        viewModelStoreOwner = context.findActivity(),
+        factory = VideoViewModel.factory(container),
+    )
+    val mediaThumbnail = remember(container) { galleryThumbnail(container.appContext.contentResolver) }
+
     LaunchedEffect(launchRequest) {
         val request = launchRequest ?: return@LaunchedEffect
-        val route = when (request) {
+        // Ignored while onboarding is still showing (there is no main screen to return to yet).
+        val onboarding = navController.currentDestination?.route == Routes.ONBOARDING
+        when (request) {
             is LaunchRequest.ResumeTrip -> Routes.navigate(request.tripId)
             LaunchRequest.ShowNavigation -> rideRoute(container.navigationState, container.rideState)
-        }
-        // Ignored while onboarding is still showing (there is no main screen to return to yet).
-        if (route != null && navController.currentDestination?.route != Routes.ONBOARDING) navController.openOnMain(route)
+            is LaunchRequest.Preview -> {
+                if (!onboarding) navController.openPreview(request.uri, request.kind, request.downscaled, request.satelliteFallback)
+                null
+            }
+        }?.let { route -> if (!onboarding) navController.openOnMain(route) }
         onLaunchRequestHandled()
     }
+
+    // A finished job while the app is on screen: the preview (or its failure's message), once. Not over a recording
+    // that started meanwhile: then the "영상을 만들었습니다" notification stays to open it.
+    val videoOutcome by videoViewModel.outcome.collectAsStateWithLifecycle()
+    LaunchedEffect(videoOutcome) {
+        val outcome = videoOutcome ?: return@LaunchedEffect
+        val preview = videoViewModel.previewToOpen(outcome)
+        if (preview != null && navController.currentDestination?.route != Routes.ONBOARDING) {
+            navController.openPreview(preview.uri, preview.kind, preview.downscaled, preview.satelliteFallback)
+            // Seen here: "영상을 만들었습니다" would only open it again.
+            VideoNotifications.cancelResult(context)
+        }
+        videoViewModel.outcomeShown()
+    }
+    var unfinishedOffered by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (!offerUnfinishedVideo || unfinishedOffered) return@LaunchedEffect
+        unfinishedOffered = true
+        videoViewModel.checkUnfinished()
+    }
+    val mediaEntry: @Composable (Long) -> Unit = { tripId -> MediaEntry(videoViewModel, tripId) }
 
     NavHost(navController = navController, startDestination = startDestination) {
         composable(Routes.ONBOARDING) {
@@ -264,6 +336,7 @@ fun BikeNavHost(
                 currentLocation = container.currentLocation,
                 onOpenSearch = { if (isCurrent()) navController.navigate(Routes.SEARCH) },
                 onOpenHistory = { navController.navigate(Routes.HISTORY) },
+                onOpenCumulative = { navController.navigate(Routes.CUMULATIVE) },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                 onResumeTrip = { tripId -> navController.openOnMain(Routes.navigate(tripId)) },
                 onShowRide = { target ->
@@ -490,6 +563,9 @@ fun BikeNavHost(
                 },
                 // [안내만 끝내기 (기록 계속)]: the recording goes on, on the record screen.
                 onGuidanceEndedWhileRecording = { if (isCurrent()) navController.openOnMain(Routes.record()) },
+                photoPrompt = { PhotoPrompt(container) },
+                heartRateGate = heartRateGate,
+                mediaEntry = mediaEntry,
             )
         }
         composable(
@@ -514,6 +590,9 @@ fun BikeNavHost(
                 },
                 onShowGuidance = { if (isCurrent()) navController.openOnMain(Routes.navigate()) },
                 onSetDestination = { if (isCurrent()) navController.navigate(Routes.SEARCH) },
+                photoPrompt = { PhotoPrompt(container) },
+                heartRateGate = heartRateGate,
+                mediaEntry = mediaEntry,
             )
         }
         composable(Routes.HISTORY) {
@@ -521,18 +600,77 @@ fun BikeNavHost(
             HistoryScreen(
                 viewModel = viewModel,
                 onOpenTrip = { tripId -> navController.navigate(Routes.tripDetail(tripId)) },
+                onOpenCumulative = { navController.navigate(Routes.CUMULATIVE) },
                 onBack = { navController.popBackStack() },
+            )
+        }
+        composable(Routes.CUMULATIVE) {
+            val viewModel: CumulativeMapViewModel = viewModel(factory = CumulativeMapViewModel.factory(container))
+            CumulativeMapScreen(
+                viewModel = viewModel,
+                tileSource = container.tileSource,
+                onBack = { navController.popBackStack() },
+                onOpenRide = { segmentId -> navController.navigate(Routes.segmentDetail(segmentId)) },
             )
         }
         composable(
             Routes.TRIP_DETAIL,
             arguments = listOf(navArgument(TripDetailViewModel.ARG_TRIP) { type = NavType.LongType }),
-        ) {
+        ) { entry ->
             val viewModel: TripDetailViewModel = viewModel(factory = TripDetailViewModel.factory(container))
+            val tripId = entry.arguments?.getLong(TripDetailViewModel.ARG_TRIP) ?: -1L
             TripDetailScreen(
                 viewModel = viewModel,
+                tileSource = container.tileSource,
+                thumbnails = container.photoThumbnails,
                 onOpenSegment = { segmentId -> navController.navigate(Routes.segmentDetail(segmentId)) },
                 onBack = { navController.popBackStack() },
+                photoPrompt = { PhotoPrompt(container) },
+                heartRateGate = heartRateGate,
+                mediaEntry = { mediaEntry(tripId) },
+                mediaThumbnail = mediaThumbnail,
+                onOpenMedia = { media -> context.viewMedia(media.uri, media.kind) },
+            )
+        }
+        composable(
+            Routes.MEDIA_PREVIEW,
+            arguments = listOf(
+                navArgument(Routes.ARG_URI) { type = NavType.StringType },
+                navArgument(Routes.ARG_KIND) { type = NavType.StringType },
+                navArgument(Routes.ARG_DOWNSCALED) {
+                    type = NavType.BoolType
+                    defaultValue = false
+                },
+                navArgument(Routes.ARG_SATELLITE_FALLBACK) {
+                    type = NavType.BoolType
+                    defaultValue = false
+                },
+            ),
+        ) { entry ->
+            val uri = entry.arguments?.getString(Routes.ARG_URI).orEmpty()
+            val kind = MediaKind.entries.firstOrNull { it.name == entry.arguments?.getString(Routes.ARG_KIND) } ?: MediaKind.VIDEO
+            val downscaled = entry.arguments?.getBoolean(Routes.ARG_DOWNSCALED) == true
+            val satelliteFallback = entry.arguments?.getBoolean(Routes.ARG_SATELLITE_FALLBACK) == true
+            val isCurrent = { navController.currentBackStackEntry?.id == entry.id }
+            // MediaStore's own name (it may differ from the one asked for); none when it cannot be read.
+            val fileName by produceState<String?>(null, uri) {
+                value = withContext(Dispatchers.IO) {
+                    try {
+                        container.mediaStoreWriter.displayName(uri.toUri())
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+            }
+            MediaPreviewScreen(
+                uri = uri,
+                kind = kind,
+                downscaled = downscaled,
+                satelliteFallback = satelliteFallback,
+                fileName = fileName,
+                onBack = { if (isCurrent()) navController.popBackStack() },
+                onShare = { context.shareMedia(uri, kind) },
+                onOpenGallery = { context.viewMedia(uri, kind) },
             )
         }
         composable(
@@ -543,12 +681,21 @@ fun BikeNavHost(
             SegmentDetailScreen(
                 viewModel = viewModel,
                 tileSource = container.tileSource,
+                thumbnails = container.photoThumbnails,
                 onBack = { navController.popBackStack() },
+                photoPrompt = { PhotoPrompt(container) },
+                heartRateGate = heartRateGate,
             )
         }
         composable(Routes.SETTINGS) {
             val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(container))
-            SettingsScreen(viewModel = viewModel, onBack = { navController.popBackStack() })
+            SettingsScreen(
+                viewModel = viewModel,
+                onBack = { navController.popBackStack() },
+                photoSource = container.photoSource,
+                heartRateGate = heartRateGate,
+                onPhotoAccessGained = container.postProcessor::request,
+            )
         }
     }
     // Collected here, not on the search screen: each save is told once even if that screen was left meanwhile; only a
@@ -577,6 +724,12 @@ fun BikeNavHost(
         onStartCustom = favoritesViewModel::startCustom,
         onConfirmCurrent = favoritesViewModel::confirmCurrent,
     )
+    VideoHost(videoViewModel)
+}
+
+/** The made file's preview on top (a second one of the same file is not pushed). */
+private fun NavController.openPreview(uri: String, kind: MediaKind, downscaled: Boolean, satelliteFallback: Boolean) {
+    navigate(Routes.mediaPreview(uri, kind, downscaled, satelliteFallback)) { launchSingleTop = true }
 }
 
 /** The guidance or record screen on top of main (plan/search/ride entries are dropped). */
@@ -596,4 +749,10 @@ private fun Context.findActivity(): ComponentActivity {
         c = c.baseContext
     }
     error("BikeNavHost must be hosted in a ComponentActivity")
+}
+
+/** The photo permission card of the summary and the detail screens; access gained → a post-processing pass. */
+@Composable
+private fun PhotoPrompt(container: AppContainer) {
+    PhotoPermissionPrompt(container.photoSource, container.settings, onAccessGained = container.postProcessor::request)
 }

@@ -7,6 +7,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.recording.SegmentTotals
+import com.cowork.bikerecoder.core.recording.TripDeleteCondition
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripStatus
@@ -15,6 +16,8 @@ import com.cowork.bikerecoder.core.trip.TripType
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
@@ -194,5 +197,60 @@ class RoomRideStoreTest {
         assertNull(store.segment(drop))
         assertEquals(0, store.points(drop).size)
         assertEquals(1, store.points(keep).size)
+    }
+
+    private suspend fun completedTrip(): Long = trips.insertTrip(
+        Trip(0, TripType.SINGLE_DAY, TripStatus.COMPLETED, RouteProfile.BALANCED, 1_000L, 2_000L, 3_000L),
+    )
+
+    /** Ruling R20: each condition is checked in the deleting statement; only COMPLETED trips are ever deleted. */
+    @Test
+    fun conditionalTripDeleteChecksStatusAndSegments() = runTest {
+        val active = newTrip()
+        assertFalse(store.deleteTripIf(active, TripDeleteCondition.NO_SEGMENTS))
+        assertFalse(store.deleteTripIf(active, TripDeleteCondition.NOT_RECORDING))
+        assertFalse(store.deleteTripIf(active, TripDeleteCondition.SHORT_NOT_RECORDING))
+
+        val short = completedTrip()
+        val first = store.openSegment(short, startedAt = 10_000L, localDate = day1)
+        // Recording (open segment): no condition holds.
+        TripDeleteCondition.entries.forEach { assertFalse(it.name, store.deleteTripIf(short, it)) }
+        store.closeSegment(first, 11_000L, totals(4.0))
+        val second = store.openSegment(short, startedAt = 12_000L, localDate = day1)
+        store.closeSegment(second, 13_000L, totals(6.0))
+        assertFalse("a closed segment is left", store.deleteTripIf(short, TripDeleteCondition.NO_SEGMENTS))
+        assertFalse("10 m in all is a ride", store.deleteTripIf(short, TripDeleteCondition.SHORT_NOT_RECORDING))
+        store.deleteSegment(second)
+        assertTrue(store.deleteTripIf(short, TripDeleteCondition.SHORT_NOT_RECORDING))
+        assertNull(trips.trip(short))
+        assertEquals(emptyList<Any>(), store.segments(short))
+
+        val long = completedTrip()
+        val ride = store.openSegment(long, startedAt = 20_000L, localDate = day2)
+        store.closeSegment(ride, 21_000L, totals(500.0))
+        assertTrue(store.deleteTripIf(long, TripDeleteCondition.NOT_RECORDING))
+        assertNull(trips.trip(long))
+
+        val emptied = completedTrip()
+        val refused = store.deleteTripIf(emptied, TripDeleteCondition.SHORT_NOT_RECORDING)
+        assertFalse("no segment: not a short ride", refused)
+        assertTrue(store.deleteTripIf(emptied, TripDeleteCondition.NO_SEGMENTS))
+        assertNull(trips.trip(emptied))
+        assertFalse("already gone", store.deleteTripIf(emptied, TripDeleteCondition.NO_SEGMENTS))
+    }
+
+    /** Ruling R21: trips with segments that are all 0 m (not in the trip summaries). */
+    @Test
+    fun emptyTripsHaveOnlyZeroMetreSegments() = runTest {
+        val empty = completedTrip()
+        store.closeSegment(store.openSegment(empty, 1_000L, day1), 2_000L, totals(0.0))
+        store.openSegment(empty, 3_000L, day1) // open, still 0 m
+        val mixed = completedTrip()
+        store.closeSegment(store.openSegment(mixed, 4_000L, day1), 5_000L, totals(0.0))
+        store.closeSegment(store.openSegment(mixed, 6_000L, day1), 7_000L, totals(0.3))
+        completedTrip() // no segment: never counted
+
+        assertEquals(listOf(empty), store.emptyTrips().map { it.id })
+        assertEquals(listOf(mixed), store.tripSummaries().map { it.trip.id })
     }
 }

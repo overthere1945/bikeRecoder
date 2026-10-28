@@ -16,15 +16,21 @@ import com.cowork.bikerecoder.nav.NavNotifications
 import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.nav.NavigationController
 import com.cowork.bikerecoder.offline.OfflineProgress
+import com.cowork.bikerecoder.post.PostProcessor
+import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.ride.RecordingEnd
 import com.cowork.bikerecoder.ride.RideControls
 import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.ride.ScreenNotice
+import com.cowork.bikerecoder.ride.ShortRides
 import com.cowork.bikerecoder.ride.recordingTripId
 import com.cowork.bikerecoder.tts.VoiceOutput
+import com.cowork.bikerecoder.ui.record.SummaryExtras
+import com.cowork.bikerecoder.ui.record.SummaryExtrasState
 import com.cowork.bikerecoder.ui.trip.EndAction
 import com.cowork.bikerecoder.ui.trip.canConvertToMultiDay
 import kotlinx.coroutines.CancellationException
+import com.cowork.bikerecoder.ui.video.mediaTripOf
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -65,9 +71,53 @@ class NavigateViewModel(
     /** The recording's on-screen notice ([com.cowork.bikerecoder.ride.RideController.notice]). */
     val rideNotice: StateFlow<ScreenNotice?> = MutableStateFlow(null),
     private val phrases: KoreanPhrases = KoreanPhrases(),
+    /** With [postProcessor]: the segment summary's extras ([summaryExtras], ruling R9). */
+    postStore: PostStore,
+    postProcessor: PostProcessor,
+    shortRides: ShortRides,
+    /** The summary's trip when it offers [영상 만들기] [이미지 만들기] ([SummaryExtras]); none by default. */
+    mediaTrip: suspend (segmentId: Long) -> Long? = { null },
 ) : ViewModel() {
 
     val ui: StateFlow<NavUiState> = controller.ui
+
+    private val extras = SummaryExtras(
+        summarySegment = combine(controller.ui, rideUi) { nav, ride -> shownSummary(nav, ride)?.segment?.id },
+        postStore = postStore,
+        postProcessor = postProcessor,
+        shortRides = shortRides,
+        scope = viewModelScope,
+        mediaTrip = mediaTrip,
+    )
+
+    /**
+     * "사진 N장" and the heart rate of the segment summary shown on the finished screen, its pass when it appears and
+     * the heart rate read again every minute while it is on screen — the same as the record screen's summary
+     * ([SummaryExtras], ruling R9).
+     */
+    val summaryExtras: StateFlow<SummaryExtrasState> = extras.state
+
+    /** [다시 가져오기] on the segment summary. */
+    fun refetchHeartRate() = extras.refetchNow()
+
+    /** The segment summary is (or no longer is) on a started screen ([SummaryExtras.onScreen]). */
+    fun summaryOnScreen(shown: Boolean) = extras.onScreen(shown)
+
+    /**
+     * [버리기] on a short ride's summary (spec §6.10): deletes it, then closes the finished screen as [confirmFinished]
+     * does — only what is still that summary and that finished guidance.
+     */
+    fun discardShortRide() {
+        val nav = ui.value
+        val shown = shownSummary() ?: return
+        extras.discardShort {
+            dismissSummary(shown)
+            if (ui.value === nav) close()
+        }
+    }
+
+    /** [저장] (or dismissed) on a short ride's summary: it stays. */
+    fun keepShortRide() = extras.keepShort()
 
     /** A recording is starting or running: [종료] offers to end the guidance only, and the recording goes on. */
     val recording: StateFlow<Boolean> = rideUi.map(::isRecording)
@@ -167,6 +217,8 @@ class NavigateViewModel(
 
     /** [여러 날로 바꾸기] on the finished screen; the summary shown with it is closed once the trip is converted. */
     fun convertToMultiDay() {
+        // Ruling R20: not while [버리기] may still delete this trip.
+        if (extras.isDiscarding) return
         val shown = shownSummary()
         viewModelScope.launch {
             controller.convertToMultiDay()
@@ -184,10 +236,7 @@ class NavigateViewModel(
     }
 
     /** The summary the finished screen shows right now ([finishedView]), if any. */
-    private fun shownSummary(): RideUiState.Finished? {
-        val nav = ui.value as? NavUiState.Finished ?: return null
-        return (finishedView(nav, rideUi.value) as? FinishedView.Done)?.summary
-    }
+    private fun shownSummary(): RideUiState.Finished? = shownSummary(ui.value, rideUi.value)
 
     /** Only [summary] itself: a newer recording state is left alone. */
     private fun dismissSummary(summary: RideUiState.Finished) {
@@ -228,11 +277,19 @@ class NavigateViewModel(
                     dismissRideSummary = container.ride::dismissSummary,
                     rideControls = container.ride,
                     rideNotice = container.ride.notice,
+                    postStore = container.postStore,
+                    postProcessor = container.postProcessor,
+                    shortRides = container.shortRides,
+                    mediaTrip = { id -> mediaTripOf(id, container.rideStore, container.tripStore) },
                 )
             }
         }
     }
 }
+
+/** The recording's summary the finished screen shows for [nav] and [ride] ([finishedView]), if any. */
+private fun shownSummary(nav: NavUiState, ride: RideUiState): RideUiState.Finished? =
+    (nav as? NavUiState.Finished)?.let { (finishedView(it, ride) as? FinishedView.Done)?.summary }
 
 private fun isRecording(ride: RideUiState): Boolean = ride.recordingTripId != null
 

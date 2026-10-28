@@ -40,7 +40,7 @@ object RideCharts {
         return GeoMath.distanceM(points[i - 1].point, points[i].point) / (dtMs / 1000.0)
     }
 
-    private fun cumulativeKm(points: List<TrackPoint>): DoubleArray {
+    internal fun cumulativeKm(points: List<TrackPoint>): DoubleArray {
         val xs = DoubleArray(points.size)
         var m = 0.0
         for (i in 1 until points.size) {
@@ -52,7 +52,7 @@ object RideCharts {
         return xs
     }
 
-    private fun downsample(values: List<ChartPoint>, maxPoints: Int): List<ChartPoint> {
+    internal fun downsample(values: List<ChartPoint>, maxPoints: Int): List<ChartPoint> {
         require(maxPoints >= 2) { "maxPoints must be at least 2" }
         if (values.size <= maxPoints) return values
         val middle = values.subList(1, values.size - 1)

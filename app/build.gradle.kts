@@ -7,17 +7,18 @@ plugins {
 }
 
 val verMajor = 1
-val verMinor = 1
-val verPatch = 0
+val verMinor = 3
+val verPatch = 1
 
 val secretsFile = rootProject.file("secrets.json")
-val kakaoRestApiKey: String = if (secretsFile.exists()) {
+val secrets: Map<String, Any?> = if (secretsFile.exists()) {
     @Suppress("UNCHECKED_CAST")
-    val parsed = groovy.json.JsonSlurper().parse(secretsFile) as Map<String, Any?>
-    (parsed["kakaoRestApiKey"] as? String) ?: ""
+    groovy.json.JsonSlurper().parse(secretsFile) as Map<String, Any?>
 } else {
-    ""
+    emptyMap()
 }
+val kakaoRestApiKey: String = (secrets["kakaoRestApiKey"] as? String) ?: ""
+val vworldApiKey: String = (secrets["vworldApiKey"] as? String) ?: ""
 
 room {
     schemaDirectory("$projectDir/schemas")
@@ -39,6 +40,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         buildConfigField("String", "KAKAO_REST_API_KEY", "\"$kakaoRestApiKey\"")
+        buildConfigField("String", "VWORLD_API_KEY", "\"$vworldApiKey\"")
     }
 
     buildTypes {
@@ -99,6 +101,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.maplibre)
     implementation(libs.play.services.location)
+    implementation(libs.androidx.health.connect)
 
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.okhttp.mockwebserver)

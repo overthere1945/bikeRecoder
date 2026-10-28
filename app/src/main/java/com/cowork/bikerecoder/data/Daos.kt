@@ -2,6 +2,7 @@ package com.cowork.bikerecoder.data
 
 import androidx.room.Dao
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
@@ -24,6 +25,29 @@ abstract class TripDao {
 
     @Query("DELETE FROM trip WHERE id = :id")
     abstract suspend fun deleteTrip(id: Long)
+
+    /** [TripDeleteCondition.NO_SEGMENTS][com.cowork.bikerecoder.core.recording.TripDeleteCondition]; rows deleted. */
+    @Query(
+        "DELETE FROM trip WHERE id = :id AND status = 'COMPLETED' " +
+            "AND NOT EXISTS (SELECT 1 FROM ride_segment WHERE tripId = :id)",
+    )
+    abstract suspend fun deleteCompletedWithoutSegments(id: Long): Int
+
+    /** [TripDeleteCondition.NOT_RECORDING][com.cowork.bikerecoder.core.recording.TripDeleteCondition]; rows deleted. */
+    @Query(
+        "DELETE FROM trip WHERE id = :id AND status = 'COMPLETED' " +
+            "AND NOT EXISTS (SELECT 1 FROM ride_segment WHERE tripId = :id AND endedAt IS NULL)",
+    )
+    abstract suspend fun deleteCompletedNotRecording(id: Long): Int
+
+    /** [TripDeleteCondition.SHORT_NOT_RECORDING][com.cowork.bikerecoder.core.recording.TripDeleteCondition]; rows deleted. */
+    @Query(
+        "DELETE FROM trip WHERE id = :id AND status = 'COMPLETED' " +
+            "AND NOT EXISTS (SELECT 1 FROM ride_segment WHERE tripId = :id AND endedAt IS NULL) " +
+            "AND EXISTS (SELECT 1 FROM ride_segment WHERE tripId = :id) " +
+            "AND (SELECT COALESCE(SUM(distanceM), 0) FROM ride_segment WHERE tripId = :id) < :maxDistanceM",
+    )
+    abstract suspend fun deleteShortCompletedNotRecording(id: Long, maxDistanceM: Double): Int
 
     @Query("SELECT * FROM waypoint WHERE tripId = :tripId ORDER BY stop_order ASC")
     abstract suspend fun stops(tripId: Long): List<WaypointEntity>
@@ -152,6 +176,10 @@ abstract class RideDao {
 
     @Query("DELETE FROM ride_segment WHERE id = :id")
     abstract suspend fun deleteSegment(id: Long)
+
+    /** Trips with segments that all have no distance (none in [tripRideRows]). */
+    @Query("SELECT tripId FROM ride_segment GROUP BY tripId HAVING MAX(distanceM) <= 0 ORDER BY tripId")
+    abstract suspend fun emptyTripIds(): List<Long>
 }
 
 @Dao
@@ -170,4 +198,109 @@ interface FavoriteDao {
 
     @Query("DELETE FROM favorite_place WHERE id = :id")
     suspend fun delete(id: Long)
+}
+
+@Dao
+abstract class PostDao {
+    /**
+     * extras가 없거나 할 일이 남은 끝난 구간, 최근 시작 순. FAILED는 max(구간 끝, 처음 읽은 시각) + [giveUpMs] 안일 때만
+     * (판정 R14, `HrRetryPolicy.failedRetryUntil`과 같은 식). 자세하지 않은 READY는 구간 끝 + [giveUpMs] 안일 때만
+     * (스펙 §6.1). `HrRetryPolicy.shouldTry`와 같은 조건.
+     */
+    @Query(
+        "SELECT s.* FROM ride_segment s LEFT JOIN segment_extras e ON e.segmentId = s.id " +
+            "WHERE s.endedAt IS NOT NULL AND (e.segmentId IS NULL OR e.photoScanDone = 0 OR e.simplifiedDone = 0 " +
+            "OR e.hrStatus = 'PENDING' OR (e.hrStatus = 'FAILED' " +
+            "AND :now <= MAX(s.endedAt, COALESCE(e.hrFirstTriedAt, s.endedAt)) + :giveUpMs) " +
+            "OR (e.hrStatus = 'READY' AND e.hrDetailed = 0 AND :now <= s.endedAt + :giveUpMs)) " +
+            "ORDER BY s.startedAt DESC, s.id DESC",
+    )
+    abstract suspend fun segmentsNeedingWork(now: Long, giveUpMs: Long): List<RideSegmentEntity>
+
+    @Query("SELECT * FROM segment_extras WHERE segmentId = :segmentId")
+    abstract suspend fun extras(segmentId: Long): SegmentExtrasEntity?
+
+    @Query("SELECT * FROM segment_extras WHERE segmentId IN (:segmentIds)")
+    abstract fun observeExtras(segmentIds: List<Long>): Flow<List<SegmentExtrasEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun saveExtras(extras: SegmentExtrasEntity)
+
+    @Query("SELECT * FROM ride_photo WHERE segmentId IN (:segmentIds) ORDER BY takenAt ASC, id ASC")
+    abstract fun observePhotos(segmentIds: List<Long>): Flow<List<RidePhotoEntity>>
+
+    /** 같은 (segmentId, mediaId)가 있으면 건너뛴다. 외래 키 위반은 IGNORE와 상관없이 실패한다. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    abstract suspend fun insertPhotos(photos: List<RidePhotoEntity>)
+
+    @Query("UPDATE ride_photo SET hidden = :hidden WHERE id = :photoId")
+    abstract suspend fun setHidden(photoId: Long, hidden: Boolean)
+
+    @Query("DELETE FROM ride_photo WHERE mediaId IN (:mediaIds)")
+    abstract suspend fun deletePhotosByMediaId(mediaIds: List<Long>)
+
+    @Query("DELETE FROM ride_photo WHERE segmentId = :segmentId AND mediaId IN (:mediaIds)")
+    abstract suspend fun deletePhotos(segmentId: Long, mediaIds: List<Long>)
+
+    @Query("DELETE FROM heart_rate_sample WHERE segmentId = :segmentId")
+    abstract suspend fun deleteSamples(segmentId: Long)
+
+    @Insert
+    abstract suspend fun insertSamples(samples: List<HeartRateSampleEntity>)
+
+    @Transaction
+    open suspend fun replaceSamples(segmentId: Long, samples: List<HeartRateSampleEntity>) {
+        deleteSamples(segmentId)
+        insertSamples(samples)
+    }
+
+    @Query("SELECT * FROM heart_rate_sample WHERE segmentId = :segmentId ORDER BY timeMillis ASC, id ASC")
+    abstract suspend fun samples(segmentId: Long): List<HeartRateSampleEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    abstract suspend fun saveSimplified(route: SegmentRouteSimplifiedEntity)
+
+    @Query("SELECT * FROM segment_route_simplified ORDER BY localDate ASC, segmentId ASC")
+    abstract suspend fun simplifiedRoutes(): List<SegmentRouteSimplifiedEntity>
+
+    /**
+     * 기록 목록 카드(스펙 §6.11): 빈 구간이 아닌 구간마다 단순화 경로, 숨기지 않은 사진 수, READY 심박을 한 번에(바인드 변수
+     * 없음). 여행 id·시작 순.
+     */
+    @Query(
+        "SELECT s.id AS segmentId, s.tripId AS tripId, s.movingTimeMs AS movingTimeMs, r.points AS points, " +
+            "(SELECT COUNT(*) FROM ride_photo p WHERE p.segmentId = s.id AND p.hidden = 0) AS photoCount, " +
+            "CASE WHEN e.hrStatus = 'READY' THEN e.avgBpm END AS avgBpm, " +
+            "CASE WHEN e.hrStatus = 'READY' THEN e.maxBpm END AS maxBpm, " +
+            "COALESCE(e.hrDetailed, 0) AS hrDetailed " +
+            "FROM ride_segment s " +
+            "LEFT JOIN segment_route_simplified r ON r.segmentId = s.id " +
+            "LEFT JOIN segment_extras e ON e.segmentId = s.id " +
+            "WHERE s.distanceM > 0 ORDER BY s.tripId ASC, s.startedAt ASC, s.id ASC",
+    )
+    abstract suspend fun segmentCards(): List<SegmentCardRow>
+}
+
+/** [points]: PolylineCodec 문자열(경로가 없으면 null). [avgBpm]·[maxBpm]: READY일 때만. */
+data class SegmentCardRow(
+    val segmentId: Long,
+    val tripId: Long,
+    val movingTimeMs: Long,
+    val points: String?,
+    val photoCount: Int,
+    val avgBpm: Int?,
+    val maxBpm: Int?,
+    val hrDetailed: Boolean,
+)
+
+@Dao
+interface TripMediaDao {
+    @Query("SELECT * FROM trip_media WHERE tripId = :tripId ORDER BY createdAt DESC, id DESC")
+    fun observe(tripId: Long): Flow<List<TripMediaEntity>>
+
+    @Insert
+    suspend fun insert(media: TripMediaEntity): Long
+
+    @Query("DELETE FROM trip_media WHERE id IN (:ids)")
+    suspend fun delete(ids: List<Long>)
 }

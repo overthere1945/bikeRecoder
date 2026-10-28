@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -12,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.recording.RideStats
 
@@ -63,12 +65,22 @@ internal fun NumberRow(left: Pair<String, String>, right: Pair<String, String>) 
     }
 }
 
+/** The value on one line: shrunk (down to [MIN_VALUE_SIZE]) only when it would not fit, e.g. "14.5 / 23.4km/h" in a card. */
 @Composable
 private fun NumberCell(label: String, value: String, modifier: Modifier) {
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.headlineSmall)
+        val style = MaterialTheme.typography.headlineSmall
+        Text(
+            value,
+            style = style,
+            maxLines = 1,
+            softWrap = false,
+            autoSize = TextAutoSize.StepBased(minFontSize = MIN_VALUE_SIZE, maxFontSize = style.fontSize, stepSize = 1.sp),
+        )
     }
 }
+
+private val MIN_VALUE_SIZE = 14.sp
 
 private const val DIMMED_ALPHA = 0.4f

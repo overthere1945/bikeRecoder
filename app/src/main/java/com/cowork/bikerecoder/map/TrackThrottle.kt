@@ -1,15 +1,31 @@
 package com.cowork.bikerecoder.map
 
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.conflate
-import kotlinx.coroutines.flow.transform
+import kotlinx.coroutines.flow.transformLatest
 
 /**
- * The first value at once, then the latest value at most once per [periodMs] (values in between are dropped). The
- * last value is always delivered, so what is drawn ends up matching the source.
+ * The first value at once, then the latest value at most once per [periodMs] (values in between are dropped; the last
+ * one is always delivered, so what is drawn ends up matching the source) — except that a value for which [immediate]
+ * (last value delivered, this value) is true goes out at once, and the period counts from it. [now] is the clock the
+ * period is measured on (milliseconds).
  */
-internal fun <T> Flow<T>.atMostEvery(periodMs: Long): Flow<T> = conflate().transform {
-    emit(it)
-    delay(periodMs)
+@OptIn(ExperimentalCoroutinesApi::class)
+internal fun <T> Flow<T>.atMostEveryUnless(
+    periodMs: Long,
+    now: () -> Long,
+    immediate: (last: T, next: T) -> Boolean,
+): Flow<T> {
+    var sent = false
+    var last: T? = null
+    var sentAt = 0L
+    return transformLatest { next ->
+        @Suppress("UNCHECKED_CAST")
+        if (sent && !immediate(last as T, next)) delay((sentAt + periodMs - now()).coerceIn(0L, periodMs))
+        emit(next)
+        sent = true
+        last = next
+        sentAt = now()
+    }
 }

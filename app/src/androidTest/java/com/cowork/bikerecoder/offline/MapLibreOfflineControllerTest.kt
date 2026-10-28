@@ -12,6 +12,7 @@ import com.cowork.bikerecoder.data.AppDatabase
 import com.cowork.bikerecoder.data.SettingsRepository
 import com.cowork.bikerecoder.map.OpenFreeMapSource
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -55,19 +56,20 @@ class MapLibreOfflineControllerTest {
     fun tearDown() = runBlocking {
         try {
             // Whatever the test did (or failed half-way through), leave no region of this trip behind.
-            if (::context.isInitialized) ourRegions().forEach { delete(it) }
+            if (::context.isInitialized) (ourRegions() + regionsOf(OTHER)).forEach { delete(it) }
         } finally {
             if (::db.isInitialized) db.close()
         }
     }
 
-    private fun controller(maxTiles: Long = MapLibreOfflineController.DEFAULT_MAX_TILES) = MapLibreOfflineController(
+    private fun controller(maxTiles: Long = MapLibreOfflineController.DEFAULT_MAX_TILES, online: Boolean = true) = MapLibreOfflineController(
         context,
         OpenFreeMapSource(okhttp3.OkHttpClient(), cacheFile = null),
         refs,
         SettingsRepository(context),
         object : NetworkWaiter(context) {
             override suspend fun awaitUnmetered() = Unit
+            override fun isOnline() = online
         },
         clock = System::currentTimeMillis,
         maxTiles = maxTiles,
@@ -87,8 +89,19 @@ class MapLibreOfflineControllerTest {
         )
     }
 
-    private suspend fun download(c: MapLibreOfflineController) {
-        c.downloadForTrip(TRIP, shortRoute(), 0.0)
+    /**
+     * About 80 km due north somewhere inland in Korea, a new place each run (not in the tile cache): its VIDEO map
+     * (z13–16) takes far longer than a few seconds to download.
+     */
+    private fun longTrack(): List<GeoPoint> {
+        val random = kotlin.random.Random(System.nanoTime())
+        val lon = 127.0 + random.nextDouble() * 1.8
+        val lat = 35.3 + random.nextDouble() * 0.6
+        return (0..80).map { GeoPoint(lat + it * 1_000.0 / 111_320.0, lon) }
+    }
+
+    private suspend fun download(c: MapLibreOfflineController, trip: Long = TRIP) {
+        c.downloadForTrip(trip, shortRoute(), 0.0)
         withTimeout(DOWNLOAD_TIMEOUT_MS) { c.awaitDownloads() }
     }
 
@@ -106,6 +119,28 @@ class MapLibreOfflineControllerTest {
     }
 
     private suspend fun ourRegions() = allRegions().filter { OfflineRegionMeta.decode(it.metadata)?.tripId == TRIP }
+
+    private suspend fun regionsOf(trip: Long) = allRegions().filter { OfflineRegionMeta.decode(it.metadata)?.tripId == trip }
+
+    /** Regions of trips this test does not own; deleteAll must not run while there are any. */
+    private suspend fun foreignRegions() =
+        allRegions().filter { OfflineRegionMeta.decode(it.metadata)?.let { m -> m.tripId != TRIP && m.tripId != OTHER } == true }
+
+    /** Waits until [trip]'s VIDEO region exists and has started to arrive; asserts it is far from complete. */
+    private suspend fun awaitVideoDownloading(trip: Long) {
+        val region = withTimeout(60_000) {
+            var found: OfflineRegion? = null
+            while (found == null) {
+                val id = refs.forTrip(trip).firstOrNull { it.kind == "VIDEO" }?.mapLibreRegionId
+                found = id?.let { allRegions().firstOrNull { r -> r.id == it } }
+                if (found == null) kotlinx.coroutines.delay(50)
+            }
+            while (status(found).completedResourceCount == 0L) kotlinx.coroutines.delay(50)
+            found
+        }
+        val status = status(region)
+        assertFalse("the video map is still downloading (${status.completedResourceCount}/${status.requiredResourceCount})", status.isComplete)
+    }
 
     private suspend fun delete(region: OfflineRegion) = withContext(Dispatchers.Main) {
         suspendCancellableCoroutine { cont ->
@@ -248,9 +283,108 @@ class MapLibreOfflineControllerTest {
         assertTrue("no region is created after the cancel", ourRegions().isEmpty())
     }
 
+    @Test
+    fun trackDownloadAddsAVideoRegionThatIsDeletedAlone() = runBlocking {
+        val c = controller()
+        download(c)
+        val tripMap = ourRegions().map { it.id }.toSet()
+
+        assertTrue(withTimeout(DOWNLOAD_TIMEOUT_MS) { c.downloadForTrack(TRIP, shortRoute().points) })
+
+        val regions = ourRegions()
+        assertEquals(listOf(RegionKind.CORRIDOR, RegionKind.OVERVIEW, RegionKind.VIDEO).sorted(), metas(regions).map { it.kind }.sorted())
+        val video = regions.single { OfflineRegionMeta.decode(it.metadata)!!.kind == RegionKind.VIDEO }
+        assertTrue("video region complete", status(video).isComplete)
+        assertEquals(setOf("CORRIDOR", "OVERVIEW", "VIDEO"), refs.forTrip(TRIP).map { it.kind }.toSet())
+
+        // The trip map is still complete: a second trip download skips, the video region does not count.
+        download(c)
+        assertEquals(tripMap + video.id, ourRegions().map { it.id }.toSet())
+        // Asked again, the complete video region is used as it is.
+        assertTrue(c.downloadForTrack(TRIP, shortRoute().points))
+        assertEquals(tripMap + video.id, ourRegions().map { it.id }.toSet())
+
+        c.deleteVideoRegions(TRIP)
+
+        assertEquals(tripMap, ourRegions().map { it.id }.toSet())
+        assertEquals(setOf("CORRIDOR", "OVERVIEW"), refs.forTrip(TRIP).map { it.kind }.toSet())
+    }
+
+    @Test
+    fun trackDownloadWithoutInternetOrMapIsRefused() = runBlocking {
+        assertFalse(controller(online = false).downloadForTrack(TRIP, shortRoute().points))
+        assertTrue(ourRegions().isEmpty())
+        assertTrue(refs.forTrip(TRIP).isEmpty())
+    }
+
+    @Test
+    fun deleteForTripAlsoRemovesTheVideoRegion() = runBlocking {
+        val c = controller()
+        assertTrue(withTimeout(DOWNLOAD_TIMEOUT_MS) { c.downloadForTrack(TRIP, shortRoute().points) })
+        assertEquals(1, ourRegions().size)
+
+        c.deleteForTrip(TRIP)
+
+        assertTrue(ourRegions().isEmpty())
+        assertTrue(refs.forTrip(TRIP).isEmpty())
+    }
+
+    /**
+     * Final review I1: a VIDEO download does not hold the map lock for minutes. Deleting another trip's map while it
+     * runs returns at once; the video download returns true with what arrived; the trip's own map is untouched.
+     */
+    @Test
+    fun aVideoDownloadYieldsToDeleteForTrip() = runBlocking {
+        val c = controller()
+        download(c)
+        download(c, OTHER)
+        val tripMap = ourRegions().map { it.id }.toSet()
+        assertEquals(2, regionsOf(OTHER).size)
+
+        val video = async(Dispatchers.Default) { c.downloadForTrack(TRIP, longTrack()) }
+        awaitVideoDownloading(TRIP)
+
+        val took = kotlin.system.measureTimeMillis { withTimeout(5_000) { c.deleteForTrip(OTHER) } }
+        assertTrue("the video download returns with what arrived", withTimeout(5_000) { video.await() })
+
+        assertTrue("deleteForTrip took $took ms", took < 5_000)
+        assertTrue(regionsOf(OTHER).isEmpty())
+        assertTrue(refs.forTrip(OTHER).isEmpty())
+        assertEquals(
+            listOf(RegionKind.CORRIDOR, RegionKind.OVERVIEW, RegionKind.VIDEO).sorted(),
+            metas(ourRegions()).map { it.kind }.sorted(),
+        )
+        assertTrue("the trip map is untouched", ourRegions().map { it.id }.containsAll(tripMap))
+
+        // The job's own cleanup then leaves no VIDEO region behind.
+        c.deleteVideoRegions(TRIP)
+        assertEquals(tripMap, ourRegions().map { it.id }.toSet())
+        assertEquals(setOf("CORRIDOR", "OVERVIEW"), refs.forTrip(TRIP).map { it.kind }.toSet())
+    }
+
+    /** Final review I1: [지도 모두 지우기] during a VIDEO download returns at once and leaves nothing behind. */
+    @Test
+    fun aVideoDownloadYieldsToDeleteAll() = runBlocking {
+        Assume.assumeTrue("device has trip maps of its own; not deleting them", foreignRegions().isEmpty())
+        val c = controller()
+
+        val video = async(Dispatchers.Default) { c.downloadForTrack(TRIP, longTrack()) }
+        awaitVideoDownloading(TRIP)
+
+        val took = kotlin.system.measureTimeMillis { withTimeout(5_000) { c.deleteAll() } }
+        assertTrue("the video download returns with what arrived", withTimeout(5_000) { video.await() })
+
+        assertTrue("deleteAll took $took ms", took < 5_000)
+        assertTrue("no VIDEO region is left", ourRegions().isEmpty())
+        assertTrue(refs.all().isEmpty())
+    }
+
     private companion object {
         /** No real trip has such an id, so this test never touches the user's own offline regions. */
         const val TRIP = 987_654_321L
+
+        /** A second trip no real trip has. */
+        const val OTHER = 987_654_322L
         const val DOWNLOAD_TIMEOUT_MS = 180_000L
     }
 }

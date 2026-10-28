@@ -1,20 +1,25 @@
 package com.cowork.bikerecoder
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.File
 
 class AppVersionTest {
     @Test
-    fun `debug version name is 1_1_0-dev`() = assertEquals("1.1.0-dev", BuildConfig.VERSION_NAME)
+    fun `debug version name is 1_3_1-dev`() = assertEquals("1.3.1-dev", BuildConfig.VERSION_NAME)
 
     @Test
-    fun `version code follows rule`() = assertEquals(10100, BuildConfig.VERSION_CODE)
+    fun `version code follows rule`() = assertEquals(10301, BuildConfig.VERSION_CODE)
 
     @Test
     fun `display strips dev suffix and prefixes V`() {
         assertEquals("V1.0.0", AppVersion.display("1.0.0-dev"))
         assertEquals("V1.1.0", AppVersion.display("1.1.0-dev"))
+        assertEquals("V1.2.0", AppVersion.display("1.2.0-dev"))
+        assertEquals("V1.2.1", AppVersion.display("1.2.1-dev"))
+        assertEquals("V1.3.0", AppVersion.display("1.3.0-dev"))
+        assertEquals("V1.3.1", AppVersion.display("1.3.1-dev"))
         assertEquals("V1.2.3", AppVersion.display("1.2.3"))
     }
 
@@ -29,5 +34,17 @@ class AppVersionTest {
             ""
         }
         assertEquals(expected, BuildConfig.KAKAO_REST_API_KEY)
+    }
+
+    @Test
+    fun `vworld key matches secrets json`() {
+        val secretsFile = File("../secrets.json")
+        val expected = if (secretsFile.exists()) {
+            Regex("\"vworldApiKey\"\\s*:\\s*\"([^\"]*)\"").find(secretsFile.readText())?.groupValues?.get(1) ?: ""
+        } else {
+            ""
+        }
+        // A boolean check: a failure message must not show the key.
+        assertTrue(expected == BuildConfig.VWORLD_API_KEY, "BuildConfig.VWORLD_API_KEY differs from secrets.json")
     }
 }

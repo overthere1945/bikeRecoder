@@ -352,4 +352,39 @@ class KakaoLocalClientTest {
         assertEquals(SearchResult.Err(SearchError.KEY_MISSING), client("").nearby(GeoPoint(37.56, 126.829)))
         assertEquals(0, server.requestCount)
     }
+
+    private val regionBody = """
+        {"meta":{"total_count":2},"documents":[
+          {"region_type":"B","code":"1150010300","address_name":"서울특별시 강서구 화곡동","region_1depth_name":"서울특별시",
+           "region_2depth_name":"B구","region_3depth_name":"화곡동","region_4depth_name":"","x":126.849,"y":37.541},
+          {"region_type":"H","code":"1150060300","address_name":"서울특별시 강서구 화곡1동","region_1depth_name":"서울특별시",
+           "region_2depth_name":"강서구","region_3depth_name":"화곡1동","region_4depth_name":"","x":126.849,"y":37.541}
+        ]}
+    """.trimIndent()
+
+    @Test
+    fun regionOfPicksAdministrativeRegion() = runTest {
+        server.enqueue(json(regionBody))
+
+        assertEquals(SearchResult.Ok<Pair<String, String>?>("서울특별시" to "강서구"), kakao.regionOf(GeoPoint(37.541, 126.849)))
+        val request = server.takeRequest()
+        assertEquals("/v2/local/geo/coord2regioncode.json", request.url.encodedPath)
+        assertEquals("126.849", request.url.queryParameter("x"))
+        assertEquals("37.541", request.url.queryParameter("y"))
+        assertEquals("KakaoAK test-key", request.headers["Authorization"])
+
+        // Only the legal-district (B) document: no administrative region.
+        server.enqueue(json("""{"documents":[{"region_type":"B","region_1depth_name":"서울특별시","region_2depth_name":"강서구"}]}"""))
+        assertEquals(SearchResult.Ok<Pair<String, String>?>(null), kakao.regionOf(GeoPoint(37.5, 127.0)))
+
+        server.enqueue(json("""{"documents":[]}"""))
+        assertEquals(SearchResult.Ok<Pair<String, String>?>(null), kakao.regionOf(GeoPoint(37.5, 127.0)))
+
+        server.enqueue(MockResponse.Builder().code(401).body("{}").build())
+        assertEquals(SearchResult.Err(SearchError.INVALID_KEY), kakao.regionOf(GeoPoint(37.5, 127.0)))
+
+        // Without a key: no request.
+        assertEquals(SearchResult.Err(SearchError.KEY_MISSING), client("").regionOf(GeoPoint(37.5, 127.0)))
+        assertEquals(4, server.requestCount)
+    }
 }

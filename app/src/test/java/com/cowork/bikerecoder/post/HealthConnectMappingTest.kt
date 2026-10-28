@@ -1,0 +1,160 @@
+package com.cowork.bikerecoder.post
+
+import androidx.health.connect.client.records.ExerciseSessionRecord
+import androidx.health.connect.client.records.HeartRateRecord
+import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
+import androidx.health.connect.client.records.metadata.Metadata
+import androidx.health.connect.client.units.Energy
+import com.cowork.bikerecoder.core.post.HeartRateSample
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Test
+import java.time.Instant
+
+class HealthConnectMappingTest {
+    private val min = 60_000L
+
+    private fun at(ms: Long): Instant = Instant.ofEpochMilli(ms)
+
+    private fun hr(vararg samples: Pair<Long, Long>): HeartRateRecord = HeartRateRecord(
+        startTime = at(samples.minOf { it.first }),
+        startZoneOffset = null,
+        endTime = at(samples.maxOf { it.first } + 1),
+        endZoneOffset = null,
+        samples = samples.map { HeartRateRecord.Sample(at(it.first), it.second) },
+        metadata = Metadata.unknownRecordingMethod(),
+    )
+
+    private fun session(start: Long, end: Long, type: Int = ExerciseSessionRecord.EXERCISE_TYPE_BIKING) =
+        ExerciseSessionRecord(
+            startTime = at(start),
+            startZoneOffset = null,
+            endTime = at(end),
+            endZoneOffset = null,
+            metadata = Metadata.unknownRecordingMethod(),
+            exerciseType = type,
+        )
+
+    private fun kcal(start: Long, end: Long, kcal: Double) = TotalCaloriesBurnedRecord(
+        startTime = at(start),
+        startZoneOffset = null,
+        endTime = at(end),
+        endZoneOffset = null,
+        energy = Energy.kilocalories(kcal),
+        metadata = Metadata.unknownRecordingMethod(),
+    )
+
+    @Test
+    fun `samples from unsorted records come out in time order inside the window`() {
+        val later = hr(5_000L to 140L, 4_000L to 135L, 9_000L to 99L)
+        val earlier = hr(1_000L to 110L, 500L to 90L, 2_000L to 120L)
+
+        val samples = HealthConnectMapping.samples(listOf(later, earlier), from = 1_000L, to = 5_000L)
+
+        assertEquals(
+            listOf(
+                HeartRateSample(1_000L, 110),
+                HeartRateSample(2_000L, 120),
+                HeartRateSample(4_000L, 135),
+                HeartRateSample(5_000L, 140),
+            ),
+            samples,
+        )
+    }
+
+    @Test
+    fun `calories are the overlapping share of each workout`() {
+        // Session A 0–60 min with 600 kcal, ride 30–90 min → half of A = 300.
+        // Session B 80–100 min with 200 kcal → 10 of 20 min overlap = 100.
+        val sessions = listOf(session(0, 60 * min), session(80 * min, 100 * min))
+        val calories = listOf(kcal(0, 60 * min, 600.0), kcal(80 * min, 100 * min, 200.0))
+
+        val total = HealthConnectMapping.calories(sessions, calories, from = 30 * min, to = 90 * min)
+
+        assertEquals(400.0, total!!, 1e-9)
+    }
+
+    @Test
+    fun `calorie records are counted only for the part inside the session`() {
+        // 0–60 min record of 600 kcal, session 0–30 min → session holds 300; ride covers all of it.
+        val total = HealthConnectMapping.calories(
+            listOf(session(0, 30 * min)),
+            listOf(kcal(0, 60 * min, 600.0)),
+            from = 0,
+            to = 30 * min,
+        )
+
+        assertEquals(300.0, total!!, 1e-9)
+    }
+
+    @Test
+    fun `no overlapping workout means no calories`() {
+        val runningBefore = session(0, 10 * min, ExerciseSessionRecord.EXERCISE_TYPE_RUNNING)
+        val bikingAfter = session(50 * min, 60 * min)
+        val calories = listOf(kcal(0, 60 * min, 600.0))
+
+        assertNull(HealthConnectMapping.calories(listOf(runningBefore, bikingAfter), calories, from = 20 * min, to = 40 * min))
+    }
+
+    /** Spec §6.2: any workout type counts, by its overlapping share (V1.2.0 took biking only). */
+    @Test
+    fun anyWorkoutTypeCounts() {
+        val running = session(0, 60 * min, ExerciseSessionRecord.EXERCISE_TYPE_RUNNING)
+        val calories = listOf(kcal(0, 60 * min, 600.0))
+
+        assertEquals(200.0, HealthConnectMapping.calories(listOf(running), calories, from = 20 * min, to = 40 * min)!!, 1e-9)
+    }
+
+    /** R18: workouts recorded at the same time count the ride's time once (the earlier-starting one first). */
+    @Test
+    fun overlappingWorkoutsAreNotCountedTwice() {
+        val a = session(0, 60 * min, ExerciseSessionRecord.EXERCISE_TYPE_WALKING)
+        val b = session(10 * min, 50 * min)
+        val calories = listOf(kcal(0, 60 * min, 600.0)) // A holds 600, B holds 400 of it
+
+        assertEquals(600.0, HealthConnectMapping.calories(listOf(b, a), calories, from = 0, to = 60 * min)!!, 1e-9)
+    }
+
+    /** R18: a later-starting workout counts only the ride time the earlier one left uncovered. */
+    @Test
+    fun aLaterWorkoutCountsOnlyTheRideTimeLeftUncovered() {
+        // ride 0–60; A 0–30 (300 kcal), B 20–60 (400 kcal, 10 kcal/min) → A 300 + B's 30–60 part 300 = 600
+        val a = session(0, 30 * min)
+        val b = session(20 * min, 60 * min, ExerciseSessionRecord.EXERCISE_TYPE_RUNNING)
+        val calories = listOf(kcal(0, 30 * min, 300.0), kcal(30 * min, 60 * min, 300.0))
+        // B holds 100 of the first record (20–30) and all 300 of the second → 400 kcal over 40 min
+
+        assertEquals(600.0, HealthConnectMapping.calories(listOf(a, b), calories, from = 0, to = 60 * min)!!, 1e-9)
+    }
+
+    /** The S25 ride: a 15-minute ride inside a walking workout that ended much later — only the overlap counts. */
+    @Test
+    fun workoutEndingLongAfterRideCountsOnlyOverlap() {
+        val walking = session(0, 75 * min, ExerciseSessionRecord.EXERCISE_TYPE_WALKING)
+        val calories = listOf(kcal(0, 75 * min, 300.0))
+
+        val total = HealthConnectMapping.calories(listOf(walking), calories, from = 0, to = 15 * min)
+
+        assertEquals(60.0, total!!, 1e-9) // 15 of 75 min
+    }
+
+    @Test
+    fun `workout without calorie records means no calories`() {
+        assertNull(HealthConnectMapping.calories(listOf(session(0, 60 * min)), emptyList(), from = 0, to = 60 * min))
+    }
+
+    @Test
+    fun `heart-rate window widens to the overlapping sessions`() {
+        val sessions = listOf(session(-10 * min, 5 * min), session(50 * min, 70 * min), session(200 * min, 210 * min))
+
+        assertEquals(-10 * min to 70 * min, HealthConnectMapping.readWindow(0, 60 * min, sessions))
+    }
+
+    @Test
+    fun `heart-rate window always reaches 60 s past both ends`() {
+        val inside = listOf(session(10 * min, 20 * min))
+
+        assertEquals(-60_000L to 60 * min + 60_000L, HealthConnectMapping.readWindow(0, 60 * min, emptyList()))
+        assertEquals(-60_000L to 60 * min + 60_000L, HealthConnectMapping.readWindow(0, 60 * min, inside))
+    }
+}

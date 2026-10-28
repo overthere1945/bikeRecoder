@@ -77,6 +77,7 @@ import com.cowork.bikerecoder.nav.NavigationService
 import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.ride.ScreenNotice
 import com.cowork.bikerecoder.ui.common.KeepScreenOn
+import com.cowork.bikerecoder.ui.health.HeartRateGate
 import com.cowork.bikerecoder.ui.common.NoticeSnackbarHost
 import com.cowork.bikerecoder.ui.record.AutoPauseChip
 import com.cowork.bikerecoder.ui.record.PageDots
@@ -88,6 +89,7 @@ import com.cowork.bikerecoder.ui.record.RIDE_PAGE_COUNT
 import com.cowork.bikerecoder.ui.record.RideNumbersPage
 import com.cowork.bikerecoder.ui.record.SegmentSummaryContent
 import com.cowork.bikerecoder.ui.record.StopButton
+import com.cowork.bikerecoder.ui.record.SummaryExtrasContent
 import com.cowork.bikerecoder.ui.record.SummaryMap
 import com.cowork.bikerecoder.ui.record.rideSummaryLine
 import com.cowork.bikerecoder.ui.record.swipeTurnsPages
@@ -137,8 +139,15 @@ fun NavigateScreen(
     tileSource: TileSource,
     onClose: () -> Unit,
     onGuidanceEndedWhileRecording: () -> Unit,
+    /** The photo permission card of the segment summary (spec §2.4, ruling R9). */
+    photoPrompt: @Composable () -> Unit = {},
+    /** The heart-rate permission flow of the segment summary (spec §3.4, ruling R9). */
+    heartRateGate: HeartRateGate? = null,
+    /** Under a completed trip's summary: [영상 만들기] [이미지 만들기] of that trip (V1.3.0 spec §1.1). */
+    mediaEntry: @Composable (tripId: Long) -> Unit = {},
 ) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
+    val summaryExtras by viewModel.summaryExtras.collectAsStateWithLifecycle()
     val ride by viewModel.rideUi.collectAsStateWithLifecycle()
     val recording by viewModel.recording.collectAsStateWithLifecycle()
     val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
@@ -244,9 +253,20 @@ fun NavigateScreen(
                             map = { modifier -> SummaryMap(summary.track, tileSource, modifier) },
                             onConfirm = viewModel::confirmFinished,
                         ) {
+                            SummaryExtrasContent(
+                                summaryExtras, photoPrompt, heartRateGate, viewModel::refetchHeartRate,
+                                viewModel::summaryOnScreen,
+                                onDiscard = viewModel::discardShortRide,
+                                onKeep = viewModel::keepShortRide,
+                            )
                             if (view.completed) Text(TRIP_COMPLETED, style = MaterialTheme.typography.headlineSmall)
+                            // Under "여행을 완료했습니다" (spec §1.1).
+                            summaryExtras.mediaTripId?.let { mediaEntry(it) }
                             if (view.canConvert) {
-                                OutlinedButton(onClick = viewModel::convertToMultiDay) { Text("여러 날로 바꾸기") }
+                                OutlinedButton(
+                                    onClick = viewModel::convertToMultiDay,
+                                    enabled = !summaryExtras.discarding,
+                                ) { Text("여러 날로 바꾸기") }
                             }
                         }
                     }

@@ -6,7 +6,10 @@ import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
+import com.cowork.bikerecoder.core.recording.TripDeleteCondition
 import com.cowork.bikerecoder.core.recording.TripRideSummary
+import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
+import com.cowork.bikerecoder.core.trip.Trip
 import java.time.LocalDate
 
 class RoomRideStore(db: AppDatabase) : RideStore {
@@ -60,6 +63,14 @@ class RoomRideStore(db: AppDatabase) : RideStore {
     override suspend fun deleteSegment(id: Long) = dao.deleteSegment(id)
 
     override suspend fun deleteTrip(tripId: Long) = tripDao.deleteTrip(tripId)
+
+    override suspend fun deleteTripIf(tripId: Long, condition: TripDeleteCondition): Boolean = when (condition) {
+        TripDeleteCondition.NO_SEGMENTS -> tripDao.deleteCompletedWithoutSegments(tripId)
+        TripDeleteCondition.NOT_RECORDING -> tripDao.deleteCompletedNotRecording(tripId)
+        TripDeleteCondition.SHORT_NOT_RECORDING -> tripDao.deleteShortCompletedNotRecording(tripId, MIN_RIDE_DISTANCE_M)
+    } > 0
+
+    override suspend fun emptyTrips(): List<Trip> = dao.emptyTripIds().mapNotNull { tripDao.trip(it)?.toTrip() }
 }
 
 internal fun RideSegment.toEntity() = RideSegmentEntity(

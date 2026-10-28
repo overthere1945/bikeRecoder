@@ -115,3 +115,121 @@ data class FavoritePlaceEntity(
     val address: String?,
     val createdAt: Long,
 )
+
+/** positionSource는 PhotoPositionSource의 name. (segmentId, mediaId)는 유일하다. */
+@Entity(
+    tableName = "ride_photo",
+    foreignKeys = [
+        ForeignKey(
+            entity = RideSegmentEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["segmentId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index(value = ["segmentId", "mediaId"], unique = true)],
+)
+data class RidePhotoEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long,
+    val segmentId: Long,
+    val mediaId: Long,
+    val takenAt: Long,
+    val lat: Double,
+    val lon: Double,
+    val positionSource: String,
+    @ColumnInfo(defaultValue = "0") val hidden: Boolean,
+)
+
+/** hrStatus는 HrStatus의 name. */
+@Entity(
+    tableName = "segment_extras",
+    foreignKeys = [
+        ForeignKey(
+            entity = RideSegmentEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["segmentId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+)
+data class SegmentExtrasEntity(
+    @PrimaryKey val segmentId: Long,
+    val photosScannedAt: Long?,
+    val photoScanDone: Boolean,
+    val hrStatus: String,
+    val hrFirstTriedAt: Long?,
+    val hrLastTriedAt: Long?,
+    val hrDetailed: Boolean,
+    val avgBpm: Int?,
+    val maxBpm: Int?,
+    val calories: Double?,
+    val simplifiedDone: Boolean,
+)
+
+@Entity(
+    tableName = "heart_rate_sample",
+    foreignKeys = [
+        ForeignKey(
+            entity = RideSegmentEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["segmentId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index(value = ["segmentId", "timeMillis"])],
+)
+data class HeartRateSampleEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long,
+    val segmentId: Long,
+    val timeMillis: Long,
+    val bpm: Int,
+)
+
+/** kind는 MediaKind의 name, uri는 갤러리(MediaStore) 항목, optionsJson은 만들 때의 옵션(음악 제외). */
+@Entity(
+    tableName = "trip_media",
+    foreignKeys = [
+        ForeignKey(
+            entity = TripEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["tripId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("tripId")],
+)
+data class TripMediaEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long,
+    val tripId: Long,
+    val kind: String,
+    val uri: String,
+    val createdAt: Long,
+    val optionsJson: String,
+)
+
+/**
+ * points는 PolylineCodec 문자열, localDate는 ISO(yyyy-MM-dd).
+ * 경계 상자(min/max lat/lon)는 점이 없으면 null.
+ */
+@Entity(
+    tableName = "segment_route_simplified",
+    foreignKeys = [
+        ForeignKey(
+            entity = RideSegmentEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["segmentId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+)
+data class SegmentRouteSimplifiedEntity(
+    @PrimaryKey val segmentId: Long,
+    val localDate: String,
+    val distanceM: Double,
+    val movingTimeMs: Long,
+    val points: String,
+    val minLat: Double?,
+    val minLon: Double?,
+    val maxLat: Double?,
+    val maxLon: Double?,
+)

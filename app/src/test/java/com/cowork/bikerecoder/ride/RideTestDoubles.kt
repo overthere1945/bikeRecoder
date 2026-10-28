@@ -5,7 +5,11 @@ import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
+import com.cowork.bikerecoder.core.recording.TripDeleteCondition
 import com.cowork.bikerecoder.core.recording.TripRideSummary
+import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
+import com.cowork.bikerecoder.core.trip.Trip
+import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.location.PressureSource
 import com.cowork.bikerecoder.nav.FakeTripStore
 import kotlinx.coroutines.CompletableDeferred
@@ -44,6 +48,12 @@ class FakeRideStore(private val trips: FakeTripStore, private val clock: () -> L
 
     /** While set, [closeSegment] waits for it (before closing anything). */
     var closeGate: CompletableDeferred<Unit>? = null
+
+    /** While set, [deleteSegment] waits for it (before deleting anything). */
+    var deleteSegmentGate: CompletableDeferred<Unit>? = null
+
+    /** While true [deleteSegment] throws (nothing is deleted). */
+    var failDeleteSegment = false
 
     override suspend fun openSegment(tripId: Long, startedAt: Long, localDate: LocalDate): Long {
         openGate?.await()
@@ -101,6 +111,8 @@ class FakeRideStore(private val trips: FakeTripStore, private val clock: () -> L
             .sortedWith(compareByDescending<TripRideSummary> { it.lastStartedAt }.thenByDescending { it.trip.id })
 
     override suspend fun deleteSegment(id: Long) {
+        deleteSegmentGate?.await()
+        if (failDeleteSegment) throw IOException("disk full")
         segmentsById.remove(id)
         pointsBySegment.remove(id)
         deletedSegments += id
@@ -115,6 +127,25 @@ class FakeRideStore(private val trips: FakeTripStore, private val clock: () -> L
         trips.stopsByTrip.remove(tripId)
         deletedTrips += tripId
     }
+
+    /** Like the Room statements: COMPLETED, and the [condition] on the trip's segments. */
+    override suspend fun deleteTripIf(tripId: Long, condition: TripDeleteCondition): Boolean {
+        val trip = trips.trips[tripId] ?: return false
+        val segments = segmentsById.values.filter { it.tripId == tripId }
+        val allowed = trip.status == TripStatus.COMPLETED && when (condition) {
+            TripDeleteCondition.NO_SEGMENTS -> segments.isEmpty()
+            TripDeleteCondition.NOT_RECORDING -> segments.none { it.endedAt == null }
+            TripDeleteCondition.SHORT_NOT_RECORDING ->
+                segments.isNotEmpty() && segments.none { it.endedAt == null } &&
+                    segments.sumOf { it.totals.distanceM } < MIN_RIDE_DISTANCE_M
+        }
+        if (allowed) deleteTrip(tripId)
+        return allowed
+    }
+
+    override suspend fun emptyTrips(): List<Trip> =
+        segmentsById.values.groupBy { it.tripId }.filterValues { segments -> segments.all { it.isEmpty } }
+            .keys.sorted().mapNotNull { trips.trips[it] }
 }
 
 /** Emits what the test sends to [pressures]; [collecting] tells whether someone is collecting right now. */

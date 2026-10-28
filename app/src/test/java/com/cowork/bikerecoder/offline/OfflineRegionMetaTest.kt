@@ -81,4 +81,23 @@ class OfflineRegionMetaTest {
             decideDownload(listOf(info(RegionKind.CORRIDOR), info(RegionKind.CORRIDOR), info(RegionKind.OVERVIEW))),
         )
     }
+    @Test
+    fun videoRegionsDoNotCountForTheTripMap() {
+        assertEquals(DownloadDecision.DOWNLOAD, decideDownload(listOf(info(RegionKind.VIDEO))))
+        assertEquals(
+            DownloadDecision.SKIP,
+            decideDownload(listOf(info(RegionKind.CORRIDOR), info(RegionKind.OVERVIEW), info(RegionKind.VIDEO, complete = false))),
+        )
+        assertEquals(
+            DownloadDecision.REPLACE,
+            decideDownload(listOf(info(RegionKind.CORRIDOR), info(RegionKind.VIDEO))),
+        )
+    }
+
+    @Test
+    fun videoMetadataRoundTrips() {
+        val meta = OfflineRegionMeta(9, RegionKind.VIDEO, false)
+        assertEquals("""{"tripId":9,"kind":"VIDEO","truncated":false}""", String(meta.encode(), Charsets.UTF_8))
+        assertEquals(meta, OfflineRegionMeta.decode(meta.encode()))
+    }
 }

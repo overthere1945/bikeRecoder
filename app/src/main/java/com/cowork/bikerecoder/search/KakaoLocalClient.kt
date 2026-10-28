@@ -62,6 +62,16 @@ class KakaoLocalClient(
     @Serializable
     private class AddressName(@SerialName("address_name") val addressName: String = "")
 
+    @Serializable
+    private class RegionResponse(val documents: List<RegionDocument> = emptyList())
+
+    @Serializable
+    private class RegionDocument(
+        @SerialName("region_type") val regionType: String = "",
+        @SerialName("region_1depth_name") val depth1: String = "",
+        @SerialName("region_2depth_name") val depth2: String = "",
+    )
+
     override suspend fun keyword(query: String, near: GeoPoint?): SearchResult<List<Place>> {
         if (apiKey.isBlank()) return SearchResult.Err(SearchError.KEY_MISSING)
         val trimmed = query.trim()
@@ -108,6 +118,22 @@ class KakaoLocalClient(
             val doc = json.decodeFromString<AddressResponse>(body).documents.firstOrNull()
             doc?.roadAddress?.addressName?.takeIf { it.isNotBlank() }
                 ?: doc?.address?.addressName?.takeIf { it.isNotBlank() }
+        }
+    }
+
+    /**
+     * The administrative region (`region_type` "H") of [point]: its (시·도, 시·군·구) names as Kakao writes them, e.g.
+     * ("서울특별시", "강서구"); null when there is none (video titles, spec §3.8).
+     */
+    suspend fun regionOf(point: GeoPoint): SearchResult<Pair<String, String>?> {
+        if (apiKey.isBlank()) return SearchResult.Err(SearchError.KEY_MISSING)
+        val url = baseUrl.newBuilder()
+            .addPathSegments("v2/local/geo/coord2regioncode.json")
+            .addQueryParameter("x", point.lon.toString())
+            .addQueryParameter("y", point.lat.toString())
+            .build()
+        return fetch(url) { body ->
+            json.decodeFromString<RegionResponse>(body).documents.firstOrNull { it.regionType == "H" }?.let { it.depth1 to it.depth2 }
         }
     }
 

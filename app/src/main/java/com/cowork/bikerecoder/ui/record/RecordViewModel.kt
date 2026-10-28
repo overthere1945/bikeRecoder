@@ -10,10 +10,14 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.nav.NavNotifications
 import com.cowork.bikerecoder.nav.NavUiState
+import com.cowork.bikerecoder.post.PostProcessor
+import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.ride.RecordingEnd
 import com.cowork.bikerecoder.ride.RideController
 import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.ride.ScreenNotice
+import com.cowork.bikerecoder.ride.ShortRides
+import com.cowork.bikerecoder.ui.video.mediaTripOf
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -28,6 +32,9 @@ import kotlinx.coroutines.launch
  * UI being destroyed) does not stop it.
  *
  * @param savedState carries [ARG_TRIP], the trip to start recording once the screen is resumed (-1 = none).
+ *
+ * The summary's extras (photo count, spec §2.3; heart rate, spec §3.3) and its post-processing pass (spec §1.1 ①) come
+ * from [SummaryExtras].
  */
 class RecordViewModel(
     private val ride: RideController,
@@ -36,9 +43,47 @@ class RecordViewModel(
     private val savedState: SavedStateHandle,
     /** "화면이 꺼지면 안내가 멈출 수 있습니다" when the location foreground service could not start. */
     val serviceWarning: StateFlow<String?> = MutableStateFlow(null),
+    postStore: PostStore,
+    postProcessor: PostProcessor,
+    shortRides: ShortRides,
+    /** The summary's trip when it offers [영상 만들기] [이미지 만들기] ([SummaryExtras]); none by default. */
+    mediaTrip: suspend (segmentId: Long) -> Long? = { null },
 ) : ViewModel() {
 
     val ui: StateFlow<RideUiState> = ride.ui
+
+    private val extras = SummaryExtras(
+        summarySegment = ride.ui.map { (it as? RideUiState.Finished)?.segment?.id },
+        postStore = postStore,
+        postProcessor = postProcessor,
+        shortRides = shortRides,
+        scope = viewModelScope,
+        mediaTrip = mediaTrip,
+    )
+
+    /**
+     * "사진 N장" and the heart rate of the summary; a pass when it appears, and the heart rate read again every minute
+     * while it is on screen ([SummaryExtras]).
+     */
+    val summaryExtras: StateFlow<SummaryExtrasState> = extras.state
+
+    /** [다시 가져오기] on the summary. */
+    fun refetchHeartRate() = extras.refetchNow()
+
+    /** The summary is (or no longer is) on a started screen ([SummaryExtras.onScreen]). */
+    fun summaryOnScreen(shown: Boolean) = extras.onScreen(shown)
+
+    /**
+     * [버리기] on a short ride's summary (spec §6.10): deletes it, then [close]s the summary the screen's usual way — only
+     * if that summary is still the one shown.
+     */
+    fun discardShortRide(close: () -> Unit) {
+        val shown = ui.value as? RideUiState.Finished ?: return
+        extras.discardShort { if (ui.value === shown) close() }
+    }
+
+    /** [저장] (or dismissed) on a short ride's summary: it stays. */
+    fun keepShortRide() = extras.keepShort()
 
     /** Guidance is starting or running: [정지] then ends only the recording. */
     val navigating: StateFlow<Boolean> = navigation.map(NavNotifications::isGuiding)
@@ -94,6 +139,10 @@ class RecordViewModel(
                     keepScreenOn = container.settings.settings.map { it.keepScreenOn },
                     savedState = createSavedStateHandle(),
                     serviceWarning = container.guidanceService.warning,
+                    postStore = container.postStore,
+                    postProcessor = container.postProcessor,
+                    shortRides = container.shortRides,
+                    mediaTrip = { id -> mediaTripOf(id, container.rideStore, container.tripStore) },
                 )
             }
         }

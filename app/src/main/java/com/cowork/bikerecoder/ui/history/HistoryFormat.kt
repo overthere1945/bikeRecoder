@@ -5,6 +5,7 @@ import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.TripRideSummary
 import com.cowork.bikerecoder.core.trip.TripType
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
@@ -16,18 +17,30 @@ const val CONFIRM_DELETE_SEGMENT = "이 구간을 삭제할까요?"
 private val SEOUL: ZoneId = ZoneId.of("Asia/Seoul")
 private val HOUR_MINUTE: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
+private const val WEEKDAYS = "월화수목금토일"
+
+/** "M월 d일 (E)" with the Korean weekday, e.g. "10월 25일 (일)" (the history cards and the cumulative map's rows). */
+fun cardDateText(date: LocalDate): String =
+    "${date.monthValue}월 ${date.dayOfMonth}일 (${WEEKDAYS[date.dayOfWeek.value - 1]})"
+
 /**
- * A trip card (spec §3.5): "{date} · {당일|여러 날(N일)} · {distance} · {moving time}". The kind follows the trip's
- * type, so a multi-day trip recorded on one day reads "여러 날(1일)".
+ * A trip card's badge (spec §6.11): "당일" or "여러 날 · {N}일" (N = days with a ride). It follows the trip's type, so a
+ * multi-day trip recorded on one day reads "여러 날 · 1일".
  */
-fun tripCardText(s: TripRideSummary): String {
-    val kind = when (s.trip.type) {
-        TripType.SINGLE_DAY -> "당일"
-        TripType.MULTI_DAY -> "여러 날(${s.dayCount}일)"
-    }
-    return "${RideFormat.date(s.firstDate)} · $kind · ${RideFormat.distance(s.distanceM)} · " +
-        RideFormat.duration(s.movingTimeMs)
+fun cardBadgeText(s: TripRideSummary): String = when (s.trip.type) {
+    TripType.SINGLE_DAY -> "당일"
+    TripType.MULTI_DAY -> "여러 날 · ${s.dayCount}일"
 }
+
+/** A trip card's second line (spec §6.11): "{거리} · {이동 시간} · {평균}km/h", the average = distance / moving time. */
+fun cardLine2Text(s: TripRideSummary): String {
+    val avgMps = if (s.movingTimeMs > 0) s.distanceM / (s.movingTimeMs / 1000.0) else 0.0
+    return "${RideFormat.distance(s.distanceM)} · ${RideFormat.duration(s.movingTimeMs)} · ${RideFormat.speedKmh(avgMps)}km/h"
+}
+
+/** A month's header over its cards (spec §6.11): "YYYY년 M월 · {거리} · {n}회". */
+fun monthHeaderText(year: Int, month: Int, distanceM: Double, trips: Int): String =
+    "${year}년 ${month}월 · ${RideFormat.distance(distanceM)} · ${trips}회"
 
 /** A segment row of the trip detail: "{start HH:mm (Seoul)} · {distance} · {moving time}". */
 fun segmentRowText(segment: RideSegment): String =

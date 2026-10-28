@@ -2,17 +2,21 @@ package com.cowork.bikerecoder
 
 import android.content.Context
 import android.util.Log
+import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.routing.Router
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.trip.OfflineMapController
 import com.cowork.bikerecoder.core.trip.TripManager
 import com.cowork.bikerecoder.core.trip.TripStore
+import com.cowork.bikerecoder.core.video.RideTitle
 import com.cowork.bikerecoder.data.AppDatabase
 import com.cowork.bikerecoder.data.DataStoreDayDistances
 import com.cowork.bikerecoder.data.DataStoreRecentPlaces
 import com.cowork.bikerecoder.data.DayDistances
 import com.cowork.bikerecoder.data.RoomFavoriteStore
+import com.cowork.bikerecoder.data.RoomPostStore
 import com.cowork.bikerecoder.data.RoomRideStore
+import com.cowork.bikerecoder.data.RoomTripMediaStore
 import com.cowork.bikerecoder.data.RoomTripStore
 import com.cowork.bikerecoder.data.SettingsRepository
 import com.cowork.bikerecoder.favorite.FavoriteRepository
@@ -29,15 +33,34 @@ import com.cowork.bikerecoder.nav.NavigationController
 import com.cowork.bikerecoder.offline.MapLibreOfflineController
 import com.cowork.bikerecoder.offline.NetworkWaiter
 import com.cowork.bikerecoder.offline.SegmentRepository
+import com.cowork.bikerecoder.post.HealthConnectHeartRateSource
+import com.cowork.bikerecoder.post.HeartRateSource
+import com.cowork.bikerecoder.post.MediaStorePhotoSource
+import com.cowork.bikerecoder.post.PhotoSource
+import com.cowork.bikerecoder.post.PhotoThumbnails
+import com.cowork.bikerecoder.post.PostProcessor
+import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.ride.RideController
+import com.cowork.bikerecoder.ride.ShortRides
 import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.routing.BRouterRouter
 import com.cowork.bikerecoder.routing.ProfileInstaller
 import com.cowork.bikerecoder.search.KakaoLocalClient
+import com.cowork.bikerecoder.search.SearchResult
 import com.cowork.bikerecoder.search.PlaceSearch
 import com.cowork.bikerecoder.search.RecentPlaceStore
 import com.cowork.bikerecoder.tts.AndroidTtsVoiceOutput
 import com.cowork.bikerecoder.tts.VoiceOutput
+import com.cowork.bikerecoder.video.AndroidVideoBackend
+import com.cowork.bikerecoder.video.SatelliteProbe
+import com.cowork.bikerecoder.video.VideoBackend
+import com.cowork.bikerecoder.video.VideoMapStyle
+import com.cowork.bikerecoder.video.MediaStoreWriter
+import com.cowork.bikerecoder.video.TripMediaStore
+import com.cowork.bikerecoder.video.VideoInputsLoader
+import com.cowork.bikerecoder.video.VideoJob
+import com.cowork.bikerecoder.video.VideoJobStore
+import com.cowork.bikerecoder.video.VideoService
 import com.cowork.bikerecoder.core.model.LocationFix
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -86,13 +109,15 @@ class AppContainer(context: Context) {
         )
     }
 
-    val placeSearch: PlaceSearch = KakaoLocalClient(okHttp, BuildConfig.KAKAO_REST_API_KEY)
+    private val kakao = KakaoLocalClient(okHttp, BuildConfig.KAKAO_REST_API_KEY)
+    val placeSearch: PlaceSearch = kakao
     val recentPlaces: RecentPlaceStore = DataStoreRecentPlaces(appContext)
     /** The style survives restarts in filesDir so an offline cold start still shows the corridor maps. */
     val tileSource: TileSource = OpenFreeMapSource(okHttp, File(appContext.filesDir, "map-style/liberty-ko.json"))
     val tripStore: TripStore = RoomTripStore(db)
+    internal val network = NetworkWaiter(appContext)
     val offlineMaps: MapLibreOfflineController = MapLibreOfflineController(
-        appContext, tileSource, db.offlineRegionRefDao(), settings, NetworkWaiter(appContext), clock = System::currentTimeMillis,
+        appContext, tileSource, db.offlineRegionRefDao(), settings, network, clock = System::currentTimeMillis,
     )
     val offline: OfflineMapController = offlineMaps
     val tripManager: TripManager = TripManager(tripStore, offline, clock = System::currentTimeMillis)
@@ -186,6 +211,78 @@ class AppContainer(context: Context) {
 
     /** The current recording state, without creating [ride]. */
     val rideState: RideUiState get() = rideCreated.value?.ui?.value ?: RideUiState.Idle
+
+    /**
+     * Post-processing (photos, heart rate, simplified routes of ended segments) runs here, apart from [rideScope]: it
+     * only touches Room, MediaStore and Health Connect. [PostProcessor] catches its own failures.
+     */
+    private val postScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    val postStore: PostStore = RoomPostStore(db)
+    val photoSource: PhotoSource = MediaStorePhotoSource(appContext)
+    val heartRateSource: HeartRateSource = HealthConnectHeartRateSource(appContext)
+
+    /** Gallery thumbnails and photos for the photo screens (memory caches shared by every screen). */
+    val photoThumbnails: PhotoThumbnails = PhotoThumbnails(appContext.contentResolver, photoSource)
+
+    /** Started while the app is on screen ([MainActivity.onStart] and the screens that show its results). */
+    val postProcessor: PostProcessor = PostProcessor(
+        rideStore, postStore, photoSource, heartRateSource, clock = System::currentTimeMillis, scope = postScope,
+    )
+
+    /** Short rides asked about at the summaries (spec §6.10), shared so a segment is asked about once. */
+    val shortRides: ShortRides = ShortRides(rideStore, offline, androidWarnLog("ShortRides"))
+
+    /** Videos and summary images made from trips (V1.3.0 spec §5.1). */
+    val tripMedia: TripMediaStore = RoomTripMediaStore(db)
+
+    /** Last video options, this phone's seconds per frame and the unfinished job (spec §1.2, §3.6, §5.1). */
+    val videoJobStore: VideoJobStore = VideoJobStore(appContext)
+
+    /** Gallery files of made videos and images (spec §3.5). */
+    val mediaStoreWriter: MediaStoreWriter = MediaStoreWriter(appContext.contentResolver)
+
+    /** The video/image job runs here, outside any screen; [VideoService] keeps the process up meanwhile. */
+    private val videoScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Default +
+            CoroutineExceptionHandler { _, e ->
+                // A map error may quote a tile URL, and so the key (ruling K1).
+                Log.e(TAG, "Unhandled error in the video scope", VideoMapStyle.redactedError(e, BuildConfig.VWORLD_API_KEY))
+            },
+    )
+
+    /** The one video or summary-image job (V1.3.0 spec §3); stops when a recording starts. */
+    val videoJob: VideoJob by lazy { videoJob(videoBackend()) }
+
+    /**
+     * The real backend: the satellite map with the build's VWorld key (V1.3.1 spec §1.2), checked at the start by a probe
+     * with [probeKey] — the same key, except in the device test of the fallback (a wrong key).
+     */
+    internal fun videoBackend(probeKey: String = BuildConfig.VWORLD_API_KEY): AndroidVideoBackend = AndroidVideoBackend(
+        appContext, tileSource, mediaStoreWriter, photoThumbnails,
+        satelliteKey = BuildConfig.VWORLD_API_KEY,
+        probe = SatelliteProbe(okHttp, probeKey),
+    )
+
+    /** A job wired like [videoJob] on [backend]; only [videoJob] itself runs in the app. */
+    internal fun videoJob(backend: VideoBackend): VideoJob = VideoJob(
+        loadInputs = VideoInputsLoader(rideStore, postStore, tripStore)::load,
+        store = videoJobStore,
+        tripMedia = tripMedia,
+        maps = offlineMaps,
+        backend = backend,
+        recording = rideUi.map { it is RideUiState.Starting || it is RideUiState.Active },
+        online = network::isOnline,
+        regionOf = ::videoRegion,
+        startService = { VideoService.start(appContext) },
+        scope = videoScope,
+        // Map errors may quote a tile URL, and so the key (ruling K1).
+        log = VideoMapStyle.redacting(androidWarnLog("VideoJob"), BuildConfig.VWORLD_API_KEY),
+    )
+
+    /** "서울 강서구" for the video title (V1.3.1 spec §3.8); null on any failure or when nothing is found. */
+    private suspend fun videoRegion(point: GeoPoint): String? =
+        (kakao.regionOf(point) as? SearchResult.Ok)?.value?.let { (d1, d2) -> RideTitle.shortRegion(d1, d2) }
 
     private companion object {
         const val TAG = "AppContainer"

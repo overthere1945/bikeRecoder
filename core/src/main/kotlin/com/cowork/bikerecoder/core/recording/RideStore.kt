@@ -69,6 +69,24 @@ data class TripRideSummary(
     val lastStartedAt: Long,
 )
 
+/**
+ * When [RideStore.deleteTripIf] may delete a trip; checked in the same statement that deletes it, so a trip that
+ * becomes ACTIVE or starts recording meanwhile is never deleted. Every condition requires COMPLETED.
+ */
+enum class TripDeleteCondition {
+    /** No segment at all, open or closed ([버리기] of a trip's last short segment, spec §6.10). */
+    NO_SEGMENTS,
+
+    /** No open segment (the history's delete of a finished trip, spec §3.5). */
+    NOT_RECORDING,
+
+    /**
+     * At least one segment, none open, and under [com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M] in all ([정리],
+     * spec §6.10).
+     */
+    SHORT_NOT_RECORDING,
+}
+
 interface RideStore {
     suspend fun openSegment(tripId: Long, startedAt: Long, localDate: LocalDate): Long
 
@@ -99,4 +117,10 @@ interface RideStore {
 
     /** trip 행을 지우면 경유지·구간·위치가 CASCADE로 지워진다. */
     suspend fun deleteTrip(tripId: Long)
+
+    /** [deleteTrip], but only if [condition] holds at that moment (one statement); true if the trip was deleted. */
+    suspend fun deleteTripIf(tripId: Long, condition: TripDeleteCondition): Boolean
+
+    /** 구간이 있고 모두 빈 구간([RideSegment.isEmpty])인 여행 — [tripSummaries]에 없는 여행 (R21: 짧은 기록으로 센다). */
+    suspend fun emptyTrips(): List<Trip>
 }

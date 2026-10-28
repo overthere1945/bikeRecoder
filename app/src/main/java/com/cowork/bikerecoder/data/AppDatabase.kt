@@ -14,9 +14,19 @@ import androidx.room.RoomDatabase
         RideSegmentEntity::class,
         TrackPointEntity::class,
         FavoritePlaceEntity::class,
+        RidePhotoEntity::class,
+        SegmentExtrasEntity::class,
+        HeartRateSampleEntity::class,
+        SegmentRouteSimplifiedEntity::class,
+        TripMediaEntity::class,
     ],
-    version = 3,
-    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
+    version = 5,
+    autoMigrations = [
+        AutoMigration(from = 1, to = 2),
+        AutoMigration(from = 2, to = 3),
+        AutoMigration(from = 3, to = 4),
+        AutoMigration(from = 4, to = 5),
+    ],
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -24,6 +34,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun offlineRegionRefDao(): OfflineRegionRefDao
     abstract fun rideDao(): RideDao
     abstract fun favoriteDao(): FavoriteDao
+    abstract fun postDao(): PostDao
+    abstract fun tripMediaDao(): TripMediaDao
 
     companion object {
         const val NAME = "bikerecoder.db"

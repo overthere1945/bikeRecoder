@@ -8,16 +8,34 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <!-- 영상·이미지 만들기 서비스: Android 15+ mediaProcessing, 그 아래 dataSync. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROCESSING" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- 주행 중 찍은 사진 찾기(선택한 사진만 허용 포함)와 사진 GPS 위치. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
+    <!-- Android 11–12(API 30–32)에는 READ_MEDIA_IMAGES가 없어 이 권한으로 모든 사진을 찾는다. -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <!-- Health Connect: 워치 심박·운동·총 칼로리 읽기. -->
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
+    <uses-permission android:name="android.permission.health.READ_EXERCISE" />
+    <uses-permission android:name="android.permission.health.READ_TOTAL_CALORIES_BURNED" />
 
     <!-- API 30+ 패키지 가시성: TTS 엔진(삼성 SMT, Google TTS)을 찾으려면 필요. -->
     <queries>
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
+        <!-- Android 13 이하에서 Health Connect 앱을 찾으려면 필요. -->
+        <package android:name="com.google.android.apps.healthdata" />
     </queries>
 
     <application
@@ -41,10 +59,36 @@
             </intent-filter>
         </activity>
 
+        <!-- Health Connect 권한 이유 화면 (Android 13 이하). -->
+        <activity
+            android:name=".ui.health.HealthRationaleActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
+        </activity>
+
+        <!-- Health Connect 권한 이유 화면 (Android 14+). -->
+        <activity-alias
+            android:name="ViewPermissionUsageActivity"
+            android:exported="true"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE"
+            android:targetActivity=".ui.health.HealthRationaleActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+        </activity-alias>
+
         <service
             android:name=".nav.NavigationService"
             android:exported="false"
             android:foregroundServiceType="location" />
+
+        <service
+            android:name=".video.VideoService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProcessing|dataSync" />
     </application>
 
 </manifest>

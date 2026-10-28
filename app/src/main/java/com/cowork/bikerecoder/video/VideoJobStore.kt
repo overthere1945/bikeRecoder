@@ -1,0 +1,171 @@
+package com.cowork.bikerecoder.video
+
+import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.doublePreferencesKey
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import com.cowork.bikerecoder.core.video.Aspect
+import com.cowork.bikerecoder.core.video.RouteColoring
+import com.cowork.bikerecoder.core.video.VideoLength
+import com.cowork.bikerecoder.core.video.VideoOptions
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.Json
+import java.io.IOException
+
+/**
+ * 끝나지 못한 작업(스펙 §3.3, §5.1): 앱이 강제 종료되면 다음 실행 때 같은 옵션으로 다시 만들기를 제안한다. [outputUri] = 쓰던
+ * 갤러리 임시 항목(`IS_PENDING`, 만들기 전이면 null) — 다시 제안하거나 닫을 때 지운다(ruling V6). 예전 기록은 null로 읽는다.
+ */
+data class PendingJob(
+    val tripId: Long,
+    val kind: MediaKind,
+    val optionsJson: String,
+    val startedAt: Long,
+    val outputUri: String? = null,
+)
+
+/**
+ * 영상 작업이 휴대폰에 남기는 것(DataStore): 마지막으로 고른 옵션(스펙 §1.2, 음악 제외), 이 휴대폰에서 마지막으로 만든 영상의
+ * 장당 시간(§3.6), 위성 지도 데이터의 장당 바이트(V1.3.1 §1.4), 진행 중 작업(§5.1). 깨진 값은 없는 것으로 읽고, 읽기가 실패해도 영상 만들기를 막지 않는다.
+ */
+class VideoJobStore(private val dataStore: DataStore<Preferences>) {
+
+    constructor(context: Context) : this(context.applicationContext.videoJobDataStore)
+
+    @Serializable
+    private class PendingEntry(
+        val tripId: Long,
+        val kind: String,
+        val optionsJson: String,
+        val startedAt: Long,
+        val outputUri: String? = null,
+    )
+
+    val lastOptions: Flow<VideoOptions> = dataStore.data
+        .map { prefs -> prefs[LAST_OPTIONS]?.let(VideoOptionsJson::decode) ?: VideoOptions() }
+        .catch { if (it is IOException) emit(VideoOptions()) else throw it }
+
+    /** [VideoOptions.musicUri]는 저장하지 않는다. */
+    suspend fun saveOptions(o: VideoOptions) {
+        dataStore.edit { it[LAST_OPTIONS] = VideoOptionsJson.encode(o) }
+    }
+
+    /** 마지막으로 만든 영상의 실제 장당 시간(초), 아직 없으면 null. */
+    suspend fun secondsPerFrame(): Double? = read()?.get(SECONDS_PER_FRAME)
+
+    /** 0보다 큰 유한한 값만 기록한다. */
+    suspend fun recordSpeed(s: Double) {
+        if (!s.isFinite() || s <= 0.0) return
+        dataStore.edit { it[SECONDS_PER_FRAME] = s }
+    }
+
+    /** 위성 지도로 만든 마지막 영상에서 앱이 받은 프레임 한 장당 바이트(스펙 §1.4), 아직 없으면 null. */
+    suspend fun bytesPerFrame(): Double? = read()?.get(BYTES_PER_FRAME)
+
+    /**
+     * [MIN_BYTES_PER_FRAME] 이상인 유한한 값만 기록한다. 0 또는 [MIN_BYTES_PER_FRAME] 미만은 캐시에서 다시 쓴 영상이라 다음 영상의
+     * 예상이 되지 못한다(판정 J3). 그때는 기본값이나 앞서 기록한 값이 그대로 남는다.
+     */
+    suspend fun recordBytesPerFrame(v: Double) {
+        if (!v.isFinite() || v < MIN_BYTES_PER_FRAME) return
+        dataStore.edit { it[BYTES_PER_FRAME] = v }
+    }
+
+    suspend fun setPending(p: PendingJob?) {
+        dataStore.edit { prefs ->
+            if (p == null) {
+                prefs.remove(PENDING_JOB)
+            } else {
+                prefs[PENDING_JOB] = json.encodeToString(PendingEntry(p.tripId, p.kind.name, p.optionsJson, p.startedAt, p.outputUri))
+            }
+        }
+    }
+
+    suspend fun pending(): PendingJob? {
+        val text = read()?.get(PENDING_JOB) ?: return null
+        return try {
+            val e = json.decodeFromString<PendingEntry>(text)
+            val kind = MediaKind.entries.firstOrNull { it.name == e.kind } ?: return null
+            PendingJob(e.tripId, kind, e.optionsJson, e.startedAt, e.outputUri)
+        } catch (_: SerializationException) {
+            null
+        }
+    }
+
+    private suspend fun read(): Preferences? = try {
+        dataStore.data.first()
+    } catch (_: IOException) {
+        null
+    }
+
+    companion object {
+        /**
+         * 판정 J3: 이보다 적게 받은 영상(프레임당 바이트)은 기록하지 않는다. S22 실측 26~33 KB의 약 1/4로, 이보다 작으면 타일
+         * 대부분을 캐시에서 다시 쓴 것으로 본다.
+         */
+        const val MIN_BYTES_PER_FRAME = 8_000.0
+
+        private val LAST_OPTIONS = stringPreferencesKey("last_options")
+        private val SECONDS_PER_FRAME = doublePreferencesKey("seconds_per_frame")
+        private val BYTES_PER_FRAME = doublePreferencesKey("satellite_bytes_per_frame")
+        private val PENDING_JOB = stringPreferencesKey("pending_job")
+        private val json = Json { ignoreUnknownKeys = true }
+    }
+}
+
+/**
+ * [VideoOptions] ↔ JSON(kotlinx.serialization). [VideoOptions.musicUri]는 쓰지 않고, 읽으면 늘 null이다. 모르는 이름이나
+ * 빠진 값은 그 항목만 기본값으로, 깨진 JSON은 기본 옵션으로 읽는다. [TripMedia.optionsJson]·[PendingJob.optionsJson]도 이 형식.
+ */
+object VideoOptionsJson {
+
+    @Serializable
+    private class Entry(
+        val aspect: String = DEFAULTS.aspect.name,
+        val length: String = DEFAULTS.length.name,
+        val photos: Boolean = DEFAULTS.photos,
+        val hud: Boolean = DEFAULTS.hud,
+        val coloring: String = DEFAULTS.coloring.name,
+    )
+
+    private val DEFAULTS = VideoOptions()
+    private val json = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+    }
+
+    fun encode(o: VideoOptions): String =
+        json.encodeToString(Entry(o.aspect.name, o.length.name, o.photos, o.hud, o.coloring.name))
+
+    fun decode(text: String): VideoOptions {
+        val e = try {
+            json.decodeFromString<Entry>(text)
+        } catch (_: SerializationException) {
+            return DEFAULTS
+        }
+        return VideoOptions(
+            aspect = Aspect.entries.firstOrNull { it.name == e.aspect } ?: DEFAULTS.aspect,
+            length = VideoLength.entries.firstOrNull { it.name == e.length } ?: DEFAULTS.length,
+            photos = e.photos,
+            hud = e.hud,
+            coloring = RouteColoring.entries.firstOrNull { it.name == e.coloring } ?: DEFAULTS.coloring,
+            musicUri = null,
+        )
+    }
+}
+
+/** A corrupt file is replaced by an empty one (defaults, no pending job) instead of failing every read. */
+private val Context.videoJobDataStore by preferencesDataStore(
+    name = "video_job",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+)
