@@ -33,6 +33,19 @@ class FrameRendererCellsTest {
         )
     }
 
+    /** The card writes units smaller (fix round 1); a duration stays whole. */
+    @Test
+    fun unitsSplitOffNumbers() {
+        assertEquals("18.0" to "km/h", FrameRenderer.splitUnit("18.0km/h"))
+        assertEquals("12.34" to "km", FrameRenderer.splitUnit("12.34km"))
+        assertEquals("132" to "bpm", FrameRenderer.splitUnit("132bpm"))
+        assertEquals("210" to "kcal", FrameRenderer.splitUnit("210kcal"))
+        assertEquals("120" to "m", FrameRenderer.splitUnit("120m"))
+        assertEquals("2" to "회", FrameRenderer.splitUnit("2회"))
+        assertEquals("1시간 0분" to "", FrameRenderer.splitUnit("1시간 0분"))
+        assertEquals("6분" to "", FrameRenderer.splitUnit("6분"))
+    }
+
     @Test
     fun longDateSpellsTheWeekday() {
         assertEquals("10월 25일 일요일", FrameRenderer.longDate("10월 25일 (일)"))

@@ -21,8 +21,21 @@ object VideoMapStyle {
     const val ATTRIBUTION = "© 브이월드 · OpenStreetMap"
 
     private const val TILE_URL = "https://api.vworld.kr/req/wmts/1.0.0/%s/Satellite/{z}/{y}/{x}.jpeg"
-    private val PLACE_CLASSES = listOf("city", "town", "village", "suburb", "quarter", "neighbourhood")
     private val ROAD_CLASSES = listOf("motorway", "trunk", "primary", "secondary")
+
+    /**
+     * The place classes of spec §1.1, the smaller ones only close up so the sky view is not a map app's screen full of
+     * names: city / town / village always, suburb from zoom 13, quarter / neighbourhood from zoom 15.
+     */
+    private val PLACE_FILTER = Json.parseToJsonElement(
+        """["any",""" +
+            """["match",["get","class"],["city","town","village"],true,false],""" +
+            """["all",["==",["get","class"],"suburb"],[">=",["zoom"],13]],""" +
+            """["all",["match",["get","class"],["quarter","neighbourhood"],true,false],[">=",["zoom"],15]]]""",
+    )
+
+    /** Road names only close up (the ride's 16.6–17.4), not on the sky view. */
+    private const val ROAD_MIN_ZOOM = 15
 
     /** Place names 1.6× the base sizes, fixed: 18 at zoom 12 to 26 at zoom 17. */
     private val PLACE_SIZE = Json.parseToJsonElement("""["interpolate",["linear"],["zoom"],12,18,17,26]""")
@@ -62,8 +75,8 @@ object VideoMapStyle {
                     put("source", "vworld")
                 })
                 if (labels != null) {
-                    add(labelLayer("v-road", labels, "transportation_name", ROAD_CLASSES, JsonPrimitive(ROAD_SIZE), line = true))
-                    add(labelLayer("v-place", labels, "place", PLACE_CLASSES, PLACE_SIZE, line = false))
+                    add(labelLayer("v-road", labels, "transportation_name", classMatch(ROAD_CLASSES), JsonPrimitive(ROAD_SIZE), line = true))
+                    add(labelLayer("v-place", labels, "place", PLACE_FILTER, PLACE_SIZE, line = false))
                 }
             })
         }
@@ -99,7 +112,7 @@ object VideoMapStyle {
         id: String,
         labels: Labels,
         sourceLayer: String,
-        classes: List<String>,
+        filter: JsonElement,
         size: JsonElement,
         line: Boolean,
     ): JsonObject = buildJsonObject {
@@ -107,13 +120,8 @@ object VideoMapStyle {
         put("type", "symbol")
         put("source", labels.sourceId)
         put("source-layer", sourceLayer)
-        put("filter", buildJsonArray {
-            add(JsonPrimitive("match"))
-            add(buildJsonArray { add(JsonPrimitive("get")); add(JsonPrimitive("class")) })
-            add(JsonArray(classes.map(::JsonPrimitive)))
-            add(JsonPrimitive(true))
-            add(JsonPrimitive(false))
-        })
+        if (line) put("minzoom", ROAD_MIN_ZOOM)
+        put("filter", filter)
         put("layout", buildJsonObject {
             put("text-field", KOREAN_NAME)
             putJsonArray("text-font") { add(JsonPrimitive(labels.font)) }
@@ -134,6 +142,15 @@ object VideoMapStyle {
             put("text-halo-color", "rgba(0,0,0,0.75)")
             put("text-halo-width", 1.6)
         })
+    }
+
+    /** `["match", ["get", "class"], classes, true, false]`. */
+    private fun classMatch(classes: List<String>): JsonElement = buildJsonArray {
+        add(JsonPrimitive("match"))
+        add(buildJsonArray { add(JsonPrimitive("get")); add(JsonPrimitive("class")) })
+        add(JsonArray(classes.map(::JsonPrimitive)))
+        add(JsonPrimitive(true))
+        add(JsonPrimitive(false))
     }
 
     private fun JsonObject.string(key: String): String? = (get(key) as? JsonPrimitive)?.takeIf { it.isString }?.content

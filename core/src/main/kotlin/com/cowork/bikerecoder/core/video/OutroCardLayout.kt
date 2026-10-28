@@ -4,7 +4,7 @@ import kotlin.math.min
 
 /**
  * The closing summary card of the video (spec §2.4) on a [width]×[height] frame: low on the screen, two columns of
- * numbers upright and four lying, so the whole route can be fitted above it ([CameraPath.outro]). Sizes are in units
+ * numbers upright and three lying (its six numbers in two even rows), so the whole route can be fitted above it ([CameraPath.outro]). Sizes are in units
  * of [unit] pixels (a 360-unit short side: 3 px at 1080p, 2 px at the 720p fallback).
  */
 object OutroCardLayout {
@@ -31,7 +31,7 @@ object OutroCardLayout {
 
     fun unit(width: Int, height: Int): Float = min(width, height) / 360f
 
-    fun columns(width: Int, height: Int): Int = if (width > height) 4 else 2
+    fun columns(width: Int, height: Int): Int = if (width > height) 3 else 2
 
     /** The card for [cellCount] numbers (at least one row), centred horizontally, [BOTTOM] above the bottom edge. */
     fun card(width: Int, height: Int, cellCount: Int): Box {

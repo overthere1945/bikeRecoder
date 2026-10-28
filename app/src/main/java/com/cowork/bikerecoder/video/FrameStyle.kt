@@ -49,6 +49,9 @@ internal object FrameStyle {
     // §3.4 the number band.
     const val HUD_SHARE = 0.27f
     const val HUD_ALPHA = 0.85f
+
+    /** Under the band the route fades out, gone this far (share of the band's height) below the band's top. */
+    const val ROUTE_FADE_SHARE = 0.2f
     const val HUD_LABEL = 0xFFC8CDD7.toInt()
     const val HUD_LABEL_SIZE = 13f
     const val HUD_UNIT_SIZE = 13f
@@ -94,6 +97,10 @@ internal object FrameStyle {
     const val CARD_LABEL_SIZE = 13f
     const val CARD_VALUE_SIZE = 24f
     const val CARD_BRAND_SIZE = 11f
+    const val CARD_ATTRIBUTION_SIZE = 9f
+
+    /** A value's unit in the card ("km", "km/h", "bpm", …) is this much of the value's size, as in the band. */
+    const val CARD_UNIT_SHARE = 0.6f
 
     /** The card rises this far into place while it fades in. */
     const val CARD_RISE = 16f
@@ -110,9 +117,20 @@ internal object FrameLayout {
         val parts: List<Box> get() = listOf(graph) + labels + values
     }
 
-    /** The closing card and, inside it, the date, the ride title, a label and value per cell and "bikeRecoder". */
-    class Outro(val card: Box, val date: Box, val title: Box, val labels: List<Box>, val values: List<Box>, val brand: Box) {
-        val parts: List<Box> get() = listOf(date, title) + labels + values + brand
+    /**
+     * The closing card and, inside it, the date, the ride title, a label and value per cell, and the footer:
+     * "bikeRecoder" on the left and the map attribution on the right (the outro shows no attribution over the map).
+     */
+    class Outro(
+        val card: Box,
+        val date: Box,
+        val title: Box,
+        val labels: List<Box>,
+        val values: List<Box>,
+        val brand: Box,
+        val attribution: Box,
+    ) {
+        val parts: List<Box> get() = listOf(date, title) + labels + values + brand + attribution
     }
 
     /** A text box of [size] units: [ASCENT] of it above the baseline, [DESCENT] below. */
@@ -125,8 +143,11 @@ internal object FrameLayout {
     private const val LABEL_GAP = 8f
     private const val GRAPH_GAP = 10f
 
-    /** Room above the graph for the gradient to fade in, when 27 % of the height is too little (landscape). */
-    private const val FADE_ROOM = 40f
+    /** Room above the band's content for the gradient to fade in, when 27 % of the height would be too little. */
+    private const val FADE_ROOM = 26f
+
+    /** Landscape: the cells take the left 60 % of the band's one row, the graph the rest. */
+    private const val WIDE_CELLS_SHARE = 0.6f
 
     fun unit(width: Int, height: Int): Float = min(width, height) / 360f
 
@@ -139,6 +160,8 @@ internal object FrameLayout {
     /**
      * The band with [cellCount] columns. The value size (36u for up to three cells, 30u for four) and so the graph's
      * place follow [sizedFor], the most cells this video ever shows, so neither jumps when a frame lacks a value.
+     * Portrait: the graph across the width above the cells. Landscape: one row, the cells on the left 60 % and the graph
+     * on the right as high as the values, so the band stays within 27 % of the short height.
      */
     fun hud(width: Int, height: Int, cellCount: Int, sizedFor: Int = cellCount): Hud {
         val u = unit(width, height)
@@ -149,10 +172,18 @@ internal object FrameLayout {
         val valueTop = valueBaseline - ASCENT * valueSize
         val labelBaseline = valueTop - LABEL_GAP * u - DESCENT * labelSize
         val labelTop = labelBaseline - ASCENT * labelSize
-        val graphBottom = labelTop - GRAPH_GAP * u
-        val graph = Box(SIDE * u, graphBottom - FrameStyle.GRAPH_HEIGHT * u, width - 2 * SIDE * u, FrameStyle.GRAPH_HEIGHT * u)
-        val bandTop = height - max(FrameStyle.HUD_SHARE * height, height - graph.y + FADE_ROOM * u)
-        val column = (width - 2 * SIDE * u) / cells
+        val graphH = FrameStyle.GRAPH_HEIGHT * u
+        val wide = width > height
+        val cellsRight = if (wide) width * WIDE_CELLS_SHARE else width - SIDE * u
+        val graph = if (wide) {
+            val left = cellsRight + GRAPH_GAP * u
+            Box(left, valueBaseline - graphH, width - SIDE * u - left, graphH)
+        } else {
+            Box(SIDE * u, labelTop - GRAPH_GAP * u - graphH, width - 2 * SIDE * u, graphH)
+        }
+        val contentTop = min(graph.y, labelTop)
+        val bandTop = height - max(FrameStyle.HUD_SHARE * height, height - contentTop + FADE_ROOM * u)
+        val column = (cellsRight - SIDE * u) / cells
         val pad = 4 * u
         val labels = List(cells) { text(SIDE * u + it * column + pad, labelBaseline, column - 2 * pad, labelSize) }
         val values = List(cells) { text(SIDE * u + it * column + pad, valueBaseline, column - 2 * pad, valueSize) }
@@ -171,7 +202,10 @@ internal object FrameLayout {
         fun cellY(i: Int) = card.y + (OutroCardLayout.HEAD + (i / columns) * OutroCardLayout.ROW) * u
         val labels = List(cellCount) { text(cellX(it), cellY(it) + 15 * u, cellW, FrameStyle.CARD_LABEL_SIZE * u) }
         val values = List(cellCount) { text(cellX(it), cellY(it) + 40 * u, cellW, FrameStyle.CARD_VALUE_SIZE * u) }
-        val brand = text(card.x + 12 * u, card.y + card.h - 11 * u, inner, FrameStyle.CARD_BRAND_SIZE * u)
-        return Outro(card, date, title, labels, values, brand)
+        val footer = card.y + card.h - 11 * u
+        val half = (card.w - 2 * OutroCardLayout.SIDE * u) / 2 - 4 * u
+        val brand = text(card.x + OutroCardLayout.SIDE * u, footer, half, FrameStyle.CARD_BRAND_SIZE * u)
+        val attribution = text(card.x + card.w - OutroCardLayout.SIDE * u - half, footer, half, FrameStyle.CARD_ATTRIBUTION_SIZE * u)
+        return Outro(card, date, title, labels, values, brand, attribution)
     }
 }

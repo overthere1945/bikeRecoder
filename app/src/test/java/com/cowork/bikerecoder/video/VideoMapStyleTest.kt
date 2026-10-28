@@ -70,10 +70,16 @@ class VideoMapStyleTest {
         val place = layer(style, "v-place")
         assertEquals("openmaptiles", place["source"]!!.jsonPrimitive.content)
         assertEquals("place", place["source-layer"]!!.jsonPrimitive.content)
+        // The spec's six classes; the smaller ones only close up (fix round 1: the sky view was full of names).
         assertEquals(
-            json("""["match",["get","class"],["city","town","village","suburb","quarter","neighbourhood"],true,false]"""),
+            json(
+                """["any",["match",["get","class"],["city","town","village"],true,false],""" +
+                    """["all",["==",["get","class"],"suburb"],[">=",["zoom"],13]],""" +
+                    """["all",["match",["get","class"],["quarter","neighbourhood"],true,false],[">=",["zoom"],15]]]""",
+            ),
             place["filter"],
         )
+        assertNull(place["minzoom"])
         val road = layer(style, "v-road")
         assertEquals("openmaptiles", road["source"]!!.jsonPrimitive.content)
         assertEquals("transportation_name", road["source-layer"]!!.jsonPrimitive.content)
@@ -81,6 +87,8 @@ class VideoMapStyleTest {
             json("""["match",["get","class"],["motorway","trunk","primary","secondary"],true,false]"""),
             road["filter"],
         )
+        // Road names only close up, not on the sky view.
+        assertEquals(15, road["minzoom"]!!.jsonPrimitive.int)
         // Korean name first (as the app's own map).
         val koreanName = json("""["coalesce",["get","name:ko"],["get","name"]]""")
         assertEquals(koreanName, place["layout"]!!.jsonObject["text-field"])

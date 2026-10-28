@@ -8,6 +8,8 @@ import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
@@ -37,6 +39,8 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -80,6 +84,17 @@ class FrameRenderer(
     private val hudLayout = FrameLayout.hud(width, height, maxCells)
     private val graphPath: Path? = elevation?.let { graphPath(it, hudLayout.graph) }
 
+    /**
+     * The strip under the band's top where the route fades out, on whole pixel rows (a layer's bounds round outward, so
+     * a fractional edge would leave a row unmasked), and the mask that fades it.
+     */
+    private val routeFadeTop = floor(hudLayout.bandTop)
+    private val routeFadeEnd = ceil(hudLayout.bandTop + (height - hudLayout.bandTop) * FrameStyle.ROUTE_FADE_SHARE)
+    private val routeFadeMask = Paint().apply {
+        shader = LinearGradient(0f, routeFadeTop, 0f, routeFadeEnd, Color.BLACK, Color.TRANSPARENT, Shader.TileMode.CLAMP)
+        xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+    }
+
     /** One unit: a 360-unit-wide short side, so a 1080 frame has 3 px per unit and the 720p fallback 2. */
     private val unit = min(width, height) / 360f
 
@@ -122,12 +137,10 @@ class FrameRenderer(
             SceneKind.OUTRO -> overlay.draw(canvas, route, Double.POSITIVE_INFINITY, unit, null, RouteStyle.FULL)
             SceneKind.INTRO_OVERVIEW -> overlay.draw(canvas, route, position, unit, marker, RouteStyle.TITLE)
             else -> {
-                overlay.draw(canvas, route, position, unit, marker, RouteStyle.RIDE)
+                fadedUnderBand(canvas, hudShown(plan)) { overlay.draw(it, route, position, unit, marker, RouteStyle.RIDE) }
                 // The descent's first frames: the title card's route fades out over the ride's.
-                if (title > 0f) {
-                    canvas.saveLayerAlpha(null, (255 * title).roundToInt())
-                    overlay.draw(canvas, route, position, unit, marker, RouteStyle.TITLE)
-                    canvas.restore()
+                if (title > 0f) canvas.layered(title, routeBounds(route)) {
+                    overlay.draw(this, route, position, unit, marker, RouteStyle.TITLE)
                 }
             }
         }
@@ -142,7 +155,8 @@ class FrameRenderer(
         }
         // The photo dims the map, not the numbers.
         if (photoAlpha > 0f) canvas.drawColor(Color.argb((90 * photoAlpha).roundToInt(), 0, 0, 0))
-        drawAttribution(canvas)
+        // The closing card carries the attribution in its footer instead.
+        if (plan.kind != SceneKind.OUTRO) drawAttribution(canvas)
         if (hudShown(plan)) drawHud(canvas, Hud.at(plan.moveMs, timeline, inputs.heartRate), located)
         plan.caption?.let { drawCaption(canvas, it) }
         if (plan.kind == SceneKind.INTRO_OVERVIEW && titleOffset == null) titleOffset = titleOffsetFor(route)
@@ -226,7 +240,11 @@ class FrameRenderer(
      */
     private fun drawMarker(canvas: Canvas, x: Float, y: Float, color: Int, index: Int, alpha: Float) {
         if (alpha <= 0f) return
-        if (alpha < 1f) canvas.saveLayerAlpha(null, (255 * alpha).roundToInt())
+        val reach = (FrameStyle.PULSE_TO_R + 4) * unit
+        canvas.layered(alpha, RectF(x - reach, y - reach, x + reach, y + reach)) { drawMarkerAt(this, x, y, color, index) }
+    }
+
+    private fun drawMarkerAt(canvas: Canvas, x: Float, y: Float, color: Int, index: Int) {
         val phase = (index / FPS.toFloat() / FrameStyle.PULSE_SECONDS) % 1f
         val radius = FrameStyle.PULSE_FROM_R + (FrameStyle.PULSE_TO_R - FrameStyle.PULSE_FROM_R) * phase
         canvas.drawCircle(x, y, radius * unit, fill(withAlpha(color, FrameStyle.PULSE_ALPHA * (1f - phase))).apply {
@@ -235,7 +253,6 @@ class FrameRenderer(
         canvas.drawCircle(x, y + unit, (FrameStyle.MARKER_WHITE_R + 1) * unit, fill(Color.argb(60, 0, 0, 0)))
         canvas.drawCircle(x, y, FrameStyle.MARKER_WHITE_R * unit, fill(Color.WHITE))
         canvas.drawCircle(x, y, FrameStyle.MARKER_COLOR_R * unit, fill(color))
-        if (alpha < 1f) canvas.restore()
     }
 
     /** A start or end point of the closing frames (spec §3.2): [color] inside a white border. */
@@ -265,7 +282,8 @@ class FrameRenderer(
         val right = width - 8 * unit
         val baseline = 15 * unit
         val pill = RectF(right - paint.measureText(attribution) - 5 * unit, baseline - 9.5f * unit, right + 5 * unit, baseline + 3.5f * unit)
-        canvas.drawRoundRect(pill, pill.height() / 2, pill.height() / 2, fill(Color.argb(120, 0, 0, 0)))
+        // Nearly opaque: it covers the map names under it instead of tangling with them.
+        canvas.drawRoundRect(pill, pill.height() / 2, pill.height() / 2, fill(withAlpha(FrameStyle.HUD_DARK, ATTRIBUTION_PILL_ALPHA)))
         canvas.drawText(attribution, right, baseline, paint)
     }
 
@@ -403,7 +421,9 @@ class FrameRenderer(
         val outer = RectF(rect.left - border, rect.top - border, rect.right + border, rect.bottom + border)
         val radius = FrameStyle.PHOTO_RADIUS * unit
 
-        canvas.saveLayerAlpha(null, (255 * alpha).roundToInt())
+        val reachX = outer.width() / 2 * scale + 12 * unit
+        val reachY = outer.height() / 2 * scale + 15 * unit
+        val count = if (alpha >= 1f) canvas.save() else canvas.saveLayerAlpha(RectF(cx - reachX, cy - reachY, cx + reachX, cy + reachY), (255 * alpha).roundToInt())
         canvas.scale(scale, scale, cx, cy)
         val shadow = fill(withAlpha(Color.BLACK, FrameStyle.PHOTO_SHADOW_ALPHA)).apply {
             maskFilter = BlurMaskFilter(FrameStyle.PHOTO_SHADOW_BLUR * unit, BlurMaskFilter.Blur.NORMAL)
@@ -420,7 +440,7 @@ class FrameRenderer(
             ((picture.width + cropW) / 2).roundToInt(), ((picture.height + cropH) / 2).roundToInt(),
         )
         canvas.drawBitmap(picture, source, rect, Paint(Paint.FILTER_BITMAP_FLAG))
-        canvas.restore()
+        canvas.restoreToCount(count)
 
         val label = text(20f, bold = true).shadowed(alpha).apply { this.alpha = (255 * alpha).roundToInt() }
         canvas.drawText(TIME.format(Instant.ofEpochMilli(takenAt).atZone(SEOUL)), cx, cy + (h / 2 + border) * scale + 30 * unit, label)
@@ -428,8 +448,9 @@ class FrameRenderer(
 
     /**
      * The closing card (spec §3.7) at [OutroCardLayout.card]: the date, the ride's name, six numbers in two columns
-     * (four lying) and "bikeRecoder". Nearly opaque: the outro camera ([outroCamera]) keeps the route above it. It rises
-     * into place from frame [VideoTimeline.OUTRO_CARD_FROM] over [VideoTimeline.OUTRO_CARD_FRAMES] frames.
+     * (three lying), units smaller than their numbers, and "bikeRecoder" with the map attribution in its footer. Opaque:
+     * the outro camera ([outroCamera]) keeps the route above it. It rises into place from frame
+     * [VideoTimeline.OUTRO_CARD_FROM] over [VideoTimeline.OUTRO_CARD_FRAMES] frames.
      */
     private fun drawSummary(canvas: Canvas, plan: FramePlan) {
         val k = frameOf(plan, VideoTimeline.OUTRO_FRAMES)
@@ -437,10 +458,15 @@ class FrameRenderer(
         if (a <= 0f) return
         val layout = FrameLayout.outro(width, height, cells.size)
         val card = layout.card
-        val radius = FrameStyle.CARD_RADIUS * unit
-        canvas.saveLayerAlpha(null, (255 * a).roundToInt())
-        canvas.translate(0f, FrameStyle.CARD_RISE * unit * (1f - a) * (1f - a))
         val box = RectF(card.x, card.y, card.x + card.w, card.y + card.h)
+        val reach = RectF(box).apply { inset(-14 * unit, -14 * unit); bottom += FrameStyle.CARD_RISE * unit }
+        canvas.layered(a, reach) { drawCard(this, layout, box, a) }
+    }
+
+    private fun drawCard(canvas: Canvas, layout: FrameLayout.Outro, box: RectF, a: Float) {
+        val card = layout.card
+        val radius = FrameStyle.CARD_RADIUS * unit
+        canvas.translate(0f, FrameStyle.CARD_RISE * unit * (1f - a) * (1f - a))
         canvas.drawRoundRect(RectF(box).apply { offset(0f, 3 * unit) }, radius, radius, fill(Color.argb(80, 0, 0, 0)).apply {
             maskFilter = BlurMaskFilter(10 * unit, BlurMaskFilter.Blur.NORMAL)
         })
@@ -452,13 +478,64 @@ class FrameRenderer(
             fitted(text(FrameStyle.CARD_NAME_SIZE, GREY), inputs.rideTitle, layout.title.w))
         val label = text(FrameStyle.CARD_LABEL_SIZE, GREY, align = Paint.Align.LEFT)
         val value = text(FrameStyle.CARD_VALUE_SIZE, DARK, bold = true, align = Paint.Align.LEFT)
-        cells.forEachIndexed { i, (_, number) -> fitted(value, number, layout.values[i].w) }
-        cells.forEachIndexed { i, (name, number) ->
-            canvas.drawText(name, layout.labels[i].x, FrameLayout.baseline(layout.labels[i]), label)
-            canvas.drawText(number, layout.values[i].x, FrameLayout.baseline(layout.values[i]), value)
+        val small = text(FrameStyle.CARD_VALUE_SIZE * FrameStyle.CARD_UNIT_SHARE, DARK, bold = true, align = Paint.Align.LEFT)
+        val gap = unit
+        val split = cells.map { splitUnit(it.second) }
+        // One size for every value: the largest that lets each number and its unit fit its cell.
+        val shrink = split.indices.minOf { i ->
+            val (number, unitText) = split[i]
+            val wide = value.measureText(number) + if (unitText.isEmpty()) 0f else gap + small.measureText(unitText)
+            min(1f, layout.values[i].w / wide)
         }
-        canvas.drawText(BRAND, cx, FrameLayout.baseline(layout.brand), text(FrameStyle.CARD_BRAND_SIZE, BRAND_GREY, bold = true))
+        value.textSize *= shrink
+        small.textSize *= shrink
+        cells.forEachIndexed { i, (name, _) ->
+            val (number, unitText) = split[i]
+            val cell = layout.values[i]
+            val baseline = FrameLayout.baseline(cell)
+            canvas.drawText(name, layout.labels[i].x, FrameLayout.baseline(layout.labels[i]), label)
+            canvas.drawText(number, cell.x, baseline, value)
+            if (unitText.isNotEmpty()) canvas.drawText(unitText, cell.x + value.measureText(number) + gap, baseline, small)
+        }
+        canvas.drawText(BRAND, layout.brand.x, FrameLayout.baseline(layout.brand),
+            text(FrameStyle.CARD_BRAND_SIZE, BRAND_GREY, bold = true, align = Paint.Align.LEFT))
+        val credit = layout.attribution
+        canvas.drawText(attribution, credit.x + credit.w, FrameLayout.baseline(credit),
+            fitted(text(FrameStyle.CARD_ATTRIBUTION_SIZE, BRAND_GREY, align = Paint.Align.RIGHT), attribution, credit.w))
+    }
+
+    /** Draws [draw] at opacity [alpha] through a layer over [bounds] only; no layer at all when fully opaque. */
+    private inline fun Canvas.layered(alpha: Float, bounds: RectF, draw: Canvas.() -> Unit) {
+        val count = if (alpha >= 1f) save() else saveLayerAlpha(bounds, (255 * alpha).roundToInt())
+        draw()
+        restoreToCount(count)
+    }
+
+    /** Where [projected]'s route is drawn, with room for its glow. */
+    private fun routeBounds(projected: RouteOverlay.Projected): RectF {
+        val out = RectF(Float.MAX_VALUE, Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE)
+        for (run in projected.runs) for (i in 0 until run.xy.size / 2) out.union(run.xy[2 * i], run.xy[2 * i + 1])
+        if (out.isEmpty) return RectF()
+        val pad = (FrameStyle.GLOW_WIDTH + 2 * FrameStyle.GLOW_BLUR) * unit
+        out.inset(-pad, -pad)
+        return if (out.intersect(0f, 0f, width.toFloat(), height.toFloat())) out else RectF()
+    }
+
+    /**
+     * Draws the route with [draw]; with the number band up ([fade]) it fades out under the band, gone at
+     * [FrameStyle.ROUTE_FADE_SHARE] of the band's height below its top, so it never runs through the numbers. The fade
+     * goes through a layer over that strip only.
+     */
+    private inline fun fadedUnderBand(canvas: Canvas, fade: Boolean, draw: (Canvas) -> Unit) {
+        if (!fade) return draw(canvas)
+        canvas.save()
+        canvas.clipRect(0f, 0f, width.toFloat(), routeFadeTop)
+        draw(canvas)
         canvas.restore()
+        val count = canvas.saveLayer(0f, routeFadeTop, width.toFloat(), routeFadeEnd, null)
+        draw(canvas)
+        canvas.drawRect(0f, routeFadeTop, width.toFloat(), routeFadeEnd + 1, routeFadeMask)
+        canvas.restoreToCount(count)
     }
 
     companion object {
@@ -523,7 +600,20 @@ class FrameRenderer(
 
         /** The shade behind the title reaches this far (units) above and below its lines, at most this opaque. */
         private const val TITLE_SCRIM = 28f
-        private const val TITLE_SCRIM_ALPHA = 0.4f
+        private const val TITLE_SCRIM_ALPHA = 0.6f
+
+        /** The attribution's pill over the map. */
+        private const val ATTRIBUTION_PILL_ALPHA = 200 / 255f
+
+        /** Units written smaller after a card value; durations ("1시간 0분") stay whole. Longest first. */
+        private val CARD_UNITS = listOf("km/h", "kcal", "bpm", "km", "m", "회")
+        private val NUMBER = Regex("""[\d.,]+""")
+
+        /** "18.0km/h" → ("18.0", "km/h"); a value without a known unit after a plain number stays whole. */
+        internal fun splitUnit(value: String): Pair<String, String> {
+            val unitText = CARD_UNITS.firstOrNull { value.endsWith(it) && NUMBER.matches(value.removeSuffix(it)) } ?: return value to ""
+            return value.removeSuffix(unitText) to unitText
+        }
 
         /** The three title lines from the top of the date to below the distance, with a margin to the bottom edge. */
         private const val TITLE_BLOCK = 130f

@@ -8,6 +8,7 @@ import android.graphics.PointF
 import android.util.Log
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import com.cowork.bikerecoder.BuildConfig
 import com.cowork.bikerecoder.core.post.HeartRateSample
 import com.cowork.bikerecoder.core.video.Aspect
@@ -30,13 +31,18 @@ import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 import java.io.IOException
 import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.ceil
+import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.sin
 
 /**
  * One frame at a time over a real MapLibre snapshot: the VWorld satellite map with the build's key (the plain
@@ -155,8 +161,7 @@ class FrameRendererTest {
         val marker = markerOf(plan)
 
         val orange = VideoTestTrip.count(frame, 0, 0, W, hudTop) { isOrange(it) }
-        Log.i(TAG, "ride frame orange pixels above the band: $orange (V1.3.0: $V130_ORANGE)")
-        assertTrue("orange $orange vs V1.3.0 $V130_ORANGE", orange >= 2 * V130_ORANGE)
+        Log.i(TAG, "ride frame orange pixels above the band: $orange")
         assertTrue("a plainly visible orange route: $orange", orange >= MIN_ORANGE)
 
         // The white ring of the current point (between the colour disc of 8u and the white disc of 11u), within 40u.
@@ -180,6 +185,80 @@ class FrameRendererTest {
         val ahead = VideoTestTrip.count(frame, (m.x - 100).toInt(), (m.y - 240).toInt(), (m.x + 100).toInt(), (m.y - 40).toInt()) { isOrange(it, 40) }
         assertTrue("done route behind the current point: $behind", behind > 300)
         assertTrue("only the faint remaining route ahead: $ahead vs $behind", ahead * 5 < behind)
+    }
+
+    /**
+     * [plan] drawn over a plain background (no style) by a flat camera at zoom 18 centred on the current point and
+     * heading the way the route goes there: the ridden route runs straight down from the middle of the frame, 150 m of
+     * it (the tail) about 635 px long. No band, so nothing fades. [index] sets the frame number (the pulse's time).
+     */
+    private fun flatFrame(plan: FramePlan, index: Int = plan.index, loadPhoto: suspend (Long) -> Bitmap? = { null }): Bitmap {
+        val located = inputs.timeline.at(plan.moveMs)
+        val a = inputs.timeline.points[located.doneIndex].point
+        val b = inputs.timeline.points[located.doneIndex + 1].point
+        val y = sin(Math.toRadians(b.lon - a.lon)) * cos(Math.toRadians(b.lat))
+        val x = cos(Math.toRadians(a.lat)) * sin(Math.toRadians(b.lat)) -
+            sin(Math.toRadians(a.lat)) * cos(Math.toRadians(b.lat)) * cos(Math.toRadians(b.lon - a.lon))
+        val camera = Camera(located.point, 18.0, (Math.toDegrees(atan2(y, x)) + 360) % 360, 0.0)
+        return runBlocking {
+            Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888).also {
+                renderer(opts = options.copy(hud = false), source = offline, loadPhoto = loadPhoto)
+                    .render(plan.copy(index = index), camera, Canvas(it))
+            }
+        }
+    }
+
+    /** The width of the orange core of the line crossing row [y] at the middle of the frame. */
+    private fun lineWidth(frame: Bitmap, y: Int): Int {
+        var left = W / 2
+        while (left > 0 && isOrange(frame.getPixel(left - 1, y), 40)) left--
+        var right = W / 2
+        while (right < W - 1 && isOrange(frame.getPixel(right + 1, y), 40)) right++
+        return if (isOrange(frame.getPixel(W / 2, y), 40)) right - left + 1 else 0
+    }
+
+    /** The tail is 9u wide at the current point and the route 7u further back; beside the line, its soft orange glow. */
+    @Test
+    fun tailWidensToNineUnitsAndTheRouteGlows() {
+        val frame = flatFrame(planOf(SceneKind.RIDE, 0.25f))
+        val near = lineWidth(frame, H / 2 + 60)
+        val far = lineWidth(frame, H / 2 + 790) // about 185 m back: past the tail
+        Log.i(TAG, "line width near $near px, far $far px")
+        assertTrue("tail at the current point ≈ 9u (27 px): $near", near in 25..29)
+        assertTrue("route behind the tail ≈ 7u (21 px): $far", far in 19..23)
+
+        // The glow: outside the white casing (5u) and within 15u of the line, semi-transparent orange.
+        var glow = 0
+        for (y in H / 2 + 760 until H / 2 + 820) for (x in W / 2 - (15 * unit).toInt()..W / 2 + (15 * unit).toInt()) {
+            if (abs(x - W / 2) < 6 * unit) continue
+            val c = frame.getPixel(x, y)
+            if (Color.red(c) - Color.blue(c) > 30 && !isOrange(c, 40)) glow++
+        }
+        Log.i(TAG, "glow pixels beside the line: $glow")
+        assertTrue("orange glow beside the line: $glow", glow > 1_500)
+    }
+
+    /** The pulse (1 s): half a second apart, the glow ring around the current point is small, then wide and faint. */
+    @Test
+    fun markerPulses() {
+        val plan = planOf(SceneKind.RIDE, 0.25f)
+        val centre = PointF(W / 2f, H / 2f)
+        // Ahead of the point (above it) only the faint white rest of the route: any orange tint there is the pulse.
+        fun tinted(frame: Bitmap): Int {
+            var n = 0
+            for (y in (centre.y - 22 * unit).toInt() until (centre.y - 10).toInt()) for (x in (centre.x - 22 * unit).toInt()..(centre.x + 22 * unit).toInt()) {
+                val d = hypot(x - centre.x, y - centre.y)
+                if (d < 17 * unit || d > 22 * unit) continue
+                val c = frame.getPixel(x, y)
+                if (Color.red(c) - Color.blue(c) > 30) n++
+            }
+            return n
+        }
+        val small = tinted(flatFrame(plan, index = 24 * 4 + 2)) // phase 0.08: radius ≈ 15u
+        val wide = tinted(flatFrame(plan, index = 24 * 4 + 14)) // phase 0.58: radius ≈ 23u
+        Log.i(TAG, "pulse ring pixels: small $small, wide $wide")
+        assertTrue("the wide pulse fills the ring: $wide", wide > 1_200)
+        assertTrue("the small pulse does not reach it: $small vs $wide", small * 5 < wide)
     }
 
     @Test
@@ -273,6 +352,39 @@ class FrameRendererTest {
         assertEquals("no graph without heights", 0, count(noHeights, flatHud.graph) { isOrange(it, 40) })
     }
 
+    /**
+     * With the band up, the route fades out under it: no orange runs through the numbers (both orientations). Over the
+     * plain background, so the only orange there could be is the route's (satellite roofs can be orange-brown).
+     */
+    @Test
+    fun routeFadesUnderTheBand() {
+        for (wide in listOf(false, true)) {
+            val (w, h) = if (wide) H to W else W to H
+            val opts = options.copy(aspect = if (wide) Aspect.LANDSCAPE else Aspect.PORTRAIT)
+            val plans = VideoTimeline.plan(inputs.timeline, inputs.photos, opts, inputs.dayStarts)
+            val cams = camerasFor(plans, w, h)
+            val hud = FrameLayout.hud(w, h, 4)
+            val gone = ceil(hud.bandTop + (h - hud.bandTop) * FrameStyle.ROUTE_FADE_SHARE).toInt()
+            for (progress in listOf(0.25f, 0.5f)) {
+                val plan = planOf(SceneKind.RIDE, progress, plans)
+                val frame = runBlocking {
+                    Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also {
+                        renderer(opts, source = offline, width = w, height = h).render(plan, cams[plan.index], Canvas(it))
+                    }
+                }
+                val g = hud.graph
+                val tinted = { c: Int -> Color.red(c) - Color.blue(c) > 40 }
+                // Just above the band the route is still there (the check can see it)...
+                val before = VideoTestTrip.count(frame, 0, (hud.bandTop - 40).toInt(), w, hud.bandTop.toInt(), tinted)
+                assertTrue("${w}x$h at $progress: route above the band: $before", before > 200)
+                // ...and below the fade there is none, the graph's orange aside.
+                val orange = VideoTestTrip.count(frame, 0, gone, w, h, tinted) -
+                    count(frame, Box(g.x - 2, max(g.y, gone.toFloat()), g.w + 4, g.y + g.h - max(g.y, gone.toFloat()) + 2), tinted)
+                assertEquals("${w}x$h at $progress: orange route under the band (the graph aside)", 0, orange)
+            }
+        }
+    }
+
     // ---- the title card (spec §3.5) ----
 
     @Test
@@ -325,6 +437,31 @@ class FrameRendererTest {
         val thirtieth = width(renderer.frame(nth(SceneKind.PHOTO, 29)))
         assertTrue("3rd frame: $third of $final", third > 0.85f * final)
         assertEquals("30th frame: the card's own size", final, thirtieth.toFloat(), 2f)
+    }
+
+    /** The slow zoom inside the card: a line a quarter of the way into the photo moves outward from frame 10 to 50. */
+    @Test
+    fun photoZoomsInsideTheCard() {
+        // The photo colour with a dark 8 px line at x = 400 of 1600.
+        val lined = Bitmap.createBitmap(1600, 1200, Bitmap.Config.ARGB_8888).apply {
+            eraseColor(VideoTestTrip.PHOTO_COLOR)
+            Canvas(this).drawRect(396f, 0f, 404f, 1200f, android.graphics.Paint().apply { color = Color.BLACK })
+        }
+        val renderer = renderer(loadPhoto = { lined })
+        val cy = (H / 2f - 16 * unit).toInt()
+        fun lineX(frame: Bitmap): Int {
+            var x = W / 2
+            while (x > 0 && brightness(frame.getPixel(x, cy)) > 80) x--
+            return x
+        }
+        val early = lineX(renderer.frame(nth(SceneKind.PHOTO, 10)))
+        val late = lineX(renderer.frame(nth(SceneKind.PHOTO, 50)))
+        // On the 864 px card the line sits 216·zoom px left of the middle: zoom 1.010 at frame 10, 1.051 at frame 50.
+        fun expected(k: Int) = W / 2 - 216f * (1 + (FrameStyle.PHOTO_ZOOM - 1) * k / (VideoTimeline.PHOTO_FRAMES - 1))
+        Log.i(TAG, "photo line at $early then $late (expected ${expected(10)}, ${expected(50)})")
+        assertEquals(expected(10), early.toFloat(), 4f)
+        assertEquals(expected(50), late.toFloat(), 4f)
+        assertTrue("moved outward: $early → $late", early - late in 6..12)
     }
 
     @Test
@@ -383,6 +520,11 @@ class FrameRendererTest {
         val black = count(frame, above) { VideoTestTrip.near(it, FrameStyle.END_BLACK, 20) }
         assertTrue("green start: $green", green > 600)
         assertTrue("black end: $black", black > 600)
+        // The attribution moves into the card's footer: grey words there, no dark pill over the map at the top right.
+        val credit = count(frame, layout.attribution) { brightness(it) < 200 }
+        assertTrue("attribution in the footer: $credit", credit > 20)
+        val pill = VideoTestTrip.count(frame, W - (120 * unit).toInt(), 0, W, (24 * unit).toInt()) { brightness(it) < 120 }
+        assertEquals("no attribution pill on the outro", 0, pill)
     }
 
     /** The OUTRO frame in the middle of the scene (card fully in, no fade) at [width]×[height], with the outro camera. */
@@ -436,6 +578,14 @@ class FrameRendererTest {
                 hud.parts.forEach { assertTrue("${w}x$h band part on screen", inside(it, screen)) }
                 assertApart("${w}x$h band of $cells", hud.parts)
                 assertTrue("${w}x$h gradient above the graph", hud.bandTop < hud.graph.y)
+                if (w > h) {
+                    // One row: the graph right of every cell, level with the values, the band within 27 %.
+                    assertTrue("${w}x$h graph right of the cells", (hud.labels + hud.values).all { it.x + it.w <= hud.graph.x })
+                    assertTrue("${w}x$h graph on the values' row", hud.graph.y >= hud.labels.first().y && hud.graph.y + hud.graph.h <= h)
+                    assertTrue("${w}x$h band ${h - hud.bandTop} within 27 %", h - hud.bandTop <= h * FrameStyle.HUD_SHARE + 0.5f)
+                } else {
+                    assertTrue("${w}x$h graph above the cells", hud.graph.y + hud.graph.h <= hud.labels.first().y)
+                }
             }
         }
     }
@@ -480,7 +630,9 @@ class FrameRendererTest {
         val hold = outro.drop(VideoTimeline.OUTRO_RISE_FRAMES).take(8)
         assertTrue(hold.all { it.reuseMap })
         hold.forEach { renderer.frame(it) }
-        assertTrue("the hold reuses one map: ${renderer.snapshotsTaken}", renderer.snapshotsTaken <= 10)
+        // The last rise frame ends exactly on the outro camera, so the whole hold reuses its map.
+        assertEquals(cameras[hold.first().index], cameras[outro[VideoTimeline.OUTRO_RISE_FRAMES - 1].index])
+        assertEquals("the hold reuses the map", 9, renderer.snapshotsTaken)
     }
 
     @Test
@@ -492,9 +644,15 @@ class FrameRendererTest {
         assertEquals(W * H, black)
     }
 
-    /** For looking at (spec §5.2): the app's external files dir, pulled by hand and then deleted. */
+    /**
+     * For looking at (spec §5.2), only when asked: `-Pandroid.testInstrumentationRunnerArguments.screenshots=true`. The
+     * frames go to the app's cache (`run-as … cat cache/v131-*.png`), never to shared storage.
+     */
     @Test
     fun screenshots() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("screenshots") == "true")
+        val dir = context.cacheDir
+        fun save(name: String, frame: Bitmap) = File(dir, "$name.png").outputStream().use { frame.compress(Bitmap.CompressFormat.PNG, 100, it) }
         val renderer = renderer()
         val shots = listOf(
             "v131-intro" to nth(SceneKind.INTRO_OVERVIEW, 0),
@@ -503,20 +661,21 @@ class FrameRendererTest {
             "v131-photo" to nth(SceneKind.PHOTO, 29),
             "v131-outro" to nth(SceneKind.OUTRO, 50),
         )
-        val dir = context.getExternalFilesDir(null)!!
-        for ((name, plan) in shots) {
-            val frame = renderer.frame(plan)
-            File(dir, "$name.png").outputStream().use { frame.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        }
-        // Landscape: the band and the card on a short frame.
+        for ((name, plan) in shots) save(name, renderer.frame(plan))
+        // Landscape: the one-row band and the three-column card on a short frame.
         val wide = options.copy(aspect = Aspect.LANDSCAPE)
         val widePlans = VideoTimeline.plan(inputs.timeline, inputs.photos, wide, inputs.dayStarts)
         val wideCameras = camerasFor(widePlans, H, W)
         val wideRenderer = renderer(wide, width = H, height = W)
-        for ((name, plan) in listOf("v131-ride-landscape" to planOf(SceneKind.RIDE, 0.5f, widePlans), "v131-outro-landscape" to nth(SceneKind.OUTRO, 50, widePlans))) {
+        val wideShots = listOf(
+            "v131-intro-land" to nth(SceneKind.INTRO_OVERVIEW, 0, widePlans),
+            "v131-ride-land" to planOf(SceneKind.RIDE, 0.5f, widePlans),
+            "v131-outro-land" to nth(SceneKind.OUTRO, 50, widePlans),
+        )
+        for ((name, plan) in wideShots) {
             val frame = Bitmap.createBitmap(H, W, Bitmap.Config.ARGB_8888)
             runBlocking { wideRenderer.render(plan, wideCameras[plan.index], Canvas(frame)) }
-            File(dir, "$name.png").outputStream().use { frame.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            save(name, frame)
         }
     }
 
@@ -526,15 +685,9 @@ class FrameRendererTest {
         const val TAG = "FrameRendererTest"
 
         /**
-         * Orange (#FF7A1A ±24) pixels above the band in the same ride frame drawn by the V1.3.0 renderer, measured in the
-         * RED run of 2026-10-28 on the S22 over the satellite map: none, as V1.3.0 drew the route in its day colour
-         * (#E53935). Hence also [MIN_ORANGE].
-         */
-        const val V130_ORANGE = 0
-
-        /**
-         * Whatever the baseline, the ridden route shows at least this much orange above the band: in this frame about
-         * 120 px of it between the current point and the band, 7–9u (21–27 px) wide, plus the current point (3980 measured).
+         * The ridden route shows at least this much orange above the band: in this frame about 120 px of it between the
+         * current point and the band, 7–9u (21–27 px) wide, plus the current point (3857 measured). (V1.3.0 drew none:
+         * its route was the day colour #E53935.) The glow itself is pinned by [tailWidensToNineUnitsAndTheRouteGlows].
          */
         const val MIN_ORANGE = 2_500
     }
