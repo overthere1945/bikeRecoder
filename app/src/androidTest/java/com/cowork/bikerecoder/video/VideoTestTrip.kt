@@ -72,7 +72,6 @@ object VideoTestTrip {
             dayStarts = emptyList(),
             segmentColors = listOf(RideColors.colorAt(0)),
             title = "10월 25일 (일)",
-            badge = "당일",
             rideTitle = "아침 라이딩",
             totals = TripTotals(totals.distanceM, totals.movingTimeMs, totals.avgSpeedMps, totals.maxSpeedMps, totals.ascentM,
                 avgBpm = if (withHeartRate) 132 else null, calories = if (withHeartRate) 210.0 else null),

@@ -143,8 +143,7 @@ class FrameRenderer(
         drawHaze(canvas, camera.tilt)
         val photoAlpha = if (cue != null && picture != null) photoPhase(plan).first else 0f
         if (plan.kind == SceneKind.OUTRO) {
-            drawEnd(canvas, xy[2], xy[3], FrameStyle.START_GREEN)
-            drawEnd(canvas, xy[4], xy[5], FrameStyle.END_BLACK)
+            MapMarks.startAndEnd(canvas, xy[2], xy[3], xy[4], xy[5], unit)
         } else {
             // The photo card takes the current point's place while it is up (its time is written just below it).
             drawMarker(canvas, marker.first, marker.second, overlay.colorAt(position), plan.index, 1f - photoAlpha)
@@ -248,13 +247,6 @@ class FrameRenderer(
         canvas.drawCircle(x, y + unit, (FrameStyle.MARKER_WHITE_R + 1) * unit, fill(Color.argb(60, 0, 0, 0)))
         canvas.drawCircle(x, y, FrameStyle.MARKER_WHITE_R * unit, fill(Color.WHITE))
         canvas.drawCircle(x, y, FrameStyle.MARKER_COLOR_R * unit, fill(color))
-    }
-
-    /** A start or end point of the closing frames (spec §3.2): [color] inside a white border. */
-    private fun drawEnd(canvas: Canvas, x: Float, y: Float, color: Int) {
-        canvas.drawCircle(x, y + unit, (FrameStyle.END_DOT_R + 1) * unit, fill(Color.argb(60, 0, 0, 0)))
-        canvas.drawCircle(x, y, FrameStyle.END_DOT_R * unit, fill(Color.WHITE))
-        canvas.drawCircle(x, y, (FrameStyle.END_DOT_R - FrameStyle.END_DOT_BORDER) * unit, fill(color))
     }
 
     /** Sky blue over the top 18 % on a tilted camera (spec §3.3), fully from 30° and less below it. */
@@ -548,17 +540,26 @@ class FrameRenderer(
          * The closing card's six numbers (spec §3.7): distance, moving time, average / top speed, the average heart rate
          * (or "주행 N회", N = [segmentCount]) and the calories (or the ascent).
          */
-        internal fun summaryCells(totals: TripTotals, segmentCount: Int): List<Pair<String, String>> = listOf(
+        internal fun summaryCells(totals: TripTotals, segmentCount: Int): List<Pair<String, String>> =
+            rideCells(totals) + heartRateOrRides(totals, segmentCount) +
+                (totals.calories?.let { "칼로리" to "${it.roundToInt()}kcal" } ?: ascentCell(totals))
+
+        /** Distance, moving time, average and top speed: the first four numbers of the closing card and the summary image. */
+        internal fun rideCells(totals: TripTotals): List<Pair<String, String>> = listOf(
             "거리" to RideFormat.distance(totals.distanceM),
             "이동 시간" to RideFormat.duration(totals.movingTimeMs),
             "평균 속도" to "${RideFormat.speedKmh(totals.avgSpeedMps)}km/h",
             "최고 속도" to "${RideFormat.speedKmh(totals.maxSpeedMps)}km/h",
-            totals.avgBpm?.let { "평균 심박" to "${it}bpm" } ?: ("주행" to "${segmentCount}회"),
-            totals.calories?.let { "칼로리" to "${it.roundToInt()}kcal" } ?: ("상승 고도" to RideFormat.altitude(totals.ascentM)),
         )
 
+        internal fun ascentCell(totals: TripTotals): Pair<String, String> = "상승 고도" to RideFormat.altitude(totals.ascentM)
+
+        /** The average heart rate, or without one "주행 N회" with N = [segmentCount] ([segmentCount] of the inputs). */
+        internal fun heartRateOrRides(totals: TripTotals, segmentCount: Int): Pair<String, String> =
+            totals.avgBpm?.let { "평균 심박" to "${it}bpm" } ?: ("주행" to "${segmentCount}회")
+
         /** The trip's target segments (the timeline numbers them 0…N−1). */
-        private fun segmentCount(inputs: VideoInputs): Int = (inputs.timeline.points.lastOrNull()?.segmentIndex ?: -1) + 1
+        internal fun segmentCount(inputs: VideoInputs): Int = (inputs.timeline.points.lastOrNull()?.segmentIndex ?: -1) + 1
 
         /** The title's date with the weekday spelled out (spec §3.5): "10월 25일 (일)" → "10월 25일 일요일"; a range as it is. */
         internal fun longDate(title: String): String = WEEKDAY.replace(title) { " ${it.groupValues[1]}요일" }

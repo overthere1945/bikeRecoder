@@ -9,7 +9,6 @@ import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
-import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.video.Aspect
 import com.cowork.bikerecoder.core.video.Box
 import com.cowork.bikerecoder.core.video.CameraPath
@@ -19,10 +18,12 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * The summary image (spec §4) in the [SummaryImageLayout] boxes: the date and badge, a top-down map of the whole route
- * (one snapshot fitted to the map box, ruling V5) in its day colours with start / end points and small circles where the
- * photos were taken, six numbers (the last is the average heart rate, or "주행 N회" without one), up to three [photos]
- * (chosen by the caller) and "bikeRecoder". Returns a software ARGB_8888 bitmap of the [Aspect] size.
+ * The summary image (spec §3.9) in the [SummaryImageLayout] boxes: the date and the ride's automatic title (§3.8), a
+ * top-down map of the whole route (one snapshot fitted to the map box, ruling V5) on the [tileSource]'s map (the
+ * satellite style, or the plain map when that is not to be had) with the route glowing orange (§3.1), the start and end
+ * points (§3.2) and small circles where the photos were taken; the map's attribution in one line (§1.1) at the top
+ * right; six numbers (the last is the average heart rate, or "주행 N회" without one), up to three [photos] (chosen by
+ * the caller) and "bikeRecoder". Returns a software ARGB_8888 bitmap of the [Aspect] size.
  */
 class SummaryImageRenderer(private val context: Context, private val tileSource: TileSource) {
 
@@ -36,6 +37,7 @@ class SummaryImageRenderer(private val context: Context, private val tileSource:
 
         drawMap(canvas, inputs, layout.map, unit)
         drawHeader(canvas, inputs, layout.header, unit)
+        drawAttribution(canvas, aspect.width, unit)
         val stats = stats(inputs)
         // One value size for all six cells: the largest that fits every one of them.
         val value = text(unit, 20f, DARK, bold = true, align = Paint.Align.LEFT)
@@ -57,8 +59,7 @@ class SummaryImageRenderer(private val context: Context, private val tileSource:
         val timeline = inputs.timeline
         val points = timeline.points
         val camera = CameraPath.overview(points.map { it.point }, w, h)
-        val colors = inputs.segmentColors.map(Color::parseColor)
-        val overlay = RouteOverlay(timeline, IntArray(points.size) { colors.getOrElse(points[it].segmentIndex) { colors.last() } })
+        val overlay = RouteOverlay(timeline, IntArray(points.size) { FrameStyle.ROUTE_ORANGE })
         val maps = MapSnapshots(context, tileSource, w, h)
         val shot = try {
             maps.take(camera)
@@ -79,16 +80,30 @@ class SummaryImageRenderer(private val context: Context, private val tileSource:
             canvas.drawCircle(xy[2 * i], xy[2 * i + 1], 5 * unit, fill(Color.WHITE))
             canvas.drawCircle(xy[2 * i], xy[2 * i + 1], 5 * unit, stroke(DARK, 1.5f * unit))
         }
-        dot(canvas, xy[0], xy[1], START_COLOR, unit)
-        dot(canvas, xy[2], xy[3], DARK, unit)
-        canvas.drawText(tileSource.attribution, box.w - 4 * unit, box.h - 4 * unit,
-            text(unit, 7f, Color.argb(200, 60, 60, 60), align = Paint.Align.RIGHT))
+        MapMarks.startAndEnd(canvas, xy[0], xy[1], xy[2], xy[3], unit)
         canvas.restore()
     }
 
+    /** The date and, in grey below it, the ride's automatic title (spec §3.8), shrunk to the header's width if need be. */
     private fun drawHeader(canvas: Canvas, inputs: VideoInputs, box: Box, unit: Float) {
-        canvas.drawText(inputs.title, box.x, box.y + box.h * 0.5f, text(unit, 26f, DARK, bold = true, align = Paint.Align.LEFT))
-        canvas.drawText(inputs.badge, box.x, box.y + box.h * 0.85f, text(unit, 14f, GREY, align = Paint.Align.LEFT))
+        val date = box.y + box.h * 0.5f
+        canvas.drawText(inputs.title, box.x, date, text(unit, 26f, DARK, bold = true, align = Paint.Align.LEFT))
+        val name = text(unit, 14f, GREY, align = Paint.Align.LEFT)
+        val wide = name.measureText(inputs.rideTitle)
+        if (wide > box.w) name.textSize *= box.w / wide
+        canvas.drawText(inputs.rideTitle, box.x, date + NAME_BELOW * unit, name)
+    }
+
+    /**
+     * The map's attribution in one line (spec §1.1), small in the image's top right corner, on the white above the
+     * header's date: off the map, so it never tangles with the map's own names.
+     */
+    private fun drawAttribution(canvas: Canvas, width: Int, unit: Float) {
+        val paint = text(unit, 9f, BRAND_GREY, align = Paint.Align.RIGHT)
+        val room = width / 2f
+        val wide = paint.measureText(tileSource.attribution)
+        if (wide > room) paint.textSize *= room / wide
+        canvas.drawText(tileSource.attribution, width - 16 * unit, 14 * unit, paint)
     }
 
     private fun drawStat(canvas: Canvas, stat: Pair<String, String>, box: Box, unit: Float, value: Paint) {
@@ -112,11 +127,6 @@ class SummaryImageRenderer(private val context: Context, private val tileSource:
         canvas.restore()
     }
 
-    private fun dot(canvas: Canvas, x: Float, y: Float, color: Int, unit: Float) {
-        canvas.drawCircle(x, y, 8 * unit, fill(Color.WHITE))
-        canvas.drawCircle(x, y, 5.5f * unit, fill(color))
-    }
-
     private fun text(unit: Float, size: Float, color: Int, bold: Boolean = false, align: Paint.Align = Paint.Align.CENTER) =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
             textSize = size * unit
@@ -135,26 +145,22 @@ class SummaryImageRenderer(private val context: Context, private val tileSource:
 
     companion object {
         /**
-         * Distance, moving time, average speed / top speed, ascent, and the average heart rate or "주행 N회" (spec §4 ③),
-         * N = the target segments (the timeline's segments are numbered 0…N−1).
+         * Distance, moving time, average speed / top speed, ascent, and the average heart rate or "주행 N회" (spec §4 ③,
+         * unchanged by §3.9), N = the target segments; the same cells as the video's closing card.
          */
         internal fun stats(inputs: VideoInputs): List<Pair<String, String>> {
             val t = inputs.totals
-            val rides = (inputs.timeline.points.lastOrNull()?.segmentIndex ?: -1) + 1
-            return listOf(
-                "거리" to RideFormat.distance(t.distanceM),
-                "이동 시간" to RideFormat.duration(t.movingTimeMs),
-                "평균 속도" to "${RideFormat.speedKmh(t.avgSpeedMps)}km/h",
-                "최고 속도" to "${RideFormat.speedKmh(t.maxSpeedMps)}km/h",
-                "상승 고도" to RideFormat.altitude(t.ascentM),
-                t.avgBpm?.let { "평균 심박" to "${it}bpm" } ?: ("주행" to "${rides}회"),
-            )
+            return FrameRenderer.rideCells(t) + FrameRenderer.ascentCell(t) +
+                FrameRenderer.heartRateOrRides(t, FrameRenderer.segmentCount(inputs))
         }
 
         private const val BRAND = "bikeRecoder"
         private const val DARK = 0xFF212121.toInt()
         private const val GREY = 0xFF757575.toInt()
+        private const val BRAND_GREY = 0xFF9E9E9E.toInt()
         private const val CELL = 0xFFF5F5F5.toInt()
-        private const val START_COLOR = 0xFF43A047.toInt()
+
+        /** The ride's title line sits this far (units) below the date's baseline. */
+        private const val NAME_BELOW = 20f
     }
 }

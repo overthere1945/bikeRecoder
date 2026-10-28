@@ -128,14 +128,13 @@ class VideoInputsTest {
     }
 
     @Test
-    fun singleDayTitleAndBadge() = runTest {
+    fun singleDayTitle() = runTest {
         trip(TripType.SINGLE_DAY)
         segment(sunday, track(at(sunday, 9), 100), distanceM = 500.0)
 
         val inputs = loader.load(TRIP)!!
 
         assertEquals("10월 25일 (일)", inputs.title)
-        assertEquals("당일", inputs.badge)
         assertTrue(inputs.dayStarts.isEmpty())
     }
 
@@ -149,7 +148,6 @@ class VideoInputsTest {
         val inputs = loader.load(TRIP)!!
 
         assertEquals("10월 17일 ~ 18일", inputs.title)
-        assertEquals("여러 날 · 2일", inputs.badge)
         assertEquals(listOf(200_000L to "2일째 · 10월 18일"), inputs.dayStarts)
         assertEquals(inputs.timeline.dayStarts, inputs.dayStarts)
         assertEquals(listOf(RideColors.colorAt(0), RideColors.colorAt(0), RideColors.colorAt(1)), inputs.segmentColors)
@@ -175,7 +173,6 @@ class VideoInputsTest {
         val inputs = loader.load(TRIP)!!
 
         assertEquals("10월 25일 (일)", inputs.title)
-        assertEquals("여러 날 · 1일", inputs.badge)
     }
 
     @Test

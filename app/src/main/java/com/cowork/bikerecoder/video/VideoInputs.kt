@@ -5,7 +5,6 @@ import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
 import com.cowork.bikerecoder.core.post.RideColors
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.trip.TripStore
-import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.core.video.PhotoCue
 import com.cowork.bikerecoder.core.video.RideTimeline
 import com.cowork.bikerecoder.core.video.RideTimelineBuilder
@@ -38,7 +37,7 @@ data class TripTotals(
  * ≥ [MIN_RIDE_DISTANCE_M], spec §1.1) on one moving-time axis; [photos] are the shown photos (hidden ones left out)
  * at their moving time; [heartRate] the target segments' samples in time order; [dayStarts] the "N일째 · M월 d일"
  * captions; [segmentColors] one colour per target segment (its day's [RideColors] colour, spec §2.2);
- * [title] "10월 25일 (일)" or "10월 17일 ~ 18일", [badge] "당일" or "여러 날 · N일"; [rideTitle] the automatic name
+ * [title] "10월 25일 (일)" or "10월 17일 ~ 18일"; [rideTitle] the automatic name
  * (spec §3.8: "저녁 라이딩" from the first start, "N일 여행" over several days; the job may add the region); [canColorByHeart] some target
  * segment has detailed heart rate (the [심박] option); [firstStartedAt] when the first target segment was started (the file
  * name, spec §3.5 — not its first GPS fix).
@@ -51,7 +50,6 @@ data class VideoInputs(
     val dayStarts: List<Pair<Long, String>>,
     val segmentColors: List<String>,
     val title: String,
-    val badge: String,
     val rideTitle: String,
     val totals: TripTotals,
     val canColorByHeart: Boolean,
@@ -67,7 +65,7 @@ class VideoInputsLoader(
 
     /** Null when the trip is gone or has no target segment with points. */
     suspend fun load(tripId: Long): VideoInputs? {
-        val trip = tripStore.trip(tripId) ?: return null
+        tripStore.trip(tripId) ?: return null
         val segments = rideStore.segments(tripId)
             .filter { it.endedAt != null && it.totals.distanceM >= MIN_RIDE_DISTANCE_M }
             .map { it to rideStore.points(it.id) }
@@ -98,10 +96,6 @@ class VideoInputsLoader(
             dayStarts = timeline.dayStarts,
             segmentColors = targets.map { RideColors.colorAt(dayIndex.getValue(it.localDate)) },
             title = titleOf(days.first(), days.last()),
-            badge = when (trip.type) {
-                TripType.SINGLE_DAY -> "당일"
-                TripType.MULTI_DAY -> "여러 날 · ${days.size}일"
-            },
             rideTitle = RideTitle.base(targets.first().startedAt, days.size, zone),
             totals = TripTotals(
                 distanceM = totals.distanceM,
