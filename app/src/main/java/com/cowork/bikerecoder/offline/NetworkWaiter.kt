@@ -38,6 +38,13 @@ open class NetworkWaiter(context: Context) {
             caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
+    /** Whether the active network is cellular and not Wi-Fi (the video sheet's data notice, V1.3.1 spec §1.4). */
+    open fun isCellular(): Boolean {
+        val caps = connectivity.activeNetwork?.let { connectivity.getNetworkCapabilities(it) } ?: return false
+        return caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
+            !caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+    }
+
     private fun unregister(callback: ConnectivityManager.NetworkCallback) {
         try {
             connectivity.unregisterNetworkCallback(callback)
