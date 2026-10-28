@@ -151,6 +151,32 @@ internal object FrameLayout {
 
     fun unit(width: Int, height: Int): Float = min(width, height) / 360f
 
+    /**
+     * The opening title's three lines (spec §3.5): [block] from the top of the date to below the distance, across the
+     * width less a margin, and each line's baseline. The block sits low, its bottom [TITLE_BOTTOM] above the frame's
+     * edge (never above the middle), so the route fitted above it ([FrameRenderer.introCamera]) has the frame's upper
+     * part and stays clear of the words while the sky view turns about the middle.
+     */
+    class Title(val block: Box, val dateBaseline: Float, val nameBaseline: Float, val distanceBaseline: Float)
+
+    /** The title's lines below the date's baseline (units). */
+    private const val TITLE_NAME_BELOW = 32f
+    private const val TITLE_DISTANCE_BELOW = 70f
+    private const val TITLE_BOTTOM = 40f
+    private const val TITLE_SIDE = 20f
+
+    fun title(width: Int, height: Int): Title {
+        val u = unit(width, height)
+        val above = ASCENT * FrameStyle.TITLE_DATE_SIZE * u
+        val below = (TITLE_DISTANCE_BELOW + DESCENT * FrameStyle.TITLE_DISTANCE_SIZE) * u
+        val top = max(height / 2f, height - TITLE_BOTTOM * u - below - above)
+        val date = top + above
+        return Title(
+            Box(TITLE_SIDE * u, top, width - 2 * TITLE_SIDE * u, above + below),
+            date, date + TITLE_NAME_BELOW * u, date + TITLE_DISTANCE_BELOW * u,
+        )
+    }
+
     /** A text box with its baseline at [baseline]. */
     fun text(x: Float, baseline: Float, w: Float, size: Float): Box = Box(x, baseline - ASCENT * size, w, BOX_EM * size)
 

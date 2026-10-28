@@ -72,13 +72,11 @@ class FrameRendererTest {
     fun tearDown() = renderers.forEach { it.close() }
 
     /** Ruling C1: the real frame height for the marker's place. */
-    private fun camerasFor(plans: List<FramePlan>, width: Int, height: Int, videoInputs: VideoInputs = inputs): List<Camera> {
-        val points = videoInputs.timeline.points.map { it.point }
-        return CameraPath.cameras(
-            plans, videoInputs.timeline, CameraPath.overview(points, width, height),
+    private fun camerasFor(plans: List<FramePlan>, width: Int, height: Int, videoInputs: VideoInputs = inputs): List<Camera> =
+        CameraPath.cameras(
+            plans, videoInputs.timeline, FrameRenderer.introCamera(videoInputs, width, height),
             FrameRenderer.outroCamera(videoInputs, width, height), heightPx = height,
         )
-    }
 
     private fun renderer(
         opts: VideoOptions = options,
@@ -386,6 +384,38 @@ class FrameRendererTest {
     }
 
     // ---- the title card (spec §3.5) ----
+
+    /**
+     * Ruling F3: the sky view's route sits above the title, in portrait and landscape and from the first to the last
+     * overview frame (the camera turns meanwhile). Over the plain background, so orange tint can only be the route; the
+     * date and name lines are white, so any tint inside them is route under the words.
+     */
+    @Test
+    fun introRouteClearsTheTitle() {
+        val tinted = { c: Int -> Color.red(c) - Color.blue(c) > 40 }
+        for (wide in listOf(false, true)) {
+            val (w, h) = if (wide) H to W else W to H
+            val opts = options.copy(aspect = if (wide) Aspect.LANDSCAPE else Aspect.PORTRAIT)
+            val plans = VideoTimeline.plan(inputs.timeline, inputs.photos, opts, inputs.dayStarts)
+            val cams = camerasFor(plans, w, h)
+            val title = FrameLayout.title(w, h)
+            val u = FrameLayout.unit(w, h)
+            val overview = plans.filter { it.kind == SceneKind.INTRO_OVERVIEW }
+            for (plan in listOf(overview.first(), overview.last())) {
+                val frame = runBlocking {
+                    Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also {
+                        renderer(opts, source = offline, width = w, height = h).render(plan, cams[plan.index], Canvas(it))
+                    }
+                }
+                val above = VideoTestTrip.count(frame, 0, 0, w, title.block.y.toInt(), tinted)
+                // From the top of the date to below the name: white words only.
+                val words = Box(0f, title.block.y, w.toFloat(), title.nameBaseline + FrameLayout.DESCENT * FrameStyle.TITLE_NAME_SIZE * u - title.block.y)
+                val under = count(frame, words, tinted)
+                assertTrue("${w}x$h frame ${plan.index}: route above the title: $above", above > 1_000)
+                assertEquals("${w}x$h frame ${plan.index}: route inside the title's words", 0, under)
+            }
+        }
+    }
 
     @Test
     fun titleCardThreeLines() {

@@ -41,8 +41,6 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.ceil
 import kotlin.math.floor
-import kotlin.math.hypot
-import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -102,8 +100,6 @@ class FrameRenderer(
     private var shotCamera: Camera? = null
     private var projected: RouteOverlay.Projected? = null
     private var projectedMoveMs = -1L
-    /** How far below the middle the title starts: clear of the route however the sky view turns (set on its first frame). */
-    private var titleOffset: Float? = null
     private var photoId: Long? = null
     private var photo: Bitmap? = null
 
@@ -159,7 +155,6 @@ class FrameRenderer(
         if (plan.kind != SceneKind.OUTRO) drawAttribution(canvas)
         if (hudShown(plan)) drawHud(canvas, Hud.at(plan.moveMs, timeline, inputs.heartRate), located)
         plan.caption?.let { drawCaption(canvas, it) }
-        if (plan.kind == SceneKind.INTRO_OVERVIEW && titleOffset == null) titleOffset = titleOffsetFor(route)
         if (title > 0f) drawTitle(canvas, title)
         if (cue != null && picture != null) drawPhoto(canvas, picture, cue.takenAt, plan, hudShown(plan))
         if (plan.kind == SceneKind.OUTRO) drawSummary(canvas, plan)
@@ -359,32 +354,19 @@ class FrameRenderer(
     }
 
     /**
-     * Where the title starts below the middle: past the farthest point of the route [projected] on the sky view, whose
-     * camera turns about the middle at one zoom, so the route stays inside that circle for the whole scene. At least
-     * a little below the middle, and never so low that the three lines leave the frame.
-     */
-    private fun titleOffsetFor(projected: RouteOverlay.Projected): Float {
-        var reach = 0f
-        for (run in projected.runs) for (i in 0 until run.xy.size / 2) {
-            reach = max(reach, hypot(run.xy[2 * i] - width / 2f, run.xy[2 * i + 1] - height / 2f))
-        }
-        val lowest = height / 2f - TITLE_BLOCK * unit
-        return (reach + (FrameStyle.MARKER_WHITE_R + TITLE_GAP) * unit).coerceAtLeast(TITLE_MIN_OFFSET * unit).coerceAtMost(lowest)
-    }
-
-    /**
      * The opening title (spec §3.5), below the middle and the route: the date, the ride's name and "1.58 km · 12분" in
      * orange. [alpha] fades it out.
      */
     private fun drawTitle(canvas: Canvas, alpha: Float) {
         val a = (255 * alpha).roundToInt()
-        val room = width - 40 * unit
+        val layout = FrameLayout.title(width, height)
+        val room = layout.block.w
         val cx = width / 2f
-        val top = height / 2f + (titleOffset ?: (TITLE_MIN_OFFSET * unit)) + FrameLayout.ASCENT * FrameStyle.TITLE_DATE_SIZE * unit
+        val top = layout.dateBaseline
         val distance = "${RideFormat.distance(inputs.totals.distanceM).removeSuffix("km")} km · ${RideFormat.duration(inputs.totals.movingTimeMs)}"
         // A soft band of shade behind the three lines, so map names under them do not compete.
-        val from = top - (FrameLayout.ASCENT * FrameStyle.TITLE_DATE_SIZE + TITLE_SCRIM) * unit
-        val to = top + (70 + TITLE_SCRIM) * unit
+        val from = layout.block.y - TITLE_SCRIM * unit
+        val to = layout.block.y + layout.block.h + TITLE_SCRIM * unit
         val shade = withAlpha(FrameStyle.TITLE_SHADE, TITLE_SCRIM_ALPHA * alpha)
         canvas.drawRect(0f, from, width.toFloat(), to, Paint().apply {
             shader = LinearGradient(
@@ -393,9 +375,9 @@ class FrameRenderer(
             )
         })
         canvas.drawText(date, cx, top, fitted(text(FrameStyle.TITLE_DATE_SIZE, bold = true), date, room).shadowed(alpha).apply { this.alpha = a })
-        canvas.drawText(inputs.rideTitle, cx, top + 32 * unit,
+        canvas.drawText(inputs.rideTitle, cx, layout.nameBaseline,
             fitted(text(FrameStyle.TITLE_NAME_SIZE, FrameStyle.TITLE_NAME), inputs.rideTitle, room).shadowed(alpha).apply { this.alpha = a })
-        canvas.drawText(distance, cx, top + 70 * unit,
+        canvas.drawText(distance, cx, layout.distanceBaseline,
             fitted(text(FrameStyle.TITLE_DISTANCE_SIZE, FrameStyle.ROUTE_ORANGE, bold = true), distance, room).shadowed(alpha).apply { this.alpha = a })
     }
 
@@ -543,6 +525,18 @@ class FrameRenderer(
          * The OUTRO camera for a [width]×[height] frame (the encoder's size, 720p fallback included): the whole route fitted
          * above the closing card ([CameraPath.outro]). Pass it to `CameraPath.cameras(plans, timeline, overview, outro)`.
          */
+        /**
+         * The sky view's camera for a [width]×[height] frame (ruling F3): the whole route fitted, north up and flat, into
+         * the part of the frame above the opening title ([FrameLayout.title], less [TITLE_CLEARANCE]), like [outroCamera]
+         * above the closing card. Pass it as `overview` to `CameraPath.cameras(plans, timeline, overview, outro, heightPx)`,
+         * which shows it one zoom out (spec §2.2 "overview − 1"): zooming out about the middle draws the route in, so it
+         * stays above the title, which starts below the middle.
+         */
+        fun introCamera(inputs: VideoInputs, width: Int, height: Int): Camera {
+            val clearance = TITLE_CLEARANCE * FrameLayout.unit(width, height)
+            return CameraPath.outro(inputs.timeline.points.map { it.point }, width, height, FrameLayout.title(width, height).block.y - clearance)
+        }
+
         fun outroCamera(inputs: VideoInputs, width: Int, height: Int): Camera =
             CameraPath.outro(inputs.timeline.points.map { it.point }, width, height, outroCard(inputs, width, height).y)
 
@@ -592,14 +586,11 @@ class FrameRenderer(
             }
         }
 
-        /** The title's date starts at least this far below the middle (units)... */
-        private const val TITLE_MIN_OFFSET = 10f
-
-        /** ...and this far past the route's reach. */
-        private const val TITLE_GAP = 16f
-
         /** The shade behind the title reaches this far (units) above and below its lines, at most this opaque. */
         private const val TITLE_SCRIM = 28f
+
+        /** The route's room above the title ends this far (units) above the title's first line. */
+        private const val TITLE_CLEARANCE = 6f
         private const val TITLE_SCRIM_ALPHA = 0.6f
 
         /** The attribution's pill over the map. */
@@ -615,8 +606,6 @@ class FrameRenderer(
             return value.removeSuffix(unitText) to unitText
         }
 
-        /** The three title lines from the top of the date to below the distance, with a margin to the bottom edge. */
-        private const val TITLE_BLOCK = 130f
 
         /** [plan]'s frame number (from 0) within its scene of [frames] frames. */
         private fun frameOf(plan: FramePlan, frames: Int): Int = (plan.sceneProgress * (frames - 1)).roundToInt()
