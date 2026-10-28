@@ -4,7 +4,7 @@ Bicycle navigation, route tracking, and photo video generator app based on trave
 
 자전거 주행을 기록하고, 자전거도로를 우선하는 길안내를 하며, 주행 경로를 사진과 MP4 영상으로 만들어 주는 개인용 안드로이드 앱입니다. 서버 없이 모든 처리를 휴대폰 안에서 합니다.
 
-- 현재 버전: **V1.3.0 (개발 중)** · V1.0.0·V1.1.0 출시, V1.2.0·V1.2.1 완료(출시 전), 모두 실주행 검증 대기 — 버전 규칙: [docs/VERSIONING.md](docs/VERSIONING.md), 변경 이력: [CHANGELOG.md](CHANGELOG.md)
+- 현재 버전: **V1.3.1 (개발 중)** · V1.0.0·V1.1.0 출시, V1.2.0·V1.2.1 완료(출시 전), V1.3.0 영상 완료(출시 전), 모두 실주행 검증 대기 — 버전 규칙: [docs/VERSIONING.md](docs/VERSIONING.md), 변경 이력: [CHANGELOG.md](CHANGELOG.md)
 - 대상 기기: Samsung Galaxy S26 (Android 17), Galaxy Watch7 (심박, Health Connect 경유)
 
 ## 로드맵
@@ -14,14 +14,15 @@ Bicycle navigation, route tracking, and photo video generator app based on trave
 | V1.0.0 | 내비게이션 | 자전거도로 우선 오프라인 경로 탐색, 경유지, 음성 안내, 이탈 재탐색, 여러 날 여행 유지, 경로 주변 지도 오프라인 저장 | 출시(`v1.0.0`), 실주행 검증 대기 |
 | V1.1.0 | 기록 코어 | GPS 기록, 속도·고도·평균·최고 속도, 자동/수동 일시정지, 음성 안내(시작·1km·일시정지·재개) | 출시(`v1.1.0`), 실주행 검증 대기 |
 | V1.2.0 | 여행과 후처리 | 여러 날 기록 묶기, 갤러리 사진 자동 매칭, Watch7 심박, 누적 경로 지도 (V1.2.1: 주행별 색·기록 카드·짧은 기록 정리) | 완료, 실주행 검증 대기 |
-| V1.3.0 | 영상과 이미지 | 요약 이미지, Relive 스타일 3D 영상(속도 비례, 사진 삽입), 기기 내 인코딩 | 개발 중 |
+| V1.3.0 | 영상과 이미지 | 요약 이미지, Relive 스타일 3D 영상(속도 비례, 사진 삽입), 기기 내 인코딩 | 완료(출시 전), 실주행 검증 대기 |
+| V1.3.1 | 영상 다듬기 | 위성 지도(브이월드), 가까운 움직이는 카메라, 빛나는 경로·숫자 띠·제목 카드, 자동 제목(시간대·지역) | 개발 중 |
 
 ## 기술 스택
 
 | 영역 | 사용 기술 |
 |---|---|
 | 언어 / UI | Kotlin, Jetpack Compose |
-| 지도 | MapLibre Native Android 13.6.1, OpenFreeMap 벡터 타일 |
+| 지도 | MapLibre Native Android 13.6.1, OpenFreeMap 벡터 타일, 영상·요약 이미지는 브이월드 위성 사진 |
 | 경로 탐색 | BRouter 1.7.10 (MIT, 앱 내장, 오프라인) |
 | 장소 검색 | 카카오 로컬 REST API |
 | 저장 | Room, DataStore |
@@ -43,19 +44,25 @@ docs/                 설계 스펙, 버전 규칙, 검증 기록
 2. 카카오 REST API 키 발급
    - https://developers.kakao.com/ → 앱 생성 → **앱 > 플랫폼 키**에서 REST API 키 확인
    - **제품 설정 > 카카오맵 > 사용 설정 ON** (필수, 꺼져 있으면 검색 시 403 오류)
-3. 프로젝트 루트에 `secrets.json` 생성 (`secrets.example.json` 참고, Git에 올라가지 않음)
+3. 브이월드 인증키 발급 (영상과 요약 이미지의 위성 지도용)
+   - https://www.vworld.kr/ → 오픈API → 인증키 발급. 서비스 유형은 **APP**, 사용할 API는 **WMTS/TMS**와 **배경지도**를 고릅니다.
+   - 키가 비어 있어도 빌드와 영상 만들기는 됩니다. 이때 영상과 이미지는 위성 대신 일반 지도로 만들어집니다.
+4. 프로젝트 루트에 `secrets.json` 생성 (`secrets.example.json` 참고, Git에 올라가지 않음)
 
    ```json
-   { "kakaoRestApiKey": "발급받은_REST_API_키" }
+   {
+     "kakaoRestApiKey": "발급받은_REST_API_키",
+     "vworldApiKey": "발급받은_브이월드_키"
+   }
    ```
 
-4. 빌드·설치
+5. 빌드·설치
 
    ```bash
    ./gradlew :app:installDebug
    ```
 
-5. 첫 실행 시 권한을 허용하고 경로 데이터(약 80MB)를 내려받습니다. 와이파이를 권장합니다.
+6. 첫 실행 시 권한을 허용하고 경로 데이터(약 80MB)를 내려받습니다. 와이파이를 권장합니다.
 
 ## 테스트
 
@@ -107,7 +114,8 @@ $ANDROID_HOME/emulator/emulator -avd bike37 -no-snapshot &
 - [여행과 후처리 설계 스펙](docs/superpowers/specs/2026-10-18-trips-postprocess-design.md)
 - [여행과 후처리 검증·실주행 체크리스트](docs/verification/trips-field-test.md)
 - [영상과 요약 이미지 설계 스펙](docs/superpowers/specs/2026-10-28-video-image-design.md)
-- [영상과 이미지 검증·실주행 체크리스트](docs/verification/video-field-test.md)
+- [영상과 이미지 검증·실주행 체크리스트](docs/verification/video-field-test.md) (V1.3.1 절 포함)
+- [영상 다듬기 설계 스펙 (V1.3.1)](docs/superpowers/specs/2026-10-28-video-polish-design.md)
 - [변경 이력](CHANGELOG.md)
 
 ## 라이선스와 출처 표기
@@ -117,3 +125,4 @@ $ANDROID_HOME/emulator/emulator -avd bike37 -no-snapshot &
 - 지도: OpenFreeMap © OpenMapTiles Data from OpenStreetMap
 - 경로 탐색: BRouter © BRouter contributors (MIT License)
 - 지도 데이터: © OpenStreetMap contributors (ODbL)
+- 영상·요약 이미지의 위성 사진: © 브이월드

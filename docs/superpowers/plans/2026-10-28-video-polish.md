@@ -54,7 +54,7 @@
 - Consumes: `RideTimeline`(`points`, `at`, `routeDistance`, `totalMoveMs`), `FramePlan`(`kind`, `moveMs`, `sceneProgress`), `Camera`.
 - Produces:
   - `CameraPath.cameras(plans, timeline, overview: Camera, outro: Camera = overview): List<Camera>`: 시그니처는 그대로, 동작만 §2.
-  - 새 상수: `TILT = 60.0`, `ZOOM_SLOW = 17.4`, `ZOOM_FAST = 16.6`, `SLOW_KMH = 10.0`, `FAST_KMH = 30.0`, `ZOOM_RATE_PER_S = 0.25`, `SPEED_WINDOW_MS = 8_000L`, `LOOK_AHEAD_M = 120.0`, `MAX_TURN_DEG_PER_S = 45.0`, `SWAY_DEG = 8.0`, `SWAY_PERIOD_S = 16.0`, `JUMP_M = 500.0`, `PHOTO_ORBIT_DEG = 40.0`, `INTRO_TURN_DEG = 90.0`, `MARKER_FROM_TOP = 2.0 / 3`.
+  - 새 상수: `TILT = 60.0`, `ZOOM_SLOW = 17.4`, `ZOOM_FAST = 16.6`, `SLOW_KMH = 10.0`, `FAST_KMH = 30.0`, `ZOOM_RATE_PER_S = 0.25`, `SPEED_WINDOW_MS = 8_000L`, `LOOK_AHEAD_M = 120.0`, `MAX_TURN_DEG_PER_S = 45.0`, `SWAY_DEG = 8.0`, `SWAY_PERIOD_S = 16.0`, `JUMP_M = 500.0`, `PHOTO_ORBIT_DEG = 40.0`, `MARKER_FROM_TOP = 2.0 / 3`.
   - `ZOOM`는 지운다. 쓰던 곳은 `ZOOM_SLOW`로 바꾼다.
   - `fun zoomForSpeed(kmh: Double): Double`
   - `fun markerLeadM(zoom: Double, tiltDeg: Double, heightPx: Int, latDeg: Double, markerFromTop: Double = MARKER_FROM_TOP): Double`
@@ -65,11 +65,11 @@
   - `rideZoomChangesSlowly`: 10 km/h 구간 뒤 30 km/h 구간이 이어지는 경로에서, 연속한 주행 프레임의 `abs(Δzoom) <= 0.25 / 24 + 1e-9`이고 모든 주행 확대가 [16.6, 17.4] 안이다.
   - `turnsAreCappedAndSwayIsEightDegrees`: 직각으로 꺾이는 경로에서 프레임 사이 방향 변화가 `45.0/24 + 흔들기 변화 최대치(8·2π/16/24) + 1e-6` 이하다. 긴 직선에서 (방향 − 경로 방향)의 최대가 8±0.3°, 최소가 −8±0.3°다.
   - `markerSitsInTheLowerThird`: `markerLeadM(17.2, 60.0, 1920, 37.5)`가 200~245 m다(식: 픽셀 앞당김 = 1.5h·(sin p − cos p·tan(p − atan((m − 0.5)·h / 1.5h))), 미터 = 픽셀 × 40075016.686·cos(lat) / (512·2^zoom)). 주행 카메라 중심이 현재 위치에서 방위 방향으로 그 거리만큼 앞에 있다(±1 m).
-  - `introLooksDownThenSpiralsIn`:
-    - 하늘 위 장면 첫 장: 기울기 0, 방향 0, 확대 = overview.zoom − 1
-    - 마지막 장: 방향 = 첫 방향 − 90°(정규화)
+  - `introLooksDownThenSpiralsIn`(규칙 F4: 제목이 떠 있는 동안 돌지 않고, 내려가기만 짧은 쪽으로 돈다. `INTRO_TURN_DEG`는 없다):
+    - 하늘 위 장면의 모든 장: 기울기 0, 방향 0(정북 그대로), 확대 = overview.zoom − 1
+    - 내려가기: 방향은 정북에서 첫 주행 방향까지 짧은 쪽(|돌기| ≤ 180°)으로 한 방향으로만 smoothstep으로 돈다
     - 내려가기 마지막 장: 첫 주행 카메라와 같음(중심 ±0.5 m, 확대·기울기·방향 ±1e-6)
-    - 내려가기 중 기울기는 줄지 않음
+    - 내려가기 중 기울기·확대는 줄지 않음
   - `photoSceneOrbitsFortyDegrees`: 사진 장면 첫 장과 마지막 장의 방향 차이가 40±0.5°이고 확대·기울기는 직전 주행 장과 같다.
   - `outroRisesToTheOutroCamera`: 끝 장면 35번째(0부터)는 `outro`와 같고, 36번째 이후 모두 `outro`다. 0번째는 마지막 주행 카메라에서 smoothstep(0)이다.
   - `jumpsRestartSmoothing`: 점이 600 m 떨어진 두 구간 경계 뒤 첫 주행 장의 방향이 그 위치의 목표 방향과 같고(평활 없음), 확대가 그 속도의 `zoomForSpeed`와 같다.
