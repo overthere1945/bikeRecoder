@@ -72,9 +72,12 @@ class VideoJobStore(private val dataStore: DataStore<Preferences>) {
     /** 위성 지도로 만든 마지막 영상에서 앱이 받은 프레임 한 장당 바이트(스펙 §1.4), 아직 없으면 null. */
     suspend fun bytesPerFrame(): Double? = read()?.get(BYTES_PER_FRAME)
 
-    /** 0보다 큰 유한한 값만 기록한다(0은 타일을 모두 캐시에서 읽은 경우라 다음 영상의 예상이 되지 못한다). */
+    /**
+     * [MIN_BYTES_PER_FRAME] 이상인 유한한 값만 기록한다. 0 또는 [MIN_BYTES_PER_FRAME] 미만은 캐시에서 다시 쓴 영상이라 다음 영상의
+     * 예상이 되지 못한다(판정 J3). 그때는 기본값이나 앞서 기록한 값이 그대로 남는다.
+     */
     suspend fun recordBytesPerFrame(v: Double) {
-        if (!v.isFinite() || v <= 0.0) return
+        if (!v.isFinite() || v < MIN_BYTES_PER_FRAME) return
         dataStore.edit { it[BYTES_PER_FRAME] = v }
     }
 
@@ -105,12 +108,18 @@ class VideoJobStore(private val dataStore: DataStore<Preferences>) {
         null
     }
 
-    private companion object {
-        val LAST_OPTIONS = stringPreferencesKey("last_options")
-        val SECONDS_PER_FRAME = doublePreferencesKey("seconds_per_frame")
-        val BYTES_PER_FRAME = doublePreferencesKey("satellite_bytes_per_frame")
-        val PENDING_JOB = stringPreferencesKey("pending_job")
-        val json = Json { ignoreUnknownKeys = true }
+    companion object {
+        /**
+         * 판정 J3: 이보다 적게 받은 영상(프레임당 바이트)은 기록하지 않는다. S22 실측 26~33 KB의 약 1/4로, 이보다 작으면 타일
+         * 대부분을 캐시에서 다시 쓴 것으로 본다.
+         */
+        const val MIN_BYTES_PER_FRAME = 8_000.0
+
+        private val LAST_OPTIONS = stringPreferencesKey("last_options")
+        private val SECONDS_PER_FRAME = doublePreferencesKey("seconds_per_frame")
+        private val BYTES_PER_FRAME = doublePreferencesKey("satellite_bytes_per_frame")
+        private val PENDING_JOB = stringPreferencesKey("pending_job")
+        private val json = Json { ignoreUnknownKeys = true }
     }
 }
 

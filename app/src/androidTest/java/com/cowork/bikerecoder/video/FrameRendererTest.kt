@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.PointF
+import android.graphics.RectF
 import android.util.Log
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -42,6 +43,7 @@ import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sin
 
 /**
@@ -517,6 +519,69 @@ class FrameRendererTest {
             }
             assertEquals(0, centre)
         }
+    }
+
+    /**
+     * Ruling FW1: while the photo is up its time sits on a dark pill (it read badly over the route's tail on a bright map),
+     * and the ridden route is dimmed to 40 %. On the plain bright background, the photo scene's middle frame.
+     */
+    @Test
+    fun photoCaptionOnDarkPillAndRouteDimmed() {
+        val photo = plans.filter { it.kind == SceneKind.PHOTO }
+        val first = renderer(source = offline).frame(photo.first())
+        val middle = renderer(source = offline).frame(planOf(SceneKind.PHOTO, 0.5f))
+        fun white(c: Int) = Color.red(c) >= 235 && Color.green(c) >= 235 && Color.blue(c) >= 235
+
+        // The card (white border around the photo), scanning out from the middle.
+        fun edge(dx: Int, dy: Int): Int {
+            var x = W / 2
+            var y = H / 2
+            while (!white(middle.getPixel(x, y))) { x += dx; y += dy }
+            while (white(middle.getPixel(x + dx, y + dy))) { x += dx; y += dy }
+            return if (dx != 0) x else y
+        }
+        val card = RectF(edge(-1, 0).toFloat(), edge(0, -1).toFloat(), edge(1, 0).toFloat(), edge(0, 1).toFloat())
+
+        // The time's white letters under the card.
+        var x0 = W
+        var x1 = -1
+        var y0 = H
+        var y1 = -1
+        for (y in (card.bottom + 10 * unit).toInt() until hudTop) for (x in W / 4 until 3 * W / 4) {
+            if (!white(middle.getPixel(x, y))) continue
+            x0 = min(x0, x); x1 = max(x1, x); y0 = min(y0, y); y1 = max(y1, y)
+        }
+        assertTrue("the time under the card", x1 > x0 && y1 > y0)
+        // Inside the pill's left end, clear of the letters and their shadow.
+        val cy = (y0 + y1) / 2
+        val strip = Box(x0 - 11.5f * unit, cy - 4 * unit, 4 * unit, 8 * unit)
+        var luma = 0.0
+        var n = 0
+        for (y in strip.y.toInt() until (strip.y + strip.h).toInt()) for (x in strip.x.toInt() until (strip.x + strip.w).toInt()) {
+            val c = middle.getPixel(x, y)
+            luma += 0.299 * Color.red(c) + 0.587 * Color.green(c) + 0.114 * Color.blue(c)
+            n++
+        }
+        luma /= n
+        Log.i(TAG, "card $card, time x $x0..$x1 y $y0..$y1, pill strip luma $luma")
+        assertTrue("dark pill behind the time: luma $luma", luma < 100)
+
+        // Strong orange outside the card (and its shadow) above the band: the dimmed route has far less than the scene's first frame.
+        val outside = RectF(card).apply { inset(-12 * unit, -12 * unit) }
+        fun strongOrange(frame: Bitmap): Int {
+            var count = 0
+            for (y in 0 until hudTop) for (x in 0 until W) {
+                if (outside.contains(x.toFloat(), y.toFloat())) continue
+                val c = frame.getPixel(x, y)
+                if (Color.red(c) - Color.blue(c) > 120) count++
+            }
+            return count
+        }
+        val before = strongOrange(first)
+        val during = strongOrange(middle)
+        Log.i(TAG, "strong orange outside the card: first frame $before, middle $during")
+        assertTrue("the route shows in the first frame: $before", before > 1_000)
+        assertTrue("the route dimmed while the photo is up: $during vs $before", during * 4 < before)
     }
 
     @Test

@@ -53,13 +53,19 @@ object VideoMapStyle {
      * that sees errors from the map (the video job's). An error without the key is passed on as it is.
      */
     fun redacting(log: WarnLog, key: String): WarnLog = WarnLog { message, error ->
-        val hides = key.isNotBlank() && error != null && key in error.stackTraceToString()
-        log.warn(redact(message, key), if (hides) redacted(error!!, key) else error)
+        log.warn(redact(message, key), error?.let { redactedError(it, key) })
     }
 
-    /** A copy of [error] (its text redacted, its stack trace kept), causes included. */
-    private fun redacted(error: Throwable, key: String): Throwable =
-        Redacted(redact(error.toString(), key), error.cause?.let { redacted(it, key) }).apply { stackTrace = error.stackTrace }
+    /**
+     * [error] itself when there is nothing to hide (a blank [key], or no [key] anywhere in its text or its causes'); else a
+     * copy with [key] replaced by "***" in its text and its causes' (ruling K1), the stack traces kept. The one redaction
+     * for every log that may see a map error (the job's, [MapSnapshots]', the video scope's).
+     */
+    internal fun redactedError(error: Throwable, key: String): Throwable =
+        if (key.isBlank() || key !in error.stackTraceToString()) error else copyRedacted(error, key)
+
+    private fun copyRedacted(error: Throwable, key: String): Throwable =
+        Redacted(redact(error.toString(), key), error.cause?.let { copyRedacted(it, key) }).apply { stackTrace = error.stackTrace }
 
     private class Redacted(text: String, cause: Throwable?) : Exception(text, cause)
 

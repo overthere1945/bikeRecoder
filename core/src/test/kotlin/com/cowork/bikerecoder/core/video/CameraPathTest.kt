@@ -244,6 +244,47 @@ class CameraPathTest {
         assertLeads(jumped, timeline.at(ride[k].moveMs).point)
     }
 
+    /**
+     * 판정 J2: 한 구간으로 이어진 긴 주행을 짧게 만들면 주행 프레임 사이 직선거리가 500 m를 넘어도, 그만큼 경로를 따라
+     * 지나왔으므로 건너뜀이 아니다. 방향·확대 평활이 끝까지 이어진다.
+     */
+    @Test
+    fun longContinuousRideKeepsSmoothing() {
+        // 5 km마다 ±60° 꺾이는 지그재그(북동 30° ↔ 북서 −30°) 104칸 = 520 km. 칸마다 초속 5 m와 10 m를 번갈아(확대가 바뀜),
+        // 10초에 한 점.
+        val points = ArrayList<RidePoint>()
+        var n = 0.0
+        var e = 0.0
+        var t = 0L
+        points += RidePoint(0L, at(n, e), null, 0L, 0, 0)
+        repeat(104) { leg ->
+            val r = Math.toRadians(if (leg % 2 == 0) 30.0 else -30.0)
+            val step = if (leg % 2 == 0) 50.0 else 100.0
+            repeat((5_000 / step).toInt()) {
+                n += step * cos(r)
+                e += step * sin(r)
+                t += 10_000L
+                points += RidePoint(t, at(n, e), null, t, 0, 0)
+            }
+        }
+        val timeline = RideTimeline(points)
+        val (plans, cameras) = plansAndCameras(timeline)
+        val ride = plans.of(SceneKind.RIDE)
+        ride.zipWithNext().forEach { (a, b) ->
+            val d = GeoMath.distanceM(timeline.at(a.moveMs).point, timeline.at(b.moveMs).point)
+            assertTrue(d > CameraPath.JUMP_M, "주행 프레임 ${b.index}: 직선 $d m")
+        }
+
+        val maxTurn = CameraPath.MAX_TURN_DEG_PER_S / FPS + 1e-9
+        val maxZoom = CameraPath.ZOOM_RATE_PER_S / FPS + 1e-9
+        ride.zipWithNext().forEachIndexed { k, (a, b) ->
+            val turn = angleDiff(heading(cameras[a.index], k), heading(cameras[b.index], k + 1))
+            assertTrue(turn <= maxTurn, "주행 프레임 ${k + 1}: ${turn}° > $maxTurn°")
+            val dz = abs(cameras[b.index].zoom - cameras[a.index].zoom)
+            assertTrue(dz <= maxZoom, "주행 프레임 ${k + 1}: Δzoom $dz")
+        }
+    }
+
     @Test
     fun standingStillJitterKeepsBearing() {
         // 북쪽 100 m → 그 자리에서 2 m 안팎으로 80번 흔들림(경로상 약 226 m) → 다시 북쪽 200 m.

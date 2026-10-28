@@ -20,6 +20,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -169,6 +170,50 @@ class VideoJobTest {
         assertEquals(StartResult.RECORDING, job.startImage(TRIP, Aspect.PORTRAIT))
 
         assertNothingStarted()
+    }
+
+    /**
+     * Final review FIX-NOW 6: a recording that starts during the satellite probe (up to 10 s) or the music is refused as
+     * RECORDING before anything is launched, and the claim is released.
+     */
+    @Test
+    fun recordingThatStartsDuringTheProbeRefuses() = runBlocking {
+        backend.onProbe = { recording.value = true }
+
+        assertEquals(StartResult.RECORDING, job.startVideo(TRIP, short))
+        assertNothingStarted()
+        recording.value = false
+        assertEquals(StartResult.RECORDING, job.startImage(TRIP, Aspect.PORTRAIT))
+        assertNothingStarted()
+        assertEquals(2, backend.probed.size)
+
+        backend.onProbe = {}
+        recording.value = false
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
+        assertTrue(awaitEnd() is VideoJobState.Done)
+    }
+
+    /** Final review FIX-NOW 7: [취소] while the title's region is looked up leaves nothing behind. */
+    @Test
+    fun cancelDuringTheRegionLookupLeavesNothing() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        regionOf = { entered.complete(Unit); awaitCancellation() }
+
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
+        entered.await()
+        job.cancel()
+
+        assertEquals(VideoJobState.Cancelled, awaitEnd())
+        awaitIdle()
+        assertNull(store.pending())
+        assertEquals(emptyList<String>(), backend.created)
+        assertEquals(emptyList<FakeSink>(), backend.sinks)
+        assertEquals(listOf(TRIP), maps.deleted)
+        assertNull(job.runningTripId.value)
+
+        regionOf = { null }
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
+        assertTrue(awaitEnd() is VideoJobState.Done)
     }
 
     @Test
@@ -358,8 +403,8 @@ class VideoJobTest {
 
         val seen = backend.sinks.single().states
         assertEquals(plans.size, seen.size)
-        // Before the first frame: the default 0.25 s per map frame (nothing measured on this phone yet).
-        assertEquals(VideoJobState.Rendering(0, VideoEstimate.minutes(plans)), seen[0])
+        // Before the first frame: the default seconds per map frame (nothing measured on this phone yet, ruling FW2).
+        assertEquals(VideoJobState.Rendering(0, VideoEstimate.minutes(plans, VideoJob.DEFAULT_SECONDS_PER_FRAME)), seen[0])
         for (k in 1 until plans.size) {
             val rest = plans.subList(k, plans.size)
             val reused = rest.count { it.reuseMap }
@@ -778,6 +823,9 @@ class VideoJobTest {
         val images = mutableListOf<Pair<String, Aspect>>()
         var firstStateSeen: VideoJobState? = null
         var probe = SatelliteCheck.OK
+
+        /** Runs inside [probeSatellite] (e.g. a recording that starts meanwhile). */
+        var onProbe: () -> Unit = {}
         val probed: MutableList<GeoPoint> = Collections.synchronizedList(mutableListOf())
         val calls: MutableList<String> = Collections.synchronizedList(mutableListOf())
 
@@ -791,6 +839,7 @@ class VideoJobTest {
         override suspend fun probeSatellite(at: GeoPoint): SatelliteCheck {
             calls += "probe"
             probed += at
+            onProbe()
             return probe
         }
 

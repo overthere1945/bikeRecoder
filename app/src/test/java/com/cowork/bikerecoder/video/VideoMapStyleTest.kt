@@ -171,6 +171,21 @@ class VideoMapStyleTest {
         assertSame(plain, seen[1].second)
     }
 
+    /** Final review FIX-NOW 3: one redaction for every log (MapSnapshots, the video scope); a key only in a cause is hidden too. */
+    @Test
+    fun redactedErrorKeepsCleanErrorsAndHidesCauseOnlyKeys() {
+        val clean = IllegalStateException("snapshot failed", IOException("timeout"))
+        assertSame(clean, VideoMapStyle.redactedError(clean, "TESTKEY"))
+
+        val keyed = IllegalStateException("snapshot failed", IOException("GET https://api.vworld.kr/req/wmts/1.0.0/TESTKEY/Satellite/17/1/2.jpeg"))
+        assertSame(keyed, VideoMapStyle.redactedError(keyed, ""))
+        val hidden = VideoMapStyle.redactedError(keyed, "TESTKEY")
+        val text = hidden.stackTraceToString()
+        assertFalse("TESTKEY" in text, text)
+        assertTrue("snapshot failed" in text && "/***/Satellite" in text, text)
+        assertEquals(keyed.stackTrace.toList(), hidden.stackTrace.toList())
+    }
+
     @Test
     fun fontsAndGlyphsFromBase() {
         val style = parse(VideoMapStyle.build(base, "TESTKEY"))

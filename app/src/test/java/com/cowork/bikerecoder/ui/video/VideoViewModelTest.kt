@@ -22,6 +22,7 @@ import com.cowork.bikerecoder.video.StartResult
 import com.cowork.bikerecoder.video.TripMedia
 import com.cowork.bikerecoder.video.TripTotals
 import com.cowork.bikerecoder.video.VideoInputs
+import com.cowork.bikerecoder.video.VideoJob
 import com.cowork.bikerecoder.video.VideoJobControl
 import com.cowork.bikerecoder.video.VideoJobState
 import com.cowork.bikerecoder.video.VideoOptionsJson
@@ -153,11 +154,13 @@ class VideoViewModelTest {
     }
 
     @Test
-    fun `without a measured speed the estimate counts 0_25 s a frame`() = runTest(dispatcher) {
+    fun `without a measured speed the estimate counts the default seconds a frame`() = runTest(dispatcher) {
+        // Ruling FW2: 0.15 s (the S22 measured about 0.10 s a frame), down from V1.3.0's 0.25.
+        assertEquals(0.15, VideoJob.DEFAULT_SECONDS_PER_FRAME)
         val vm = vm()
         vm.open(TRIP, MediaKind.VIDEO)
         advanceUntilIdle()
-        assertEquals(expectedMinutes(VideoOptions(), 0.25), vm.sheet.value!!.minutes)
+        assertEquals(expectedMinutes(VideoOptions(), VideoJob.DEFAULT_SECONDS_PER_FRAME), vm.sheet.value!!.minutes)
     }
 
     /**

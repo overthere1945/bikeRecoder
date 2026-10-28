@@ -245,7 +245,10 @@ class AppContainer(context: Context) {
     /** The video/image job runs here, outside any screen; [VideoService] keeps the process up meanwhile. */
     private val videoScope = CoroutineScope(
         SupervisorJob() + Dispatchers.Default +
-            CoroutineExceptionHandler { _, e -> Log.e(TAG, "Unhandled error in the video scope", e) },
+            CoroutineExceptionHandler { _, e ->
+                // A map error may quote a tile URL, and so the key (ruling K1).
+                Log.e(TAG, "Unhandled error in the video scope", VideoMapStyle.redactedError(e, BuildConfig.VWORLD_API_KEY))
+            },
     )
 
     /** The one video or summary-image job (V1.3.0 spec §3); stops when a recording starts. */

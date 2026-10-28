@@ -158,6 +158,8 @@ class VideoJob(
             val music = options.musicUri?.let { uri ->
                 backend.loadMusic(uri, plans.size * 1_000_000L / FPS) ?: return StartResult.MUSIC_UNREADABLE
             }
+            // The probe (up to 10 s) and the music take time: a recording that started meanwhile is refused here, before launch.
+            if (recording.first()) return StartResult.RECORDING
             launch(MediaKind.VIDEO, inputs, VideoOptionsJson.encode(options), needed, satellite) { uri, titled ->
                 makeVideo(uri, titled, options, plans, music, satellite == SatelliteCheck.OK)
             }
@@ -178,6 +180,7 @@ class VideoJob(
             if (backend.freeBytes() < IMAGE_BYTES) return StartResult.NO_SPACE
             if (!mapReachable(inputs)) return StartResult.NO_INTERNET
             val satellite = backend.probeSatellite(inputs.start())
+            if (recording.first()) return StartResult.RECORDING
             launch(MediaKind.IMAGE, inputs, VideoOptionsJson.encode(VideoOptions(aspect = aspect)), IMAGE_BYTES, satellite) { uri, titled ->
                 backend.writeImage(uri, titled, aspect, satellite == SatelliteCheck.OK)
                 Made(downscaled = false, secondsPerFrame = null, bytesPerFrame = null)
@@ -465,8 +468,11 @@ class VideoJob(
         /** A summary PNG is a few MB; the space it asks for before starting. */
         const val IMAGE_BYTES = 20_000_000L
 
-        /** Before this phone has made a video (spec §3.6). */
-        const val DEFAULT_SECONDS_PER_FRAME = 0.25
+        /**
+         * Before this phone has made a video (spec §3.6). V1.3.1 ruling FW2: the S22 measured about 0.10 s a frame
+         * (74 s / 720), so this is lowered from V1.3.0 spec §3.6's 0.25; the estimate uses the measured value after the first video.
+         */
+        const val DEFAULT_SECONDS_PER_FRAME = 0.15
 
         private val SEOUL: ZoneId = ZoneId.of("Asia/Seoul")
 

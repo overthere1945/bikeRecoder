@@ -128,12 +128,16 @@ class FrameRenderer(
         val xy = route.extras
         val marker = xy[0] to xy[1]
         val title = titleAlpha(plan)
+        val photoAlpha = if (cue != null && picture != null) photoPhase(plan).first else 0f
         if (title > 0f) canvas.drawColor(withAlpha(FrameStyle.TITLE_SHADE, FrameStyle.TITLE_SHADE_ALPHA * title))
         when (plan.kind) {
             SceneKind.OUTRO -> overlay.draw(canvas, route, Double.POSITIVE_INFINITY, unit, null, RouteStyle.FULL)
             SceneKind.INTRO_OVERVIEW -> overlay.draw(canvas, route, position, unit, marker, RouteStyle.TITLE)
             else -> {
-                fadedUnderBand(canvas, hudShown(plan)) { overlay.draw(it, route, position, unit, marker, RouteStyle.RIDE) }
+                // Ruling FW1: dimmed while the photo is up (no layer at all otherwise).
+                canvas.layered(1f - FrameStyle.PHOTO_ROUTE_DIM * photoAlpha, routeBounds(route)) {
+                    fadedUnderBand(this, hudShown(plan)) { overlay.draw(it, route, position, unit, marker, RouteStyle.RIDE) }
+                }
                 // The descent's first frames: the title card's route fades out over the ride's.
                 if (title > 0f) canvas.layered(title, routeBounds(route)) {
                     overlay.draw(this, route, position, unit, marker, RouteStyle.TITLE)
@@ -141,7 +145,6 @@ class FrameRenderer(
             }
         }
         drawHaze(canvas, camera.tilt)
-        val photoAlpha = if (cue != null && picture != null) photoPhase(plan).first else 0f
         if (plan.kind == SceneKind.OUTRO) {
             MapMarks.startAndEnd(canvas, xy[2], xy[3], xy[4], xy[5], unit)
         } else {
@@ -375,8 +378,8 @@ class FrameRenderer(
 
     /**
      * The photo (spec §3.6): 80 % of the width (and at most 70 % of the height, and clear of the number band), with a
-     * white border, rounded corners and a shadow, its time "오후 8:49" below. It pops in over 7 frames (0.85 → 1.04 →
-     * 1), slowly zooms inside (1 → 1.06) and shrinks away over the last 7 (1 → 0.95).
+     * white border, rounded corners and a shadow, its time "오후 8:49" below on a dark pill (ruling FW1). It pops in over
+     * 7 frames (0.85 → 1.04 → 1), slowly zooms inside (1 → 1.06) and shrinks away over the last 7 (1 → 0.95).
      */
     private fun drawPhoto(canvas: Canvas, picture: Bitmap, takenAt: Long, plan: FramePlan, hud: Boolean) {
         val (alpha, scale) = photoPhase(plan)
@@ -417,7 +420,16 @@ class FrameRenderer(
         canvas.restoreToCount(count)
 
         val label = text(20f, bold = true).shadowed(alpha).apply { this.alpha = (255 * alpha).roundToInt() }
-        canvas.drawText(TIME.format(Instant.ofEpochMilli(takenAt).atZone(SEOUL)), cx, cy + (h / 2 + border) * scale + 30 * unit, label)
+        val time = TIME.format(Instant.ofEpochMilli(takenAt).atZone(SEOUL))
+        val baseline = cy + (h / 2 + border) * scale + 30 * unit
+        // Ruling FW1: on a dark pill, so the time reads over the route's tail and a bright map alike.
+        val half = label.measureText(time) / 2 + FrameStyle.CAPTION_PAD_X * unit
+        val pill = RectF(
+            cx - half, baseline - FrameLayout.ASCENT * label.textSize - FrameStyle.CAPTION_PAD_Y * unit,
+            cx + half, baseline + FrameLayout.DESCENT * label.textSize + FrameStyle.CAPTION_PAD_Y * unit,
+        )
+        canvas.drawRoundRect(pill, pill.height() / 2, pill.height() / 2, fill(Color.argb((FrameStyle.CAPTION_PILL_ALPHA * alpha).roundToInt(), 0, 0, 0)))
+        canvas.drawText(time, cx, baseline, label)
     }
 
     /**

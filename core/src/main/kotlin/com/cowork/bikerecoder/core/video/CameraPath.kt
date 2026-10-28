@@ -42,7 +42,10 @@ object CameraPath {
     const val SWAY_DEG = 8.0
     const val SWAY_PERIOD_S = 16.0
 
-    /** 연속한 두 주행 프레임의 위치가 이보다 멀면 확대·방향 평활을 다시 시작한다. */
+    /**
+     * 연속한 두 주행 프레임의 직선거리가 그 사이 경로로 지나온 거리보다 이만큼 넘게 길면(구간 사이를 건너뜀) 확대·방향 평활을
+     * 다시 시작한다(판정 J2: 구간 사이 이동은 경로 거리 0으로 센다. 이어진 긴 주행은 프레임당 이동이 커도 평활을 유지).
+     */
     const val JUMP_M = 500.0
     const val PHOTO_ORBIT_DEG = 40.0
 
@@ -90,7 +93,8 @@ object CameraPath {
      * [plans]와 같은 길이(스펙 §2). [heightPx] = 찍는 지도 높이(현재 위치를 화면 아래 1/3에 두는 데 쓴다).
      * - RIDE: 그 이동 시각 위치에서 경로를 따라 120 m 앞을 보는 방향을 평활·초당 45° 상한으로 따라가고(첫 주행 프레임은 바로 그 방향),
      *   흔들기(±8°, 영상 시간 = 지금까지의 주행 프레임 수 / 24초, 16초 주기)를 더한다. 확대는 최근 8초 속도의 [zoomForSpeed]를 초당 0.25까지만
-     *   따라간다. 앞 주행 프레임과 500 m 넘게 떨어지면 방향·확대를 바로 목표값으로 둔다. 중심은 [markerLeadM]만큼 진행 방향 앞.
+     *   따라간다. 앞 주행 프레임과의 직선거리가 경로로 지나온 거리보다 500 m 넘게 길면(구간 사이를 건너뜀, 판정 J2) 방향·확대를
+     *   바로 목표값으로 둔다. 중심은 [markerLeadM]만큼 진행 방향 앞.
      * - INTRO_OVERVIEW: [overview] 중심, 확대 − 1, 기울기 0, 정북 그대로(규칙 F4: 제목 카드가 떠 있는 동안 돌지 않는다).
      * - INTRO_DESCENT: 그 카메라에서 첫 주행 카메라로 smoothstep 보간. 방향은 정북에서 첫 주행 방향까지 짧은 쪽(|돌기| ≤ 180°).
      * - PHOTO: 그 이동 시각의 주행 카메라를 (사진 시작 방향 + 40° × 진행)으로, 확대·기울기는 직전 장 그대로. 끝나면 그 방향에서 다시 따라간다.
@@ -136,6 +140,7 @@ object CameraPath {
         var zoom = firstRide.zoom
         var rideFrames = 0
         var lastRidePoint: GeoPoint? = null
+        var lastRideAlong = 0.0 // 앞 주행 프레임의 경로상 누적 거리(구간 사이는 0으로 셈)
         var photoStart = firstBearing
         var outroFrame = 0
         var riseFrom = outro
@@ -156,7 +161,9 @@ object CameraPath {
                 SceneKind.RIDE -> {
                     val located = timeline.at(plan.moveMs)
                     val previous = lastRidePoint
-                    val jumped = previous != null && GeoMath.distanceM(previous, located.point) > JUMP_M
+                    val along = route.at(located)
+                    val travelled = (along - lastRideAlong).coerceAtLeast(0.0)
+                    val jumped = previous != null && GeoMath.distanceM(previous, located.point) > JUMP_M + travelled
                     val current = heading // 첫 주행 장 앞에 사진이 있었으면 그 사진이 돈 방향
                     val wanted = lookBearing(located, current ?: firstBearing)
                     val next = if (current == null || jumped) wanted
@@ -165,6 +172,7 @@ object CameraPath {
                     zoom = if (previous == null || jumped) wantedZoom else zoom + (wantedZoom - zoom).coerceIn(-maxZoomStep, maxZoomStep)
                     heading = next
                     lastRidePoint = located.point
+                    lastRideAlong = along
                     riding(located.point, zoom, normalize(next + sway(rideFrames++)))
                 }
                 SceneKind.OUTRO -> {

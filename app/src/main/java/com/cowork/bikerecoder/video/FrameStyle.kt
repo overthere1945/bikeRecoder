@@ -85,6 +85,14 @@ internal object FrameStyle {
     const val PHOTO_SHADOW_BLUR = 8f
     const val PHOTO_SHADOW_DY = 3f
 
+    /** Ruling FW1: while the photo is up the ridden route is drawn at 1 − this × the card's opacity (40 % when whole). */
+    const val PHOTO_ROUTE_DIM = 0.6f
+
+    /** Ruling FW1: the photo's time on a dark pill of this alpha (× the card's opacity), padded this much (units). */
+    const val CAPTION_PILL_ALPHA = 150
+    const val CAPTION_PAD_X = 14f
+    const val CAPTION_PAD_Y = 7f
+
     // §3.7 the closing card.
     const val CARD_RADIUS = 16f
     /**

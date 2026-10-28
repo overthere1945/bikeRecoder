@@ -133,8 +133,14 @@ class VideoJobStoreTest {
         store.recordBytesPerFrame(-1.0)
         store.recordBytesPerFrame(Double.NaN)
         store.recordBytesPerFrame(Double.POSITIVE_INFINITY)
+        // Ruling J3: a video made again from cached tiles measures a few hundred bytes a frame; not an estimate.
+        store.recordBytesPerFrame(500.0)
+        store.recordBytesPerFrame(VideoJobStore.MIN_BYTES_PER_FRAME - 1)
 
-        assertEquals(50_000.0, reopen().bytesPerFrame())
+        val reopened = reopen()
+        assertEquals(50_000.0, reopened.bytesPerFrame())
+        reopened.recordBytesPerFrame(VideoJobStore.MIN_BYTES_PER_FRAME)
+        assertEquals(VideoJobStore.MIN_BYTES_PER_FRAME, reopened.bytesPerFrame())
     }
 
     @Test
