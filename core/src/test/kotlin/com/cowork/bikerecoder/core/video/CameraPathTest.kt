@@ -10,6 +10,7 @@ import kotlin.math.cos
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.pow
+import kotlin.math.sign
 import kotlin.math.sin
 import kotlin.math.tan
 import kotlin.test.assertEquals
@@ -270,17 +271,10 @@ class CameraPathTest {
         val firstRide = cameras[plans.first { it.kind == SceneKind.RIDE }.index]
         assertEquals(45.0, firstRide.bearing, 0.5)
 
-        // 하늘 위: 전체 지도보다 한 단계 멀리, 위에서 정북으로 시작해 (첫 방향 − 90°)까지 돈다.
-        assertEquals(Camera(overview.center, overview.zoom - 1, 0.0, 0.0), high.first())
-        high.forEach {
-            assertEquals(overview.center, it.center)
-            assertEquals(overview.zoom - 1, it.zoom)
-            assertEquals(0.0, it.tilt)
-        }
-        assertEquals(0.0, angleDiff(normalize(firstRide.bearing - 90.0), high.last().bearing), 1e-6)
+        // 하늘 위(규칙 F4): 제목이 떠 있는 동안 돌지 않는다. 전체 지도보다 한 단계 멀리, 정북, 위에서.
+        high.forEach { assertEquals(Camera(overview.center, overview.zoom - 1, 0.0, 0.0), it) }
 
-        // 내려가기: 하늘 위 마지막 장에서 첫 주행 카메라로.
-        assertSameCamera(high.last(), descent.first(), "descent first")
+        // 내려가기: 하늘 위 장면에서 첫 주행 카메라로, 확대·기울기는 커지기만 한다.
         assertSameCamera(firstRide, descent.last(), "descent last")
         descent.zipWithNext().forEach { (a, b) ->
             assertTrue(b.tilt >= a.tilt, "tilt ${a.tilt} → ${b.tilt}")
@@ -289,9 +283,34 @@ class CameraPathTest {
         val mid = descent[descent.size / 2]
         assertTrue(mid.zoom > overview.zoom - 1 && mid.zoom < firstRide.zoom, "zoom ${mid.zoom}")
         assertTrue(mid.tilt > 0.0 && mid.tilt < CameraPath.TILT, "tilt ${mid.tilt}")
-        // 315°에서 45°로 짧은 쪽(북쪽을 지나 +90°)으로 돈다.
-        val turned = signedDiff(high.last().bearing, mid.bearing)
-        assertTrue(turned > 0.0 && turned < 90.0, "bearing ${mid.bearing}")
+        assertTurnsTheShortWay(high.last(), descent, firstRide)
+    }
+
+    /** 첫 방향이 170°(+170° 돌기)나 200°(−160° 돌기)여도 내려가기는 짧은 쪽으로 한 방향으로만 돈다(규칙 F4). */
+    @Test
+    fun descentTurnsTheShortWayToAnyHeading() {
+        for (heading in listOf(170.0, 200.0)) {
+            val timeline = path(*(listOf(0.0 to 0.0) + walk(0.0 to 0.0, heading, 400)).toTypedArray())
+            val (plans, cameras) = plansAndCameras(timeline)
+            val high = plans.of(SceneKind.INTRO_OVERVIEW).map { cameras[it.index] }
+            val descent = plans.of(SceneKind.INTRO_DESCENT).map { cameras[it.index] }
+            val firstRide = cameras[plans.first { it.kind == SceneKind.RIDE }.index]
+            assertEquals(heading, firstRide.bearing, 0.5)
+            high.forEach { assertEquals(0.0, it.bearing, "$heading overview") }
+            assertSameCamera(firstRide, descent.last(), "$heading descent last")
+            assertTurnsTheShortWay(high.last(), descent, firstRide)
+        }
+    }
+
+    /** [descent]의 방향이 [from]에서 [to]까지 짧은 쪽(|돌기| ≤ 180°)으로, 되돌아가지 않고 한 방향으로만 바뀐다. */
+    private fun assertTurnsTheShortWay(from: Camera, descent: List<Camera>, to: Camera) {
+        val total = signedDiff(from.bearing, to.bearing)
+        assertTrue(abs(total) <= 180.0, "turn $total")
+        // 지나온 각도(출발 방향 기준, 짧은 쪽 부호)가 0에서 total까지 단조롭게 간다.
+        val turned = descent.map { signedDiff(from.bearing, it.bearing) * sign(total) }
+        assertTrue(turned.first() >= 0.0, "first ${turned.first()}")
+        turned.zipWithNext().forEach { (a, b) -> assertTrue(b >= a - 1e-9, "bearing went back: $a → $b (turn $total)") }
+        assertEquals(abs(total), turned.last(), 1e-6)
     }
 
     @Test

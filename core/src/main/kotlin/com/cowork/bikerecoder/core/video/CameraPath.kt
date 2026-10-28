@@ -45,7 +45,6 @@ object CameraPath {
     /** 연속한 두 주행 프레임의 위치가 이보다 멀면 확대·방향 평활을 다시 시작한다. */
     const val JUMP_M = 500.0
     const val PHOTO_ORBIT_DEG = 40.0
-    const val INTRO_TURN_DEG = 90.0
 
     /** 현재 위치가 놓일 화면 높이(위에서부터의 비율). */
     const val MARKER_FROM_TOP = 2.0 / 3
@@ -92,8 +91,8 @@ object CameraPath {
      * - RIDE: 그 이동 시각 위치에서 경로를 따라 120 m 앞을 보는 방향을 평활·초당 45° 상한으로 따라가고(첫 주행 프레임은 바로 그 방향),
      *   흔들기(±8°, 영상 시간 = 지금까지의 주행 프레임 수 / 24초, 16초 주기)를 더한다. 확대는 최근 8초 속도의 [zoomForSpeed]를 초당 0.25까지만
      *   따라간다. 앞 주행 프레임과 500 m 넘게 떨어지면 방향·확대를 바로 목표값으로 둔다. 중심은 [markerLeadM]만큼 진행 방향 앞.
-     * - INTRO_OVERVIEW: [overview] 중심, 확대 − 1, 기울기 0, 방향은 정북에서 (첫 주행 방향 − 90°)까지 짧은 쪽으로 선형.
-     * - INTRO_DESCENT: 그 마지막 장에서 첫 주행 카메라로 smoothstep 보간.
+     * - INTRO_OVERVIEW: [overview] 중심, 확대 − 1, 기울기 0, 정북 그대로(규칙 F4: 제목 카드가 떠 있는 동안 돌지 않는다).
+     * - INTRO_DESCENT: 그 카메라에서 첫 주행 카메라로 smoothstep 보간. 방향은 정북에서 첫 주행 방향까지 짧은 쪽(|돌기| ≤ 180°).
      * - PHOTO: 그 이동 시각의 주행 카메라를 (사진 시작 방향 + 40° × 진행)으로, 확대·기울기는 직전 장 그대로. 끝나면 그 방향에서 다시 따라간다.
      * - OUTRO: 끝 직전 카메라(마지막 주행 장, 끝에 사진이 있으면 그 사진 장)에서 [outro]로 [VideoTimeline.OUTRO_RISE_FRAMES]장 동안
      *   smoothstep, 그 뒤 [outro] 그대로.
@@ -130,9 +129,7 @@ object CameraPath {
         val firstLocated = timeline.at(firstRideMs)
         val firstBearing = lookBearing(firstLocated, overview.bearing)
         val firstRide = riding(firstLocated.point, zoomForSpeed(speedKmh(firstRideMs)), firstBearing)
-        val turnedTo = normalize(firstBearing - INTRO_TURN_DEG)
         val high = Camera(overview.center, (overview.zoom - 1).coerceAtLeast(0.0), bearing = 0.0, tilt = 0.0)
-        val highEnd = high.copy(bearing = turnedTo)
 
         val out = ArrayList<Camera>(plans.size)
         var heading: Double? = null // 평활해 따라가는 진행 방향(흔들기 전)
@@ -144,8 +141,10 @@ object CameraPath {
         var riseFrom = outro
         for (plan in plans) {
             out += when (plan.kind) {
-                SceneKind.INTRO_OVERVIEW -> high.copy(bearing = normalize(signedDelta(0.0, turnedTo) * plan.sceneProgress))
-                SceneKind.INTRO_DESCENT -> interpolate(highEnd, firstRide, smoothstep(plan.sceneProgress.toDouble()))
+                // 규칙 F4: 제목 카드가 떠 있는 동안은 돌지 않는다(화면 가운데를 축으로 돌면 경로가 제목 위로 쓸려 온다).
+                SceneKind.INTRO_OVERVIEW -> high
+                // 도는 것은 내려가기만: 정북에서 첫 주행 방향까지 짧은 쪽으로(signedDelta), 확대·기울기·중심과 같은 smoothstep.
+                SceneKind.INTRO_DESCENT -> interpolate(high, firstRide, smoothstep(plan.sceneProgress.toDouble()))
                 SceneKind.PHOTO -> {
                     val before = out.lastOrNull() ?: firstRide
                     if (plan.sceneProgress == 0f) photoStart = before.bearing
