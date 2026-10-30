@@ -6,6 +6,8 @@ import com.cowork.bikerecoder.core.stats.RideStat
 import com.cowork.bikerecoder.core.stats.StatTotals
 import com.cowork.bikerecoder.core.stats.StatsPeriod
 import com.cowork.bikerecoder.core.stats.Streak
+import com.cowork.bikerecoder.ui.feed.feedMonthHeaderText
+import com.cowork.bikerecoder.ui.feed.meterText
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
@@ -109,7 +111,7 @@ class StatsFormatTest {
             listOf(
                 RecordRow("가장 긴 주행", "42.1 km · 2026년 9월 14일", RecordTarget.Segment(1)),
                 RecordRow("가장 오래 탄 주행", "3시간 0분 · 2026년 9월 14일", RecordTarget.Segment(1)),
-                RecordRow("가장 많이 오른 주행", "350m · 2026년 10월 20일", RecordTarget.Segment(2)),
+                RecordRow("가장 많이 오른 주행", "350 m · 2026년 10월 20일", RecordTarget.Segment(2)),
                 RecordRow("가장 빠른 평균 속도", "20.0 km/h · 2026년 10월 20일", RecordTarget.Segment(2)),
                 RecordRow("가장 많이 탄 주", "42.1 km · 9월 3주", RecordTarget.Period(PeriodKind.WEEK, LocalDate.of(2026, 9, 14))),
                 RecordRow("가장 많이 탄 달", "47.1 km · 2026년 9월", RecordTarget.Period(PeriodKind.MONTH, LocalDate.of(2026, 9, 1))),
@@ -170,10 +172,25 @@ class StatsFormatTest {
         val totals = StatTotals(24_100.0, 3, 6_300_000, 123.4)
         assertEquals("24.1 km", metricText(StatMetric.DISTANCE, totals))
         assertEquals("1시간 45분", metricText(StatMetric.TIME, totals))
-        assertEquals("123m", metricText(StatMetric.ASCENT, totals))
+        assertEquals("123 m", metricText(StatMetric.ASCENT, totals))
         assertEquals(24_100.0, metricValue(StatMetric.DISTANCE, totals), 1e-9)
         assertEquals(6_300_000.0, metricValue(StatMetric.TIME, totals), 1e-9)
         assertEquals(123.4, metricValue(StatMetric.ASCENT, totals), 1e-9)
+    }
+
+    /** Review M1: the V1.4.0 screens write metres like kilometres, with a space. */
+    @Test
+    fun meterTextHasASpaceAndRoundsHalfUp() {
+        assertEquals("123 m", meterText(123.4))
+        assertEquals("124 m", meterText(123.5))
+        assertEquals("0 m", meterText(0.0))
+        assertEquals("1,234 m", meterText(1_234.0))
+    }
+
+    @Test
+    fun feedMonthHeaderUsesTheCardsKilometres() {
+        assertEquals("2026년 10월 · 32.1 km · 7회", feedMonthHeaderText(2026, 10, 32_100.0, 7))
+        assertEquals("2026년 9월 · 0.0 km · 1회", feedMonthHeaderText(2026, 9, 12.0, 1))
     }
 
     @Test

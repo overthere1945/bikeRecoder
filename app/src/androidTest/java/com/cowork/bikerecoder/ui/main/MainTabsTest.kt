@@ -129,7 +129,7 @@ class MainTabsTest {
         thumbFile = null,
         routes = listOf(listOf(GeoPoint(37.50, 127.00), GeoPoint(37.52, 127.03), GeoPoint(37.51, 127.08)) to "#FF6D00"),
     )
-    private var feedMonths = listOf(FeedMonth("2026년 10월 · 32.10km · 1회", listOf(trip)))
+    private var feedMonths = listOf(FeedMonth("2026년 10월 · 32.1 km · 1회", listOf(trip)))
     private val strip = WeekStripState(64_200.0, 4, 12_300.0, 100, Streak(4, includesThisWeek = true))
 
     @Before

@@ -33,6 +33,14 @@ fun feedThumbName(tripId: Long, key: String): String = "$tripId-$key.webp"
 fun kmText(meters: Double): String =
     "${BigDecimal(meters).divide(THOUSAND, 1, RoundingMode.HALF_UP).toPlainString()} km"
 
+/** "123 m", "1,234 m": whole metres, rounded half up, with a space like [kmText] (the V1.4.0 screens; review M1). */
+fun meterText(meters: Double): String =
+    "${String.format(java.util.Locale.US, "%,d", BigDecimal(meters).setScale(0, RoundingMode.HALF_UP).toLong())} m"
+
+/** "2026년 10월 · 32.1 km · 7회": a month of the feed, [distanceM] the sum of its cards. */
+fun feedMonthHeaderText(year: Int, month: Int, distanceM: Double, trips: Int): String =
+    "${year}년 ${month}월 · ${kmText(distanceM)} · ${trips}회"
+
 /** "+12.3 km" / "−4.0 km" (a real minus sign): [meters] signed, to one decimal. */
 fun signedKmText(meters: Double): String {
     val rounded = BigDecimal(meters).divide(THOUSAND, 1, RoundingMode.HALF_UP)

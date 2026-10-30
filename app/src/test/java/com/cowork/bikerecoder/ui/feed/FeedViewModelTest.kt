@@ -665,7 +665,10 @@ class FeedViewModelTest {
 
     private fun FeedViewModel.card(tripId: Long) = cards().single { it.tripId == tripId }
 
-    /** Spec §6.11: "YYYY년 M월 · {거리} · {n}회" over the shown trips of the month of their first date, newest month first. */
+    /**
+     * Spec §6.11: "YYYY년 M월 · {거리} · {n}회" over the shown trips of the month of their first date, newest month first. The
+     * distance is the sum of the cards below it (finished rides of 10 m or more, review M1), in the cards' "32.1 km".
+     */
     @Test
     fun monthHeadersAndTotals() = runTest(dispatcher) {
         trip(1, TripStatus.COMPLETED)
@@ -677,12 +680,15 @@ class FeedViewModelTest {
         segment(2, startedAt = 200, date = LocalDate.of(2026, 9, 30), totals = ride(500.0))
         segment(2, startedAt = 300, date = LocalDate.of(2026, 10, 1), totals = ride(500.0))
         segment(3, startedAt = 400, date = LocalDate.of(2026, 10, 3), totals = ride(1_000.0))
-        segment(3, startedAt = 450, date = LocalDate.of(2026, 10, 3), totals = ride(2_450.0))
+        segment(3, startedAt = 450, date = LocalDate.of(2026, 10, 3), totals = ride(2_449.0))
+        // Under 10 m: not on trip 3's card, so not in the header either (3,458 m would read 3.5 km).
+        segment(3, startedAt = 470, date = LocalDate.of(2026, 10, 3), totals = short(9.0))
         segment(4, startedAt = 500, date = LocalDate.of(2026, 10, 25), totals = short(3.0)) // hidden: not counted
         val vm = history()
         advanceUntilIdle()
 
-        assertEquals(listOf("2026년 10월 · 3.45km · 1회", "2026년 9월 · 2.00km · 2회"), vm.months.value.map { it.header })
+        assertEquals(listOf("2026년 10월 · 3.4 km · 1회", "2026년 9월 · 2.0 km · 2회"), vm.months.value.map { it.header })
+        assertEquals(3_449.0, vm.card(3).distanceM, 1e-9)
         assertEquals(listOf(listOf(3L), listOf(2L, 1L)), vm.months.value.map { g -> g.cards.map { it.tripId } })
     }
 

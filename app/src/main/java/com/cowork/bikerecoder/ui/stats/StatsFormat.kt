@@ -13,6 +13,7 @@ import com.cowork.bikerecoder.core.stats.StatsPeriod
 import com.cowork.bikerecoder.core.stats.Streak
 import com.cowork.bikerecoder.ui.feed.groupedInt
 import com.cowork.bikerecoder.ui.feed.kmText
+import com.cowork.bikerecoder.ui.feed.meterText
 import com.cowork.bikerecoder.ui.feed.signedKmText
 import com.cowork.bikerecoder.ui.history.cardDateText
 import java.math.BigDecimal
@@ -24,11 +25,11 @@ import java.time.temporal.TemporalAdjusters
 /** The three values a bar chart and the totals can show (spec §3.3: 거리 · 시간 · 상승). */
 enum class StatMetric { DISTANCE, TIME, ASCENT }
 
-/** "24.1 km", "1시간 45분", "123m": [totals] in the unit of [metric]. */
+/** "24.1 km", "1시간 45분", "123 m": [totals] in the unit of [metric]. */
 fun metricText(metric: StatMetric, totals: StatTotals): String = when (metric) {
     StatMetric.DISTANCE -> kmText(totals.distanceM)
     StatMetric.TIME -> RideFormat.duration(totals.movingTimeMs)
-    StatMetric.ASCENT -> RideFormat.altitude(totals.ascentM)
+    StatMetric.ASCENT -> meterText(totals.ascentM)
 }
 
 /** The number a bar is as tall as: metres, milliseconds or metres of ascent. */
@@ -147,7 +148,7 @@ fun recordRows(all: List<RideStat>, today: LocalDate): List<RecordRow> {
         val (label, value) = when (record.kind) {
             RideRecordKind.LONGEST_DISTANCE -> "가장 긴 주행" to kmText(ride.distanceM)
             RideRecordKind.LONGEST_TIME -> "가장 오래 탄 주행" to RideFormat.duration(ride.movingTimeMs)
-            RideRecordKind.MOST_ASCENT -> "가장 많이 오른 주행" to RideFormat.altitude(ride.ascentM)
+            RideRecordKind.MOST_ASCENT -> "가장 많이 오른 주행" to meterText(ride.ascentM)
             RideRecordKind.FASTEST_AVG -> "가장 빠른 평균 속도" to "${RideFormat.speedKmh(record.value)} km/h"
         }
         rows += RecordRow(label, "$value · ${RideFormat.date(ride.localDate)}", RecordTarget.Segment(ride.segmentId))

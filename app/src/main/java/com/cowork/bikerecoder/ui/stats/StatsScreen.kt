@@ -46,6 +46,7 @@ import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.post.PeriodFilter
 import com.cowork.bikerecoder.core.stats.PeriodKind
 import com.cowork.bikerecoder.ui.feed.kmText
+import com.cowork.bikerecoder.ui.feed.meterText
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
@@ -270,7 +271,7 @@ private fun PeriodBlock(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TotalCell("주행", "${state.totals.rides}회", StatsTags.RIDES, Modifier.weight(1f))
             TotalCell("이동 시간", RideFormat.duration(state.totals.movingTimeMs), StatsTags.TIME, Modifier.weight(1f))
-            TotalCell("상승", RideFormat.altitude(state.totals.ascentM), StatsTags.ASCENT, Modifier.weight(1f))
+            TotalCell("상승", meterText(state.totals.ascentM), StatsTags.ASCENT, Modifier.weight(1f))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (metric in StatMetric.entries) {

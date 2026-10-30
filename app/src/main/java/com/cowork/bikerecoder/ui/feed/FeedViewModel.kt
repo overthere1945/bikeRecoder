@@ -36,7 +36,6 @@ import com.cowork.bikerecoder.post.SegmentCard
 import com.cowork.bikerecoder.ride.TripDeleter
 import com.cowork.bikerecoder.ui.history.HistoryDialog
 import com.cowork.bikerecoder.ui.history.MSG_ACTIVE_TRIP_NOT_DELETABLE
-import com.cowork.bikerecoder.ui.history.monthHeaderText
 import com.cowork.bikerecoder.video.MediaKind
 import com.cowork.bikerecoder.video.TripMedia
 import com.cowork.bikerecoder.video.TripMediaStore
@@ -75,7 +74,7 @@ data class WeekStripState(
     val streak: Streak,
 )
 
-/** A month of cards under "YYYY년 M월 · {거리} · {n}회" (spec §6.11 of V1.2). */
+/** A month of cards under "YYYY년 M월 · {거리} · {n}회" (spec §6.11 of V1.2; [feedMonthHeaderText]). */
 data class FeedMonth(val header: String, val cards: List<FeedCardState>)
 
 /**
@@ -476,7 +475,10 @@ class FeedViewModel(
         val months = loaded.shown.groupBy { YearMonth.from(it.firstDate) }.toSortedMap(reverseOrder())
             .map { (month, trips) ->
                 FeedMonth(
-                    header = monthHeaderText(month.year, month.monthValue, trips.sumOf { it.distanceM }, trips.size),
+                    // The sum of the cards below (finished rides of 10 m or more), in their km text (review M1).
+                    header = feedMonthHeaderText(
+                        month.year, month.monthValue, trips.sumOf { cards.getValue(it.trip.id).distanceM }, trips.size,
+                    ),
                     cards = trips.sortedWith(compareByDescending<TripRideSummary> { firstStart(it) }.thenByDescending { it.trip.id })
                         .map { cards.getValue(it.trip.id) },
                 )

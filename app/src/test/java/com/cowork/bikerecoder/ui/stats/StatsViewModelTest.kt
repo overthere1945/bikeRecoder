@@ -280,7 +280,7 @@ class StatsViewModelTest {
         vm.selectMetric(StatMetric.ASCENT)
         advanceUntilIdle()
         assertEquals(50.0, vm.state.value.bars[3].value, 1e-9)
-        assertEquals("10월 4주 · 50m", vm.state.value.bars[3].valueText)
+        assertEquals("10월 4주 · 50 m", vm.state.value.bars[3].valueText)
 
         vm.selectBar(99)
         advanceUntilIdle()

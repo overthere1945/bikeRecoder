@@ -97,7 +97,7 @@ fun FeedCard(
         ) {
             BigNumber("거리", kmText(card.distanceM))
             BigNumber("이동 시간", RideFormat.duration(card.movingTimeMs))
-            BigNumber("상승", RideFormat.altitude(card.ascentM))
+            BigNumber("상승", meterText(card.ascentM))
         }
         Text(
             averageLineText(card.avgSpeedMps, card.avgBpm),

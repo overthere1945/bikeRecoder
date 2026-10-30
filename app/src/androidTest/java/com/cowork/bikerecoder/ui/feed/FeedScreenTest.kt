@@ -92,7 +92,7 @@ class FeedScreenTest {
     private val strip = WeekStripState(64_200.0, 4, 12_300.0, 100, Streak(4, includesThisWeek = true))
     private val stripWithoutGoal = strip.copy(weeklyGoalKm = null)
 
-    private val months = listOf(FeedMonth("2026년 10월 · 32.10km · 1회", listOf(cardA())), FeedMonth("2026년 9월 · 1.58km · 1회", listOf(cardB)))
+    private val months = listOf(FeedMonth("2026년 10월 · 32.1 km · 1회", listOf(cardA())), FeedMonth("2026년 9월 · 1.6 km · 1회", listOf(cardB)))
 
     private val opened = mutableListOf<Long>()
     private val videos = mutableListOf<TripMedia>()
@@ -153,8 +153,8 @@ class FeedScreenTest {
         show()
 
         for (text in listOf(
-            "2026년 10월 · 32.10km · 1회", "저녁 라이딩 · 서울 강서구", "10월 25일 (일) 오후 6:12",
-            "32.1 km", "1시간 45분", "123m", "평균 18.3 km/h · ♥ 132", "+2",
+            "2026년 10월 · 32.1 km · 1회", "저녁 라이딩 · 서울 강서구", "10월 25일 (일) 오후 6:12",
+            "32.1 km", "1시간 45분", "123 m", "평균 18.3 km/h · ♥ 132", "+2",
         )) {
             composeRule.onNodeWithText(text).assertIsDisplayed()
         }
@@ -166,7 +166,7 @@ class FeedScreenTest {
 
     @Test
     fun cardWithoutPhotosVideoOrRecordHasNone() {
-        show(months = listOf(FeedMonth("2026년 9월 · 1.58km · 1회", listOf(cardB))))
+        show(months = listOf(FeedMonth("2026년 9월 · 1.6 km · 1회", listOf(cardB))))
 
         composeRule.onNodeWithText("2일 여행").assertIsDisplayed()
         composeRule.onNodeWithText("9월 27일~28일 · 진행 중").assertIsDisplayed()
@@ -364,7 +364,7 @@ class FeedScreenTest {
     @Test
     fun cardsComingAndGoingAreReported() {
         val many = (1L..8L).map { cardB.copy(tripId = it, title = "라이딩 $it") }
-        show(months = listOf(FeedMonth("2026년 10월 · 12.64km · 8회", many)))
+        show(months = listOf(FeedMonth("2026년 10월 · 12.6 km · 8회", many)))
         composeRule.waitForIdle()
 
         assertTrue("the first card is on view: $shown", 1L in shown)
@@ -403,7 +403,7 @@ class FeedScreenTest {
     fun screenshot() {
         val picture = File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "feed-test-picture.png")
         picture.outputStream().use { satellitePicture().compress(Bitmap.CompressFormat.PNG, 100, it) }
-        show(months = listOf(FeedMonth("2026년 10월 · 32.10km · 1회", listOf(cardA(picture)))) + months.drop(1))
+        show(months = listOf(FeedMonth("2026년 10월 · 32.1 km · 1회", listOf(cardA(picture)))) + months.drop(1))
         composeRule.waitForIdle()
         Thread.sleep(500) // the picture and the thumbnails are read off the main thread
         composeRule.waitForIdle()
