@@ -489,4 +489,28 @@ class CameraPathTest {
             ys.forEach { assertTrue(it >= 0.1 * cardTop - 1 && it <= 0.9 * cardTop + 1, "${w}x$h y $it above $cardTop") }
         }
     }
+
+    @Test
+    fun overviewInsetKeepsTheMarginInPixels() {
+        val tall = listOf(at(0.0, 0.0), at(20_000.0, -3_000.0), at(8_000.0, 5_000.0), at(-1_000.0, 1_000.0))
+        val wide = listOf(at(0.0, 0.0), at(2_000.0, 30_000.0), at(-3_000.0, 12_000.0))
+        val (w, h, margin) = Triple(1280, 720, 64)
+        for (points in listOf(tall, wide)) {
+            val cam = CameraPath.overviewInset(points, w, h, margin)
+            assertEquals(0.0, cam.tilt)
+            assertEquals(0.0, cam.bearing)
+            val world = 512.0 * 2.0.pow(cam.zoom)
+            val xs = points.map { (mercX(it.lon) - mercX(cam.center.lon)) * world + w / 2.0 }
+            val ys = points.map { (mercY(it.lat) - mercY(cam.center.lat)) * world + h / 2.0 }
+            val eps = 1e-6
+            xs.forEach { assertTrue(it >= margin - eps && it <= w - margin + eps, "x $it") }
+            ys.forEach { assertTrue(it >= margin - eps && it <= h - margin + eps, "y $it") }
+            val fill = max((xs.max() - xs.min()) / (w - 2.0 * margin), (ys.max() - ys.min()) / (h - 2.0 * margin))
+            assertEquals(1.0, fill, 1e-6)
+        }
+        // A tiny route is not zoomed in past the riding zoom, as with [overview].
+        assertEquals(CameraPath.ZOOM_SLOW, CameraPath.overviewInset(listOf(at(0.0, 0.0), at(3.0, 0.0)), w, h, margin).zoom)
+        // 10 % of a 500 px square is 50 px: the same camera as the ratio overview.
+        assertEquals(CameraPath.overview(tall, 500, 500).zoom, CameraPath.overviewInset(tall, 500, 500, 50).zoom, 1e-9)
+    }
 }

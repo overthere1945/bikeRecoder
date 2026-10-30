@@ -23,6 +23,7 @@ import com.cowork.bikerecoder.data.RoomTripMediaStore
 import com.cowork.bikerecoder.data.RoomTripStore
 import com.cowork.bikerecoder.data.SettingsRepository
 import com.cowork.bikerecoder.favorite.FavoriteRepository
+import com.cowork.bikerecoder.feed.FeedThumbnails
 import com.cowork.bikerecoder.feed.TripRegions
 import com.cowork.bikerecoder.location.BarometerSource
 import com.cowork.bikerecoder.location.FusedLocationSource
@@ -56,6 +57,7 @@ import com.cowork.bikerecoder.search.RecentPlaceStore
 import com.cowork.bikerecoder.tts.AndroidTtsVoiceOutput
 import com.cowork.bikerecoder.tts.VoiceOutput
 import com.cowork.bikerecoder.video.AndroidVideoBackend
+import com.cowork.bikerecoder.video.FeedThumbnailRenderer
 import com.cowork.bikerecoder.video.SatelliteProbe
 import com.cowork.bikerecoder.video.VideoBackend
 import com.cowork.bikerecoder.video.VideoMapStyle
@@ -77,6 +79,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
@@ -293,6 +296,44 @@ class AppContainer(context: Context) {
             lookup = { point -> (kakao.regionOf(point) as? SearchResult.Ok)?.value?.let { (d1, d2) -> RideTitle.shortRegion(d1, d2) } },
             log = VideoMapStyle.redacting(androidWarnLog("TripRegions"), BuildConfig.KAKAO_REST_API_KEY),
         )
+    }
+
+    /**
+     * The feed's satellite pictures (V1.4.0 spec §2.4, §4), made in the background one at a time and kept in
+     * `filesDir/feed_thumbs`. Nothing is started while a recording, guidance or a video is running ([FeedThumbnails.busy]).
+     * Created on first use; pictures of trips deleted since the last run are swept away then.
+     */
+    val feedThumbnails: FeedThumbnails by lazy {
+        val key = BuildConfig.VWORLD_API_KEY
+        val renderer = FeedThumbnailRenderer(appContext, videoBackend(), tileSource, key)
+        val inputs = VideoInputsLoader(rideStore, postStore, tripStore, tripLabels)
+        val log = VideoMapStyle.redacting(androidWarnLog("FeedThumbnails"), key)
+        FeedThumbnails(
+            dir = File(appContext.filesDir, "feed_thumbs"),
+            render = { tripId -> inputs.load(tripId)?.let { renderer.render(it) } },
+            busy = combine(
+                rideUi,
+                navigationUi,
+                flow { emitAll(videoJob.runningTripId) },
+            ) { ride, guidance, videoTrip ->
+                ride is RideUiState.Starting || ride is RideUiState.Active ||
+                    guidance is NavUiState.Starting || guidance is NavUiState.Active || videoTrip != null
+            },
+            online = network.online(),
+            scope = appScope,
+            log = log,
+        ).also { thumbs ->
+            appScope.launch {
+                try {
+                    val keep = rideStore.tripSummaries().mapTo(HashSet()) { it.trip.id } + rideStore.emptyTrips().map { it.id }
+                    thumbs.prune(keep)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    log.warn("Feed pictures of deleted trips could not be swept", e)
+                }
+            }
+        }
     }
 
     private companion object {

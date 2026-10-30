@@ -193,16 +193,26 @@ object CameraPath {
      * zoom은 지도 1픽셀 = 스냅샷 1픽셀(pixel ratio 1) 기준이고 [ZOOM_SLOW]보다 크지 않다. 요약 이미지의 지도 칸·720p 영상처럼
      * 실제로 찍는 지도 크기를 넘긴다(규칙 V5).
      */
-    fun overview(points: List<GeoPoint>, widthPx: Int, heightPx: Int): Camera {
+    fun overview(points: List<GeoPoint>, widthPx: Int, heightPx: Int): Camera =
+        overview(points, widthPx, heightPx, marginX = OVERVIEW_MARGIN * widthPx, marginY = OVERVIEW_MARGIN * heightPx)
+
+    /**
+     * [overview]이되 여백이 비율이 아니라 각 변 [marginPx] 픽셀이다(피드 그림: 1280×720에 64 px). 여백이 크기의 절반 이상이면
+     * 쓸 수 있는 칸이 1 px로 남는 것으로 본다.
+     */
+    fun overviewInset(points: List<GeoPoint>, widthPx: Int, heightPx: Int, marginPx: Int): Camera =
+        overview(points, widthPx, heightPx, marginX = marginPx.toDouble(), marginY = marginPx.toDouble())
+
+    private fun overview(points: List<GeoPoint>, widthPx: Int, heightPx: Int, marginX: Double, marginY: Double): Camera {
         require(points.isNotEmpty()) { "빈 경로" }
         require(widthPx > 0 && heightPx > 0) { "지도 크기 ${widthPx}x$heightPx" }
         val xs = points.map { mercatorX(it.lon) }
         val ys = points.map { mercatorY(it.lat) }
         val spanX = xs.max() - xs.min()
         val spanY = ys.max() - ys.min()
-        val usable = 1.0 - 2 * OVERVIEW_MARGIN
-        fun fit(span: Double, size: Int) = if (span <= 0.0) Double.POSITIVE_INFINITY else log2(usable * size / (span * TILE_SIZE))
-        val zoom = min(min(fit(spanX, widthPx), fit(spanY, heightPx)), ZOOM_SLOW).coerceAtLeast(0.0)
+        fun fit(span: Double, usablePx: Double) =
+            if (span <= 0.0) Double.POSITIVE_INFINITY else log2(max(1.0, usablePx) / (span * TILE_SIZE))
+        val zoom = min(min(fit(spanX, widthPx - 2 * marginX), fit(spanY, heightPx - 2 * marginY)), ZOOM_SLOW).coerceAtLeast(0.0)
         val center = GeoPoint(latitudeOf((ys.max() + ys.min()) / 2), longitudeOf((xs.max() + xs.min()) / 2))
         return Camera(center, zoom, bearing = 0.0, tilt = 0.0)
     }
