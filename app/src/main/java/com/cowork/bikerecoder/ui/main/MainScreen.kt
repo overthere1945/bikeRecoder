@@ -33,6 +33,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,6 +50,7 @@ import com.cowork.bikerecoder.favorite.FavoritePlace
 import com.cowork.bikerecoder.map.BikeMap
 import com.cowork.bikerecoder.map.CameraFit
 import com.cowork.bikerecoder.map.CameraMode
+import com.cowork.bikerecoder.map.MapCamera
 import com.cowork.bikerecoder.map.MapOverlay
 import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.ui.common.GlyphIcon
@@ -56,6 +59,19 @@ import com.cowork.bikerecoder.ui.record.RECORDING_INTERRUPTED
 import kotlinx.coroutines.flow.StateFlow
 
 private val KOREA_CENTER = GeoPoint(36.5, 127.8)
+
+/**
+ * Where the map tab's camera starts: where it was left ([saved]: another tab showed meanwhile, the screen turned or another
+ * screen was on top), else on the user ([user]) at zoom 14, else all of Korea at zoom 7.
+ */
+internal fun mainMapStart(saved: MapCamera?, user: GeoPoint?): MapCamera = saved
+    ?: if (user != null) MapCamera(user, 14.0) else MapCamera(KOREA_CENTER, 7.0)
+
+/** [MapCamera] as four numbers, for [rememberSaveable]. */
+internal val MapCameraSaver: Saver<MapCamera?, DoubleArray> = Saver(
+    save = { camera -> camera?.let { doubleArrayOf(it.center.lat, it.center.lon, it.zoom, it.bearing) } },
+    restore = { MapCamera(GeoPoint(it[0], it[1]), it[2], it[3]) },
+)
 
 @Composable
 fun MainScreen(
@@ -101,10 +117,13 @@ fun MainScreen(
         }
     }
 
-    // Centre on the user once, the first time a fix is known; later only via the 내 위치 button.
+    // Centre on the user once, the first time a fix is known; later only via the 내 위치 button. Where the camera was left
+    // is kept with the tab (V1.4.0 review I1): back on [지도] the map starts there, not on the user again.
     var fit by remember { mutableStateOf<CameraFit?>(null) }
-    var centeredOnce by remember { mutableStateOf(false) }
+    var centeredOnce by rememberSaveable { mutableStateOf(false) }
+    var camera by rememberSaveable(stateSaver = MapCameraSaver) { mutableStateOf<MapCamera?>(null) }
     val user = fix
+    val start = remember { mainMapStart(camera, user?.point) }
     LaunchedEffect(user != null) {
         if (user != null && !centeredOnce) {
             centeredOnce = true
@@ -120,9 +139,11 @@ fun MainScreen(
             onLongPress = viewModel::onLongPress,
             onUserGesture = {},
             modifier = Modifier.fillMaxSize(),
-            initialCenter = user?.point ?: KOREA_CENTER,
-            initialZoom = if (user != null) 14.0 else 7.0,
+            initialCenter = start.center,
+            initialZoom = start.zoom,
+            initialBearing = start.bearing,
             fit = fit,
+            onCameraStopped = { camera = it },
         )
 
         Column(

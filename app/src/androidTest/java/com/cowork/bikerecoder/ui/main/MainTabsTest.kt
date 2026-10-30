@@ -6,6 +6,8 @@ import android.graphics.Bitmap
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import android.view.View
+import android.view.ViewGroup
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
@@ -31,6 +33,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.Dp
 import androidx.core.view.ViewCompat
+import androidx.core.view.children
 import androidx.core.view.WindowInsetsCompat
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -67,12 +70,19 @@ import com.cowork.bikerecoder.ui.settings.SettingsContent
 import com.cowork.bikerecoder.ui.settings.SettingsUiState
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.After
+import org.maplibre.android.camera.CameraPosition
+import org.maplibre.android.camera.CameraUpdateFactory
+import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.maps.MapLibreMap
+import org.maplibre.android.maps.MapView
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
 
 /**
  * The tab frame of the main screen (V1.4.0 spec §1.1, §1.4) as BikeNavHost builds it: the real map screen (an empty
@@ -267,6 +277,44 @@ class MainTabsTest {
 
         tab(MainTab.MAP).performClick()
         composeRule.onNodeWithText("장소, 주소 검색").assertIsDisplayed()
+    }
+
+    /** The map screen's MapView (there is one while [지도] shows). */
+    private fun mapView(): MapView {
+        fun find(view: View): MapView? = view as? MapView ?: (view as? ViewGroup)?.children?.firstNotNullOfOrNull { find(it) }
+        var found: MapView? = null
+        composeRule.runOnUiThread { found = find(composeRule.activity.window.decorView) }
+        return checkNotNull(found) { "no map on screen" }
+    }
+
+    /** [block] on the map once it is ready, on the main thread. */
+    private fun <T> onMap(block: (MapLibreMap) -> T): T {
+        val view = mapView()
+        val result = CompletableFuture<T>()
+        composeRule.runOnUiThread { view.getMapAsync { result.complete(block(it)) } }
+        return result.get(10, TimeUnit.SECONDS)
+    }
+
+    /** Review I1: back on [지도] after another tab the map is where it was left (center, zoom, bearing), not on the user. */
+    @Test
+    fun theMapKeepsItsPlaceAcrossTabs() {
+        show()
+        val there = CameraPosition.Builder().target(LatLng(35.1, 129.0)).zoom(15.5).bearing(42.0).build()
+        onMap { it.moveCamera(CameraUpdateFactory.newCameraPosition(there)) }
+        // The camera stops and is kept by the tab.
+        Thread.sleep(1_000)
+        composeRule.waitForIdle()
+
+        tab(MainTab.FEED).performClick()
+        composeRule.onNodeWithText("이번 주 64.2 km · 4회").assertIsDisplayed()
+        tab(MainTab.MAP).performClick()
+        composeRule.onNodeWithText("장소, 주소 검색").assertIsDisplayed()
+
+        val back = onMap { it.cameraPosition }
+        assertEquals(35.1, back.target!!.latitude, 1e-6)
+        assertEquals(129.0, back.target!!.longitude, 1e-6)
+        assertEquals(15.5, back.zoom, 1e-6)
+        assertEquals(42.0, back.bearing, 1e-6)
     }
 
     @Test
