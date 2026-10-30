@@ -2,10 +2,12 @@ package com.cowork.bikerecoder.data
 
 import android.content.Context
 import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -32,6 +34,10 @@ data class AppSettings(
     val photoPromptDismissed: Boolean = false,
     /** 심박(Health Connect) 권한 카드를 [나중에]했거나 거절했다. */
     val heartRatePromptDismissed: Boolean = false,
+    /** 주간 목표(km). 없으면 null. */
+    val weeklyGoalKm: Int? = null,
+    /** 연간 목표(km). 없으면 null. */
+    val yearlyGoalKm: Int? = null,
 )
 
 /** 기록 중에 안내를 새로 시작할 때 기록을 어떻게 할지(스펙 §4.3). */
@@ -66,7 +72,21 @@ class SettingsRepository(context: Context) {
             prefs[RECORDING_ON_NEW_GUIDANCE] = next.recordingOnNewGuidance.name
             prefs[PHOTO_PROMPT_DISMISSED] = next.photoPromptDismissed
             prefs[HEART_RATE_PROMPT_DISMISSED] = next.heartRatePromptDismissed
+            prefs.setOrRemove(WEEKLY_GOAL_KM, next.weeklyGoalKm)
+            prefs.setOrRemove(YEARLY_GOAL_KM, next.yearlyGoalKm)
         }
+    }
+
+    /** 목표를 저장한다. null이면 그 키를 지운다. 다른 설정은 건드리지 않는다. */
+    suspend fun setGoals(weeklyKm: Int?, yearlyKm: Int?) {
+        dataStore.edit { prefs ->
+            prefs.setOrRemove(WEEKLY_GOAL_KM, weeklyKm)
+            prefs.setOrRemove(YEARLY_GOAL_KM, yearlyKm)
+        }
+    }
+
+    private fun MutablePreferences.setOrRemove(key: Preferences.Key<Int>, value: Int?) {
+        if (value == null) remove(key) else this[key] = value
     }
 
     private fun Preferences.toSettings(): AppSettings {
@@ -90,6 +110,8 @@ class SettingsRepository(context: Context) {
                 ?: defaults.recordingOnNewGuidance,
             photoPromptDismissed = this[PHOTO_PROMPT_DISMISSED] ?: defaults.photoPromptDismissed,
             heartRatePromptDismissed = this[HEART_RATE_PROMPT_DISMISSED] ?: defaults.heartRatePromptDismissed,
+            weeklyGoalKm = this[WEEKLY_GOAL_KM],
+            yearlyGoalKm = this[YEARLY_GOAL_KM],
         )
     }
 
@@ -105,5 +127,7 @@ class SettingsRepository(context: Context) {
         val RECORDING_ON_NEW_GUIDANCE = stringPreferencesKey("recording_on_new_guidance")
         val PHOTO_PROMPT_DISMISSED = booleanPreferencesKey("photo_prompt_dismissed")
         val HEART_RATE_PROMPT_DISMISSED = booleanPreferencesKey("heart_rate_prompt_dismissed")
+        val WEEKLY_GOAL_KM = intPreferencesKey("weekly_goal_km")
+        val YEARLY_GOAL_KM = intPreferencesKey("yearly_goal_km")
     }
 }

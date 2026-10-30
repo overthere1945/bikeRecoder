@@ -6,6 +6,8 @@ import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.routing.Router
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.trip.OfflineMapController
+import com.cowork.bikerecoder.core.stats.RideStatsSource
+import com.cowork.bikerecoder.core.trip.TripLabelStore
 import com.cowork.bikerecoder.core.trip.TripManager
 import com.cowork.bikerecoder.core.trip.TripStore
 import com.cowork.bikerecoder.core.video.RideTitle
@@ -15,7 +17,9 @@ import com.cowork.bikerecoder.data.DataStoreRecentPlaces
 import com.cowork.bikerecoder.data.DayDistances
 import com.cowork.bikerecoder.data.RoomFavoriteStore
 import com.cowork.bikerecoder.data.RoomPostStore
+import com.cowork.bikerecoder.data.RoomRideStatsSource
 import com.cowork.bikerecoder.data.RoomRideStore
+import com.cowork.bikerecoder.data.RoomTripLabelStore
 import com.cowork.bikerecoder.data.RoomTripMediaStore
 import com.cowork.bikerecoder.data.RoomTripStore
 import com.cowork.bikerecoder.data.SettingsRepository
@@ -122,6 +126,8 @@ class AppContainer(context: Context) {
     val offline: OfflineMapController = offlineMaps
     val tripManager: TripManager = TripManager(tripStore, offline, clock = System::currentTimeMillis)
     val rideStore: RideStore = RoomRideStore(db)
+    val tripLabels: TripLabelStore = RoomTripLabelStore(db)
+    val rideStats: RideStatsSource = RoomRideStatsSource(db)
     val favorites: FavoriteRepository = FavoriteRepository(RoomFavoriteStore(db), clock = System::currentTimeMillis)
 
     /** The device barometer; null without one (altitude then comes from GPS only). */

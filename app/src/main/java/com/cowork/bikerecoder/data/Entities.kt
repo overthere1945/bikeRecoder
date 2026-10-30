@@ -233,3 +233,21 @@ data class SegmentRouteSimplifiedEntity(
     val maxLat: Double?,
     val maxLon: Double?,
 )
+
+/** 여행 이름표(사용자 제목, 알아낸 지역). `trip` 표와 따로 둬서 여행 상태 저장이 덮어쓰지 못한다. 여행을 지우면 같이 지워진다. */
+@Entity(
+    tableName = "trip_label",
+    foreignKeys = [
+        ForeignKey(
+            entity = TripEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["tripId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+)
+data class TripLabelEntity(
+    @PrimaryKey val tripId: Long,
+    val customTitle: String?,
+    val regionName: String?,
+)

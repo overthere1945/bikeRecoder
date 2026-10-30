@@ -9,10 +9,12 @@ import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TripDeleteCondition
 import com.cowork.bikerecoder.core.recording.TrackPoint
+import com.cowork.bikerecoder.core.stats.RideStat
 import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripStop
 import com.cowork.bikerecoder.core.trip.TripType
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -84,6 +86,29 @@ class RoomRideStoreTest {
         assertEquals(listOf(11_000L, 12_000L, 13_000L), store.points(segmentId).map { it.timeMillis })
         assertEquals(totals(250.0, movingTimeMs = 3_000L), store.segment(segmentId)!!.totals)
         assertNull(store.segment(segmentId)!!.endedAt)
+    }
+
+    @Test
+    fun observeRidesEmitsEndedSegmentsOnly() = runTest {
+        val stats = RoomRideStatsSource(db)
+        val tripId = newTrip()
+        val done = store.openSegment(tripId, startedAt = 10_000L, localDate = day1)
+        store.closeSegment(done, 11_000L, totals(1_200.0, 60_000L))
+        val open = store.openSegment(tripId, startedAt = 20_000L, localDate = day2)
+
+        assertEquals(
+            listOf(RideStat(done, tripId, 10_000L, day1, 1_200.0, 60_000L, 4.0)),
+            stats.observeRides().first(),
+        )
+
+        store.closeSegment(open, 21_000L, totals(5.0, 2_000L)) // 짧은 구간도 거르지 않고 내보낸다
+        assertEquals(
+            listOf(
+                RideStat(done, tripId, 10_000L, day1, 1_200.0, 60_000L, 4.0),
+                RideStat(open, tripId, 20_000L, day2, 5.0, 2_000L, 4.0),
+            ),
+            stats.observeRides().first(),
+        )
     }
 
     @Test

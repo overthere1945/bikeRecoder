@@ -11,6 +11,7 @@ import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.post.CumulativeEntry
 import com.cowork.bikerecoder.core.post.HeartRateSample
 import com.cowork.bikerecoder.core.recording.TrackPoint
+import com.cowork.bikerecoder.core.trip.TripLabel
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripStop
 import com.cowork.bikerecoder.core.trip.TripType
@@ -30,7 +31,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.time.LocalDate
 
-/** 스펙 ⑥: 이전 버전 데이터가 마이그레이션 뒤에도 그대로이고, 새 테이블이 동작한다(1→2, 2→3, 3→4, 4→5). */
+/** 스펙 ⑥: 이전 버전 데이터가 마이그레이션 뒤에도 그대로이고, 새 테이블이 동작한다(1→2, 2→3, 3→4, 4→5, 5→6). */
 @RunWith(AndroidJUnit4::class)
 class RideDatabaseMigrationTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
@@ -230,6 +231,51 @@ class RideDatabaseMigrationTest {
             assertEquals(emptyList<TripMedia>(), media.observe(5).first())
             val id = media.add(TripMedia(0, 5, MediaKind.VIDEO, "content://media/external/video/media/1", 7_000L, "{}"))
             assertEquals(listOf(id), media.observe(5).first().map { it.id })
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun v5DataSurvivesMigrationTo6() = runBlocking {
+        helper.createDatabase(DB, 5).apply {
+            execSQL(
+                "INSERT INTO trip (id, type, status, profile, createdAt, lastActiveAt, completedAt) " +
+                    "VALUES (5, 'MULTI_DAY', 'COMPLETED', 'BALANCED', 1000, 2000, 6000)",
+            )
+            execSQL(
+                "INSERT INTO ride_segment (id, tripId, startedAt, endedAt, localDate, distanceM, movingTimeMs, " +
+                    "elapsedMs, maxSpeedMps, ascentM, descentM, minAltitudeM, maxAltitudeM) " +
+                    "VALUES (21, 5, 3000, 4000, '2026-10-12', 1500.0, 60000, 90000, 8.5, 10.0, 4.0, NULL, NULL)",
+            )
+            execSQL(
+                "INSERT INTO trip_media (id, tripId, kind, uri, createdAt, optionsJson) " +
+                    "VALUES (61, 5, 'VIDEO', 'content://media/external/video/media/1', 7000, '{}')",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(DB, 6, true)
+        migrated.query("PRAGMA foreign_key_check").use { assertEquals(0, it.count) }
+        migrated.close()
+
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, DB).build()
+        try {
+            assertEquals(TripStatus.COMPLETED, RoomTripStore(db).trip(5)!!.status)
+            val segment = RoomRideStore(db).segments(5).single()
+            assertEquals(21L, segment.id)
+            assertEquals(1500.0, segment.totals.distanceM, 0.0)
+            assertEquals(10.0, segment.totals.ascentM, 0.0)
+            val media = RoomTripMediaStore(db).observe(5).first().single()
+            assertEquals(61L, media.id)
+            assertEquals("content://media/external/video/media/1", media.uri)
+
+            // 새 표는 비어 있고, 쓸 수 있다.
+            val labels = RoomTripLabelStore(db)
+            assertEquals(emptyMap<Long, TripLabel>(), labels.observeLabels().first())
+            assertEquals(TripLabel(), labels.label(5))
+            labels.setCustomTitle(5, "남한강 일주")
+            assertEquals(TripLabel("남한강 일주", null), labels.label(5))
         } finally {
             db.close()
         }
