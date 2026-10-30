@@ -109,7 +109,7 @@ object StatsCalculator {
         PeriodKind.ALL -> throw IllegalArgumentException("ALL has no previous/next")
     }
 
-    private fun mondayOf(date: LocalDate): LocalDate = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+    internal fun mondayOf(date: LocalDate): LocalDate = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
 
     private fun weekOf(monday: LocalDate) = StatsPeriod(PeriodKind.WEEK, monday, monday.plusDays(6))
 
