@@ -117,7 +117,7 @@ class RideRecordsTest {
     @Test
     fun fastestAvgIsAbsentWithoutAnEligibleRide() {
         val kinds = RideRecords.rideRecords(
-            listOf(ride(d(2026, 10, 1), distanceM = 4_000.0), ride(d(2026, 10, 2), distanceM = 3_000.0)),
+            listOf(ride(d(2026, 10, 1), distanceM = 4_000.0, ascentM = 1.0), ride(d(2026, 10, 2), distanceM = 3_000.0, ascentM = 2.0)),
         ).map { it.kind }
         assertEquals(
             listOf(RideRecordKind.LONGEST_DISTANCE, RideRecordKind.LONGEST_TIME, RideRecordKind.MOST_ASCENT),
@@ -218,5 +218,35 @@ class RideRecordsTest {
         val y = ride(d(2026, 10, 1), distanceM = 11_000.0, startedAt = 100)
         assertTrue(RideRecords.newRecords(listOf(x, y), x.segmentId).isEmpty())
         assertNotNull(RideRecords.newRecords(listOf(x, y), y.segmentId).singleOrNull { it == RideRecordKind.LONGEST_DISTANCE })
+    }
+
+    @Test
+    fun zeroValuedRecordsAreNotRecords() {
+        // 모든 주행의 상승이 0 m: 가장 많이 오른 주행 기록 없음, 트로피도 그 때문에는 없음
+        val a = ride(d(2026, 10, 1), distanceM = 20_000.0, movingMs = 1_000_000L, ascentM = 0.0, tripId = 10)
+        val b = ride(d(2026, 10, 2), distanceM = 10_000.0, movingMs = 2_000_000L, ascentM = 0.0, tripId = 20)
+        val kinds = RideRecords.rideRecords(listOf(a, b)).map { it.kind }
+        assertTrue(RideRecordKind.MOST_ASCENT !in kinds)
+        assertEquals(setOf(10L, 20L), RideRecords.recordHolderTrips(listOf(a, b)))
+        // 상승만 같은 여행(30)이 0 m로 트로피를 받지 않는다
+        val c = ride(d(2026, 10, 3), distanceM = 1_000.0, movingMs = 1_000L, ascentM = 0.0, tripId = 30)
+        assertTrue(30L !in RideRecords.recordHolderTrips(listOf(a, b, c)))
+
+        // 모든 주행의 이동 시간이 0 ms: LONGEST_TIME·FASTEST_AVG 기록 없음
+        val x = ride(d(2026, 10, 1), distanceM = 20_000.0, movingMs = 0L, ascentM = 5.0)
+        val y = ride(d(2026, 10, 2), distanceM = 10_000.0, movingMs = 0L, ascentM = 9.0)
+        val xyKinds = RideRecords.rideRecords(listOf(x, y)).map { it.kind }
+        assertEquals(listOf(RideRecordKind.LONGEST_DISTANCE, RideRecordKind.MOST_ASCENT), xyKinds)
+    }
+
+    @Test
+    fun newRecordsNeverIncludeAZeroValue() {
+        val first = ride(d(2026, 10, 1), distanceM = 10_000.0, movingMs = 0L, ascentM = 0.0)
+        val second = ride(d(2026, 10, 2), distanceM = 12_000.0, movingMs = 0L, ascentM = 0.0)
+        assertEquals(listOf(RideRecordKind.LONGEST_DISTANCE), RideRecords.newRecords(listOf(first, second), second.segmentId))
+        // 앞 주행의 값이 0이고 이번이 0보다 크면 신기록 (0은 기록이 아니지만 이번 값은 양수)
+        val third = ride(d(2026, 10, 3), distanceM = 5_000.0, movingMs = 1_000L, ascentM = 3.0)
+        val result = RideRecords.newRecords(listOf(first, second, third), third.segmentId)
+        assertTrue(RideRecordKind.LONGEST_TIME in result && RideRecordKind.MOST_ASCENT in result)
     }
 }

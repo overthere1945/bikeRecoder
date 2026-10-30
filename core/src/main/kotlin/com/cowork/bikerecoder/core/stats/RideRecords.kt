@@ -68,7 +68,7 @@ object RideRecords {
     /**
      * 주행 항목 네 가지의 최고 기록. 주행이 2회 미만이면 빈 목록. 같은 값이면 먼저 세운 주행.
      * [RideRecordKind.FASTEST_AVG]는 거리 [FASTEST_MIN_DISTANCE_M] 이상에 이동 시간이 0보다 큰 주행만 본다.
-     * 대상 주행이 없는 항목은 빠진다.
+     * 대상 주행이 없거나 최고값이 0 이하인 항목은 기록이 아니므로 빠진다(상승 0 m, 이동 시간 0 ms 등).
      */
     fun rideRecords(rides: List<RideStat>): List<RideRecord> {
         val kept = StatsCalculator.rides(rides)
@@ -90,7 +90,7 @@ object RideRecords {
 
     /**
      * [segmentId] 구간이 세운 신기록 항목. 그 항목에 해당하는 더 이른 주행이 있고, 이 구간이 그 최고값보다
-     * 클 때만이다. 이 구간이 짧은 기록이라 걸러졌으면 빈 목록.
+     * 클 때만이다(값이 0이면 신기록이 아니다). 이 구간이 짧은 기록이라 걸러졌으면 빈 목록.
      */
     fun newRecords(rides: List<RideStat>, segmentId: Long): List<RideRecordKind> {
         val kept = StatsCalculator.rides(rides)
@@ -99,6 +99,7 @@ object RideRecords {
         if (earlier.isEmpty()) return emptyList()
         return RideRecordKind.entries.filter { kind ->
             val mine = valueOf(kind, target) ?: return@filter false
+            if (mine <= 0.0) return@filter false
             val prior = earlier.mapNotNull { valueOf(kind, it) }.maxOrNull() ?: return@filter false
             mine > prior
         }
@@ -125,6 +126,7 @@ object RideRecords {
         var best: RideRecord? = null
         for (ride in kept) {
             val v = valueOf(kind, ride) ?: continue
+            if (v <= 0.0) continue
             if (best == null || v > best.value) best = RideRecord(kind, ride, v)
         }
         return best
