@@ -24,6 +24,19 @@ class MainTabsBackTest {
         assertEquals(listOf("지도", "요약", "통계", "설정"), MainTab.entries.map { it.label })
     }
 
+    /** Review I2: Material icons (no emoji), filled on the selected tab and outlined on the others. */
+    @Test
+    fun tabIconsAreFilledWhenSelectedAndOutlinedOtherwise() {
+        assertEquals(
+            listOf("Filled.Map", "Filled.DynamicFeed", "Filled.BarChart", "Filled.Settings"),
+            MainTab.entries.map { it.icon(selected = true).name },
+        )
+        assertEquals(
+            listOf("Outlined.Map", "Outlined.DynamicFeed", "Outlined.BarChart", "Outlined.Settings"),
+            MainTab.entries.map { it.icon(selected = false).name },
+        )
+    }
+
     @Test
     fun tappingAnotherTabOpensItWithoutScrolling() {
         val (selected, scroll) = tapTab(MainTab.MAP, MainTab.FEED, ScrollToTop())

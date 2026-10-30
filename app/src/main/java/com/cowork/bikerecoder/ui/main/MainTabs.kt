@@ -7,6 +7,16 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.DynamicFeed
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.BarChart
+import androidx.compose.material.icons.outlined.DynamicFeed
+import androidx.compose.material.icons.outlined.Map
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -19,15 +29,23 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
-import com.cowork.bikerecoder.ui.common.GlyphIcon
 
 /** The tabs of the main screen (V1.4.0 spec §1.1), with their names on the tab bar. */
-enum class MainTab(val label: String, val glyph: String) {
-    MAP("지도", "🗺"),
-    FEED("요약", "📰"),
-    STATS("통계", "📊"),
-    SETTINGS("설정", "⚙"),
+enum class MainTab(val label: String) {
+    MAP("지도"),
+    FEED("요약"),
+    STATS("통계"),
+    SETTINGS("설정"),
+}
+
+/** The tab's icon on the tab bar: filled while [selected], outlined otherwise (they take the bar's tint). */
+fun MainTab.icon(selected: Boolean): ImageVector = when (this) {
+    MainTab.MAP -> if (selected) Icons.Filled.Map else Icons.Outlined.Map
+    MainTab.FEED -> if (selected) Icons.Filled.DynamicFeed else Icons.Outlined.DynamicFeed
+    MainTab.STATS -> if (selected) Icons.Filled.BarChart else Icons.Outlined.BarChart
+    MainTab.SETTINGS -> if (selected) Icons.Filled.Settings else Icons.Outlined.Settings
 }
 
 /** Test tags of the tab frame. */
@@ -114,7 +132,7 @@ fun MainTabsScaffold(
                         NavigationBarItem(
                             selected = tab == selected,
                             onClick = { onSelect(tab) },
-                            icon = { GlyphIcon(tab.glyph, null) },
+                            icon = { Icon(tab.icon(tab == selected), contentDescription = null) },
                             label = { Text(tab.label) },
                             modifier = Modifier.testTag(MainTabsTags.tab(tab)),
                         )

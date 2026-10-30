@@ -14,7 +14,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -41,7 +45,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.post.PeriodFilter
 import com.cowork.bikerecoder.core.stats.PeriodKind
-import com.cowork.bikerecoder.ui.common.GlyphIcon
 import com.cowork.bikerecoder.ui.feed.kmText
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -237,7 +240,7 @@ private fun PeriodBlock(
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (state.period.kind != PeriodKind.ALL) {
                 IconButton(onClick = onPrevious, enabled = state.canPrevious, modifier = Modifier.testTag(StatsTags.PREVIOUS)) {
-                    GlyphIcon("‹", "이전 기간")
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "이전 기간")
                 }
             }
             Text(
@@ -249,7 +252,7 @@ private fun PeriodBlock(
             )
             if (state.period.kind != PeriodKind.ALL) {
                 IconButton(onClick = onNext, enabled = state.canNext, modifier = Modifier.testTag(StatsTags.NEXT)) {
-                    GlyphIcon("›", "다음 기간")
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "다음 기간")
                 }
             }
         }
@@ -315,7 +318,7 @@ private fun RecordLine(row: RecordRow, index: Int, onOpen: (RecordTarget) -> Uni
                 Text(row.label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(row.value, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
             }
-            if (target != null) Text("›", style = MaterialTheme.typography.titleLarge)
+            if (target != null) Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
         }
     }
 }
