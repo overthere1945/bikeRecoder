@@ -46,6 +46,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -128,11 +130,12 @@ class FeedViewModelTest {
         offlineMaps: OfflineMapController = offline,
         processor: PostProcessor = postProcessor(),
         rideStore: RideStore = rides,
+        goal: Flow<Int?> = weeklyGoal,
     ) = FeedViewModel(
         rideStore, postStore, processor, offlineMaps, log,
         rideStats = stats,
         labels = labels,
-        weeklyGoalKm = weeklyGoal,
+        weeklyGoalKm = goal,
         tripMedia = media,
         pictures = pictures,
         ensureRegion = { tripId, start ->
@@ -1075,10 +1078,27 @@ class FeedViewModelTest {
         val vm = history()
         advanceUntilIdle()
 
-        val strip = vm.weekStrip.value
+        val strip = vm.weekStrip.value!!
         assertEquals(15_000.0, strip.distanceM, 1e-9)
         assertEquals(2, strip.rides)
         assertEquals(10_000.0, strip.diffM!!, 1e-9)
+    }
+
+    /** Review M2: no strip (no "0.0 km", no [목표 정하기]) until the rides and the weekly goal have been read. */
+    @Test
+    fun weekStripWaitsForTheRidesAndTheGoal() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        segment(1, 1, LocalDate.of(2026, 10, 27), totals = ride(5_000.0))
+        val goal = MutableSharedFlow<Int?>()
+        val vm = history(goal = goal)
+        advanceUntilIdle()
+        assertNull(vm.weekStrip.value)
+
+        goal.emit(100)
+        advanceUntilIdle()
+
+        assertEquals(5_000.0, vm.weekStrip.value!!.distanceM, 1e-9)
+        assertEquals(100, vm.weekStrip.value!!.weeklyGoalKm)
     }
 
     @Test
@@ -1088,9 +1108,9 @@ class FeedViewModelTest {
         val vm = history()
         advanceUntilIdle()
 
-        assertEquals(0.0, vm.weekStrip.value.distanceM, 1e-9)
-        assertEquals(0, vm.weekStrip.value.rides)
-        assertNull(vm.weekStrip.value.diffM)
+        assertEquals(0.0, vm.weekStrip.value!!.distanceM, 1e-9)
+        assertEquals(0, vm.weekStrip.value!!.rides)
+        assertNull(vm.weekStrip.value!!.diffM)
     }
 
     @Test
@@ -1103,19 +1123,19 @@ class FeedViewModelTest {
         val vm = history()
         advanceUntilIdle()
 
-        assertNull(vm.weekStrip.value.weeklyGoalKm)
-        assertEquals(Streak(3, includesThisWeek = true), vm.weekStrip.value.streak)
+        assertNull(vm.weekStrip.value!!.weeklyGoalKm)
+        assertEquals(Streak(3, includesThisWeek = true), vm.weekStrip.value!!.streak)
 
         weeklyGoal.value = 100
         advanceUntilIdle()
-        assertEquals(100, vm.weekStrip.value.weeklyGoalKm)
+        assertEquals(100, vm.weekStrip.value!!.weeklyGoalKm)
 
         // A week later and nothing yet in the new week: the streak runs through last week.
         nowMs = seoul(2026, 11, 3, 12, 0)
         vm.refresh()
         advanceUntilIdle()
-        assertEquals(Streak(3, includesThisWeek = false), vm.weekStrip.value.streak)
-        assertEquals(0, vm.weekStrip.value.rides)
+        assertEquals(Streak(3, includesThisWeek = false), vm.weekStrip.value!!.streak)
+        assertEquals(0, vm.weekStrip.value!!.rides)
     }
 
     /** A process that lives into a new week shows the new week after the next resume, with no ride recorded between. */
@@ -1125,20 +1145,20 @@ class FeedViewModelTest {
         segment(1, 1, LocalDate.of(2026, 10, 27), totals = ride(8_000.0))
         val vm = history()
         advanceUntilIdle()
-        assertEquals(8_000.0, vm.weekStrip.value.distanceM, 1e-9)
-        assertEquals(Streak(1, includesThisWeek = true), vm.weekStrip.value.streak)
+        assertEquals(8_000.0, vm.weekStrip.value!!.distanceM, 1e-9)
+        assertEquals(Streak(1, includesThisWeek = true), vm.weekStrip.value!!.streak)
 
         nowMs = seoul(2026, 11, 3, 9, 0) // Tuesday of the next week; no stats emission
         advanceUntilIdle()
-        assertEquals(8_000.0, vm.weekStrip.value.distanceM, 1e-9, "not before the screen is resumed")
+        assertEquals(8_000.0, vm.weekStrip.value!!.distanceM, 1e-9, "not before the screen is resumed")
 
         vm.refresh()
         advanceUntilIdle()
 
-        assertEquals(0.0, vm.weekStrip.value.distanceM, 1e-9)
-        assertEquals(0, vm.weekStrip.value.rides)
-        assertEquals(Streak(1, includesThisWeek = false), vm.weekStrip.value.streak)
-        assertEquals(-8_000.0, vm.weekStrip.value.diffM!!, 1e-9, "last week up to Tuesday has the Tuesday-or-earlier ride")
+        assertEquals(0.0, vm.weekStrip.value!!.distanceM, 1e-9)
+        assertEquals(0, vm.weekStrip.value!!.rides)
+        assertEquals(Streak(1, includesThisWeek = false), vm.weekStrip.value!!.streak)
+        assertEquals(-8_000.0, vm.weekStrip.value!!.diffM!!, 1e-9, "last week up to Tuesday has the Tuesday-or-earlier ride")
     }
 
     @Test

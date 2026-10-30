@@ -120,7 +120,7 @@ class FeedScreenTest {
 
     private fun show(
         months: List<FeedMonth> = this.months,
-        strip: WeekStripState = this.strip,
+        strip: WeekStripState? = this.strip,
         ready: Boolean = true,
         hiddenShortCount: Int = 0,
         dialog: HistoryDialog? = null,
@@ -264,6 +264,16 @@ class FeedScreenTest {
 
         composeRule.onNodeWithText("첫 주행을 기록해 보세요").assertDoesNotExist()
         composeRule.onNodeWithTag(FeedTags.STRIP).assertIsDisplayed()
+    }
+
+    /** Review M2: before the rides and the goal are read there is no strip ("0.0 km", [목표 정하기]), only the list. */
+    @Test
+    fun noStripBeforeItIsRead() {
+        show(strip = null)
+
+        composeRule.onNodeWithTag(FeedTags.STRIP).assertDoesNotExist()
+        composeRule.onNodeWithText("목표 정하기").assertDoesNotExist()
+        composeRule.onNodeWithText("저녁 라이딩 · 서울 강서구").assertIsDisplayed()
     }
 
     /** Spec §2.1: "이번 주 64.2 km · 4회", "지난주 이맘때보다 +12.3 km", "4주 연속"; a tap opens the week's stats. */

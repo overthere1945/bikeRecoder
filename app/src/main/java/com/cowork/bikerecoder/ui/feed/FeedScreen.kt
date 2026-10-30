@@ -82,10 +82,10 @@ fun FeedScreen(
     )
 }
 
-/** The stateless feed: [FeedScreen] with the state and the callbacks spelled out. */
+/** The stateless feed: [FeedScreen] with the state and the callbacks spelled out. No strip while [weekStrip] is null (not read yet). */
 @Composable
 fun FeedContent(
-    weekStrip: WeekStripState,
+    weekStrip: WeekStripState?,
     months: List<FeedMonth>,
     ready: Boolean,
     hiddenShortCount: Int,
@@ -114,7 +114,7 @@ fun FeedContent(
 
 @Composable
 private fun FeedList(
-    weekStrip: WeekStripState,
+    weekStrip: WeekStripState?,
     months: List<FeedMonth>,
     ready: Boolean,
     hiddenShortCount: Int,
@@ -142,7 +142,7 @@ private fun FeedList(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier.fillMaxSize().testTag(FeedTags.LIST),
     ) {
-        item(key = "weekStrip") { WeekStrip(weekStrip, onOpenStatsWeek, onSetGoals) }
+        if (weekStrip != null) item(key = "weekStrip") { WeekStrip(weekStrip, onOpenStatsWeek, onSetGoals) }
         for (month in months) {
             item(key = "month:${month.header}") {
                 Text(

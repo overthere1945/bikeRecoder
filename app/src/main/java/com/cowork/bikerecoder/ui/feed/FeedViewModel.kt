@@ -199,10 +199,13 @@ class FeedViewModel(
     val months: StateFlow<List<FeedMonth>> =
         feed.map { it.months }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    /** Spec §2.1: this week, last week up to the same weekday, the goal and the streak. */
-    val weekStrip: StateFlow<WeekStripState> = combine(allRides, weeklyGoalKm.safely(null, "weekly goal"), today) { rides, goal, today ->
+    /**
+     * Spec §2.1: this week, last week up to the same weekday, the goal and the streak. Null until the rides and the goal have
+     * been read (review M2: no "0.0 km" or [목표 정하기] before them).
+     */
+    val weekStrip: StateFlow<WeekStripState?> = combine(allRides, weeklyGoalKm.safely(null, "weekly goal"), today) { rides, goal, today ->
         weekStripOf(rides, goal, today)
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, WeekStripState(0.0, 0, null, null, Streak(0, includesThisWeek = false)))
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /** The short trips not listed, as last read. */
     private var hiddenShort: List<Long> = emptyList()

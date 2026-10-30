@@ -113,10 +113,12 @@ fun StatsScreen(
     onOpenCumulative: (PeriodFilter) -> Unit,
     scrollToTop: Int,
 ) {
-    val state by viewModel.state.collectAsStateWithLifecycle()
+    val loaded by viewModel.state.collectAsStateWithLifecycle()
     // A day may have passed (a new week or month).
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refresh() }
     var goalDialog by rememberSaveable { mutableStateOf(false) }
+    // Nothing until the rides and the goals are read (review M2); so the goal window starts from the stored goals.
+    val state = loaded ?: return
     StatsContent(
         state = state,
         scrollToTop = scrollToTop,

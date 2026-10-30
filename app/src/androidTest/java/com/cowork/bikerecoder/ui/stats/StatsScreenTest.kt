@@ -29,8 +29,10 @@ import com.cowork.bikerecoder.core.post.PeriodFilter
 import com.cowork.bikerecoder.core.stats.PeriodKind
 import com.cowork.bikerecoder.core.stats.RideStat
 import com.cowork.bikerecoder.core.stats.RideStatsSource
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flow
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -110,6 +112,22 @@ class StatsScreenTest {
     private fun scrollTo(tag: String) {
         composeRule.onNodeWithTag(StatsTags.LIST).performScrollToNode(hasTestTag(tag))
         composeRule.waitForIdle()
+    }
+
+    /** Review M2: before the goals have been read the tab shows nothing: no "no goal" card, no zeros. */
+    @Test
+    fun nothingShowsBeforeTheGoalsAreRead() {
+        val unread = object : GoalSettings {
+            override val goals: Flow<GoalKm> = flow { awaitCancellation() }
+            override suspend fun setGoals(weeklyKm: Int?, yearlyKm: Int?) = Unit
+        }
+        viewModel = StatsViewModel(FakeRides(rides), unread, { LocalDate.of(2026, 10, 28) }, WarnLog { _, _ -> })
+        composeRule.setContent { MaterialTheme { StatsScreen(viewModel, onOpenSegment = {}, onOpenCumulative = {}, scrollToTop = 0) } }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag(StatsTags.LIST).assertDoesNotExist()
+        composeRule.onNodeWithText(GOAL_EMPTY_HINT).assertDoesNotExist()
+        composeRule.onNodeWithText("0.0 km").assertDoesNotExist()
     }
 
     @Test

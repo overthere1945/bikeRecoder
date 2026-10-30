@@ -113,7 +113,8 @@ class StatsViewModel(
     private val selection = MutableStateFlow(Selection())
     private val day = MutableStateFlow(today())
 
-    val state: StateFlow<StatsState> = combine(
+    /** Null until both the rides and the goals have been read (review M2: no zeros or "no goal" before them). */
+    val state: StateFlow<StatsState?> = combine(
         rides.observeRides().catch { e ->
             log.warn("Could not follow the ride stats", e)
             emit(emptyList())
@@ -125,7 +126,7 @@ class StatsViewModel(
         selection,
         day,
     ) { all, goalKm, sel, today -> build(all, goalKm, sel, today) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, build(emptyList(), GoalKm(null, null), Selection(), day.value))
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /** Takes today's date again (every resume): a new day may be a new week. */
     fun refresh() {
@@ -141,7 +142,7 @@ class StatsViewModel(
     fun next() = page(1)
 
     private fun page(step: Int) {
-        val current = state.value
+        val current = state.value ?: return
         if (if (step < 0) !current.canPrevious else !current.canNext) return
         val target = if (step < 0) StatsCalculator.previous(current.period) else StatsCalculator.next(current.period)
         val thisStart = StatsCalculator.periodOf(target.kind, day.value, emptyList(), day.value).start
@@ -153,10 +154,10 @@ class StatsViewModel(
         selection.update { it.copy(kind = kind, anchor = start, bar = null) }
     }
 
-    /** This Monday-to-Sunday week (the summary tab's week strip), by the date read now. */
+    /** This Monday-to-Sunday week (the summary tab's week strip), by the date read now and following it (a new week moves on). */
     fun showThisWeek() {
         day.value = today()
-        show(PeriodKind.WEEK, mondayOf(day.value))
+        selection.update { it.copy(kind = PeriodKind.WEEK, anchor = null, bar = null) }
     }
 
     fun selectMetric(metric: StatMetric) {
@@ -166,7 +167,7 @@ class StatsViewModel(
     /** Taps a bar: its value shows; the same bar again hides it. A bar that is not there or has not come yet is ignored. */
     fun selectBar(index: Int?) {
         if (index != null) {
-            val bar = state.value.bars.getOrNull(index)
+            val bar = state.value?.bars?.getOrNull(index)
             if (bar == null || bar.upcoming) return
         }
         selection.update { it.copy(bar = if (index == null || index == it.bar) null else index) }

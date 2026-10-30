@@ -9,6 +9,7 @@ import com.cowork.bikerecoder.core.stats.RideStatsSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -79,9 +80,42 @@ class StatsViewModelTest {
         return vm
     }
 
+    /** Review M2: nothing (no zeros, no "no goal") until both the rides and the goals have been read. */
+    @Test
+    fun noStateUntilRidesAndGoalsAreRead() = runTest(dispatcher) {
+        val rides = MutableSharedFlow<List<RideStat>>()
+        val goals = MutableSharedFlow<GoalKm>()
+        val vm = StatsViewModel(
+            object : RideStatsSource {
+                override fun observeRides(): Flow<List<RideStat>> = rides
+            },
+            object : GoalSettings {
+                override val goals: Flow<GoalKm> = goals
+                override suspend fun setGoals(weeklyKm: Int?, yearlyKm: Int?) = Unit
+            },
+            { today },
+            WarnLog { _, _ -> },
+        )
+        advanceUntilIdle()
+        assertNull(vm.state.value)
+
+        rides.emit(sample)
+        advanceUntilIdle()
+        assertNull(vm.state.value, "the goals are not read yet")
+        // Nothing to page or tap yet.
+        vm.previous()
+        vm.selectBar(0)
+
+        goals.emit(GoalKm(100, null))
+        advanceUntilIdle()
+        assertEquals(100, vm.state.value!!.weeklyGoal?.goalKm)
+        assertEquals("2026년 10월", vm.state.value!!.title)
+        assertNull(vm.state.value!!.selectedBar)
+    }
+
     @Test
     fun startsOnThisMonthDistance() = runTest(dispatcher) {
-        val state = viewModel().state.value
+        val state = viewModel().state.value!!
 
         assertEquals(PeriodKind.MONTH, state.period.kind)
         assertEquals(LocalDate.of(2026, 10, 1), state.period.start)
@@ -104,7 +138,7 @@ class StatsViewModelTest {
 
     @Test
     fun noRidesShowsThisPeriodOnly() = runTest(dispatcher) {
-        val state = viewModel(FakeRides()).state.value
+        val state = viewModel(FakeRides()).state.value!!
 
         assertEquals(0.0, state.totals.distanceM, 1e-9)
         assertFalse(state.canPrevious)
@@ -120,24 +154,24 @@ class StatsViewModelTest {
 
         vm.previous() // September: the month of the first ride
         advanceUntilIdle()
-        assertEquals(LocalDate.of(2026, 9, 1), vm.state.value.period.start)
-        assertEquals("2026년 9월", vm.state.value.title)
-        assertFalse(vm.state.value.canPrevious)
-        assertTrue(vm.state.value.canNext)
-        assertEquals("8월보다 +30.0 km", vm.state.value.comparisonText)
+        assertEquals(LocalDate.of(2026, 9, 1), vm.state.value!!.period.start)
+        assertEquals("2026년 9월", vm.state.value!!.title)
+        assertFalse(vm.state.value!!.canPrevious)
+        assertTrue(vm.state.value!!.canNext)
+        assertEquals("8월보다 +30.0 km", vm.state.value!!.comparisonText)
 
         vm.previous() // no further
         advanceUntilIdle()
-        assertEquals(LocalDate.of(2026, 9, 1), vm.state.value.period.start)
+        assertEquals(LocalDate.of(2026, 9, 1), vm.state.value!!.period.start)
 
         vm.next()
         advanceUntilIdle()
-        assertEquals(LocalDate.of(2026, 10, 1), vm.state.value.period.start)
-        assertFalse(vm.state.value.canNext)
+        assertEquals(LocalDate.of(2026, 10, 1), vm.state.value!!.period.start)
+        assertFalse(vm.state.value!!.canNext)
 
         vm.next() // no further than this month
         advanceUntilIdle()
-        assertEquals(LocalDate.of(2026, 10, 1), vm.state.value.period.start)
+        assertEquals(LocalDate.of(2026, 10, 1), vm.state.value!!.period.start)
     }
 
     @Test
@@ -146,7 +180,7 @@ class StatsViewModelTest {
 
         vm.selectKind(PeriodKind.ALL)
         advanceUntilIdle()
-        val state = vm.state.value
+        val state = vm.state.value!!
 
         assertEquals("전체", state.title)
         assertFalse(state.canPrevious)
@@ -157,7 +191,7 @@ class StatsViewModelTest {
         vm.previous()
         vm.next()
         advanceUntilIdle()
-        assertEquals(PeriodKind.ALL, vm.state.value.period.kind)
+        assertEquals(PeriodKind.ALL, vm.state.value!!.period.kind)
     }
 
     @Test
@@ -168,18 +202,18 @@ class StatsViewModelTest {
 
         vm.selectKind(PeriodKind.WEEK)
         advanceUntilIdle()
-        assertEquals(LocalDate.of(2026, 10, 26), vm.state.value.period.start)
-        assertEquals("10월 5주 (10/26~11/1)", vm.state.value.title)
-        assertEquals(listOf("월", "화", "수", "목", "금", "토", "일"), vm.state.value.bars.map { it.label })
+        assertEquals(LocalDate.of(2026, 10, 26), vm.state.value!!.period.start)
+        assertEquals("10월 5주 (10/26~11/1)", vm.state.value!!.title)
+        assertEquals(listOf("월", "화", "수", "목", "금", "토", "일"), vm.state.value!!.bars.map { it.label })
         // Sunday 11/1 has not come yet.
-        assertEquals(listOf(false, false, false, false, false, false, true), vm.state.value.bars.map { it.upcoming })
+        assertEquals(listOf(false, false, false, false, false, false, true), vm.state.value!!.bars.map { it.upcoming })
 
         vm.selectKind(PeriodKind.YEAR)
         advanceUntilIdle()
-        assertEquals(LocalDate.of(2026, 1, 1), vm.state.value.period.start)
-        assertEquals(12, vm.state.value.bars.size)
+        assertEquals(LocalDate.of(2026, 1, 1), vm.state.value!!.period.start)
+        assertEquals(12, vm.state.value!!.bars.size)
         // November and December have not come yet.
-        assertEquals(listOf(false, false, true, true), vm.state.value.bars.drop(8).map { it.upcoming })
+        assertEquals(listOf(false, false, true, true), vm.state.value!!.bars.drop(8).map { it.upcoming })
     }
 
     @Test
@@ -188,24 +222,24 @@ class StatsViewModelTest {
 
         vm.show(PeriodKind.WEEK, LocalDate.of(2026, 9, 16)) // a Wednesday
         advanceUntilIdle()
-        assertEquals(PeriodKind.WEEK, vm.state.value.period.kind)
-        assertEquals(LocalDate.of(2026, 9, 14), vm.state.value.period.start)
-        assertEquals("9월 3주 (9/14~9/20)", vm.state.value.title)
-        assertEquals(30_000.0, vm.state.value.totals.distanceM, 1e-9)
-        assertEquals(PeriodFilter(weekStart = LocalDate.of(2026, 9, 14)), vm.state.value.cumulativeFilter)
+        assertEquals(PeriodKind.WEEK, vm.state.value!!.period.kind)
+        assertEquals(LocalDate.of(2026, 9, 14), vm.state.value!!.period.start)
+        assertEquals("9월 3주 (9/14~9/20)", vm.state.value!!.title)
+        assertEquals(30_000.0, vm.state.value!!.totals.distanceM, 1e-9)
+        assertEquals(PeriodFilter(weekStart = LocalDate.of(2026, 9, 14)), vm.state.value!!.cumulativeFilter)
 
         vm.show(PeriodKind.MONTH, LocalDate.of(2026, 9, 1))
         advanceUntilIdle()
-        assertEquals("2026년 9월", vm.state.value.title)
+        assertEquals("2026년 9월", vm.state.value!!.title)
 
         // Before the first ride or after today: the nearest period one can page to.
         vm.show(PeriodKind.MONTH, LocalDate.of(2020, 1, 1))
         advanceUntilIdle()
-        assertEquals(LocalDate.of(2026, 9, 1), vm.state.value.period.start)
+        assertEquals(LocalDate.of(2026, 9, 1), vm.state.value!!.period.start)
         vm.show(PeriodKind.MONTH, LocalDate.of(2030, 1, 1))
         advanceUntilIdle()
-        assertEquals(LocalDate.of(2026, 10, 1), vm.state.value.period.start)
-        assertFalse(vm.state.value.canNext)
+        assertEquals(LocalDate.of(2026, 10, 1), vm.state.value!!.period.start)
+        assertFalse(vm.state.value!!.canNext)
     }
 
     @Test
@@ -218,9 +252,25 @@ class StatsViewModelTest {
         vm.showThisWeek()
         advanceUntilIdle()
 
-        assertEquals(PeriodKind.WEEK, vm.state.value.period.kind)
-        assertEquals(LocalDate.of(2026, 11, 2), vm.state.value.period.start)
-        assertEquals(PeriodFilter(weekStart = LocalDate.of(2026, 11, 2)), vm.state.value.cumulativeFilter)
+        assertEquals(PeriodKind.WEEK, vm.state.value!!.period.kind)
+        assertEquals(LocalDate.of(2026, 11, 2), vm.state.value!!.period.start)
+        assertEquals(PeriodFilter(weekStart = LocalDate.of(2026, 11, 2)), vm.state.value!!.cumulativeFilter)
+    }
+
+    /** Review M5: "this week" from the strip follows the date: a resume in the next week shows that week. */
+    @Test
+    fun showThisWeekFollowsTheDate() = runTest(dispatcher) {
+        val vm = viewModel()
+        vm.showThisWeek()
+        advanceUntilIdle()
+        assertEquals(LocalDate.of(2026, 10, 26), vm.state.value!!.period.start)
+
+        today = LocalDate.of(2026, 11, 3)
+        vm.refresh()
+        advanceUntilIdle()
+
+        assertEquals(PeriodKind.WEEK, vm.state.value!!.period.kind)
+        assertEquals(LocalDate.of(2026, 11, 2), vm.state.value!!.period.start)
     }
 
     @Test
@@ -229,41 +279,41 @@ class StatsViewModelTest {
 
         vm.selectBar(3)
         advanceUntilIdle()
-        assertEquals(3, vm.state.value.selectedBar)
+        assertEquals(3, vm.state.value!!.selectedBar)
 
         vm.selectBar(1)
         advanceUntilIdle()
-        assertEquals(1, vm.state.value.selectedBar)
+        assertEquals(1, vm.state.value!!.selectedBar)
 
         vm.selectBar(1) // again: gone
         advanceUntilIdle()
-        assertNull(vm.state.value.selectedBar)
+        assertNull(vm.state.value!!.selectedBar)
 
         vm.selectBar(3)
         vm.previous()
         advanceUntilIdle()
-        assertNull(vm.state.value.selectedBar)
+        assertNull(vm.state.value!!.selectedBar)
 
         vm.selectBar(0)
         vm.next()
         advanceUntilIdle()
-        assertNull(vm.state.value.selectedBar)
+        assertNull(vm.state.value!!.selectedBar)
 
         vm.selectBar(0)
         vm.selectMetric(StatMetric.TIME)
         advanceUntilIdle()
-        assertNull(vm.state.value.selectedBar)
-        assertEquals(StatMetric.TIME, vm.state.value.metric)
+        assertNull(vm.state.value!!.selectedBar)
+        assertEquals(StatMetric.TIME, vm.state.value!!.metric)
 
         vm.selectBar(0)
         vm.selectKind(PeriodKind.YEAR)
         advanceUntilIdle()
-        assertNull(vm.state.value.selectedBar)
+        assertNull(vm.state.value!!.selectedBar)
 
         vm.selectBar(0)
         vm.show(PeriodKind.MONTH, LocalDate.of(2026, 9, 1))
         advanceUntilIdle()
-        assertNull(vm.state.value.selectedBar)
+        assertNull(vm.state.value!!.selectedBar)
     }
 
     @Test
@@ -272,59 +322,59 @@ class StatsViewModelTest {
 
         vm.selectMetric(StatMetric.TIME)
         advanceUntilIdle()
-        assertEquals(listOf(1_800_000.0, 0.0, 0.0, 3_600_000.0, 0.0), vm.state.value.bars.map { it.value })
+        assertEquals(listOf(1_800_000.0, 0.0, 0.0, 3_600_000.0, 0.0), vm.state.value!!.bars.map { it.value })
         vm.selectBar(3)
         advanceUntilIdle()
-        assertEquals("10월 4주 · 1시간 0분", vm.state.value.bars[3].valueText)
+        assertEquals("10월 4주 · 1시간 0분", vm.state.value!!.bars[3].valueText)
 
         vm.selectMetric(StatMetric.ASCENT)
         advanceUntilIdle()
-        assertEquals(50.0, vm.state.value.bars[3].value, 1e-9)
-        assertEquals("10월 4주 · 50 m", vm.state.value.bars[3].valueText)
+        assertEquals(50.0, vm.state.value!!.bars[3].value, 1e-9)
+        assertEquals("10월 4주 · 50 m", vm.state.value!!.bars[3].valueText)
 
         vm.selectBar(99)
         advanceUntilIdle()
-        assertNull(vm.state.value.selectedBar)
+        assertNull(vm.state.value!!.selectedBar)
 
         today = LocalDate.of(2026, 10, 12) // October 12th: the later weeks are still to come
         vm.refresh()
         advanceUntilIdle()
-        assertEquals(listOf(false, false, false, true, true), vm.state.value.bars.map { it.upcoming })
+        assertEquals(listOf(false, false, false, true, true), vm.state.value!!.bars.map { it.upcoming })
         vm.selectBar(4)
         advanceUntilIdle()
-        assertNull(vm.state.value.selectedBar)
+        assertNull(vm.state.value!!.selectedBar)
     }
 
     @Test
     fun recordsHiddenUnderTwoRides() = runTest(dispatcher) {
         val rides = FakeRides(listOf(sample[0]))
         val vm = viewModel(rides)
-        assertEquals(emptyList<RecordRow>(), vm.state.value.records)
+        assertEquals(emptyList<RecordRow>(), vm.state.value!!.records)
 
         rides.flow.value = sample
         advanceUntilIdle()
-        assertEquals(7, vm.state.value.records.size)
-        assertEquals("가장 긴 주행", vm.state.value.records.first().label)
+        assertEquals(7, vm.state.value!!.records.size)
+        assertEquals("가장 긴 주행", vm.state.value!!.records.first().label)
     }
 
     @Test
     fun saveGoalsWritesValidAndClearsEmpty() = runTest(dispatcher) {
         val goals = FakeGoals(weekly = 50, yearly = 1000)
         val vm = viewModel(goals = goals)
-        assertEquals(50, vm.state.value.weeklyGoal?.goalKm)
+        assertEquals(50, vm.state.value!!.weeklyGoal?.goalKm)
 
         vm.saveGoals(GoalInput.Valid(100), GoalInput.Empty)
         advanceUntilIdle()
 
         assertEquals(listOf(GoalKm(100, null)), goals.saved)
-        assertEquals(100, vm.state.value.weeklyGoal?.goalKm)
-        assertNull(vm.state.value.yearlyGoal)
+        assertEquals(100, vm.state.value!!.weeklyGoal?.goalKm)
+        assertNull(vm.state.value!!.yearlyGoal)
 
         vm.saveGoals(GoalInput.Empty, GoalInput.Valid(2000))
         advanceUntilIdle()
         assertEquals(GoalKm(null, 2000), goals.saved.last())
-        assertNull(vm.state.value.weeklyGoal)
-        assertEquals(2000, vm.state.value.yearlyGoal?.goalKm)
+        assertNull(vm.state.value!!.weeklyGoal)
+        assertEquals(2000, vm.state.value!!.yearlyGoal?.goalKm)
     }
 
     @Test
@@ -337,13 +387,13 @@ class StatsViewModelTest {
         advanceUntilIdle()
 
         assertEquals(emptyList<GoalKm>(), goals.saved)
-        assertEquals(50, vm.state.value.weeklyGoal?.goalKm)
+        assertEquals(50, vm.state.value!!.weeklyGoal?.goalKm)
     }
 
     @Test
     fun goalsMeasureThisWeekAndThisYear() = runTest(dispatcher) {
         val vm = viewModel(goals = FakeGoals(weekly = 20, yearly = 1000))
-        val state = vm.state.value
+        val state = vm.state.value!!
 
         // The week of Monday 10/26 has no ride; the 25th (a Sunday) was the week before.
         assertEquals(0.0, state.weeklyGoal!!.distanceM, 1e-9)
@@ -355,26 +405,26 @@ class StatsViewModelTest {
         today = LocalDate.of(2026, 10, 25)
         vm.refresh()
         advanceUntilIdle()
-        assertEquals(20_000.0, vm.state.value.weeklyGoal!!.distanceM, 1e-9)
-        assertTrue(vm.state.value.weeklyGoal!!.reached)
-        assertEquals(1.0f, vm.state.value.weeklyGoal!!.fraction, 0f)
+        assertEquals(20_000.0, vm.state.value!!.weeklyGoal!!.distanceM, 1e-9)
+        assertTrue(vm.state.value!!.weeklyGoal!!.reached)
+        assertEquals(1.0f, vm.state.value!!.weeklyGoal!!.fraction, 0f)
     }
 
     @Test
     fun noYearlyGoalNoProjection() = runTest(dispatcher) {
-        assertNull(viewModel(goals = FakeGoals(weekly = 20)).state.value.projectionText)
+        assertNull(viewModel(goals = FakeGoals(weekly = 20)).state.value!!.projectionText)
     }
 
     @Test
     fun streakTextFollowsTheRides() = runTest(dispatcher) {
         val vm = viewModel()
         // The week of 10/19 had a ride; this week (10/26) none yet: 1 week so far.
-        assertEquals("1주 연속 · 이번 주에 타면 2주", vm.state.value.streakText)
+        assertEquals("1주 연속 · 이번 주에 타면 2주", vm.state.value!!.streakText)
 
         today = LocalDate.of(2026, 10, 25)
         vm.refresh()
         advanceUntilIdle()
-        assertEquals("1주 연속 주행 중", vm.state.value.streakText)
+        assertEquals("1주 연속 주행 중", vm.state.value!!.streakText)
     }
 
     @Test
@@ -383,22 +433,22 @@ class StatsViewModelTest {
 
         vm.selectKind(PeriodKind.WEEK)
         advanceUntilIdle()
-        assertEquals(PeriodFilter(weekStart = LocalDate.of(2026, 10, 26)), vm.state.value.cumulativeFilter)
+        assertEquals(PeriodFilter(weekStart = LocalDate.of(2026, 10, 26)), vm.state.value!!.cumulativeFilter)
 
         vm.selectKind(PeriodKind.MONTH)
         advanceUntilIdle()
-        assertEquals(PeriodFilter(year = 2026, month = 10), vm.state.value.cumulativeFilter)
-        assertEquals(2, vm.state.value.cumulativeRides)
+        assertEquals(PeriodFilter(year = 2026, month = 10), vm.state.value!!.cumulativeFilter)
+        assertEquals(2, vm.state.value!!.cumulativeRides)
 
         vm.selectKind(PeriodKind.YEAR)
         advanceUntilIdle()
-        assertEquals(PeriodFilter(year = 2026), vm.state.value.cumulativeFilter)
-        assertEquals(3, vm.state.value.cumulativeRides)
+        assertEquals(PeriodFilter(year = 2026), vm.state.value!!.cumulativeFilter)
+        assertEquals(3, vm.state.value!!.cumulativeRides)
 
         vm.selectKind(PeriodKind.ALL)
         advanceUntilIdle()
-        assertEquals(PeriodFilter(), vm.state.value.cumulativeFilter)
-        assertEquals(3, vm.state.value.cumulativeRides)
+        assertEquals(PeriodFilter(), vm.state.value!!.cumulativeFilter)
+        assertEquals(3, vm.state.value!!.cumulativeRides)
     }
 
     @Test
@@ -409,8 +459,8 @@ class StatsViewModelTest {
         rides.flow.value = sample + ride(4, LocalDate.of(2026, 10, 28), 5.0)
         advanceUntilIdle()
 
-        assertEquals(35_000.0, vm.state.value.totals.distanceM, 1e-9)
-        assertEquals(3, vm.state.value.totals.rides)
+        assertEquals(35_000.0, vm.state.value!!.totals.distanceM, 1e-9)
+        assertEquals(3, vm.state.value!!.totals.rides)
     }
 
     @Test
@@ -421,7 +471,7 @@ class StatsViewModelTest {
         vm.refresh()
         advanceUntilIdle()
 
-        assertEquals(LocalDate.of(2026, 11, 1), vm.state.value.period.start)
-        assertEquals("2026년 11월", vm.state.value.title)
+        assertEquals(LocalDate.of(2026, 11, 1), vm.state.value!!.period.start)
+        assertEquals("2026년 11월", vm.state.value!!.title)
     }
 }
