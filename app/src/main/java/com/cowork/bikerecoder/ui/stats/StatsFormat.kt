@@ -57,7 +57,7 @@ fun weekName(monday: LocalDate, withYear: Boolean): String {
 
 /**
  * The sentence under the distance (spec §3.3). A finished period is compared with the one before it by name ("9월보다",
- * "지난주보다", "2025년보다"); the period in progress up to the same day ("지난달·지난주 이맘때보다", "작년 이맘때보다").
+ * "전 주보다" for a past week, "2025년보다"); the period in progress up to the same day ("지난달·지난주 이맘때보다", "작년 이맘때보다").
  * The value is the difference in distance, with the percentage only when the earlier value is above 0. Null for [PeriodKind.ALL]
  * and when both are 0.
  */
@@ -74,7 +74,7 @@ fun comparisonText(comparison: Comparison, period: StatsPeriod): String? {
         }
     } else {
         when (period.kind) {
-            PeriodKind.WEEK -> "지난주"
+            PeriodKind.WEEK -> "전 주"
             PeriodKind.MONTH -> "${period.start.minusMonths(1).monthValue}월"
             else -> "${period.start.year - 1}년"
         }

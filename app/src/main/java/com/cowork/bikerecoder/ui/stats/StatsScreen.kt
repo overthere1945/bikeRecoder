@@ -1,6 +1,9 @@
 package com.cowork.bikerecoder.ui.stats
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -26,6 +29,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -144,7 +148,7 @@ internal fun StatsContent(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onSelectMetric: (StatMetric) -> Unit,
-    onSelectBar: (Int) -> Unit,
+    onSelectBar: (Int?) -> Unit,
     onShowPeriod: (PeriodKind, LocalDate) -> Unit,
     onOpenSegment: (Long) -> Unit,
     onOpenCumulative: () -> Unit,
@@ -159,7 +163,7 @@ internal fun StatsContent(
         state = listState,
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.fillMaxSize().testTag(StatsTags.LIST),
+        modifier = Modifier.fillMaxSize().clearsBarOnOutsideTap { onSelectBar(null) }.testTag(StatsTags.LIST),
     ) {
         item(key = "goals") { GoalCard(state.weeklyGoal, state.yearlyGoal, state.projectionText, onEditGoals) }
         item(key = "streak") {
@@ -198,6 +202,18 @@ internal fun StatsContent(
     }
 }
 
+/**
+ * Calls [onTap] for a tap that nothing took (spec §3.3: "다른 곳을 누르면 사라진다"). The main pass reaches this parent after the
+ * children, so a tap on a bar, chip or button (which consume it) and a scroll or drag (which cancel it) do not count.
+ */
+private fun Modifier.clearsBarOnOutsideTap(onTap: () -> Unit): Modifier = pointerInput(onTap) {
+    awaitEachGesture {
+        awaitFirstDown(requireUnconsumed = false)
+        val up = waitForUpOrCancellation()
+        if (up != null && !up.isConsumed) onTap()
+    }
+}
+
 @Composable
 private fun PeriodBlock(
     state: StatsState,
@@ -205,7 +221,7 @@ private fun PeriodBlock(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onSelectMetric: (StatMetric) -> Unit,
-    onSelectBar: (Int) -> Unit,
+    onSelectBar: (Int?) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

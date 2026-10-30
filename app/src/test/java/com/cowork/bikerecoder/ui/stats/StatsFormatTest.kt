@@ -27,8 +27,11 @@ class StatsFormatTest {
     fun comparisonTexts() {
         // Finished periods: against the one before, by its name; a real minus sign (U+2212).
         assertEquals("9월보다 +21.3 km (+33%)", comparisonText(comparison(85.8, 64.5, false), october))
-        assertEquals("지난주보다 −4.0 km (−12%)", comparisonText(comparison(30.0, 34.0, false), week))
+        assertEquals("전 주보다 −4.0 km (−12%)", comparisonText(comparison(30.0, 34.0, false), week))
         assertEquals("2025년보다 +100.0 km (+10%)", comparisonText(comparison(1100.0, 1000.0, false), year))
+        // Last week itself reads like any past week: against the one before it.
+        val lastWeek = StatsPeriod(PeriodKind.WEEK, LocalDate.of(2026, 10, 12), LocalDate.of(2026, 10, 18))
+        assertEquals("전 주보다 +6.0 km (+20%)", comparisonText(comparison(36.0, 30.0, false), lastWeek))
         // January compares with December of the year before.
         val january = StatsPeriod(PeriodKind.MONTH, LocalDate.of(2026, 1, 1), LocalDate.of(2026, 1, 31))
         assertEquals("12월보다 +1.0 km (+10%)", comparisonText(comparison(11.0, 10.0, false), january))

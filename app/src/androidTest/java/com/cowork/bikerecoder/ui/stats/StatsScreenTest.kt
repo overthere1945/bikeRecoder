@@ -179,6 +179,27 @@ class StatsScreenTest {
     }
 
     @Test
+    fun tappingElsewhereHidesTheBarValue() {
+        show()
+        composeRule.onNodeWithTag(StatsTags.bar(3)).performClick()
+        composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals("10월 4주 · 61.8 km")
+
+        composeRule.onNodeWithTag(StatsTags.TITLE).performClick() // text on the background
+        composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals(" ")
+
+        composeRule.onNodeWithTag(StatsTags.bar(3)).performClick()
+        composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals("10월 4주 · 61.8 km")
+        composeRule.onNodeWithTag(StatsTags.BAR_VALUE).performClick() // the value line itself
+        composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals(" ")
+
+        // A tap on the bar still toggles: on, then off (not on again).
+        composeRule.onNodeWithTag(StatsTags.bar(4)).performClick()
+        composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals("10월 5주 · 64.3 km")
+        composeRule.onNodeWithTag(StatsTags.bar(4)).performClick()
+        composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals(" ")
+    }
+
+    @Test
     fun barsOfDaysThatHaveNotComeCannotBeTapped() {
         show()
         composeRule.onNodeWithTag(StatsTags.kind(PeriodKind.WEEK)).performClick()
