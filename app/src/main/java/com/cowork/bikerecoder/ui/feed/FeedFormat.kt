@@ -26,8 +26,8 @@ fun clockText(millis: Long, zone: ZoneId): String {
     return "${if (hour < 12) "오전" else "오후"} $hour12:${"%02d".format(time.minute)}"
 }
 
-/** The name of the satellite picture file of a trip ([com.cowork.bikerecoder.feed.FeedThumbnails] writes `<tripId>-<key>.png`). */
-fun feedThumbName(tripId: Long, key: String): String = "$tripId-$key.png"
+/** The name of the satellite picture file of a trip ([com.cowork.bikerecoder.feed.FeedThumbnails] writes `<tripId>-<key>.webp`). */
+fun feedThumbName(tripId: Long, key: String): String = "$tripId-$key.webp"
 
 /** "64.2 km": kilometres to one decimal, rounded half up. */
 fun kmText(meters: Double): String =

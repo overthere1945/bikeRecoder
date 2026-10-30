@@ -6,16 +6,22 @@ import android.graphics.Color
 import android.util.Log
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.cowork.bikerecoder.BuildConfig
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.video.Aspect
 import com.cowork.bikerecoder.core.video.VideoOptions
+import com.cowork.bikerecoder.feed.AndroidBitmapWebp
+import com.cowork.bikerecoder.map.OpenFreeMapSource
 import com.cowork.bikerecoder.map.TileSource
 import kotlinx.coroutines.runBlocking
+import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 
 /**
@@ -103,6 +109,26 @@ class FeedThumbnailRendererTest {
         assertTrue("dark pill $corner", corner > 1_000)
         assertTrue("white words $words", words > 100)
         assertEquals("nothing white at the bottom left", 0, same)
+        image.recycle()
+    }
+
+    /**
+     * Ruling I4: a real satellite picture (the build's VWorld key, over the device's internet) as the feed stores it, WebP
+     * lossy 90, is far smaller than as PNG 100 (on the S22: about 106 KB against 813 KB).
+     */
+    @Test
+    fun aRealSatellitePictureIsStoredSmall() = runBlocking {
+        assumeTrue("this build has no VWorld key", BuildConfig.VWORLD_API_KEY.isNotBlank())
+        val real = FeedThumbnailRenderer(
+            context, Backend(SatelliteCheck.OK), OpenFreeMapSource(OkHttpClient(), cacheFile = null), BuildConfig.VWORLD_API_KEY,
+        )
+        val image = real.render(VideoTestTrip.inputs())!!
+
+        val png = ByteArrayOutputStream().also { check(image.compress(Bitmap.CompressFormat.PNG, 100, it)) }.size()
+        val stored = ByteArrayOutputStream().also { AndroidBitmapWebp.write(image, it) }.size()
+        Log.i(TAG, "picture sizes: PNG 100 $png bytes, stored (WebP lossy 90) $stored bytes")
+        assertTrue("PNG $png, WebP $stored", stored * 2 <= png)
+        assertTrue("WebP $stored", stored < 300_000)
         image.recycle()
     }
 

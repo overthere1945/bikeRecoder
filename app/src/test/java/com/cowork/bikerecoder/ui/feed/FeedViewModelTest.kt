@@ -948,10 +948,10 @@ class FeedViewModelTest {
         val key1 = vm.card(1).thumbKey!!
         assertNull(vm.card(1).thumbFile)
 
-        pictures.filesFlow.value = mapOf(1L to File("/feed/1-$key1.png"), 2L to File("/feed/2-0123456789ab.png"))
+        pictures.filesFlow.value = mapOf(1L to File("/feed/1-$key1.webp"), 2L to File("/feed/2-0123456789ab.webp"))
         advanceUntilIdle()
 
-        assertEquals(File("/feed/1-$key1.png"), vm.card(1).thumbFile)
+        assertEquals(File("/feed/1-$key1.webp"), vm.card(1).thumbFile)
         assertNull(vm.card(2).thumbFile, "a picture of an older key is not this trip's picture")
     }
 

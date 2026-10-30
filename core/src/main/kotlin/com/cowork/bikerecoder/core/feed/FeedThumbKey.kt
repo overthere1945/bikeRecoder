@@ -12,8 +12,8 @@ data class ThumbSegment(val id: Long, val endedAt: Long, val distanceM: Double)
  * SHA-256을 낸 앞 12자리 16진수.
  */
 object FeedThumbKey {
-    /** 그리는 방식을 바꾸면 올린다: 저장된 그림이 모두 새로 그려진다. */
-    const val VERSION = 1
+    /** 그리는 방식을 바꾸면 올린다: 저장된 그림이 모두 새로 그려진다. 2: PNG에서 WebP로(판정 I4). */
+    const val VERSION = 2
 
     private const val HEX_CHARS = 12
 

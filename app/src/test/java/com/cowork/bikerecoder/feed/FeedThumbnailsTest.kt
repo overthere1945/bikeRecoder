@@ -25,7 +25,7 @@ import java.io.OutputStream
 /**
  * 피드 위성 그림의 대기 줄(스펙 §2.4, §4): 한 번에 하나씩 `want` 순서로, 기록·안내·영상이 돌면 쉬고, 실패는 이 프로세스에서
  * 다시 안 하고(연결이 돌아오면 지운다), 저장은 임시 파일을 거치고, 지워진 여행의 그림은 남지 않는다.
- * 가짜 그림 만들기·가짜 PNG 쓰기(이 JVM에는 Bitmap이 없다), 임시 폴더, 시험용 시계.
+ * 가짜 그림 만들기·가짜 WebP 쓰기(이 JVM에는 Bitmap이 없다), 임시 폴더, 시험용 시계.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class FeedThumbnailsTest {
@@ -52,8 +52,8 @@ class FeedThumbnailsTest {
         return unsafe.allocateInstance(Bitmap::class.java) as Bitmap
     }
 
-    private val png = object : BitmapPng {
-        override fun write(bitmap: Bitmap, out: OutputStream) = out.write("png".toByteArray())
+    private val writer = object : BitmapWriter {
+        override fun write(bitmap: Bitmap, out: OutputStream) = out.write("webp".toByteArray())
         override fun recycle(bitmap: Bitmap) {
             recycled += bitmap
         }
@@ -81,7 +81,7 @@ class FeedThumbnailsTest {
 
     private fun TestScope.thumbs() = FeedThumbnails(
         dir, ::render, busy, online, CoroutineScope(StandardTestDispatcher(testScheduler) + SupervisorJob()).also { scopes += it }, { m, e -> warnings += m to e },
-        io = StandardTestDispatcher(testScheduler), png = png,
+        io = StandardTestDispatcher(testScheduler), writer = writer,
     )
 
     private fun names() = dir.list().orEmpty().sorted()
@@ -99,8 +99,8 @@ class FeedThumbnailsTest {
 
         assertEquals(listOf(3L, 1L, 2L), calls)
         assertEquals(1, maxInFlight)
-        assertEquals(mapOf(3L to "3-c.png", 1L to "1-a.png", 2L to "2-b.png"), thumbs.names())
-        assertEquals(listOf("1-a.png", "2-b.png", "3-c.png"), names())
+        assertEquals(mapOf(3L to "3-c.webp", 1L to "1-a.webp", 2L to "2-b.webp"), thumbs.names())
+        assertEquals(listOf("1-a.webp", "2-b.webp", "3-c.webp"), names())
         assertEquals(3, recycled.size)
     }
 
@@ -117,7 +117,7 @@ class FeedThumbnailsTest {
         advanceUntilIdle()
 
         assertEquals(listOf(2L), calls)
-        assertEquals(mapOf(2L to "2-b.png"), thumbs.names())
+        assertEquals(mapOf(2L to "2-b.webp"), thumbs.names())
     }
 
     @Test
@@ -133,7 +133,7 @@ class FeedThumbnailsTest {
         advanceUntilIdle()
 
         assertEquals(listOf(1L, 2L), calls)
-        assertEquals(mapOf(1L to "1-a2.png", 2L to "2-b.png"), thumbs.names())
+        assertEquals(mapOf(1L to "1-a2.webp", 2L to "2-b.webp"), thumbs.names())
     }
 
     @Test
@@ -158,7 +158,7 @@ class FeedThumbnailsTest {
         online.value = true
         advanceUntilIdle()
         assertEquals(listOf(1L, 1L), calls)
-        assertEquals(mapOf(1L to "1-a.png"), thumbs.names())
+        assertEquals(mapOf(1L to "1-a.webp"), thumbs.names())
     }
 
     @Test
@@ -187,13 +187,13 @@ class FeedThumbnailsTest {
         thumbs.want(1, "a")
         thumbs.want(2, "x")
         advanceUntilIdle()
-        assertEquals(listOf("1-a.png", "2-x.png"), names())
+        assertEquals(listOf("1-a.webp", "2-x.webp"), names())
 
         thumbs.want(1, "b")
         advanceUntilIdle()
 
-        assertEquals(listOf("1-b.png", "2-x.png"), names())
-        assertEquals(mapOf(1L to "1-b.png", 2L to "2-x.png"), thumbs.names())
+        assertEquals(listOf("1-b.webp", "2-x.webp"), names())
+        assertEquals(mapOf(1L to "1-b.webp", 2L to "2-x.webp"), thumbs.names())
     }
 
     @Test
@@ -206,10 +206,10 @@ class FeedThumbnailsTest {
         thumbs.want(1, "b")
         runCurrent()
 
-        assertEquals(mapOf(1L to "1-a.png"), thumbs.names())
+        assertEquals(mapOf(1L to "1-a.webp"), thumbs.names())
         gates.getValue(1).complete(Unit)
         advanceUntilIdle()
-        assertEquals(mapOf(1L to "1-b.png"), thumbs.names())
+        assertEquals(mapOf(1L to "1-b.webp"), thumbs.names())
     }
 
     @Test
@@ -229,7 +229,7 @@ class FeedThumbnailsTest {
 
         // The picture drawn after the delete is thrown away; the next trip goes on.
         assertEquals(listOf(2L), thumbs.files.value.keys.toList())
-        assertEquals(listOf("2-b.png"), names())
+        assertEquals(listOf("2-b.webp"), names())
         assertEquals(listOf(1L, 2L), calls)
         assertEquals(2, recycled.size)
     }
@@ -256,7 +256,7 @@ class FeedThumbnailsTest {
         advanceUntilIdle()
 
         assertEquals(listOf(1L, 2L, 3L), calls)
-        assertEquals(mapOf(2L to "2-b.png", 3L to "3-c.png"), thumbs.names())
+        assertEquals(mapOf(2L to "2-b.webp", 3L to "3-c.webp"), thumbs.names())
     }
 
     @Test
@@ -273,13 +273,13 @@ class FeedThumbnailsTest {
         gates.getValue(1).complete(Unit)
         advanceUntilIdle()
         assertEquals(listOf(1L), calls)
-        assertEquals(mapOf(1L to "1-a.png"), thumbs.names())
+        assertEquals(mapOf(1L to "1-a.webp"), thumbs.names())
 
         // The recording ends: on with 2.
         busy.value = false
         advanceUntilIdle()
         assertEquals(listOf(1L, 2L), calls)
-        assertEquals(mapOf(1L to "1-a.png", 2L to "2-b.png"), thumbs.names())
+        assertEquals(mapOf(1L to "1-a.webp", 2L to "2-b.webp"), thumbs.names())
     }
 
     @Test
@@ -297,42 +297,42 @@ class FeedThumbnailsTest {
 
     @Test
     fun pruneRemovesFilesOfGoneTrips() = runTest {
-        File(dir, "1-a.png").writeText("x")
-        File(dir, "2-b.png").writeText("x")
-        File(dir, "3-c.png").writeText("x")
-        File(dir, "2-b.png.tmp").writeText("x")
+        File(dir, "1-a.webp").writeText("x")
+        File(dir, "2-b.webp").writeText("x")
+        File(dir, "3-c.webp").writeText("x")
+        File(dir, "2-b.webp.tmp").writeText("x")
         val thumbs = thumbs()
 
         thumbs.prune(setOf(1L, 3L))
 
-        assertEquals(listOf("1-a.png", "3-c.png"), names())
-        assertEquals(mapOf(1L to "1-a.png", 3L to "3-c.png"), thumbs.names())
+        assertEquals(listOf("1-a.webp", "3-c.webp"), names())
+        assertEquals(mapOf(1L to "1-a.webp", 3L to "3-c.webp"), thumbs.names())
     }
 
     @Test
     fun startupTakesTheLatestFilePerTripAndClearsTemporaryFiles() = runTest {
-        File(dir, "1-old.png").apply { writeText("x"); setLastModified(1_000_000) }
-        File(dir, "1-new.png").apply { writeText("x"); setLastModified(2_000_000) }
-        File(dir, "2-z.png.tmp").writeText("x")
+        File(dir, "1-old.webp").apply { writeText("x"); setLastModified(1_000_000) }
+        File(dir, "1-new.webp").apply { writeText("x"); setLastModified(2_000_000) }
+        File(dir, "2-z.webp.tmp").writeText("x")
         File(dir, "notes.txt").writeText("x")
         val thumbs = thumbs()
 
         advanceUntilIdle()
 
-        assertEquals(mapOf(1L to "1-new.png"), thumbs.names())
-        assertEquals(listOf("1-new.png", "notes.txt"), names())
+        assertEquals(mapOf(1L to "1-new.webp"), thumbs.names())
+        assertEquals(listOf("1-new.webp", "notes.txt"), names())
     }
 
     @Test
     fun aFileOfTheWantedKeyOnDiskIsNotRenderedAgain() = runTest {
-        File(dir, "1-a.png").writeText("x")
+        File(dir, "1-a.webp").writeText("x")
         val thumbs = thumbs()
 
         thumbs.want(1, "a")
         advanceUntilIdle()
 
         assertEquals(emptyList<Long>(), calls)
-        assertEquals(mapOf(1L to "1-a.png"), thumbs.names())
+        assertEquals(mapOf(1L to "1-a.webp"), thumbs.names())
     }
 
     @Test
@@ -344,7 +344,7 @@ class FeedThumbnailsTest {
         advanceUntilIdle()
 
         assertEquals(listOf(1L, 2L), calls)
-        assertEquals(mapOf(2L to "2-b.png"), thumbs.names())
+        assertEquals(mapOf(2L to "2-b.webp"), thumbs.names())
         assertTrue(warnings.single().second is OutOfMemoryError)
 
         // Remembered as failed, and the worker is still alive for a later trip.
@@ -352,20 +352,53 @@ class FeedThumbnailsTest {
         thumbs.want(3, "c")
         advanceUntilIdle()
         assertEquals(listOf(1L, 2L, 3L), calls)
-        assertEquals(mapOf(2L to "2-b.png", 3L to "3-c.png"), thumbs.names())
+        assertEquals(mapOf(2L to "2-b.webp", 3L to "3-c.webp"), thumbs.names())
     }
 
     @Test
     fun aStrayOverLongNumberedFileAtStartupIsIgnoredAndTheQueueStillRenders() = runTest {
-        File(dir, "99999999999999999999-x.png").writeText("x")
-        File(dir, "99999999999999999999-x.png.tmp").writeText("x")
+        File(dir, "99999999999999999999-x.webp").writeText("x")
+        File(dir, "99999999999999999999-x.webp.tmp").writeText("x")
         val thumbs = thumbs()
 
         thumbs.want(1, "a")
         advanceUntilIdle()
 
         assertEquals(listOf(1L), calls)
-        assertEquals(mapOf(1L to "1-a.png"), thumbs.names())
-        assertTrue(File(dir, "99999999999999999999-x.png").exists())
+        assertEquals(mapOf(1L to "1-a.webp"), thumbs.names())
+        assertTrue(File(dir, "99999999999999999999-x.webp").exists())
+    }
+
+    /** Ruling I4: the PNG pictures of the first V1.4.0 builds go at the start; their trips are drawn again as WebP. */
+    @Test
+    fun legacyPngPicturesAreDeletedAtStartAndDrawnAgainAsWebp() = runTest {
+        File(dir, "1-a.png").writeText("x")
+        File(dir, "2-b.png.tmp").writeText("x")
+        File(dir, "3-c.webp").writeText("x")
+        File(dir, "99999999999999999999-x.png").writeText("x")
+        val thumbs = thumbs()
+
+        thumbs.want(1, "a")
+        advanceUntilIdle()
+
+        assertEquals(listOf(1L), calls)
+        assertEquals(mapOf(1L to "1-a.webp", 3L to "3-c.webp"), thumbs.names())
+        assertEquals(listOf("1-a.webp", "3-c.webp", "99999999999999999999-x.png"), names())
+    }
+
+    @Test
+    fun pruneAlsoRemovesLegacyPngFiles() = runTest {
+        File(dir, "1-a.webp").writeText("x")
+        val thumbs = thumbs()
+        advanceUntilIdle()
+        // PNG files that showed up after the start's sweep: of a kept trip and of a gone one.
+        File(dir, "1-a.png").writeText("x")
+        File(dir, "2-b.png").writeText("x")
+        File(dir, "2-b.png.tmp").writeText("x")
+
+        thumbs.prune(setOf(1L))
+
+        assertEquals(listOf("1-a.webp"), names())
+        assertEquals(mapOf(1L to "1-a.webp"), thumbs.names())
     }
 }

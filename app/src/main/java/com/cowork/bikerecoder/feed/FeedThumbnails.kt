@@ -20,15 +20,21 @@ import java.io.IOException
 import java.io.OutputStream
 
 /** How a finished picture is written and let go (a seam: the JVM tests have no Bitmap to compress). */
-interface BitmapPng {
+interface BitmapWriter {
     fun write(bitmap: Bitmap, out: OutputStream)
 
     fun recycle(bitmap: Bitmap)
 }
 
-internal object AndroidBitmapPng : BitmapPng {
+private const val WEBP_QUALITY = 90
+
+/**
+ * WebP lossy at quality 90 (ruling I4): on the S22 a 1280×720 satellite picture is about 106 KB, against about 813 KB as
+ * PNG 100.
+ */
+internal object AndroidBitmapWebp : BitmapWriter {
     override fun write(bitmap: Bitmap, out: OutputStream) {
-        check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) { "PNG not written" }
+        check(bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, WEBP_QUALITY, out)) { "WebP not written" }
     }
 
     override fun recycle(bitmap: Bitmap) = bitmap.recycle()
@@ -36,16 +42,18 @@ internal object AndroidBitmapPng : BitmapPng {
 
 /**
  * The satellite pictures of the feed's trip cards (V1.4.0 spec §2.4, §4), made one at a time in the background and kept
- * as `<tripId>-<key>.png` in [dir] (the key says what the picture was drawn from, [com.cowork.bikerecoder.core.feed.FeedThumbKey]).
+ * as `<tripId>-<key>.webp` in [dir] (the key says what the picture was drawn from, [com.cowork.bikerecoder.core.feed.FeedThumbKey]).
  *
  * - A card on screen [want]s its trip's picture and [unwant]s it when it leaves; the wanted ones are made in the order they
  *   were first wanted, by a single worker in [scope], through [render] (null = it cannot be made now: no satellite map, no route).
  * - While [busy] (a recording, guidance or a video is running) no new picture is started; one already under way is finished and
  *   saved.
  * - A picture that failed (null, an exception) is not tried again in this process, until [online] turns from false to true.
- * - A picture is written to `….png.tmp` and renamed, then the trip's other files are deleted. [files] holds the newest picture of
+ * - A picture is written to `….webp.tmp` and renamed, then the trip's other files are deleted. [files] holds the newest picture of
  *   each trip (read from [dir] at the start, so earlier runs' pictures show at once). [delete] and [prune] leave no file behind
  *   even when a picture of that trip is being made at that moment.
+ * - The `.png` pictures of the first V1.4.0 builds (and their `.png.tmp`) are deleted at the start and by [prune]; the cards
+ *   on screen draw theirs again.
  */
 class FeedThumbnails internal constructor(
     private val dir: File,
@@ -55,7 +63,7 @@ class FeedThumbnails internal constructor(
     scope: CoroutineScope,
     private val log: WarnLog,
     private val io: CoroutineDispatcher,
-    private val png: BitmapPng,
+    private val writer: BitmapWriter,
 ) {
     constructor(
         dir: File,
@@ -64,7 +72,7 @@ class FeedThumbnails internal constructor(
         online: Flow<Boolean>,
         scope: CoroutineScope,
         log: WarnLog,
-    ) : this(dir, render, busy, online, scope, log, Dispatchers.IO, AndroidBitmapPng)
+    ) : this(dir, render, busy, online, scope, log, Dispatchers.IO, AndroidBitmapWebp)
 
     private val lock = Any()
 
@@ -147,10 +155,16 @@ class FeedThumbnails internal constructor(
         withContext(io) { deleteFilesOf(tripId) }
     }
 
-    /** Deletes the files of every trip not in [keep] (the startup sweep after trips were deleted, spec §4). */
+    /**
+     * Deletes the files of every trip not in [keep] (the startup sweep after trips were deleted, spec §4), and every legacy
+     * `.png` picture.
+     */
     suspend fun prune(keep: Set<Long>) {
         started.await()
-        val onDisk = withContext(io) { dir.listFiles().orEmpty().mapNotNull { tripOf(it.name) } }
+        val onDisk = withContext(io) {
+            deleteLegacy()
+            dir.listFiles().orEmpty().mapNotNull { tripOf(it.name) }
+        }
         val gone = (files.value.keys + onDisk).toSet() - keep
         for (id in gone) {
             forget(id)
@@ -171,10 +185,16 @@ class FeedThumbnails internal constructor(
         dir.listFiles().orEmpty().filter { tripOf(it.name) == tripId }.forEach { it.delete() }
     }
 
-    /** Stray `.tmp` files go; the newest picture of each trip is shown and its older ones go. */
+    /** The `.png` pictures (and their `.tmp`) of the first V1.4.0 builds; a stranger's file is left alone. */
+    private fun deleteLegacy() {
+        dir.listFiles().orEmpty().filter { LEGACY.matches(it.name) && tripOf(it.name) != null }.forEach { it.delete() }
+    }
+
+    /** Stray `.tmp` files and legacy `.png` pictures go; the newest picture of each trip is shown and its older ones go. */
     private suspend fun readDirectory() = withContext(io) {
+        dir.listFiles().orEmpty().filter { it.name.endsWith(TMP) }.forEach { it.delete() }
+        deleteLegacy()
         val all = dir.listFiles().orEmpty()
-        all.filter { it.name.endsWith(TMP) }.forEach { it.delete() }
         // A name that looks like a picture but whose number is no trip id (too long for a Long) is a stranger: left alone.
         val pictures = all.filter { PICTURE.matches(it.name) }.mapNotNull { file -> tripOf(file.name)?.let { it to file } }
             .groupBy({ it.first }, { it.second })
@@ -223,7 +243,7 @@ class FeedThumbnails internal constructor(
         try {
             saved = withContext(io) {
                 dir.mkdirs()
-                tmp.outputStream().use { png.write(bitmap, it) }
+                tmp.outputStream().use { writer.write(bitmap, it) }
                 val target = File(dir, nameOf(tripId, key))
                 if (!tmp.renameTo(target)) throw IOException("cannot rename ${tmp.name}")
                 target
@@ -254,7 +274,7 @@ class FeedThumbnails internal constructor(
             }
             withContext(NonCancellable + io) { tmp.delete() }
         } finally {
-            png.recycle(bitmap)
+            writer.recycle(bitmap)
         }
     }
 
@@ -266,10 +286,13 @@ class FeedThumbnails internal constructor(
 
     private companion object {
         const val TMP = ".tmp"
-        val PICTURE = Regex("""^(\d+)-.+\.png$""")
-        val ANY = Regex("""^(\d+)-.+\.png(\.tmp)?$""")
+        val PICTURE = Regex("""^(\d+)-.+\.webp$""")
 
-        fun nameOf(tripId: Long, key: String) = "$tripId-$key.png"
+        /** A picture or its temporary file, of this build (`.webp`) or a legacy one (`.png`). */
+        val ANY = Regex("""^(\d+)-.+\.(webp|png)(\.tmp)?$""")
+        val LEGACY = Regex("""^(\d+)-.+\.png(\.tmp)?$""")
+
+        fun nameOf(tripId: Long, key: String) = "$tripId-$key.webp"
 
         /** The trip a file in the directory belongs to; null for a stranger. */
         fun tripOf(name: String): Long? = ANY.matchEntire(name)?.groupValues?.get(1)?.toLongOrNull()

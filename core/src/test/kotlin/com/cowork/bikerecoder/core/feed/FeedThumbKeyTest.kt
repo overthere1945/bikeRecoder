@@ -42,6 +42,14 @@ class FeedThumbKeyTest {
         }
     }
 
+    /** 판정 I4: 그림이 PNG에서 WebP로 바뀌어 버전 2다. 같은 구간이라도 버전 1의 키와 다르다. */
+    @Test
+    fun versionTwoSinceWebp() {
+        assertEquals(2, FeedThumbKey.VERSION)
+        // SHA-256 of "1:1000:12345|v2"; with "|v1" it was "bf99aa2bfde8".
+        assertEquals("e591644d98a4", FeedThumbKey.of(listOf(a)))
+    }
+
     @Test
     fun segmentBoundariesAreNotAmbiguous() {
         // "1:23:4" + "5:6:7" must not equal "1:2:34" + "5:6:7"-like concatenations.
