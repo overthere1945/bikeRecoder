@@ -109,10 +109,23 @@ class FeedThumbnails internal constructor(
         scope.launch {
             try {
                 readDirectory()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                log.warn("Feed pictures directory cannot be read", e)
             } finally {
                 started.complete(Unit)
             }
-            for (ignored in wake) work()
+            for (ignored in wake) {
+                // Whatever goes wrong in a pass (an Error such as OutOfMemoryError included), the worker lives on.
+                try {
+                    work()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    log.warn("Feed picture queue pass failed", e)
+                }
+            }
         }
     }
 
@@ -162,7 +175,9 @@ class FeedThumbnails internal constructor(
     private suspend fun readDirectory() = withContext(io) {
         val all = dir.listFiles().orEmpty()
         all.filter { it.name.endsWith(TMP) }.forEach { it.delete() }
-        val pictures = all.filter { PICTURE.matches(it.name) }.groupBy { tripOf(it.name)!! }
+        // A name that looks like a picture but whose number is no trip id (too long for a Long) is a stranger: left alone.
+        val pictures = all.filter { PICTURE.matches(it.name) }.mapNotNull { file -> tripOf(file.name)?.let { it to file } }
+            .groupBy({ it.first }, { it.second })
         val newest = pictures.mapValues { (_, list) -> list.maxWith(compareBy<File> { it.lastModified() }.thenBy { it.name }) }
         pictures.values.flatten().filter { file -> newest.values.none { it == file } }.forEach { it.delete() }
         synchronized(lock) { _files.value = _files.value + newest }
@@ -193,7 +208,7 @@ class FeedThumbnails internal constructor(
             render(tripId)
         } catch (e: CancellationException) {
             throw e
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             log.warn("Feed picture of trip $tripId cannot be drawn", e)
             fail(tripId, key)
             return
@@ -231,7 +246,7 @@ class FeedThumbnails internal constructor(
                 saved?.delete()
                 tmp.delete()
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             val deleted = synchronized(lock) { (generation[tripId] ?: 0) != number }
             if (!deleted) {
                 log.warn("Feed picture of trip $tripId cannot be saved", e)

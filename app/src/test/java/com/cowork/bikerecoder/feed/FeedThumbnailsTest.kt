@@ -43,6 +43,7 @@ class FeedThumbnailsTest {
     private val gates = HashMap<Long, CompletableDeferred<Unit>>()
     private val missing = HashSet<Long>()
     private val broken = HashSet<Long>()
+    private val outOfMemory = HashSet<Long>()
     private val recycled = mutableListOf<Bitmap>()
 
     /** What a "picture" is here: an allocated Bitmap that is never touched (its methods are stubs in this JVM). */
@@ -64,6 +65,7 @@ class FeedThumbnailsTest {
         maxInFlight = maxOf(maxInFlight, inFlight)
         try {
             gates[tripId]?.await() ?: delay(100)
+            if (tripId in outOfMemory) throw OutOfMemoryError("bitmap $tripId")
             if (tripId in broken) throw IllegalStateException("render of $tripId failed")
             return if (tripId in missing) null else fakeBitmap()
         } finally {
@@ -331,5 +333,39 @@ class FeedThumbnailsTest {
 
         assertEquals(emptyList<Long>(), calls)
         assertEquals(mapOf(1L to "1-a.png"), thumbs.names())
+    }
+
+    @Test
+    fun anErrorInARenderFailsThatPictureAndTheQueueGoesOn() = runTest {
+        val thumbs = thumbs()
+        outOfMemory += 1
+        thumbs.want(1, "a")
+        thumbs.want(2, "b")
+        advanceUntilIdle()
+
+        assertEquals(listOf(1L, 2L), calls)
+        assertEquals(mapOf(2L to "2-b.png"), thumbs.names())
+        assertTrue(warnings.single().second is OutOfMemoryError)
+
+        // Remembered as failed, and the worker is still alive for a later trip.
+        thumbs.want(1, "a")
+        thumbs.want(3, "c")
+        advanceUntilIdle()
+        assertEquals(listOf(1L, 2L, 3L), calls)
+        assertEquals(mapOf(2L to "2-b.png", 3L to "3-c.png"), thumbs.names())
+    }
+
+    @Test
+    fun aStrayOverLongNumberedFileAtStartupIsIgnoredAndTheQueueStillRenders() = runTest {
+        File(dir, "99999999999999999999-x.png").writeText("x")
+        File(dir, "99999999999999999999-x.png.tmp").writeText("x")
+        val thumbs = thumbs()
+
+        thumbs.want(1, "a")
+        advanceUntilIdle()
+
+        assertEquals(listOf(1L), calls)
+        assertEquals(mapOf(1L to "1-a.png"), thumbs.names())
+        assertTrue(File(dir, "99999999999999999999-x.png").exists())
     }
 }
