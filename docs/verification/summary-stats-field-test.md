@@ -57,9 +57,37 @@ adb -s R5CT43TFS9A shell input keyevent KEYCODE_WAKEUP
 ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=<클래스> </dev/null
 ```
 
-**S22 전체 시험: 최종 수정 후 기록**
+**S22 전체 시험 (2026-10-31, 최종 코드 `43889f4`)**
 
-이 기록 시점에는 기기 시험 전체(클래스를 하나씩 모두 돌린 결과)를 적지 않았습니다. 전체 리뷰의 수정이 끝난 최종 코드로 `app/src/androidTest`의 모든 클래스를 S22에서 하나씩 돌리고, 클래스 수·시험 수·흔들린 시험을 여기에 덧붙입니다. 설치(`installDebug`)와 스크린샷(`Download/bikeRecoderTest/v140-*.png`: 요약 탭, 통계 탭 목표 있음/없음, 제목 창, 기록 중 띠)도 그때 합니다. 이 변경에서는 `ui.settings.SettingsScreenTest`의 버전 표기만 `V1.4.0`으로 바뀌었고, 이 클래스만 S22에서 돌려 13/13 통과했습니다(2026-10-31, [설정] 탭 시험 포함).
+`app/src/androidTest`의 모든 클래스 **53개**를 S22에서 하나씩 돌렸습니다. 시험 **367개**가 모두 통과했고, 실패하거나 흔들린 시험은 없습니다. 다만 `FrameRendererTest.screenshots`와 `SummaryImageRendererTest`의 스크린샷 시험 두 개는 `screenshots=true` 인자를 줄 때만 도는 시험입니다. 이번에는 인자를 주지 않아 건너뛰었는데, XML 보고서에는 이 건너뜀이 `AssumptionViolatedException`, 곧 실패 1로 적힙니다. Gradle 결과는 두 클래스 모두 성공입니다.
+
+이번 수정과 관련된 클래스의 결과는 다음과 같습니다.
+
+- `ui.feed.FeedScreenTest` 20
+- `ui.stats.StatsScreenTest` 19, `ui.stats.GoalDialogTest` 7
+- `ui.main.MainTabsTest` 11
+- `ui.history.RenameTripDialogTest` 8
+- `data.RoomTripLabelStoreTest` 6
+- `data.RideDatabaseMigrationTest` 5 (5→6 포함)
+- `data.SettingsRepositoryGoalsTest` 2
+- `video.FeedThumbnailRendererTest` 6
+
+`video.FeedThumbnailRendererTest`의 그림 크기 시험은 인터넷과 브이월드 키가 있어야 돕니다. 키가 없으면 건너뛰고, 인터넷이 없으면 실패합니다.
+
+스크린샷은 `Download/bikeRecoderTest/` 아래 네 장입니다.
+
+- `v140-feed.png`: 요약 탭
+- `v140-stats-goals.png`: 통계 탭, 목표 있음
+- `v140-stats-nogoals.png`: 통계 탭, 목표 없음
+- `v140-band.png`: 기록 중 띠와 탭 아이콘
+
+화면으로 확인한 것은 다음과 같습니다.
+
+- 탭 아이콘이 한 가지 모양입니다.
+- 거리 표기가 "32.1 km", 높이 표기가 "123 m"입니다.
+- 목표 원 안의 글자가 두 줄로 나뉩니다.
+
+이전 실행에서 남은 `v140-* (n).png`는 지웠습니다. 그 뒤 `installDebug`로 설치해 `1.4.0-dev`, `10400`이 들어간 것을 확인했습니다. 시험이 앱을 지웠다가 새로 설치한 것이라, 처음 실행하면 권한 안내(1/5)부터 나옵니다.
 
 스펙 §6.2의 S22 확인 범위(전체 시험 때 이 범위가 모두 들어 있는지 확인):
 - DB 5→6 옮기기(`MigrationTestHelper`): 기존 여행·구간이 그대로이고 새 표 `trip_label`이 비어 있음
