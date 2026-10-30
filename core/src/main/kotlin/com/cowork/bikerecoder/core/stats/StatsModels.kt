@@ -11,6 +11,8 @@ data class RideStat(
     val distanceM: Double,
     val movingTimeMs: Long,
     val ascentM: Double,
+    /** 끝난 시각(ms). 통계에는 쓰지 않고, 요약 카드 그림의 키가 구간 변경을 알아보는 데 쓴다. */
+    val endedAt: Long = 0L,
 )
 
 enum class PeriodKind { WEEK, MONTH, YEAR, ALL }

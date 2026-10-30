@@ -97,15 +97,15 @@ class RoomRideStoreTest {
         val open = store.openSegment(tripId, startedAt = 20_000L, localDate = day2)
 
         assertEquals(
-            listOf(RideStat(done, tripId, 10_000L, day1, 1_200.0, 60_000L, 4.0)),
+            listOf(RideStat(done, tripId, 10_000L, day1, 1_200.0, 60_000L, 4.0, endedAt = 11_000L)),
             stats.observeRides().first(),
         )
 
         store.closeSegment(open, 21_000L, totals(5.0, 2_000L)) // 짧은 구간도 거르지 않고 내보낸다
         assertEquals(
             listOf(
-                RideStat(done, tripId, 10_000L, day1, 1_200.0, 60_000L, 4.0),
-                RideStat(open, tripId, 20_000L, day2, 5.0, 2_000L, 4.0),
+                RideStat(done, tripId, 10_000L, day1, 1_200.0, 60_000L, 4.0, endedAt = 11_000L),
+                RideStat(open, tripId, 20_000L, day2, 5.0, 2_000L, 4.0, endedAt = 21_000L),
             ),
             stats.observeRides().first(),
         )

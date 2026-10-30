@@ -19,6 +19,7 @@ class RoomRideStatsSource(db: AppDatabase) : RideStatsSource {
                 distanceM = it.distanceM,
                 movingTimeMs = it.movingTimeMs,
                 ascentM = it.ascentM,
+                endedAt = it.endedAt,
             )
         }
     }

@@ -16,7 +16,7 @@ class FakeRideStats(private val segments: suspend () -> List<RideSegment>) : Rid
 
     override fun observeRides(): Flow<List<RideStat>> = tick.map {
         segments().filter { it.endedAt != null }.map {
-            RideStat(it.id, it.tripId, it.startedAt, it.localDate, it.totals.distanceM, it.totals.movingTimeMs, it.totals.ascentM)
+            RideStat(it.id, it.tripId, it.startedAt, it.localDate, it.totals.distanceM, it.totals.movingTimeMs, it.totals.ascentM, it.endedAt!!)
         }
     }
 }

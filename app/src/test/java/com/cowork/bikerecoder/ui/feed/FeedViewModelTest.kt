@@ -907,6 +907,8 @@ class FeedViewModelTest {
         trip(2, TripStatus.COMPLETED)
         trip(3, TripStatus.COMPLETED)
         trip(4, TripStatus.COMPLETED)
+        trip(5, TripStatus.ACTIVE)
+        segment(5, startedAt = 700) // ACTIVE between two days: nothing open, so its picture can be drawn
         segment(1, startedAt = 100)
         segment(1, startedAt = 200, open = true)
         recording(2, startedAt = 300) // completed by guidance, still recording
@@ -927,6 +929,12 @@ class FeedViewModelTest {
             vm.card(3).thumbKey,
         )
         assertNull(vm.card(4).thumbKey, "no ride of 10 m or more")
+        assertTrue(vm.card(5).inProgress)
+        assertEquals(
+            FeedThumbKey.of(listOf(ThumbSegment(rides.segments(5).single().id, 700 + 1_000, 1_000.0))),
+            vm.card(5).thumbKey,
+            "an ACTIVE trip with no open segment still has its picture",
+        )
     }
 
     @Test
@@ -997,6 +1005,7 @@ class FeedViewModelTest {
 
         segment(1, startedAt = 200, totals = ride(2_000.0))
         vm.refresh()
+        stats.tick.value++
         advanceUntilIdle()
 
         val after = vm.card(1).thumbKey!!
@@ -1097,10 +1106,33 @@ class FeedViewModelTest {
 
         // A week later and nothing yet in the new week: the streak runs through last week.
         nowMs = seoul(2026, 11, 3, 12, 0)
-        stats.tick.value++
+        vm.refresh()
         advanceUntilIdle()
         assertEquals(Streak(3, includesThisWeek = false), vm.weekStrip.value.streak)
         assertEquals(0, vm.weekStrip.value.rides)
+    }
+
+    /** A process that lives into a new week shows the new week after the next resume, with no ride recorded between. */
+    @Test
+    fun refreshTakesTheNewDateForTheWeekStrip() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        segment(1, 1, LocalDate.of(2026, 10, 27), totals = ride(8_000.0))
+        val vm = history()
+        advanceUntilIdle()
+        assertEquals(8_000.0, vm.weekStrip.value.distanceM, 1e-9)
+        assertEquals(Streak(1, includesThisWeek = true), vm.weekStrip.value.streak)
+
+        nowMs = seoul(2026, 11, 3, 9, 0) // Tuesday of the next week; no stats emission
+        advanceUntilIdle()
+        assertEquals(8_000.0, vm.weekStrip.value.distanceM, 1e-9, "not before the screen is resumed")
+
+        vm.refresh()
+        advanceUntilIdle()
+
+        assertEquals(0.0, vm.weekStrip.value.distanceM, 1e-9)
+        assertEquals(0, vm.weekStrip.value.rides)
+        assertEquals(Streak(1, includesThisWeek = false), vm.weekStrip.value.streak)
+        assertEquals(-8_000.0, vm.weekStrip.value.diffM!!, 1e-9, "last week up to Tuesday has the Tuesday-or-earlier ride")
     }
 
     @Test

@@ -337,7 +337,7 @@ abstract class TripLabelDao {
 @Dao
 interface RideStatsDao {
     @Query(
-        "SELECT id AS segmentId, tripId, startedAt, localDate, distanceM, movingTimeMs, ascentM " +
+        "SELECT id AS segmentId, tripId, startedAt, localDate, distanceM, movingTimeMs, ascentM, endedAt " +
             "FROM ride_segment WHERE endedAt IS NOT NULL ORDER BY startedAt, id",
     )
     fun observeEnded(): Flow<List<RideStatRow>>
@@ -351,4 +351,5 @@ data class RideStatRow(
     val distanceM: Double,
     val movingTimeMs: Long,
     val ascentM: Double,
+    val endedAt: Long,
 )

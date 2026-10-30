@@ -14,7 +14,6 @@ import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.HeartRateSummary
 import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
 import com.cowork.bikerecoder.core.post.RideColors
-import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.TripDeleteCondition
 import com.cowork.bikerecoder.core.recording.TripRideSummary
@@ -60,6 +59,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.time.Instant
+import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
 
@@ -140,9 +140,9 @@ private class FeedThumbnailsPictures(private val thumbnails: FeedThumbnails) : F
  * counted ([hiddenShortCount]); [정리] deletes them after asking. Nothing is deleted without asking, and every delete is
  * conditional in the store ([TripDeleter], ruling R20).
  *
- * The listed trips are also shown as [months] of cards, whose segments, routes, photos and heart rate are read once per load
- * (a trip's segments each; the routes, photos and heart rate of all trips in one read of [postStore]); if the extras cannot be
- * read the cards are shown without them. The list is read again when a [postProcessor] pass ends or saves a route, and on
+ * The listed trips are also shown as [months] of cards: the numbers come from the finished rides of the stats flow, the routes,
+ * photos and heart rate from one read of [postStore] per load (not one per trip); if the extras cannot be read the cards are
+ * shown without them. The list is read again when a [postProcessor] pass ends or saves a route, and on
  * [refresh]. What changes by itself — titles ([labels]), made videos, satellite pictures, the stats for 🏆 — is followed live.
  * The screen tells which cards are on view ([onCardShown], [onCardHidden]); those are the ones whose picture is asked for and
  * whose region is looked up.
@@ -179,6 +179,11 @@ class FeedViewModel(
     /** True once the list has been read (or failed to be) for the first time: before it, "no trips" is not yet known. */
     val ready: StateFlow<Boolean> = _ready.asStateFlow()
 
+    private fun todayNow(): LocalDate = Instant.ofEpochMilli(clock()).atZone(zone).toLocalDate()
+
+    /** Today in [zone], read again by [refresh] (every resume), so a process that lives into a new week shows the new week. */
+    private val today = MutableStateFlow(todayNow())
+
     private val allRides: Flow<List<RideStat>> = rideStats.observeRides().safely(emptyList(), "ride stats")
 
     private val feed: StateFlow<FeedData> = combine(
@@ -196,8 +201,8 @@ class FeedViewModel(
         feed.map { it.months }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** Spec §2.1: this week, last week up to the same weekday, the goal and the streak. */
-    val weekStrip: StateFlow<WeekStripState> = combine(allRides, weeklyGoalKm.safely(null, "weekly goal")) { rides, goal ->
-        weekStripOf(rides, goal)
+    val weekStrip: StateFlow<WeekStripState> = combine(allRides, weeklyGoalKm.safely(null, "weekly goal"), today) { rides, goal, today ->
+        weekStripOf(rides, goal, today)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, WeekStripState(0.0, 0, null, null, Streak(0, includesThisWeek = false)))
 
     /** The short trips not listed, as last read. */
@@ -238,8 +243,9 @@ class FeedViewModel(
         viewModelScope.launch { feed.collect { data -> onView.toList().forEach { sync(it, data.cards[it]) } } }
     }
 
-    /** Reads the list again (e.g. back from a trip whose segments were deleted). */
+    /** Reads the list again (e.g. back from a trip whose segments were deleted) and takes the date again (a new week). */
     fun refresh() {
+        today.value = todayNow()
         viewModelScope.launch { mutex.withLock { load() } }
     }
 
@@ -278,8 +284,8 @@ class FeedViewModel(
     private suspend fun startOf(tripId: Long): GeoPoint? {
         val facts = loaded.value.facts[tripId] ?: return null
         facts.cards.firstNotNullOfOrNull { it.route?.firstOrNull() }?.let { return it }
-        val ride = facts.rides.firstOrNull() ?: return null
-        return rideStore.points(ride.id).firstOrNull()?.point
+        val ride = feed.value.firstRide[tripId] ?: return null
+        return rideStore.points(ride).firstOrNull()?.point
     }
 
     fun requestDelete(tripId: Long) {
@@ -375,11 +381,9 @@ class FeedViewModel(
                 val byTrip = segments.groupBy { it.tripId }
                 val facts = split.shown.associate { summary ->
                     val id = summary.trip.id
-                    val all = rideStore.segments(id)
                     id to TripFacts(
-                        rides = all.filter { it.endedAt != null && it.totals.distanceM >= MIN_RIDE_DISTANCE_M },
-                        firstStartedAt = all.filterNot { it.isEmpty }.minOfOrNull { it.startedAt },
                         inProgress = summary.trip.status == TripStatus.ACTIVE || id in split.open,
+                        hasOpenSegment = id in split.open,
                         cards = byTrip[id].orEmpty(),
                         photos = photos[id].orEmpty(),
                     )
@@ -423,13 +427,12 @@ class FeedViewModel(
 
     private class HistorySplit(val shown: List<TripRideSummary>, val hidden: List<Long>, val open: Set<Long>)
 
-    /** What one load read about a listed trip. */
+    /** What one load read about a listed trip (its finished rides come from the stats flow, not from a read per trip). */
     private class TripFacts(
-        /** The finished segments of [MIN_RIDE_DISTANCE_M] or more, in start order: what the card's numbers count. */
-        val rides: List<RideSegment>,
-        /** When its first segment with any distance began (a trip with no ride has no other start). */
-        val firstStartedAt: Long?,
+        /** ACTIVE, or a segment is open: "· 진행 중" and no delete. */
         val inProgress: Boolean,
+        /** A segment of it is open (being recorded): its picture is not drawn now. */
+        val hasOpenSegment: Boolean,
         /** The listed segments (with a distance) in start order. */
         val cards: List<SegmentCard>,
         val photos: List<Long>,
@@ -441,9 +444,14 @@ class FeedViewModel(
         }
     }
 
-    private class FeedData(val months: List<FeedMonth>, val cards: Map<Long, FeedCardState>) {
+    private class FeedData(
+        val months: List<FeedMonth>,
+        val cards: Map<Long, FeedCardState>,
+        /** The first finished ride (of [MIN_RIDE_DISTANCE_M] or more) of each trip that has one. */
+        val firstRide: Map<Long, Long>,
+    ) {
         companion object {
-            val EMPTY = FeedData(emptyList(), emptyMap())
+            val EMPTY = FeedData(emptyList(), emptyMap(), emptyMap())
         }
     }
 
@@ -455,46 +463,46 @@ class FeedViewModel(
         files: Map<Long, File>,
     ): FeedData {
         val trophies = RideRecords.recordHolderTrips(rides)
+        val ridesOf = StatsCalculator.rides(rides).groupBy { it.tripId }
         val videoOf = videos.filter { it.kind == MediaKind.VIDEO }.groupBy { it.tripId }
             .mapValues { (_, list) -> list.maxWith(compareBy({ it.createdAt }, { it.id })) }
         val cards = loaded.shown.associate { summary ->
             val id = summary.trip.id
             val facts = loaded.facts.getValue(id)
-            id to cardOf(summary, facts, labels[id] ?: TripLabel(), videoOf[id], id in trophies, files[id])
+            id to cardOf(summary, facts, ridesOf[id].orEmpty(), labels[id] ?: TripLabel(), videoOf[id], id in trophies, files[id])
         }
+        /** Spec §2.2: newest first by the first segment's start (a trip with no ride yet: its latest start). */
+        fun firstStart(summary: TripRideSummary) = ridesOf[summary.trip.id]?.firstOrNull()?.startedAt ?: summary.lastStartedAt
         val months = loaded.shown.groupBy { YearMonth.from(it.firstDate) }.toSortedMap(reverseOrder())
             .map { (month, trips) ->
                 FeedMonth(
                     header = monthHeaderText(month.year, month.monthValue, trips.sumOf { it.distanceM }, trips.size),
-                    cards = trips.map { cards.getValue(it.trip.id) to loaded.facts.getValue(it.trip.id) }
-                        .sortedWith(
-                            compareByDescending<Pair<FeedCardState, TripFacts>> { it.second.firstStartedAt ?: 0L }
-                                .thenByDescending { it.first.tripId },
-                        )
-                        .map { it.first },
+                    cards = trips.sortedWith(compareByDescending<TripRideSummary> { firstStart(it) }.thenByDescending { it.trip.id })
+                        .map { cards.getValue(it.trip.id) },
                 )
             }
-        return FeedData(months, cards)
+        return FeedData(months, cards, ridesOf.mapValues { (_, list) -> list.first().segmentId })
     }
 
     private fun cardOf(
         summary: TripRideSummary,
         facts: TripFacts,
+        rides: List<RideStat>,
         label: TripLabel,
         video: TripMedia?,
         trophy: Boolean,
         file: File?,
     ): FeedCardState {
         val id = summary.trip.id
-        val rides = facts.rides
-        val distance = rides.sumOf { it.totals.distanceM }
-        val moving = rides.sumOf { it.totals.movingTimeMs }
+        val distance = rides.sumOf { it.distanceM }
+        val moving = rides.sumOf { it.movingTimeMs }
         val days = rides.map { it.localDate }.distinct().sorted().ifEmpty { listOf(summary.firstDate) }
-        val firstStartedAt = rides.firstOrNull()?.startedAt ?: facts.firstStartedAt ?: summary.lastStartedAt
-        val thumbKey = if (facts.inProgress || rides.isEmpty()) {
+        val firstStartedAt = rides.firstOrNull()?.startedAt ?: summary.lastStartedAt
+        // Spec §2.4: no picture while a segment of the trip is open, or when it has no ride to draw.
+        val thumbKey = if (facts.hasOpenSegment || rides.isEmpty()) {
             null
         } else {
-            FeedThumbKey.of(rides.map { ThumbSegment(it.id, it.endedAt ?: 0L, it.totals.distanceM) })
+            FeedThumbKey.of(rides.map { ThumbSegment(it.segmentId, it.endedAt, it.distanceM) })
         }
         return FeedCardState(
             tripId = id,
@@ -503,7 +511,7 @@ class FeedViewModel(
             inProgress = facts.inProgress,
             distanceM = distance,
             movingTimeMs = moving,
-            ascentM = rides.sumOf { it.totals.ascentM },
+            ascentM = rides.sumOf { it.ascentM },
             avgSpeedMps = if (moving > 0) distance / (moving / 1000.0) else 0.0,
             avgBpm = HeartRateSummary.tripAverage(facts.cards.mapNotNull { s -> s.heartRate?.let { it to s.movingTimeMs } }),
             photoMediaIds = facts.photos.take(MAX_CARD_PHOTOS),
@@ -517,8 +525,7 @@ class FeedViewModel(
         )
     }
 
-    private fun weekStripOf(all: List<RideStat>, goalKm: Int?): WeekStripState {
-        val today = Instant.ofEpochMilli(clock()).atZone(zone).toLocalDate()
+    private fun weekStripOf(all: List<RideStat>, goalKm: Int?, today: LocalDate): WeekStripState {
         val rides = StatsCalculator.rides(all)
         val week = StatsCalculator.periodOf(PeriodKind.WEEK, today, rides, today)
         val comparison = checkNotNull(StatsCalculator.comparison(rides, week, today))
