@@ -178,11 +178,6 @@ class FeedViewModel(
 
     private val loaded = MutableStateFlow(Loaded.EMPTY)
 
-    private val _ready = MutableStateFlow(false)
-
-    /** True once the list has been read (or failed to be) for the first time: before it, "no trips" is not yet known. */
-    val ready: StateFlow<Boolean> = _ready.asStateFlow()
-
     private fun todayNow(): LocalDate = Instant.ofEpochMilli(clock()).atZone(zone).toLocalDate()
 
     /** Today in [zone], read again by [refresh] (every resume), so a process that lives into a new week shows the new week. */
@@ -205,6 +200,12 @@ class FeedViewModel(
         feed.map { it.months }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /**
+     * True once the list has been read (or failed to be) for the first time: before it, "no trips" is not yet known. Taken from
+     * the same built feed as [months], so the empty-state never shows for a frame above cards still being built.
+     */
+    val ready: StateFlow<Boolean> = feed.map { it.ready }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /**
      * Spec §2.1: this week, last week up to the same weekday, the goal and the streak. Null until the rides and the goal have
      * been read (review M2: no "0.0 km" or [목표 정하기] before them).
      */
@@ -215,10 +216,9 @@ class FeedViewModel(
     /** The short trips not listed, as last read. */
     private var hiddenShort: List<Long> = emptyList()
 
-    private val _hiddenShortCount = MutableStateFlow(0)
-
-    /** "짧은 기록 N개 숨김": the short trips not listed. */
-    val hiddenShortCount: StateFlow<Int> = _hiddenShortCount.asStateFlow()
+    /** "짧은 기록 N개 숨김": the short trips not listed (from the built feed, with the cards above it). */
+    val hiddenShortCount: StateFlow<Int> =
+        feed.map { it.hiddenShortCount }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
 
     /** The short trips the cleanup question counted (only these may be deleted by [confirmCleanup]). */
     private var cleanupIds: List<Long> = emptyList()
@@ -397,11 +397,10 @@ class FeedViewModel(
                 }
                 _trips.value = split.shown
                 hiddenShort = split.hidden
-                _hiddenShortCount.value = split.hidden.size
-                loaded.value = Loaded(split.shown, facts)
+                loaded.value = Loaded(split.shown, facts, split.hidden.size)
             }
         } finally {
-            _ready.value = true
+            if (!loaded.value.read) loaded.value = Loaded(emptyList(), emptyMap(), hiddenShortCount = 0)
         }
     }
 
@@ -445,9 +444,15 @@ class FeedViewModel(
         val photos: List<Long>,
     )
 
-    private class Loaded(val shown: List<TripRideSummary>, val facts: Map<Long, TripFacts>) {
+    private class Loaded(
+        val shown: List<TripRideSummary>,
+        val facts: Map<Long, TripFacts>,
+        val hiddenShortCount: Int,
+        /** False only before the first read has ended. */
+        val read: Boolean = true,
+    ) {
         companion object {
-            val EMPTY = Loaded(emptyList(), emptyMap())
+            val EMPTY = Loaded(emptyList(), emptyMap(), hiddenShortCount = 0, read = false)
         }
     }
 
@@ -456,9 +461,11 @@ class FeedViewModel(
         val cards: Map<Long, FeedCardState>,
         /** The first finished ride (of [MIN_RIDE_DISTANCE_M] or more) of each trip that has one. */
         val firstRide: Map<Long, Long>,
+        val hiddenShortCount: Int,
+        val ready: Boolean,
     ) {
         companion object {
-            val EMPTY = FeedData(emptyList(), emptyMap(), emptyMap())
+            val EMPTY = FeedData(emptyList(), emptyMap(), emptyMap(), hiddenShortCount = 0, ready = false)
         }
     }
 
@@ -491,7 +498,9 @@ class FeedViewModel(
                         .map { cards.getValue(it.trip.id) },
                 )
             }
-        return FeedData(months, cards, ridesOf.mapValues { (_, list) -> list.first().segmentId })
+        return FeedData(
+            months, cards, ridesOf.mapValues { (_, list) -> list.first().segmentId }, loaded.hiddenShortCount, loaded.read,
+        )
     }
 
     private fun cardOf(
