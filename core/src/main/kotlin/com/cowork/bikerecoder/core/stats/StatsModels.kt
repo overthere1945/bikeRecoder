@@ -1,0 +1,27 @@
+package com.cowork.bikerecoder.core.stats
+
+import java.time.LocalDate
+
+/** 통계에 쓰는 끝난 구간 한 건. 거르지 않은 상태로 들어오며, 걸러 쓰는 일은 [StatsCalculator.rides]가 한다. */
+data class RideStat(
+    val segmentId: Long,
+    val tripId: Long,
+    val startedAt: Long,
+    val localDate: LocalDate,
+    val distanceM: Double,
+    val movingTimeMs: Long,
+    val ascentM: Double,
+)
+
+enum class PeriodKind { WEEK, MONTH, YEAR, ALL }
+
+/** [start]~[endInclusive] 날짜 구간(양 끝 포함). */
+data class StatsPeriod(val kind: PeriodKind, val start: LocalDate, val endInclusive: LocalDate)
+
+data class StatTotals(val distanceM: Double, val rides: Int, val movingTimeMs: Long, val ascentM: Double)
+
+/** 막대 하나. [upcoming]은 [start]가 오늘보다 뒤라서 아직 오지 않은 칸. */
+data class Bucket(val start: LocalDate, val endInclusive: LocalDate, val totals: StatTotals, val upcoming: Boolean)
+
+/** [sameDay]가 true면 [current]는 이번 기간 오늘까지, [previous]는 앞 기간의 같은 날까지. */
+data class Comparison(val current: StatTotals, val previous: StatTotals, val sameDay: Boolean)
