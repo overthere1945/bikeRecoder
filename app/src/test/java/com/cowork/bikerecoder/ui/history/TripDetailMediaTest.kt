@@ -132,6 +132,8 @@ class TripDetailMediaTest {
         override fun observe(tripId: Long): Flow<List<TripMedia>> =
             items.map { list -> list.filter { it.tripId == tripId }.sortedByDescending { it.createdAt } }
 
+        override fun observeVideos(): Flow<List<TripMedia>> = error("not used")
+
         override suspend fun add(m: TripMedia): Long = error("not used")
 
         override suspend fun remove(ids: Collection<Long>) {

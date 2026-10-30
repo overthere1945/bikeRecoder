@@ -987,6 +987,7 @@ class VideoJobTest {
         val rows: MutableList<TripMedia> = Collections.synchronizedList(mutableListOf())
         val pendingAtAdd = mutableListOf<PendingJob?>()
         override fun observe(tripId: Long): Flow<List<TripMedia>> = flowOf(rows.filter { it.tripId == tripId })
+        override fun observeVideos(): Flow<List<TripMedia>> = flowOf(rows.filter { it.kind == MediaKind.VIDEO })
         var failAdd: (() -> Throwable)? = null
         override suspend fun add(m: TripMedia): Long {
             pendingAtAdd += store.pending()

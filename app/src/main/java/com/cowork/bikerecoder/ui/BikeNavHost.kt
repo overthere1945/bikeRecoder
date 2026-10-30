@@ -39,14 +39,14 @@ import com.cowork.bikerecoder.ui.onboarding.effectiveOnboardingStep
 import com.cowork.bikerecoder.ui.onboarding.readPermissionState
 import com.cowork.bikerecoder.ui.cumulative.CumulativeMapScreen
 import com.cowork.bikerecoder.ui.cumulative.CumulativeMapViewModel
+import com.cowork.bikerecoder.ui.feed.FeedScreen
+import com.cowork.bikerecoder.ui.feed.FeedViewModel
 import com.cowork.bikerecoder.ui.favorite.FavoriteChips
 import com.cowork.bikerecoder.ui.favorite.FavoriteDialogs
 import com.cowork.bikerecoder.ui.favorite.FavoriteEvent
 import com.cowork.bikerecoder.ui.favorite.FavoritesScreen
 import com.cowork.bikerecoder.ui.favorite.FavoritesViewModel
 import com.cowork.bikerecoder.ui.health.HeartRateGate
-import com.cowork.bikerecoder.ui.history.HistoryScreen
-import com.cowork.bikerecoder.ui.history.HistoryViewModel
 import com.cowork.bikerecoder.ui.history.SegmentDetailScreen
 import com.cowork.bikerecoder.ui.history.SegmentDetailViewModel
 import com.cowork.bikerecoder.ui.history.TripDetailScreen
@@ -596,11 +596,17 @@ fun BikeNavHost(
             )
         }
         composable(Routes.HISTORY) {
-            val viewModel: HistoryViewModel = viewModel(factory = HistoryViewModel.factory(container))
-            HistoryScreen(
+            val viewModel: FeedViewModel = viewModel(factory = FeedViewModel.factory(container))
+            // The summary tab arrives with the tab frame (Tasks 7-8); until then the old route shows the feed on its own.
+            FeedScreen(
                 viewModel = viewModel,
+                thumbnails = container.photoThumbnails,
                 onOpenTrip = { tripId -> navController.navigate(Routes.tripDetail(tripId)) },
-                onOpenCumulative = { navController.navigate(Routes.CUMULATIVE) },
+                onOpenVideo = { media -> context.viewMedia(media.uri, media.kind) },
+                onOpenStatsWeek = {},
+                onStartRecording = { navController.popBackStack() },
+                onSetGoals = {},
+                scrollToTop = 0,
                 onBack = { navController.popBackStack() },
             )
         }

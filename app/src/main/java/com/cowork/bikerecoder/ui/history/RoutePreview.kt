@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.cowork.bikerecoder.core.model.GeoPoint
 import kotlin.math.cos
@@ -29,20 +30,42 @@ private val PREVIEW_CORNER = 8.dp
  */
 @Composable
 fun RoutePreview(routes: List<Pair<List<GeoPoint>, String>>, modifier: Modifier = Modifier) {
-    val background = MaterialTheme.colorScheme.surface
+    RouteDrawing(
+        routes,
+        modifier.size(PREVIEW_SIZE),
+        background = MaterialTheme.colorScheme.surface,
+        padding = PREVIEW_PADDING,
+        lineWidth = PREVIEW_LINE,
+        corner = PREVIEW_CORNER,
+    )
+}
+
+/**
+ * [routes] as [RoutePreview] draws them, in the size [modifier] gives: lines of [lineWidth] fitted together inside [padding]
+ * on a rounded [background]. The feed card draws it large on its dark background when it has no satellite picture yet.
+ */
+@Composable
+internal fun RouteDrawing(
+    routes: List<Pair<List<GeoPoint>, String>>,
+    modifier: Modifier,
+    background: Color,
+    padding: Dp,
+    lineWidth: Dp,
+    corner: Dp,
+) {
     Spacer(
-        modifier = modifier.size(PREVIEW_SIZE).drawWithCache {
-            val all = fitToBox(routes.flatMap { it.first }, size.width, size.height, PREVIEW_PADDING.toPx())
+        modifier = modifier.drawWithCache {
+            val all = fitToBox(routes.flatMap { it.first }, size.width, size.height, padding.toPx())
             var from = 0
             val lines = routes.map { (points, color) ->
                 val offsets = all.subList(from, from + points.size)
                 from += points.size
                 offsets to Color(android.graphics.Color.parseColor(color))
             }
-            val stroke = Stroke(width = PREVIEW_LINE.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-            val corner = CornerRadius(PREVIEW_CORNER.toPx())
+            val stroke = Stroke(width = lineWidth.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+            val cornerRadius = CornerRadius(corner.toPx())
             onDrawBehind {
-                drawRoundRect(background, cornerRadius = corner)
+                drawRoundRect(background, cornerRadius = cornerRadius)
                 for ((offsets, color) in lines) {
                     when (offsets.size) {
                         0 -> Unit

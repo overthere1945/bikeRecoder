@@ -29,6 +29,9 @@ interface TripMediaStore {
     /** [tripId] 여행의 기록, 최근에 만든 것부터. */
     fun observe(tripId: Long): Flow<List<TripMedia>>
 
+    /** 모든 여행의 영상([MediaKind.VIDEO])만, 최근에 만든 것부터. 요약 탭 카드의 ▶ 영상용이다. */
+    fun observeVideos(): Flow<List<TripMedia>>
+
     /** 들어온 [TripMedia.id]는 무시하고 새 id를 돌려준다. */
     suspend fun add(m: TripMedia): Long
 

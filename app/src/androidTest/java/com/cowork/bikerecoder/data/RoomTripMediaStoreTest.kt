@@ -40,6 +40,18 @@ class RoomTripMediaStoreTest {
         TripMedia(0, tripId, kind, "content://media/external/test/$createdAt", createdAt, "{\"t\":$createdAt}")
 
     @Test
+    fun observeVideosIsEveryTripsVideosNewestFirst() = runTest {
+        val tripA = trip()
+        val tripB = trip()
+        val older = store.add(media(tripA, MediaKind.VIDEO, 10_000L))
+        store.add(media(tripA, MediaKind.IMAGE, 40_000L))
+        val newest = store.add(media(tripB, MediaKind.VIDEO, 30_000L))
+        val middle = store.add(media(tripA, MediaKind.VIDEO, 20_000L))
+
+        assertEquals(listOf(newest, middle, older), store.observeVideos().first().map { it.id })
+    }
+
+    @Test
     fun addObserveNewestFirstPerTripAndRemove() = runTest {
         val tripA = trip()
         val tripB = trip()

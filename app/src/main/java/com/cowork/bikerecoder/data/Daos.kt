@@ -298,6 +298,9 @@ interface TripMediaDao {
     @Query("SELECT * FROM trip_media WHERE tripId = :tripId ORDER BY createdAt DESC, id DESC")
     fun observe(tripId: Long): Flow<List<TripMediaEntity>>
 
+    @Query("SELECT * FROM trip_media WHERE kind = 'VIDEO' ORDER BY createdAt DESC, id DESC")
+    fun observeVideos(): Flow<List<TripMediaEntity>>
+
     @Insert
     suspend fun insert(media: TripMediaEntity): Long
 
