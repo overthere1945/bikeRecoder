@@ -17,6 +17,7 @@ import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -293,7 +294,7 @@ class StatsScreenTest {
     fun goalCardShowsTheProgressAndOpensTheGoalWindow() {
         show()
 
-        composeRule.onNodeWithText("64 / 100 km").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("64 / 100 km", useUnmergedTree = true).assertIsDisplayed()
         unmerged(StatsTags.YEARLY_TEXT).assertTextEquals("436 / 1,000 km")
         unmerged(StatsTags.PROJECTION).assertTextEquals("지금 속도면 연말에 약 530 km")
         unmerged(StatsTags.YEARLY_REACHED).assertDoesNotExist()
@@ -307,14 +308,14 @@ class StatsScreenTest {
 
         assertEquals(listOf(GoalKm(120, 1000)), goals.saved)
         composeRule.onNodeWithTag(GoalDialogTags.WEEKLY).assertDoesNotExist()
-        composeRule.onNodeWithText("64 / 120 km").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("64 / 120 km", useUnmergedTree = true).assertIsDisplayed()
     }
 
     @Test
     fun reachedGoalsSayDone() {
         show(goals = FakeGoals(weekly = 50, yearly = 400))
 
-        composeRule.onNodeWithText("달성").assertIsDisplayed() // the ring
+        composeRule.onNodeWithContentDescription("km 달성", substring = true, useUnmergedTree = true).assertIsDisplayed() // the ring
         unmerged(StatsTags.YEARLY_REACHED).assertIsDisplayed()
     }
 
@@ -331,7 +332,7 @@ class StatsScreenTest {
         composeRule.waitForIdle()
 
         assertEquals(listOf(GoalKm(100, null)), noGoals.saved)
-        composeRule.onNodeWithText("64 / 100 km").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("64 / 100 km", useUnmergedTree = true).assertIsDisplayed()
         unmerged(StatsTags.YEARLY_TEXT).assertDoesNotExist()
     }
 

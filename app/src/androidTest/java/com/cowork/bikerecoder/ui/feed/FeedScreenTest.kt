@@ -9,21 +9,29 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.height
+import androidx.compose.ui.unit.width
 import androidx.test.platform.app.InstrumentationRegistry
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.stats.Streak
@@ -268,7 +276,7 @@ class FeedScreenTest {
         composeRule.onNodeWithText("4주 연속").assertIsDisplayed()
         composeRule.onNodeWithText("목표 정하기").assertDoesNotExist()
         composeRule.onNodeWithTag(FeedTags.RING, useUnmergedTree = true).assertIsDisplayed()
-        composeRule.onNodeWithText("64 / 100 km", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("64 / 100 km", useUnmergedTree = true).assertIsDisplayed()
 
         composeRule.onNodeWithTag(FeedTags.STRIP).performClick()
 
@@ -305,8 +313,31 @@ class FeedScreenTest {
     fun reachedGoalSaysAchieved() {
         show(strip = strip.copy(distanceM = 100_500.0))
 
-        composeRule.onNodeWithText("100 / 100 km", useUnmergedTree = true).assertIsDisplayed()
-        composeRule.onNodeWithText("달성", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("100 / 100 km 달성", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    /**
+     * Review M3: the ring's number and "/ 10,000 km" stay inside the ring with a large goal at twice the font size (the text
+     * is part of the drawing: sized in dp and shrunk to fit).
+     */
+    @Test
+    fun ringTextStaysInsideTheRingWithALargeGoalAndFont() {
+        composeRule.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale = 2f)) {
+                MaterialTheme {
+                    WeekStrip(strip.copy(distanceM = 10_234_900.0, weeklyGoalKm = 10_000), onOpenStatsWeek = {}, onSetGoals = {})
+                }
+            }
+        }
+
+        composeRule.onNodeWithContentDescription("10,234 / 10,000 km 달성", useUnmergedTree = true).assertIsDisplayed()
+        val ring = composeRule.onNodeWithTag(FeedTags.RING, useUnmergedTree = true).getBoundsInRoot()
+        val text = composeRule.onNodeWithTag(FeedTags.RING_TEXT, useUnmergedTree = true).getBoundsInRoot()
+        // Inside the stroke (8 dp wide): within the inner 68 dp, around the middle.
+        assertTrue("text $text in ring $ring", text.width <= 60.dp && text.height <= 60.dp)
+        assertTrue("text $text in ring $ring", text.left >= ring.left + 8.dp && text.right <= ring.right - 8.dp)
+        assertTrue("text $text in ring $ring", text.top >= ring.top + 8.dp && text.bottom <= ring.bottom - 8.dp)
     }
 
     /** Spec §6.10: "짧은 기록 N개 숨김" [정리] under the list, then "짧은 기록 N개를 삭제할까요?" [삭제] [취소]. */

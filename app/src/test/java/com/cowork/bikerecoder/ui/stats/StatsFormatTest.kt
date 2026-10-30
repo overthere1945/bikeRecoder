@@ -198,5 +198,8 @@ class StatsFormatTest {
         assertEquals("64 / 100 km", com.cowork.bikerecoder.ui.feed.goalProgressText(64_200.0, 100))
         assertEquals("412 / 1,000 km", com.cowork.bikerecoder.ui.feed.goalProgressText(412_900.0, 1000))
         assertEquals("1,250 / 3,000 km", com.cowork.bikerecoder.ui.feed.goalProgressText(1_250_000.0, 3000))
+        // The ring's two lines (review M3).
+        assertEquals("1,234", com.cowork.bikerecoder.ui.feed.goalDoneText(1_234_900.0))
+        assertEquals("/ 10,000 km", com.cowork.bikerecoder.ui.feed.goalOfText(10_000))
     }
 }

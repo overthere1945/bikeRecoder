@@ -54,8 +54,13 @@ fun weekTotalText(meters: Double, rides: Int): String = "이번 주 ${kmText(met
 fun weekDiffText(diffMeters: Double): String = "지난주 이맘때보다 ${signedKmText(diffMeters)}"
 
 /** "64 / 100 km", "412 / 1,000 km": the kilometres so far (rounded down) of the goal, thousands grouped. */
-fun goalProgressText(meters: Double, goalKm: Int): String =
-    "${groupedInt((meters / 1000.0).toInt())} / ${groupedInt(goalKm)} km"
+fun goalProgressText(meters: Double, goalKm: Int): String = "${goalDoneText(meters)} ${goalOfText(goalKm)}"
+
+/** The ring's big number: "64", "1,234" (the kilometres so far, rounded down). */
+fun goalDoneText(meters: Double): String = groupedInt((meters / 1000.0).toInt())
+
+/** The ring's second line: "/ 100 km", "/ 10,000 km". */
+fun goalOfText(goalKm: Int): String = "/ ${groupedInt(goalKm)} km"
 
 /** 1180 → "1,180". */
 fun groupedInt(value: Int): String = String.format(java.util.Locale.US, "%,d", value)

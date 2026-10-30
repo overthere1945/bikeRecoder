@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -21,14 +23,20 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 object FeedTags {
     const val STRIP = "feed-week-strip"
     const val RING = "feed-goal-ring"
+    const val RING_TEXT = "feed-goal-ring-text"
     const val EMPTY = "feed-empty"
     const val LIST = "feed-list"
 
@@ -96,18 +104,47 @@ internal fun GoalRing(distanceM: Double, goalKm: Int, tag: String = FeedTags.RIN
                 style = Stroke(width, cap = StrokeCap.Round),
             )
         }
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                goalProgressText(distanceM, goalKm),
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-            )
-            if (reached) Text("달성", style = MaterialTheme.typography.labelSmall, color = GOAL_REACHED_TEXT)
+        // Inside the ring the text is part of the drawing: sized in dp (not by the font scale) and shrunk to its width, so a
+        // large goal or a large font never reaches the stroke (review M3). It is read out as one line.
+        val density = LocalDensity.current
+        val big = with(density) { RING_BIG_TEXT.toSp() }
+        val small = with(density) { RING_SMALL_TEXT.toSp() }
+        val min = with(density) { RING_MIN_TEXT.toSp() }
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.width(RING_TEXT_WIDTH).testTag(FeedTags.RING_TEXT).clearAndSetSemantics {
+                contentDescription = goalProgressText(distanceM, goalKm) + if (reached) " 달성" else ""
+            },
+        ) {
+            RingLine(goalDoneText(distanceM), big, min, FontWeight.Bold)
+            RingLine(goalOfText(goalKm), small, min)
+            if (reached) RingLine("달성", small, min, color = GOAL_REACHED_TEXT)
         }
     }
 }
 
+/** One line of the ring, [size] at most and down to [min] when it is too wide. */
+@Composable
+private fun RingLine(text: String, size: TextUnit, min: TextUnit, weight: FontWeight? = null, color: Color = Color.Unspecified) {
+    Text(
+        text,
+        color = color,
+        fontWeight = weight,
+        style = MaterialTheme.typography.labelSmall.copy(fontSize = size, lineHeight = size * RING_LINE_HEIGHT),
+        maxLines = 1,
+        softWrap = false,
+        autoSize = TextAutoSize.StepBased(minFontSize = min, maxFontSize = size, stepSize = STEP),
+    )
+}
+
 private val RING_SIZE = 84.dp
+
+/** The widest line that keeps clear of the stroke (the ring is 68 dp across inside it). */
+private val RING_TEXT_WIDTH = 52.dp
+private val RING_BIG_TEXT = 18.dp
+private val RING_SMALL_TEXT = 11.dp
+private val RING_MIN_TEXT = 7.dp
+private const val RING_LINE_HEIGHT = 1.2f
+private val STEP = 0.5.sp
 internal val GOAL_REACHED = Color(0xFF2E7D32)
 internal val GOAL_REACHED_TEXT = Color(0xFF1B5E20)
