@@ -22,6 +22,8 @@ import com.cowork.bikerecoder.core.stats.StatsPeriod
 import com.cowork.bikerecoder.data.SettingsRepository
 import com.cowork.bikerecoder.ui.feed.kmText
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -29,6 +31,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -100,6 +103,8 @@ class StatsViewModel(
     private val goals: GoalSettings,
     private val today: () -> LocalDate = { LocalDate.now(SEOUL) },
     private val log: WarnLog = WarnLog { _, _ -> },
+    /** Where the state is computed: off the main thread (review M4). */
+    compute: CoroutineDispatcher = Dispatchers.Default,
 ) : ViewModel() {
 
     /** What the user picked: [anchor] a date of the shown period (null = the period of today), [bar] the tapped bar. */
@@ -126,6 +131,7 @@ class StatsViewModel(
         selection,
         day,
     ) { all, goalKm, sel, today -> build(all, goalKm, sel, today) }
+        .flowOn(compute)
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /** Takes today's date again (every resume): a new day may be a new week. */

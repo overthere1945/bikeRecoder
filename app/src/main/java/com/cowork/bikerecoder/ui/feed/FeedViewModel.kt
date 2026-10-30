@@ -40,6 +40,8 @@ import com.cowork.bikerecoder.video.MediaKind
 import com.cowork.bikerecoder.video.TripMedia
 import com.cowork.bikerecoder.video.TripMediaStore
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -51,6 +53,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -163,6 +166,8 @@ class FeedViewModel(
     private val ensureRegion: suspend (tripId: Long, start: GeoPoint) -> String?,
     private val clock: () -> Long = System::currentTimeMillis,
     private val zone: ZoneId = SEOUL,
+    /** Where the cards and the strip are built: off the main thread (review M4). */
+    compute: CoroutineDispatcher = Dispatchers.Default,
 ) : ViewModel() {
 
     /** Every trip delete here goes through it: conditional, then the offline maps (ruling R20). */
@@ -193,7 +198,7 @@ class FeedViewModel(
         pictures.files.safely(emptyMap(), "feed pictures"),
     ) { loaded, rides, labelMap, videos, files ->
         buildFeed(loaded, rides, labelMap, videos, files)
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, FeedData.EMPTY)
+    }.flowOn(compute).stateIn(viewModelScope, SharingStarted.Eagerly, FeedData.EMPTY)
 
     /** The listed trips' cards by month of their first date, newest month first; the cards by first start, newest first. */
     val months: StateFlow<List<FeedMonth>> =
@@ -205,7 +210,7 @@ class FeedViewModel(
      */
     val weekStrip: StateFlow<WeekStripState?> = combine(allRides, weeklyGoalKm.safely(null, "weekly goal"), today) { rides, goal, today ->
         weekStripOf(rides, goal, today)
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    }.flowOn(compute).stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /** The short trips not listed, as last read. */
     private var hiddenShort: List<Long> = emptyList()

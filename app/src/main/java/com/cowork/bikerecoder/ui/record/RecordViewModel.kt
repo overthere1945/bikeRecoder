@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -151,7 +152,7 @@ class RecordViewModel(
                     postProcessor = container.postProcessor,
                     shortRides = container.shortRides,
                     rideStats = container.rideStats.observeRides(),
-                    goals = container.settings.settings.map { it.weeklyGoalKm to it.yearlyGoalKm },
+                    goals = container.settings.settings.map { it.weeklyGoalKm to it.yearlyGoalKm }.distinctUntilChanged(),
                     mediaTrip = { id -> mediaTripOf(id, container.rideStore, container.tripStore) },
                 )
             }

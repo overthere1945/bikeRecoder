@@ -7,10 +7,13 @@ import com.cowork.bikerecoder.core.stats.PeriodKind
 import com.cowork.bikerecoder.core.stats.RideStat
 import com.cowork.bikerecoder.core.stats.RideStatsSource
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -26,6 +29,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.time.LocalDate
 import java.time.ZoneId
+import kotlin.coroutines.ContinuationInterceptor
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class StatsViewModelTest {
@@ -75,7 +79,7 @@ class StatsViewModelTest {
         rides: FakeRides = FakeRides(sample),
         goals: FakeGoals = FakeGoals(),
     ): StatsViewModel {
-        val vm = StatsViewModel(rides, goals, { today }, WarnLog { _, _ -> })
+        val vm = StatsViewModel(rides, goals, { today }, WarnLog { _, _ -> }, dispatcher)
         advanceUntilIdle()
         return vm
     }
@@ -95,6 +99,7 @@ class StatsViewModelTest {
             },
             { today },
             WarnLog { _, _ -> },
+            dispatcher,
         )
         advanceUntilIdle()
         assertNull(vm.state.value)
@@ -111,6 +116,25 @@ class StatsViewModelTest {
         assertEquals(100, vm.state.value!!.weeklyGoal?.goalKm)
         assertEquals("2026년 10월", vm.state.value!!.title)
         assertNull(vm.state.value!!.selectedBar)
+    }
+
+    /** Review M4: the rides are followed and the state built on the compute dispatcher, not on Main. */
+    @Test
+    fun theStateIsBuiltOnTheComputeDispatcher() = runTest(dispatcher) {
+        val compute = StandardTestDispatcher(testScheduler, name = "compute")
+        var followedOn: ContinuationInterceptor? = null
+        val rides = object : RideStatsSource {
+            override fun observeRides(): Flow<List<RideStat>> = flow {
+                followedOn = currentCoroutineContext()[ContinuationInterceptor]
+                emit(sample)
+                awaitCancellation()
+            }
+        }
+        val vm = StatsViewModel(rides, FakeGoals(), { today }, WarnLog { _, _ -> }, compute)
+        advanceUntilIdle()
+
+        assertEquals(compute, followedOn)
+        assertEquals("2026년 10월", vm.state.value!!.title)
     }
 
     @Test

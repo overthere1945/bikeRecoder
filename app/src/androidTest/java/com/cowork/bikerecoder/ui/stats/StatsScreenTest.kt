@@ -29,6 +29,7 @@ import com.cowork.bikerecoder.core.post.PeriodFilter
 import com.cowork.bikerecoder.core.stats.PeriodKind
 import com.cowork.bikerecoder.core.stats.RideStat
 import com.cowork.bikerecoder.core.stats.RideStatsSource
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -93,8 +94,9 @@ class StatsScreenTest {
     private val cumulative = mutableListOf<PeriodFilter>()
     private lateinit var viewModel: StatsViewModel
 
+    /** The state is built on the main thread here (the app builds it off it), so every check sees the newest one. */
     private fun show(rides: List<RideStat> = this.rides, goals: FakeGoals = this.goals, scrollToTop: Int = 0) {
-        viewModel = StatsViewModel(FakeRides(rides), goals, { LocalDate.of(2026, 10, 28) }, WarnLog { _, _ -> })
+        viewModel = StatsViewModel(FakeRides(rides), goals, { LocalDate.of(2026, 10, 28) }, WarnLog { _, _ -> }, Dispatchers.Main)
         composeRule.setContent {
             MaterialTheme {
                 // The tab sits in the app's scaffold; here the system bars are kept off it by hand.
@@ -121,7 +123,7 @@ class StatsScreenTest {
             override val goals: Flow<GoalKm> = flow { awaitCancellation() }
             override suspend fun setGoals(weeklyKm: Int?, yearlyKm: Int?) = Unit
         }
-        viewModel = StatsViewModel(FakeRides(rides), unread, { LocalDate.of(2026, 10, 28) }, WarnLog { _, _ -> })
+        viewModel = StatsViewModel(FakeRides(rides), unread, { LocalDate.of(2026, 10, 28) }, WarnLog { _, _ -> }, Dispatchers.Main)
         composeRule.setContent { MaterialTheme { StatsScreen(viewModel, onOpenSegment = {}, onOpenCumulative = {}, scrollToTop = 0) } }
         composeRule.waitForIdle()
 
@@ -357,7 +359,7 @@ class StatsScreenTest {
     @Test
     fun scrollToTopBringsTheListBackUp() {
         var tick = 0
-        viewModel = StatsViewModel(FakeRides(rides), goals, { LocalDate.of(2026, 10, 28) }, WarnLog { _, _ -> })
+        viewModel = StatsViewModel(FakeRides(rides), goals, { LocalDate.of(2026, 10, 28) }, WarnLog { _, _ -> }, Dispatchers.Main)
         val counter = androidx.compose.runtime.mutableIntStateOf(0)
         composeRule.setContent {
             MaterialTheme {

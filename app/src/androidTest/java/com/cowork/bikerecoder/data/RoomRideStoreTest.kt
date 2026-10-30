@@ -14,8 +14,12 @@ import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripStop
 import com.cowork.bikerecoder.core.trip.TripType
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -109,6 +113,37 @@ class RoomRideStoreTest {
             ),
             stats.observeRides().first(),
         )
+    }
+
+    /**
+     * Review M4: a recording saves its open segment every 5 s; the list of ended rides is the same, so it is not sent again
+     * (the stats and the feed do not rebuild for the whole ride). Closing the segment does send it.
+     */
+    @Test
+    fun observeRidesIgnoresAGrowingOpenSegment() = runTest {
+        val stats = RoomRideStatsSource(db)
+        val tripId = newTrip()
+        val done = store.openSegment(tripId, startedAt = 10_000L, localDate = day1)
+        store.closeSegment(done, 11_000L, totals(1_200.0, 60_000L))
+        val open = store.openSegment(tripId, startedAt = 20_000L, localDate = day2)
+
+        val seen = withContext(Dispatchers.Default) {
+            val seen = mutableListOf<List<RideStat>>()
+            withTimeoutOrNull(3_000) {
+                stats.observeRides().collect { rides ->
+                    seen += rides
+                    if (seen.size == 1) {
+                        store.appendPoints(open, listOf(point(21_000L)), totals(30.0))
+                        store.appendPoints(open, listOf(point(26_000L)), totals(60.0))
+                        delay(1_000)
+                        store.closeSegment(open, 27_000L, totals(60.0))
+                    }
+                }
+            }
+            seen
+        }
+
+        assertEquals(listOf(listOf(done), listOf(done, open)), seen.map { list -> list.map { it.segmentId } })
     }
 
     @Test

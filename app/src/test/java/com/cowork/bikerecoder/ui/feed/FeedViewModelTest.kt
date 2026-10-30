@@ -144,6 +144,7 @@ class FeedViewModelTest {
         },
         clock = { nowMs },
         zone = SEOUL,
+        compute = dispatcher,
     )
 
     private val postStore = FakePostStore { trips.trips.keys.flatMap { rides.segments(it) } }
