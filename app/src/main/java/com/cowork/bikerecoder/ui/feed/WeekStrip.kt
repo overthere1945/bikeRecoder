@@ -35,6 +35,7 @@ object FeedTags {
     fun card(tripId: Long) = "feed-card-$tripId"
     fun video(tripId: Long) = "feed-video-$tripId"
     fun trophy(tripId: Long) = "feed-trophy-$tripId"
+    fun picture(tripId: Long) = "feed-picture-$tripId"
     fun photo(tripId: Long, index: Int) = "feed-photo-$tripId-$index"
 }
 

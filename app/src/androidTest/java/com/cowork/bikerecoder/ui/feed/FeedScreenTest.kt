@@ -378,6 +378,26 @@ class FeedScreenTest {
         assertTrue("the first card left: $hidden", 1L in hidden)
     }
 
+    /**
+     * Review I3: a picture this process has decoded before is drawn on the first frame (no line drawing first). The file is
+     * not on disk, so only the cache can give it; another missing file that was never decoded shows the line drawing.
+     */
+    @Test
+    fun aDecodedPictureShowsOnTheFirstFrame() {
+        val dir = InstrumentationRegistry.getInstrumentation().targetContext.cacheDir
+        val cached = File(dir, "7-cached-only.webp").also { it.delete() }
+        val missing = File(dir, "3-never-made.webp").also { it.delete() }
+        FeedPictureCache[cached] = satellitePicture().asImageBitmap()
+        composeRule.mainClock.autoAdvance = false
+
+        show(months = listOf(FeedMonth("2026년 10월 · 33.7 km · 2회", listOf(cardA(cached), cardB.copy(thumbKey = "x", thumbFile = missing)))))
+
+        composeRule.onNodeWithTag(FeedTags.picture(7), useUnmergedTree = true).assertExists()
+        composeRule.mainClock.autoAdvance = true
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(FeedTags.picture(3), useUnmergedTree = true).assertDoesNotExist()
+    }
+
     /** One picture of the feed for the record: Download/bikeRecoderTest/v140-feed.png (pulled by hand). */
     @Test
     fun screenshot() {

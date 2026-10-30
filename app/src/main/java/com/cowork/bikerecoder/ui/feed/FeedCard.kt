@@ -1,6 +1,5 @@
 package com.cowork.bikerecoder.ui.feed
 
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,15 +19,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -118,10 +121,14 @@ private fun BigNumber(label: String, value: String) {
 @Composable
 private fun CardPicture(card: FeedCardState, onOpenVideo: (TripMedia) -> Unit) {
     Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(DRAWING_GROUND)) {
-        val picture by rememberPicture(card.thumbFile)
-        val image = picture
+        val image = rememberPicture(card.thumbFile)
         if (image != null) {
-            Image(image, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            Image(
+                image,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().testTag(FeedTags.picture(card.tripId)),
+            )
         } else {
             RouteDrawing(
                 card.routes,
@@ -207,14 +214,19 @@ private fun PhotoRow(card: FeedCardState, photo: suspend (Long, Int) -> ImageBit
     }
 }
 
-/** The picture file decoded off the main thread; null while it is read, or when there is none or it cannot be read. */
+/**
+ * The picture file: at once when this process has decoded it before ([FeedPictureCache]), else decoded off the main thread at
+ * the screen's width; null while it is read, or when there is none or it cannot be read.
+ */
 @Composable
-private fun rememberPicture(file: File?) = produceState<ImageBitmap?>(null, file) {
-    value = null
-    value = file?.let {
-        withContext(Dispatchers.IO) {
+private fun rememberPicture(file: File?): ImageBitmap? {
+    val cardWidth = with(LocalDensity.current) { LocalConfiguration.current.screenWidthDp.dp.roundToPx() }
+    val picture = remember(file) { mutableStateOf(file?.let { FeedPictureCache[it] }) }
+    LaunchedEffect(file) {
+        if (file == null || picture.value != null) return@LaunchedEffect
+        picture.value = withContext(Dispatchers.IO) {
             try {
-                BitmapFactory.decodeFile(it.path)?.asImageBitmap()
+                FeedPictureCache.decode(file, cardWidth)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -222,4 +234,5 @@ private fun rememberPicture(file: File?) = produceState<ImageBitmap?>(null, file
             }
         }
     }
+    return picture.value
 }
