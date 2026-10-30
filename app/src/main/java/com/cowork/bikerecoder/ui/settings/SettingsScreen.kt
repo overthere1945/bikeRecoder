@@ -93,12 +93,12 @@ internal val ATTRIBUTIONS = listOf(
  * [onPhotoAccessGained], heart rate allowed → [HeartRateGate.onGranted] (post-processing passes). When the system no
  * longer shows its permission screen, [허용] opens the settings instead ([opensAppSettingsAfterPhotoRequest],
  * [opensHealthConnectSettingsAfterRequest]); [onOpenAppSettings] / [onOpenHealthConnectSettings] replace those screens
- * (tests), null = the real ones.
+ * (tests), null = the real ones. [onBack] null (the [설정] tab, V1.4.0 spec §1.1) leaves out the back arrow.
  */
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
-    onBack: () -> Unit,
+    onBack: (() -> Unit)?,
     photoSource: PhotoSource,
     heartRateGate: HeartRateGate,
     onPhotoAccessGained: () -> Unit,
@@ -167,7 +167,7 @@ fun SettingsScreen(
 internal fun SettingsContent(
     state: SettingsUiState,
     versionDisplay: String,
-    onBack: () -> Unit,
+    onBack: (() -> Unit)?,
     onSetProfile: (RouteProfile) -> Unit,
     onSetVoice: (Boolean) -> Unit,
     onSetKeepScreenOn: (Boolean) -> Unit,
@@ -186,8 +186,11 @@ internal fun SettingsContent(
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onBack) { GlyphIcon("←", "뒤로") }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = if (onBack == null) Modifier.heightIn(min = 48.dp).padding(horizontal = 16.dp) else Modifier,
+            ) {
+                if (onBack != null) IconButton(onClick = onBack) { GlyphIcon("←", "뒤로") }
                 Text("설정", style = MaterialTheme.typography.titleLarge)
             }
             Column(

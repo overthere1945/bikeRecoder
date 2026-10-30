@@ -209,6 +209,21 @@ class StatsViewModelTest {
     }
 
     @Test
+    fun showThisWeekJumpsToTodaysWeek() = runTest(dispatcher) {
+        // The summary tab's week strip (V1.4.0 spec §1.1): this Monday-to-Sunday week, by the date read now.
+        val vm = viewModel()
+        vm.show(PeriodKind.MONTH, LocalDate.of(2026, 9, 1))
+        today = LocalDate.of(2026, 11, 2) // the process lived into a Monday of a new month
+
+        vm.showThisWeek()
+        advanceUntilIdle()
+
+        assertEquals(PeriodKind.WEEK, vm.state.value.period.kind)
+        assertEquals(LocalDate.of(2026, 11, 2), vm.state.value.period.start)
+        assertEquals(PeriodFilter(weekStart = LocalDate.of(2026, 11, 2)), vm.state.value.cumulativeFilter)
+    }
+
+    @Test
     fun selectBarTogglesAndClearsOnPeriodChange() = runTest(dispatcher) {
         val vm = viewModel()
 

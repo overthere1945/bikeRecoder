@@ -22,11 +22,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -66,10 +63,6 @@ fun MainScreen(
     tileSource: TileSource,
     currentLocation: StateFlow<LocationFix?>,
     onOpenSearch: () -> Unit,
-    /** ☰ → [기록]. */
-    onOpenHistory: () -> Unit,
-    /** ☰ → [설정]. */
-    onOpenSettings: () -> Unit,
     onResumeTrip: (tripId: Long) -> Unit,
     /** [보기] on the riding banner. */
     onShowRide: (RideTarget) -> Unit,
@@ -81,8 +74,6 @@ fun MainScreen(
     onAddWaypoint: (name: String, point: GeoPoint) -> Unit,
     /** The favorite chips, drawn right under the search row. */
     favoriteChips: @Composable () -> Unit = {},
-    /** ☰ → [누적 지도]. */
-    onOpenCumulative: () -> Unit = {},
     /** [즐겨찾기에 저장] on the long-press sheet; null hides it. */
     onSaveFavorite: ((FavoritePlace) -> Unit)? = null,
 ) {
@@ -151,26 +142,6 @@ fun MainScreen(
                     ) {
                         GlyphIcon("🔍", null)
                         Text("장소, 주소 검색", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-                Box {
-                    var menuOpen by remember { mutableStateOf(false) }
-                    Surface(shape = RoundedCornerShape(28.dp), shadowElevation = 4.dp) {
-                        IconButton(onClick = { menuOpen = true }) { GlyphIcon("☰", "메뉴") }
-                    }
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        DropdownMenuItem(text = { Text("기록") }, onClick = {
-                            menuOpen = false
-                            onOpenHistory()
-                        })
-                        DropdownMenuItem(text = { Text("누적 지도") }, onClick = {
-                            menuOpen = false
-                            onOpenCumulative()
-                        })
-                        DropdownMenuItem(text = { Text("설정") }, onClick = {
-                            menuOpen = false
-                            onOpenSettings()
-                        })
                     }
                 }
             }

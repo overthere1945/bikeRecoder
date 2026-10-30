@@ -153,6 +153,12 @@ class StatsViewModel(
         selection.update { it.copy(kind = kind, anchor = start, bar = null) }
     }
 
+    /** This Monday-to-Sunday week (the summary tab's week strip), by the date read now. */
+    fun showThisWeek() {
+        day.value = today()
+        show(PeriodKind.WEEK, mondayOf(day.value))
+    }
+
     fun selectMetric(metric: StatMetric) {
         selection.update { if (it.metric == metric) it else it.copy(metric = metric, bar = null) }
     }

@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.ui.cumulative
 
+import androidx.lifecycle.SavedStateHandle
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.CumulativeEntry
 import com.cowork.bikerecoder.core.post.CumulativeTotals
@@ -22,6 +23,7 @@ import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.post.SegmentExtras
 import com.cowork.bikerecoder.ride.FakeRideStore
+import com.cowork.bikerecoder.ui.Routes
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -85,8 +87,11 @@ class CumulativeMapViewModelTest {
         advanceUntilIdle()
     }
 
-    private fun TestScope.viewModel(postStore: PostStore = countingStore) =
-        CumulativeMapViewModel(postStore, processor(), log, compute = dispatcher, today = { TODAY })
+    private fun TestScope.viewModel(
+        postStore: PostStore = countingStore,
+        initial: PeriodFilter = PeriodFilter(),
+        today: LocalDate = TODAY,
+    ) = CumulativeMapViewModel(postStore, processor(), log, compute = dispatcher, today = { today }, initial = initial)
 
     /** A simplified route of [id] on [date], two points at [lat]. */
     private fun entry(
@@ -757,6 +762,80 @@ class CumulativeMapViewModelTest {
         assertEquals(5L, pickRide(listOf(3L, 5L), selected = 7L, rideOrder = listOf(7L, 5L, 3L)))
         // An empty spot.
         assertNull(pickRide(emptyList(), selected = 3L, rideOrder = listOf(5L, 3L)))
+    }
+
+    @Test
+    fun startsOnGivenPeriod() = runTest(dispatcher) {
+        entry(1, LocalDate.of(2025, 12, 30))
+        entry(2, LocalDate.of(2026, 1, 5))
+        entry(3, LocalDate.of(2026, 3, 1))
+        entry(4, LocalDate.of(2026, 9, 30))
+
+        // No period given: [전체], as before.
+        val all = viewModel()
+        settle()
+        assertEquals(PeriodFilter(), all.state.value.period)
+        assertEquals(listOf(4L, 3L, 2L, 1L), all.state.value.entries.map { it.segmentId })
+
+        // A month (the stats tab's [월]) and a year ([년]).
+        val month = viewModel(initial = PeriodFilter(2026, 1))
+        settle()
+        assertEquals(PeriodFilter(2026, 1), month.state.value.period)
+        assertEquals(listOf(2L), month.state.value.entries.map { it.segmentId })
+        assertEquals(listOf(1, 3, 9), month.state.value.months)
+        assertNull(month.state.value.quick)
+        val year = viewModel(initial = PeriodFilter(2026))
+        settle()
+        assertEquals(PeriodFilter(2026), year.state.value.period)
+        assertEquals(listOf(4L, 3L, 2L), year.state.value.entries.map { it.segmentId })
+
+        // A week given by its Monday alone ([주]) is shown as a week of that Monday's month, across the year end too.
+        val yearEnd = viewModel(initial = PeriodFilter(weekStart = LocalDate.of(2025, 12, 29)))
+        settle()
+        assertEquals(PeriodFilter(2025, 12, LocalDate.of(2025, 12, 29)), yearEnd.state.value.period)
+        assertEquals(listOf(1L), yearEnd.state.value.entries.map { it.segmentId })
+        assertEquals("12월 5주 (12/29~1/4)", yearEnd.state.value.week?.label)
+        val september = viewModel(initial = PeriodFilter(weekStart = LocalDate.of(2026, 9, 28)))
+        settle()
+        assertEquals(PeriodFilter(2026, 9, LocalDate.of(2026, 9, 28)), september.state.value.period)
+        assertEquals(listOf(4L), september.state.value.entries.map { it.segmentId })
+
+        // Today's week is a week of today's month, as [이번 주] shows it.
+        val thisWeek = viewModel(initial = PeriodFilter(weekStart = LocalDate.of(2026, 10, 26)), today = LocalDate.of(2026, 11, 1))
+        settle()
+        assertEquals(PeriodFilter(2026, 11, LocalDate.of(2026, 10, 26)), thisWeek.state.value.period)
+        assertEquals(1, thisWeek.state.value.week?.number)
+    }
+
+    @Test
+    fun cumulativeRouteCarriesThePeriod() {
+        val none = Long.MIN_VALUE
+        assertEquals("cumulative?year={year}&month={month}&weekStart={weekStart}", Routes.CUMULATIVE_PATTERN)
+        assertEquals("cumulative?year=-1&month=-1&weekStart=$none", Routes.cumulative(PeriodFilter()))
+        assertEquals("cumulative?year=2026&month=-1&weekStart=$none", Routes.cumulative(PeriodFilter(2026)))
+        assertEquals("cumulative?year=2026&month=1&weekStart=$none", Routes.cumulative(PeriodFilter(2026, 1)))
+        val monday = LocalDate.of(2025, 12, 29)
+        assertEquals(
+            "cumulative?year=-1&month=-1&weekStart=${monday.toEpochDay()}",
+            Routes.cumulative(PeriodFilter(weekStart = monday)),
+        )
+
+        // The arguments as navigation puts them into the screen's SavedStateHandle.
+        fun handle(year: Int, month: Int, weekStart: Long) = SavedStateHandle(
+            mapOf(
+                CumulativeMapViewModel.ARG_YEAR to year,
+                CumulativeMapViewModel.ARG_MONTH to month,
+                CumulativeMapViewModel.ARG_WEEK_START to weekStart,
+            ),
+        )
+        assertEquals(PeriodFilter(), CumulativeMapViewModel.initialFilter(SavedStateHandle()))
+        assertEquals(PeriodFilter(), CumulativeMapViewModel.initialFilter(handle(-1, -1, none)))
+        assertEquals(PeriodFilter(2026), CumulativeMapViewModel.initialFilter(handle(2026, -1, none)))
+        assertEquals(PeriodFilter(2026, 1), CumulativeMapViewModel.initialFilter(handle(2026, 1, none)))
+        assertEquals(
+            PeriodFilter(weekStart = monday),
+            CumulativeMapViewModel.initialFilter(handle(-1, -1, monday.toEpochDay())),
+        )
     }
 
     @Test

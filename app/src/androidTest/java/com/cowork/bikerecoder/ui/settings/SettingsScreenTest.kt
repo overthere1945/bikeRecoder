@@ -13,6 +13,7 @@ import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -79,14 +80,14 @@ class SettingsScreenTest {
         )
     }
 
-    private fun show() {
+    private fun show(onBack: (() -> Unit)? = {}) {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val gate = HeartRateGate(heartRate, SettingsRepository(context), onGranted = {})
         composeRule.setContent {
             MaterialTheme {
                 SettingsScreen(
                     viewModel = viewModel,
-                    onBack = {},
+                    onBack = onBack,
                     photoSource = photos,
                     heartRateGate = gate,
                     onPhotoAccessGained = {},
@@ -242,6 +243,23 @@ class SettingsScreenTest {
         composeRule.onNodeWithTag(SettingsTags.HEART_RATE_STATUS).performScrollTo()
             .assertTextEquals("Health Connect를 사용할 수 없습니다")
         composeRule.onNodeWithTag(SettingsTags.HEART_RATE_ALLOW).assertDoesNotExist()
+    }
+
+    /** As a screen of its own it has ←; as the [설정] tab (V1.4.0 spec §1.1) it has none, only the title. */
+    @Test
+    fun backArrowOnlyWithOnBack() {
+        var backs = 0
+        show(onBack = { backs++ })
+        composeRule.onNodeWithContentDescription("뒤로").performClick()
+        assertEquals(1, backs)
+    }
+
+    @Test
+    fun settingsTabHasNoBackArrow() {
+        show(onBack = null)
+        composeRule.onNodeWithText("설정").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("뒤로").assertDoesNotExist()
+        composeRule.onNodeWithTag(SettingsTags.VOICE).performScrollTo().assertIsOn()
     }
 
     @Test

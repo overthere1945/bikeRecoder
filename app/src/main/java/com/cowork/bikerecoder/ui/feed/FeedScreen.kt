@@ -35,12 +35,10 @@ import com.cowork.bikerecoder.post.PhotoThumbnails
 import com.cowork.bikerecoder.ui.history.CONFIRM_DELETE_TRIP
 import com.cowork.bikerecoder.ui.history.HistoryDialog
 import com.cowork.bikerecoder.ui.history.HistoryDialogs
-import com.cowork.bikerecoder.ui.history.HistoryScaffold
 import com.cowork.bikerecoder.video.TripMedia
 
 /**
  * The summary tab (V1.4.0 spec §2): the strip of this week, then the trips as big cards by month, and last "짧은 기록 N개 숨김".
- * [onBack] is set only where the feed is a screen of its own (the old 「기록」 route): it adds the top bar with ←.
  * [scrollToTop] counts the taps on the tab that is already open: each new value scrolls the list to the top.
  */
 @Composable
@@ -53,7 +51,6 @@ fun FeedScreen(
     onStartRecording: () -> Unit,
     onSetGoals: () -> Unit,
     scrollToTop: Int,
-    onBack: (() -> Unit)? = null,
 ) {
     val weekStrip by viewModel.weekStrip.collectAsStateWithLifecycle()
     val months by viewModel.months.collectAsStateWithLifecycle()
@@ -82,7 +79,6 @@ fun FeedScreen(
         onCardShown = viewModel::onCardShown,
         onCardHidden = viewModel::onCardHidden,
         scrollToTop = scrollToTop,
-        onBack = onBack,
     )
 }
 
@@ -108,15 +104,11 @@ fun FeedContent(
     onCardShown: (Long) -> Unit = {},
     onCardHidden: (Long) -> Unit = {},
     scrollToTop: Int = 0,
-    onBack: (() -> Unit)? = null,
 ) {
-    val list: @Composable () -> Unit = {
-        FeedList(
-            weekStrip, months, ready, hiddenShortCount, photo, onOpenTrip, onOpenVideo, onOpenStatsWeek,
-            onStartRecording, onSetGoals, onRequestDelete, onRequestCleanup, onCardShown, onCardHidden, scrollToTop,
-        )
-    }
-    if (onBack != null) HistoryScaffold(title = "요약", onBack = onBack) { list() } else list()
+    FeedList(
+        weekStrip, months, ready, hiddenShortCount, photo, onOpenTrip, onOpenVideo, onOpenStatsWeek,
+        onStartRecording, onSetGoals, onRequestDelete, onRequestCleanup, onCardShown, onCardHidden, scrollToTop,
+    )
     HistoryDialogs(dialog, CONFIRM_DELETE_TRIP, onConfirmDelete, onDismiss, onConfirmCleanup)
 }
 
