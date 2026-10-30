@@ -18,11 +18,14 @@ import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.ride.ScreenNotice
 import com.cowork.bikerecoder.ride.ShortRides
 import com.cowork.bikerecoder.ui.video.mediaTripOf
+import com.cowork.bikerecoder.core.stats.RideStat
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -46,6 +49,9 @@ class RecordViewModel(
     postStore: PostStore,
     postProcessor: PostProcessor,
     shortRides: ShortRides,
+    /** The summary's goal and new-record lines ([SummaryExtras]): the finished rides and the weekly and yearly goal in km. */
+    rideStats: Flow<List<RideStat>> = emptyFlow(),
+    goals: Flow<Pair<Int?, Int?>> = flowOf(null to null),
     /** The summary's trip when it offers [영상 만들기] [이미지 만들기] ([SummaryExtras]); none by default. */
     mediaTrip: suspend (segmentId: Long) -> Long? = { null },
 ) : ViewModel() {
@@ -58,6 +64,8 @@ class RecordViewModel(
         postProcessor = postProcessor,
         shortRides = shortRides,
         scope = viewModelScope,
+        rideStats = rideStats,
+        goals = goals,
         mediaTrip = mediaTrip,
     )
 
@@ -142,6 +150,8 @@ class RecordViewModel(
                     postStore = container.postStore,
                     postProcessor = container.postProcessor,
                     shortRides = container.shortRides,
+                    rideStats = container.rideStats.observeRides(),
+                    goals = container.settings.settings.map { it.weeklyGoalKm to it.yearlyGoalKm },
                     mediaTrip = { id -> mediaTripOf(id, container.rideStore, container.tripStore) },
                 )
             }

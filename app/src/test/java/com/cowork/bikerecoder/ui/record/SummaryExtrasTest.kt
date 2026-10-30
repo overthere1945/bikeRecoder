@@ -7,6 +7,7 @@ import com.cowork.bikerecoder.core.post.HrRead
 import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
+import com.cowork.bikerecoder.core.stats.RideStat
 import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripType
@@ -448,6 +449,139 @@ class SummaryExtrasTest {
         assertEquals(emptyList<Long>(), rides.deletedSegments)
         assertEquals(emptyList<Long>(), rides.deletedTrips)
         assertEquals(listOf(id), rides.segments(TRIP).map { it.id })
+    }
+
+
+    // --- 구간 요약의 목표 달성·신기록 줄 (spec §3.1, §3.4) ---
+
+    private val stats = MutableStateFlow<List<RideStat>>(emptyList())
+    private val goals = MutableStateFlow<Pair<Int?, Int?>>(null to null)
+
+    /** A finished ride of [distanceM] on 2026-10-28 (a Wednesday); [id] is the summary's segment. */
+    private fun ride(
+        id: Long, distanceM: Double, startedAt: Long = id * 1_000_000L, date: LocalDate = LocalDate.of(2026, 10, 28),
+        movingTimeMs: Long = 600_000L, ascentM: Double = 0.0,
+    ) = RideStat(id, TRIP, startedAt, date, distanceM, movingTimeMs, ascentM)
+
+    private fun TestScope.statsExtras(): SummaryExtras {
+        val processor = PostProcessor(
+            rides, store, FakePhotoSource(), heartRate, clock = { 0L }, scope = backgroundScope, warnLog = { _, _ -> },
+        )
+        return SummaryExtras(
+            shown, store, processor, shortRides, backgroundScope,
+            rideStats = stats, goals = goals, computeContext = kotlin.coroutines.EmptyCoroutineContext,
+        )
+    }
+
+    @Test
+    fun weeklyGoalCrossedShowsLine() = runTest {
+        val extras = statsExtras()
+        goals.value = 100 to 1_000
+        stats.value = listOf(ride(1, 95_000.0, date = LocalDate.of(2026, 10, 26)), ride(2, 10_000.0))
+        shown.value = 2
+        runCurrent()
+        assertEquals(listOf("이번 주 목표 100 km 달성"), extras.state.value.achievements)
+    }
+
+    @Test
+    fun yearlyGoalLineGroupsThousands() = runTest {
+        val extras = statsExtras()
+        goals.value = null to 1_000
+        stats.value = listOf(ride(1, 995_000.0, date = LocalDate.of(2026, 3, 2)), ride(2, 10_000.0))
+        shown.value = 2
+        runCurrent()
+        assertEquals(listOf("올해 목표 1,000 km 달성"), extras.state.value.achievements)
+    }
+
+    @Test
+    fun alreadyAboveGoalNoLine() = runTest {
+        val extras = statsExtras()
+        goals.value = 100 to null
+        stats.value = listOf(ride(1, 120_000.0, date = LocalDate.of(2026, 10, 26)), ride(2, 10_000.0))
+        shown.value = 2
+        runCurrent()
+        assertEquals(emptyList<String>(), extras.state.value.achievements)
+    }
+
+    @Test
+    fun newLongestRideLine() = runTest {
+        val extras = statsExtras()
+        stats.value = listOf(ride(1, 4_000.0, date = LocalDate.of(2026, 10, 1)), ride(2, 6_000.0))
+        shown.value = 2
+        runCurrent()
+        assertEquals(listOf("🏆 가장 긴 주행 신기록"), extras.state.value.achievements)
+    }
+
+    @Test
+    fun firstRideNoRecordLine() = runTest {
+        val extras = statsExtras()
+        stats.value = listOf(ride(1, 30_000.0))
+        shown.value = 1
+        runCurrent()
+        assertEquals(emptyList<String>(), extras.state.value.achievements)
+    }
+
+    @Test
+    fun shortRideNoLines() = runTest {
+        val extras = statsExtras()
+        goals.value = 1 to 1
+        stats.value = listOf(ride(1, 20_000.0, date = LocalDate.of(2026, 10, 1)), ride(2, 5.0))
+        shown.value = 2
+        runCurrent()
+        assertEquals(emptyList<String>(), extras.state.value.achievements)
+    }
+
+    @Test
+    fun noLinesBeforeTheSegmentIsClosed() = runTest {
+        val extras = statsExtras()
+        goals.value = 1 to 1
+        stats.value = listOf(ride(1, 4_000.0, date = LocalDate.of(2026, 10, 1)))
+        shown.value = 2
+        runCurrent()
+        assertEquals(emptyList<String>(), extras.state.value.achievements)
+
+        stats.value = stats.value + ride(2, 6_000.0)
+        runCurrent()
+        assertEquals(
+            listOf("이번 주 목표 1 km 달성", "🏆 가장 긴 주행 신기록"),
+            extras.state.value.achievements,
+        )
+    }
+
+    @Test
+    fun linesOrder() = runTest {
+        val extras = statsExtras()
+        goals.value = 40 to 40
+        stats.value = listOf(
+            ride(1, 20_000.0, date = LocalDate.of(2026, 10, 27), movingTimeMs = 3_600_000L, ascentM = 10.0),
+            ride(2, 30_000.0, movingTimeMs = 7_200_000L, ascentM = 50.0),
+        )
+        shown.value = 2
+        runCurrent()
+        assertEquals(
+            listOf(
+                "이번 주 목표 40 km 달성", "올해 목표 40 km 달성",
+                "🏆 가장 긴 주행 신기록", "🏆 가장 오래 탄 주행 신기록", "🏆 가장 많이 오른 주행 신기록",
+            ),
+            extras.state.value.achievements,
+        )
+    }
+
+    @Test
+    fun noLinesWhileAskingAboutAShortRideOrDiscarding() = runTest {
+        // A segment of 100 m asked about as short is not possible; use a real short segment in the store.
+        val (id, _) = setup(SHORT)
+        val extras = statsExtras()
+        goals.value = 1 to 1
+        stats.value = listOf(ride(id - 1, 20_000.0, date = LocalDate.of(2026, 10, 1)), ride(id, 30_000.0))
+        shown.value = id
+        runCurrent()
+        assertTrue(extras.state.value.askShort)
+        assertEquals(emptyList<String>(), extras.state.value.achievements, "asking")
+
+        extras.keepShort()
+        runCurrent()
+        assertTrue(extras.state.value.achievements.isNotEmpty(), "answered: lines show")
     }
 
     private companion object {

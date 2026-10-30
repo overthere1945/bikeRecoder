@@ -10,6 +10,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.lifecycle.compose.LifecycleStartEffect
 import com.cowork.bikerecoder.core.post.HrStatus
+import com.cowork.bikerecoder.core.stats.Goals
+import com.cowork.bikerecoder.core.stats.RideRecordKind
+import com.cowork.bikerecoder.core.stats.RideRecords
+import com.cowork.bikerecoder.core.stats.RideStat
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.post.SegmentExtras
@@ -18,6 +22,7 @@ import com.cowork.bikerecoder.ui.health.HeartRateGate
 import com.cowork.bikerecoder.ui.health.HeartRateSection
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
@@ -29,14 +34,19 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
+import kotlin.coroutines.CoroutineContext
 
 /** What a segment summary shows besides its totals (spec §2.3, §3.3). */
 data class SummaryExtrasState(
@@ -53,6 +63,11 @@ data class SummaryExtrasState(
      * with a finished ride of 10 m or more; null otherwise.
      */
     val mediaTripId: Long? = null,
+    /**
+     * "이번 주 목표 100 km 달성", "올해 목표 1,000 km 달성", "🏆 가장 긴 주행 신기록" ... (spec §3.1, §3.4), in that order;
+     * empty for a segment not closed yet, under 10 m, asked about as short or being discarded.
+     */
+    val achievements: List<String> = emptyList(),
 )
 
 /**
@@ -77,6 +92,12 @@ class SummaryExtras(
     private val postProcessor: PostProcessor,
     private val shortRides: ShortRides,
     private val scope: CoroutineScope,
+    /** The finished segments of every trip ([com.cowork.bikerecoder.core.stats.RideStatsSource.observeRides]). */
+    private val rideStats: Flow<List<RideStat>> = emptyFlow(),
+    /** The weekly and the yearly goal in km (null = none). */
+    private val goals: Flow<Pair<Int?, Int?>> = flowOf(null to null),
+    /** Where the lines are worked out (they go through every ride). */
+    private val computeContext: CoroutineContext = Dispatchers.Default,
     private val mediaTrip: suspend (segmentId: Long) -> Long? = { null },
 ) {
     private val segment = summarySegment.distinctUntilChanged().stateIn(scope, SharingStarted.Eagerly, null)
@@ -99,14 +120,18 @@ class SummaryExtras(
             if (id == null) {
                 flowOf(SummaryExtrasState())
             } else {
+                val flags = combine(askShort(id), discarding.map { it == id }) { askShort, discarding -> askShort to discarding }
                 combine(
                     postStore.observePhotos(listOf(id)).map { photos -> photos.count { !it.hidden } }.catch { emit(0) },
                     postStore.observeExtras(listOf(id)).map { it.firstOrNull() }.catch { emit(null) },
-                    askShort(id),
-                    discarding.map { it == id },
+                    flags,
                     flow { emit(mediaTrip(id)) }.catch { emit(null) },
-                ) { photoCount, heartRate, askShort, discarding, mediaTripId ->
-                    SummaryExtrasState(photoCount, heartRate, askShort, discarding, mediaTripId)
+                    achievements(id),
+                ) { photoCount, heartRate, (askShort, discarding), mediaTripId, lines ->
+                    SummaryExtrasState(
+                        photoCount, heartRate, askShort, discarding, mediaTripId,
+                        achievements = if (askShort || discarding) emptyList() else lines,
+                    )
                 }
             }
         }
@@ -160,6 +185,16 @@ class SummaryExtras(
         segment.value?.let(shortRides::answer)
     }
 
+    /**
+     * The lines of segment [id] (spec §3.1, §3.4), worked out again for every change of the rides or the goals; empty
+     * until the first one is in (and for good when [rideStats] never gives any).
+     */
+    private fun achievements(id: Long): Flow<List<String>> =
+        combine(rideStats, goals) { rides, (weekly, yearly) -> achievementLines(rides, id, weekly, yearly) }
+            .flowOn(computeContext)
+            .catch { emit(emptyList()) }
+            .onStart { emit(emptyList()) }
+
     private fun askShort(id: Long): Flow<Boolean> = combine(
         flow { emit(shortRides.isShort(id)) }.catch { emit(false) },
         shortRides.answered,
@@ -195,6 +230,29 @@ class SummaryExtras(
     companion object {
         const val REFETCH_EVERY_MS = 60_000L
         const val REFETCH_TIMES = 15
+
+        /**
+         * Weekly goal, yearly goal, then the new records ([RideRecordKind] order) that finishing segment [id] brought.
+         * Nothing for a segment that is not among [rides] or is under 10 m (the core functions leave those out).
+         */
+        internal fun achievementLines(rides: List<RideStat>, id: Long, weeklyKm: Int?, yearlyKm: Int?): List<String> {
+            val lines = ArrayList<String>(2 + RideRecordKind.entries.size)
+            val (weekBefore, weekAfter) = Goals.weekBeforeAfter(rides, id)
+            if (Goals.crossed(weeklyKm, weekBefore, weekAfter)) lines += "이번 주 목표 ${grouped(weeklyKm!!)} km 달성"
+            val (yearBefore, yearAfter) = Goals.yearBeforeAfter(rides, id)
+            if (Goals.crossed(yearlyKm, yearBefore, yearAfter)) lines += "올해 목표 ${grouped(yearlyKm!!)} km 달성"
+            RideRecords.newRecords(rides, id).mapTo(lines) { kind ->
+                when (kind) {
+                    RideRecordKind.LONGEST_DISTANCE -> "🏆 가장 긴 주행 신기록"
+                    RideRecordKind.LONGEST_TIME -> "🏆 가장 오래 탄 주행 신기록"
+                    RideRecordKind.MOST_ASCENT -> "🏆 가장 많이 오른 주행 신기록"
+                    RideRecordKind.FASTEST_AVG -> "🏆 가장 빠른 평균 속도 신기록"
+                }
+            }
+            return lines
+        }
+
+        private fun grouped(km: Int): String = String.format(Locale.US, "%,d", km)
     }
 }
 
@@ -222,6 +280,7 @@ fun SummaryExtrasContent(
         onStopOrDispose { currentOnScreen(false) }
     }
     SummaryPhotoCount(state.photoCount)
+    state.achievements.forEach { Text(it, style = MaterialTheme.typography.titleSmall) }
     photoPrompt()
     HeartRateSection(state.heartRate, onRefetch, heartRateGate)
     state.mediaTripId?.let { mediaEntry(it) }

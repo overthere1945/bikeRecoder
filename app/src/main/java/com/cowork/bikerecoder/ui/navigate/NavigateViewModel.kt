@@ -10,6 +10,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.stats.RideStat
 import com.cowork.bikerecoder.core.voice.KoreanPhrases
 import com.cowork.bikerecoder.nav.FinishReason
 import com.cowork.bikerecoder.nav.NavNotifications
@@ -37,6 +38,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -75,6 +78,9 @@ class NavigateViewModel(
     postStore: PostStore,
     postProcessor: PostProcessor,
     shortRides: ShortRides,
+    /** The summary's goal and new-record lines ([SummaryExtras]): the finished rides and the weekly and yearly goal in km. */
+    rideStats: Flow<List<RideStat>> = emptyFlow(),
+    goals: Flow<Pair<Int?, Int?>> = flowOf(null to null),
     /** The summary's trip when it offers [영상 만들기] [이미지 만들기] ([SummaryExtras]); none by default. */
     mediaTrip: suspend (segmentId: Long) -> Long? = { null },
 ) : ViewModel() {
@@ -87,6 +93,8 @@ class NavigateViewModel(
         postProcessor = postProcessor,
         shortRides = shortRides,
         scope = viewModelScope,
+        rideStats = rideStats,
+        goals = goals,
         mediaTrip = mediaTrip,
     )
 
@@ -280,6 +288,8 @@ class NavigateViewModel(
                     postStore = container.postStore,
                     postProcessor = container.postProcessor,
                     shortRides = container.shortRides,
+                    rideStats = container.rideStats.observeRides(),
+                    goals = container.settings.settings.map { it.weeklyGoalKm to it.yearlyGoalKm },
                     mediaTrip = { id -> mediaTripOf(id, container.rideStore, container.tripStore) },
                 )
             }

@@ -17,6 +17,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertWidthIsAtLeast
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -36,6 +37,7 @@ import com.cowork.bikerecoder.ride.RecordingEnd
 import com.cowork.bikerecoder.ride.RideUiState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import java.time.LocalDate
@@ -265,6 +267,41 @@ class RecordScreenTest {
         count = 0
         composeRule.waitForIdle()
         composeRule.onNodeWithText("사진", substring = true).assertDoesNotExist()
+    }
+
+    /** Spec §3.1, §3.4: the goal and new-record lines come under "사진 N장". */
+    @Test
+    fun summaryShowsTheAchievementLinesUnderThePhotoCount() {
+        val state = SummaryExtrasState(
+            photoCount = 2,
+            achievements = listOf("이번 주 목표 100 km 달성", "🏆 가장 긴 주행 신기록"),
+        )
+        composeRule.setContent {
+            MaterialTheme {
+                SegmentSummaryContent(
+                    segment = RideSegment(
+                        id = 1,
+                        tripId = 1,
+                        startedAt = 0L,
+                        endedAt = 600_000L,
+                        localDate = LocalDate.of(2026, 10, 18),
+                        totals = SegmentTotals.ZERO.copy(distanceM = 3_010.0, movingTimeMs = 600_000),
+                    ),
+                    map = {},
+                    onConfirm = {},
+                    footer = { SummaryExtrasContent(state, photoPrompt = {}) },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("사진 2장").assertIsDisplayed()
+        composeRule.onNodeWithText("이번 주 목표 100 km 달성").assertIsDisplayed()
+        composeRule.onNodeWithText("🏆 가장 긴 주행 신기록").assertIsDisplayed()
+        val photoBottom = composeRule.onNodeWithText("사진 2장").getBoundsInRoot().bottom
+        val first = composeRule.onNodeWithText("이번 주 목표 100 km 달성").getBoundsInRoot()
+        val second = composeRule.onNodeWithText("🏆 가장 긴 주행 신기록").getBoundsInRoot()
+        assertTrue("below the photo line", first.top >= photoBottom)
+        assertTrue("in order", second.top >= first.bottom)
     }
 
     /** Spec §3.3, ruling R9: the summary's heart-rate row, [다시 가져오기], and telling it is on screen. */
