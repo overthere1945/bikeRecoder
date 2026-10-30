@@ -107,7 +107,7 @@ class SettingsScreenTest {
     @Test
     fun showsVersionAndTogglesVoice() {
         show()
-        composeRule.onNodeWithText("V1.3.1").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("V1.4.0").performScrollTo().assertIsDisplayed()
 
         composeRule.onNodeWithTag(SettingsTags.VOICE).performScrollTo().assertIsOn()
         composeRule.onNodeWithTag(SettingsTags.VOICE).performClick()
