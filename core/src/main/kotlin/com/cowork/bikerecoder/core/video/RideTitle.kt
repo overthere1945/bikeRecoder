@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.core.video
 
+import com.cowork.bikerecoder.core.trip.TripLabel
 import java.time.Instant
 import java.time.ZoneId
 
@@ -52,4 +53,22 @@ object RideTitle {
 
     /** "저녁 라이딩 · 서울 강서구". 지역이 없으면 [base]만. */
     fun withRegion(base: String, region: String?): String = if (region.isNullOrBlank()) base else "$base · $region"
+
+    /** 직접 붙인 제목의 길이: 코드 포인트 수(이모지 하나가 1자, 규칙 D6). */
+    const val MAX_CUSTOM_CODE_POINTS = 30
+
+    /** 입력의 앞뒤 빈칸을 지우고 [MAX_CUSTOM_CODE_POINTS]자까지만 남긴다. 비면 null(= 직접 제목을 지운다). */
+    fun cleanCustom(input: String): String? {
+        val trimmed = input.trim()
+        if (trimmed.isEmpty()) return null
+        return truncateCodePoints(trimmed, MAX_CUSTOM_CODE_POINTS).trimEnd().ifEmpty { null }
+    }
+
+    /** [text]의 앞 [max] 코드 포인트. 서로게이트 쌍을 가운데서 자르지 않는다. */
+    fun truncateCodePoints(text: String, max: Int): String =
+        if (text.codePointCount(0, text.length) <= max) text else text.substring(0, text.offsetByCodePoints(0, max))
+
+    /** 보이는 제목: 직접 붙인 제목, 없으면 자동 제목에 지역을 붙인 것(스펙 §2.5). */
+    fun shown(label: TripLabel, firstStartedAt: Long, rideDays: Int, zone: ZoneId): String =
+        label.customTitle?.takeIf { it.isNotBlank() } ?: withRegion(base(firstStartedAt, rideDays, zone), label.regionName)
 }

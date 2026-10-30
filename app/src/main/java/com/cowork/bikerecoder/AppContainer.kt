@@ -2,7 +2,6 @@ package com.cowork.bikerecoder
 
 import android.content.Context
 import android.util.Log
-import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.routing.Router
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.trip.OfflineMapController
@@ -24,6 +23,7 @@ import com.cowork.bikerecoder.data.RoomTripMediaStore
 import com.cowork.bikerecoder.data.RoomTripStore
 import com.cowork.bikerecoder.data.SettingsRepository
 import com.cowork.bikerecoder.favorite.FavoriteRepository
+import com.cowork.bikerecoder.feed.TripRegions
 import com.cowork.bikerecoder.location.BarometerSource
 import com.cowork.bikerecoder.location.FusedLocationSource
 import com.cowork.bikerecoder.location.LocationSource
@@ -272,23 +272,28 @@ class AppContainer(context: Context) {
 
     /** A job wired like [videoJob] on [backend]; only [videoJob] itself runs in the app. */
     internal fun videoJob(backend: VideoBackend): VideoJob = VideoJob(
-        loadInputs = VideoInputsLoader(rideStore, postStore, tripStore)::load,
+        loadInputs = VideoInputsLoader(rideStore, postStore, tripStore, tripLabels)::load,
         store = videoJobStore,
         tripMedia = tripMedia,
         maps = offlineMaps,
         backend = backend,
         recording = rideUi.map { it is RideUiState.Starting || it is RideUiState.Active },
         online = network::isOnline,
-        regionOf = ::videoRegion,
+        regions = tripRegions,
         startService = { VideoService.start(appContext) },
         scope = videoScope,
         // Map errors may quote a tile URL, and so the key (ruling K1).
         log = VideoMapStyle.redacting(androidWarnLog("VideoJob"), BuildConfig.VWORLD_API_KEY),
     )
 
-    /** "서울 강서구" for the video title (V1.3.1 spec §3.8); null on any failure or when nothing is found. */
-    private suspend fun videoRegion(point: GeoPoint): String? =
-        (kakao.regionOf(point) as? SearchResult.Ok)?.value?.let { (d1, d2) -> RideTitle.shortRegion(d1, d2) }
+    /** "서울 강서구" for a trip's title (V1.4.0 spec §2.5): the stored one first, else looked up once and stored. */
+    val tripRegions: TripRegions by lazy {
+        TripRegions(
+            labels = tripLabels,
+            lookup = { point -> (kakao.regionOf(point) as? SearchResult.Ok)?.value?.let { (d1, d2) -> RideTitle.shortRegion(d1, d2) } },
+            log = VideoMapStyle.redacting(androidWarnLog("TripRegions"), BuildConfig.KAKAO_REST_API_KEY),
+        )
+    }
 
     private companion object {
         const val TAG = "AppContainer"

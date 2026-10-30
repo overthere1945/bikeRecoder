@@ -438,7 +438,7 @@ class VideoViewModel(
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 val context = container.appContext
-                val loader = VideoInputsLoader(container.rideStore, container.postStore, container.tripStore)
+                val loader = VideoInputsLoader(container.rideStore, container.postStore, container.tripStore, container.tripLabels)
                 VideoViewModel(
                     job = container.videoJob,
                     loadInputs = { withContext(Dispatchers.IO) { loader.load(it) } },

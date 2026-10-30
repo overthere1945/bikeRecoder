@@ -2,6 +2,9 @@ package com.cowork.bikerecoder.video
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import com.cowork.bikerecoder.core.model.GeoPoint
+import com.cowork.bikerecoder.core.trip.TripLabel
+import com.cowork.bikerecoder.feed.TripRegions
+import com.cowork.bikerecoder.nav.FakeTripLabelStore
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
@@ -66,7 +69,8 @@ class VideoJobTest {
     private var servicesStarted = 0
     private val warnings = mutableListOf<String>()
 
-    private val inputs = testInputs()
+    private val labels = FakeTripLabelStore()
+    private var inputs = testInputs()
     private val short = VideoOptions(length = VideoLength.SHORT, photos = false, hud = true)
     private val plans = VideoTimeline.plan(inputs.timeline, inputs.photos, short, inputs.dayStarts)
 
@@ -79,7 +83,7 @@ class VideoJobTest {
             backend = backend,
             recording = recording,
             online = { online },
-            regionOf = { regionOf(it) },
+            regions = regions(),
             startService = { servicesStarted++ },
             scope = scope(),
             log = { message, _ -> warnings += message },
@@ -90,6 +94,8 @@ class VideoJobTest {
 
     /** The region of the ride's first point (spec §3.8); none by default. */
     private var regionOf: suspend (GeoPoint) -> String? = { null }
+
+    private fun regions() = TripRegions(labels, { regionOf(it) }, { message, _ -> warnings += message })
 
     private fun awaitEnd(): VideoJobState = runBlocking {
         withTimeout(20_000) { job.state.first { it is VideoJobState.Done || it is VideoJobState.Failed || it is VideoJobState.Cancelled } }
@@ -555,7 +561,42 @@ class VideoJobTest {
 
         assertEquals("아침 라이딩 · 서울 강서구", backend.videoInputs.single().rideTitle)
         assertEquals("아침 라이딩 · 서울 강서구", backend.imageInputs.single().rideTitle)
-        assertEquals(List(2) { inputs.timeline.points.first().point }, asked)
+        // Looked up once, stored; the image reads the stored name.
+        assertEquals(listOf(inputs.timeline.points.first().point), asked)
+        assertEquals(TripLabel(regionName = "서울 강서구"), labels.label(TRIP))
+    }
+
+    /** V1.4.0 §2.5: a custom title is used as it is, with no region and no lookup. */
+    @Test
+    fun customTitleIsUsedWithoutRegion() = runBlocking {
+        val asked = mutableListOf<GeoPoint>()
+        regionOf = { asked += it; "서울 강서구" }
+        labels.setRegionName(TRIP, "서울 강서구")
+        inputs = inputs.copy(rideTitle = "한강 한 바퀴", titleIsCustom = true)
+
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
+        awaitEnd()
+        awaitIdle()
+        assertEquals(StartResult.STARTED, job.startImage(TRIP, Aspect.PORTRAIT))
+        awaitEnd()
+
+        assertEquals("한강 한 바퀴", backend.videoInputs.single().rideTitle)
+        assertEquals("한강 한 바퀴", backend.imageInputs.single().rideTitle)
+        assertEquals(emptyList<GeoPoint>(), asked)
+    }
+
+    /** V1.4.0 §2.5: the stored region comes first; the lookup is not made. */
+    @Test
+    fun cachedRegionIsUsedWithoutLookup() = runBlocking {
+        val asked = mutableListOf<GeoPoint>()
+        regionOf = { asked += it; "부산 해운대구" }
+        labels.setRegionName(TRIP, "서울 강서구")
+
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
+        awaitEnd()
+
+        assertEquals("아침 라이딩 · 서울 강서구", backend.videoInputs.single().rideTitle)
+        assertEquals(emptyList<GeoPoint>(), asked)
     }
 
     /** Review Focus 3: a lookup that hangs is given up after 5 s; one that throws is ignored. Either way the job is made. */
@@ -584,7 +625,7 @@ class VideoJobTest {
     /** A job on the test's virtual clock (its scope), so the 5 s limit passes at once. */
     private fun virtualTimeJob(scope: CoroutineScope) = VideoJob(
         loadInputs = { if (it == TRIP) inputs else null }, store = store, tripMedia = media, maps = maps, backend = backend,
-        recording = recording, online = { true }, regionOf = { regionOf(it) }, startService = {}, scope = scope,
+        recording = recording, online = { true }, regions = regions(), startService = {}, scope = scope,
         log = { message, _ -> warnings += message }, clock = { NOW }, nanoTime = { backend.nanos },
     )
 
@@ -742,7 +783,7 @@ class VideoJobTest {
         val handler = kotlinx.coroutines.CoroutineExceptionHandler { _, e -> uncaught += e }
         val failing = VideoJob(
             loadInputs = { inputs }, store = store, tripMedia = media, maps = maps, backend = backend, recording = recording,
-            online = { true }, regionOf = { null }, startService = {},
+            online = { true }, regions = regions(), startService = {},
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + handler).also { scopes += it },
             log = { message, _ -> warnings += message }, clock = { NOW }, nanoTime = { backend.nanos },
         )
@@ -778,7 +819,7 @@ class VideoJobTest {
     fun aServiceThatCannotStartLeavesTheRunningJobClaimed() = runBlocking {
         val throwing = VideoJob(
             loadInputs = { inputs }, store = store, tripMedia = media, maps = maps, backend = backend, recording = recording,
-            online = { true }, regionOf = { null }, startService = { throw IllegalStateException("not allowed") }, scope = scope(),
+            online = { true }, regions = regions(), startService = { throw IllegalStateException("not allowed") }, scope = scope(),
             log = { message, _ -> warnings += message }, clock = { NOW }, nanoTime = { backend.nanos },
         )
         backend.gateAt = 2

@@ -11,6 +11,7 @@ import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripType
+import com.cowork.bikerecoder.nav.FakeTripLabelStore
 import com.cowork.bikerecoder.nav.FakeTripStore
 import com.cowork.bikerecoder.post.FakePostStore
 import com.cowork.bikerecoder.post.SegmentExtras
@@ -30,7 +31,8 @@ class VideoInputsTest {
     private val trips = FakeTripStore()
     private val rides = FakeRideStore(trips)
     private val posts = FakePostStore { rides.segments(TRIP) }
-    private val loader = VideoInputsLoader(rides, posts, trips)
+    private val labels = FakeTripLabelStore()
+    private val loader = VideoInputsLoader(rides, posts, trips, labels)
 
     private val seoul = ZoneId.of("Asia/Seoul")
     private val day1 = LocalDate.of(2026, 10, 17)
@@ -179,6 +181,20 @@ class VideoInputsTest {
         segment(sunday, track(evening, 100), distanceM = 500.0)
 
         assertEquals("저녁 라이딩", loader.load(TRIP)!!.rideTitle)
+    }
+
+    /** V1.4.0 §2.5: the trip's own title goes in as it is, flagged so the job adds no region. */
+    @Test
+    fun customTitleIsTheRideTitle() = runTest {
+        trip(TripType.SINGLE_DAY)
+        segment(sunday, track(at(sunday, 19), 100), distanceM = 500.0)
+        assertEquals(false, loader.load(TRIP)!!.titleIsCustom)
+        labels.setCustomTitle(TRIP, "한강 한 바퀴")
+
+        val inputs = loader.load(TRIP)!!
+
+        assertEquals("한강 한 바퀴", inputs.rideTitle)
+        assertEquals(true, inputs.titleIsCustom)
     }
 
     @Test
