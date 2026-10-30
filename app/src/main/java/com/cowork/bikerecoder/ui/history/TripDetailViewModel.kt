@@ -131,13 +131,23 @@ class TripDetailViewModel(
      * while there is neither a custom title nor a finished ride to name it after.
      */
     val title: StateFlow<String?> = combine(label, _segmentsByDate) { label, byDate ->
-        val rides = byDate.values.flatten().filter { it.endedAt != null && it.totals.distanceM >= MIN_RIDE_DISTANCE_M }
-        if (rides.isEmpty()) {
-            label.customTitle?.takeIf { it.isNotBlank() }
-        } else {
-            RideTitle.shown(label, rides.minOf { it.startedAt }, rides.map { it.localDate }.distinct().size, zone)
-        }
+        val rides = targetRides(byDate)
+        if (rides.isEmpty()) label.customTitle?.takeIf { it.isNotBlank() } else shownTitle(label, rides)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
+     * The automatic title ("저녁 라이딩 · 서울 강서구") whether or not there is a custom title: what the title becomes when
+     * the custom one is cleared, and the hint in "제목 바꾸기". Null while there is no finished ride to name it after.
+     */
+    val autoTitle: StateFlow<String?> = combine(label, _segmentsByDate) { label, byDate ->
+        targetRides(byDate).takeIf { it.isNotEmpty() }?.let { shownTitle(label.copy(customTitle = null), it) }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    private fun targetRides(byDate: Map<LocalDate, List<RideSegment>>) =
+        byDate.values.flatten().filter { it.endedAt != null && it.totals.distanceM >= MIN_RIDE_DISTANCE_M }
+
+    private fun shownTitle(label: TripLabel, rides: List<RideSegment>) =
+        RideTitle.shown(label, rides.minOf { it.startedAt }, rides.map { it.localDate }.distinct().size, zone)
 
     private val _dialog = MutableStateFlow<HistoryDialog?>(null)
     val dialog: StateFlow<HistoryDialog?> = _dialog.asStateFlow()

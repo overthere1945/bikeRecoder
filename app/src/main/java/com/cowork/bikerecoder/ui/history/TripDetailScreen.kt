@@ -87,6 +87,7 @@ fun TripDetailScreen(
     val media by viewModel.media.collectAsStateWithLifecycle()
     val title by viewModel.title.collectAsStateWithLifecycle()
     val customTitle by viewModel.customTitle.collectAsStateWithLifecycle()
+    val autoTitle by viewModel.autoTitle.collectAsStateWithLifecycle()
     var renaming by rememberSaveable { mutableStateOf(false) }
     val access = rememberHeartRateAccess(heartRateGate)
     val viewer = rememberPhotoViewerState()
@@ -143,7 +144,7 @@ fun TripDetailScreen(
     if (renaming) {
         RenameTripDialog(
             current = customTitle,
-            placeholder = title.orEmpty(),
+            placeholder = autoTitle.orEmpty(),
             onSave = {
                 viewModel.rename(it)
                 renaming = false

@@ -11,6 +11,7 @@ import java.time.LocalDate
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -38,6 +39,17 @@ class RenameTripDialogTest {
         composeRule.onNodeWithText("저녁 라이딩 · 서울 강서구").assertIsDisplayed()
         composeRule.onNodeWithText("저장").assertIsDisplayed()
         composeRule.onNodeWithText("취소").assertIsDisplayed()
+    }
+
+    /** A custom title in the field; clearing it shows the given automatic title as the hint, not the custom one. */
+    @Test
+    fun clearedFieldShowsTheAutomaticTitleAsHint() {
+        show("한강 한 바퀴")
+        composeRule.onNodeWithText("저녁 라이딩 · 서울 강서구").assertDoesNotExist()
+
+        composeRule.onNode(hasSetTextAction()).performTextClearance()
+
+        composeRule.onNodeWithText("저녁 라이딩 · 서울 강서구").assertIsDisplayed()
     }
 
     @Test

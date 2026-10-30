@@ -128,6 +128,21 @@ class TripDetailViewModelTest {
         assertEquals("저녁 라이딩 · 서울 강서구", vm.title.value)
     }
 
+    /** The dialog's hint is the automatic title, also while a custom title is shown. */
+    @Test
+    fun autoTitleStaysAutomaticWhileACustomTitleIsSet() = runTest(dispatcher) {
+        evening()
+        val vm = detail()
+        advanceUntilIdle()
+        assertEquals("저녁 라이딩 · 서울 강서구", vm.autoTitle.value)
+
+        vm.rename("한강 한 바퀴")
+        advanceUntilIdle()
+
+        assertEquals("한강 한 바퀴", vm.title.value)
+        assertEquals("저녁 라이딩 · 서울 강서구", vm.autoTitle.value)
+    }
+
     @Test
     fun aLongTitleIsCutAtThirtyCodePoints() = runTest(dispatcher) {
         evening()
