@@ -74,14 +74,17 @@ fun WeekStrip(state: WeekStripState, onOpenStatsWeek: () -> Unit, onSetGoals: ()
     }
 }
 
-/** The weekly goal ring (spec §3.1): the week's kilometres of the goal, stopping at 100 %; another colour and "달성" once reached. */
+/**
+ * The weekly goal ring (spec §3.1): the week's kilometres of the goal, stopping at 100 %; another colour and "달성" once reached.
+ * It is drawn for a secondary-container background (also by the stats tab's goal card).
+ */
 @Composable
-private fun GoalRing(distanceM: Double, goalKm: Int) {
+internal fun GoalRing(distanceM: Double, goalKm: Int, tag: String = FeedTags.RING) {
     val reached = distanceM >= goalKm * 1000.0
     val fraction = (distanceM / (goalKm * 1000.0)).coerceIn(0.0, 1.0).toFloat()
     val track = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.15f)
     val progress = if (reached) GOAL_REACHED else MaterialTheme.colorScheme.primary
-    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(RING_SIZE).testTag(FeedTags.RING)) {
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(RING_SIZE).testTag(tag)) {
         Canvas(modifier = Modifier.size(RING_SIZE)) {
             val width = 8.dp.toPx()
             val inset = width / 2
@@ -105,5 +108,5 @@ private fun GoalRing(distanceM: Double, goalKm: Int) {
 }
 
 private val RING_SIZE = 84.dp
-private val GOAL_REACHED = Color(0xFF2E7D32)
-private val GOAL_REACHED_TEXT = Color(0xFF1B5E20)
+internal val GOAL_REACHED = Color(0xFF2E7D32)
+internal val GOAL_REACHED_TEXT = Color(0xFF1B5E20)

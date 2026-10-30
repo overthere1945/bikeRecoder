@@ -45,8 +45,12 @@ fun weekTotalText(meters: Double, rides: Int): String = "이번 주 ${kmText(met
 /** "지난주 이맘때보다 +12.3 km". */
 fun weekDiffText(diffMeters: Double): String = "지난주 이맘때보다 ${signedKmText(diffMeters)}"
 
-/** "64 / 100 km": the week's kilometres (rounded down) of the goal. */
-fun goalProgressText(meters: Double, goalKm: Int): String = "${(meters / 1000.0).toInt()} / $goalKm km"
+/** "64 / 100 km", "412 / 1,000 km": the kilometres so far (rounded down) of the goal, thousands grouped. */
+fun goalProgressText(meters: Double, goalKm: Int): String =
+    "${groupedInt((meters / 1000.0).toInt())} / ${groupedInt(goalKm)} km"
+
+/** 1180 → "1,180". */
+fun groupedInt(value: Int): String = String.format(java.util.Locale.US, "%,d", value)
 
 /** "평균 15.5 km/h", with " · ♥ 132" when a heart rate is known. */
 fun averageLineText(avgSpeedMps: Double, avgBpm: Int?): String {
