@@ -108,6 +108,9 @@ class ShareIntentsTest {
         val inner = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)!!
         assertFileBasics(inner)
         assertEquals(text, inner.getStringExtra(Intent.EXTRA_TEXT))
+        // The chooser itself carries the grant, so the app picked there can read the file.
+        assertEquals(Uri.parse(uri), intent.clipData!!.getItemAt(0).uri)
+        assertTrue(intent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
     }
 
     @Test

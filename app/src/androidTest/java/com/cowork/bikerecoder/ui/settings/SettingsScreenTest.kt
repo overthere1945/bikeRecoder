@@ -195,6 +195,18 @@ class SettingsScreenTest {
     }
 
     @Test
+    fun longStoredHashtagsReopenIntact() {
+        val long = (1..19).joinToString(" ") { "#태그%02d".format(it) } // 133 characters
+        settings.value = settings.value.copy(shareHashtags = long)
+        show()
+        composeRule.onNodeWithTag(SettingsTags.SHARE_HASHTAGS).performScrollTo().performClick()
+        composeRule.onNodeWithTag(SettingsTags.SHARE_HASHTAGS_INPUT).assertTextEquals(long)
+        composeRule.onNodeWithTag(SettingsTags.CONFIRM).performClick()
+
+        composeRule.waitUntil(5_000) { settings.value.shareHashtags == long }
+    }
+
+    @Test
     fun emptyShowsNone() {
         settings.value = settings.value.copy(shareHashtags = "")
         show()

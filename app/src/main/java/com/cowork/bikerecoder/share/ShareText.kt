@@ -61,7 +61,8 @@ fun regionTags(regionName: String?): List<String> =
 
 /** A single-word hashtag: "#" plus the letters, digits and "_" of [word]; null when nothing is left. */
 fun cleanTag(word: String): String? {
-    val body = word.filter { it.isLetterOrDigit() || it == '_' }
+    val body = StringBuilder()
+    word.codePoints().filter { Character.isLetterOrDigit(it) || it == '_'.code }.forEach { body.appendCodePoint(it) }
     return if (body.isEmpty()) null else "#$body"
 }
 
@@ -146,9 +147,9 @@ private fun moodRegex(mood: Mood) = Regex("(^|\\s)${Regex.escape(mood.tag)}(?=\\
 /** The record the text was written against (spec §3.4): "finished rides:metres", e.g. "3:32140". */
 fun shareStamp(rides: Int, distanceM: Double): String = "$rides:${distanceM.roundToLong()}"
 
-/** The e-mail subject: the first line of [text], cut at [MAX_SUBJECT] code points. */
+/** The e-mail subject: the first non-blank line of [text], cut at [MAX_SUBJECT] code points. */
 fun emailSubject(text: String): String =
-    RideTitle.truncateCodePoints(text.lineSequence().first().trim(), MAX_SUBJECT)
+    RideTitle.truncateCodePoints(text.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }.orEmpty(), MAX_SUBJECT)
 
 private val WHITESPACE = Regex("\\s+")
 private val SPACES = Regex("[ \\t]{2,}")

@@ -129,6 +129,10 @@ class ShareActions(
         } catch (_: ActivityNotFoundException) {
             tell(MSG_NO_APP)
             return
+        } catch (_: SecurityException) {
+            // An activity of the app that is not open to us (a handler it keeps to itself).
+            tell(MSG_NO_APP)
+            return
         }
         close()
     }

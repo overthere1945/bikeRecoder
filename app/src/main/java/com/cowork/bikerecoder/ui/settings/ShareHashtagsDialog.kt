@@ -16,8 +16,8 @@ import com.cowork.bikerecoder.share.MAX_HASHTAGS_INPUT
 import com.cowork.bikerecoder.share.normalizeHashtags
 
 /**
- * "기본 해시태그" (spec §3.5). The one-line field starts with [current] (the value in effect) and takes at most
- * [MAX_HASHTAGS_INPUT] characters. [onSave] gets [normalizeHashtags] of the input (an empty result means "none");
+ * "기본 해시태그" (spec §3.5). The one-line field starts with [current] (the value in effect) and grows to at most
+ * [MAX_HASHTAGS_INPUT] characters (a longer [current] is kept whole and can only be cut down). [onSave] gets [normalizeHashtags] of the input (an empty result means "none");
  * [onDismiss] is [취소].
  */
 @Composable
@@ -26,14 +26,14 @@ fun ShareHashtagsDialog(
     onSave: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var text by remember { mutableStateOf(current.take(MAX_HASHTAGS_INPUT)) }
+    var text by remember { mutableStateOf(current) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("기본 해시태그") },
         text = {
             OutlinedTextField(
                 value = text,
-                onValueChange = { text = it.take(MAX_HASHTAGS_INPUT) },
+                onValueChange = { if (it.length <= MAX_HASHTAGS_INPUT || it.length <= text.length) text = it },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().testTag(SettingsTags.SHARE_HASHTAGS_INPUT),
             )

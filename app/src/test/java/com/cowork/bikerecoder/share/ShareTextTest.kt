@@ -177,4 +177,16 @@ class ShareTextTest {
     fun emailSubjectIsTheFirstLine() {
         assertEquals("저녁 라이딩", emailSubject("저녁 라이딩\n2026년"))
     }
+
+    @Test
+    fun emailSubjectSkipsLeadingBlankLines() {
+        assertEquals("저녁 라이딩", emailSubject("\n  \n저녁 라이딩\n2026년"))
+        assertEquals("", emailSubject(" \n\n"))
+    }
+
+    @Test
+    fun cleanTagKeepsSupplementaryLetters() {
+        assertEquals("#𠀀한강", cleanTag("𠀀한강😊"))
+        assertNull(cleanTag("😊"))
+    }
 }

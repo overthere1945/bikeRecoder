@@ -37,11 +37,9 @@ class PackageShareApps(private val context: Context) : ShareApps {
         ShareTarget.COPY, ShareTarget.SAVE, ShareTarget.MORE -> true
     }
 
-    override fun instagramFeed(): ComponentName? =
-        instagramActivities().firstOrNull { !it.contains("Story") && !it.contains("Direct") }
+    override fun instagramFeed(): ComponentName? = pickInstagramFeed(instagramReceivers())?.toComponent()
 
-    override fun instagramStory(): ComponentName? =
-        instagramActivities().firstOrNull { it.contains("Story") }
+    override fun instagramStory(): ComponentName? = pickInstagramStory(instagramReceivers())?.toComponent()
 
     override fun icon(target: ShareTarget): Drawable? {
         val packageName = when (target) {
@@ -62,8 +60,32 @@ class PackageShareApps(private val context: Context) : ShareApps {
             0,
         )
 
-    private fun instagramActivities(): List<ComponentName> =
-        receivers(INSTAGRAM_PACKAGE).map { ComponentName(it.activityInfo.packageName, it.activityInfo.name) }
+    private fun instagramReceivers(): List<InstagramReceiver> =
+        receivers(INSTAGRAM_PACKAGE).map {
+            InstagramReceiver(it.activityInfo.packageName, it.activityInfo.name, it.activityInfo.exported)
+        }
 
-    private fun ComponentName.contains(part: String) = className.contains(part)
+    private fun InstagramReceiver.toComponent() = ComponentName(packageName, className)
 }
+
+/** One activity of Instagram that takes a shared image or video. */
+data class InstagramReceiver(val packageName: String, val className: String, val exported: Boolean)
+
+/**
+ * The feed share screen among [receivers]: of the exported ones, sorted by class name so the answer does not depend on
+ * the order the package manager lists them, the one named exactly `ShareHandlerActivity`, else the first that is neither
+ * a story nor a direct-message screen. Null when none is left.
+ */
+fun pickInstagramFeed(receivers: List<InstagramReceiver>): InstagramReceiver? {
+    val candidates = receivers.exportedByName()
+    return candidates.firstOrNull { it.className.substringAfterLast('.') == "ShareHandlerActivity" }
+        ?: candidates.firstOrNull { !it.className.has("story") && !it.className.has("direct") }
+}
+
+/** The story share screen among [receivers]: the first exported one (by class name) that is a story and not a direct one. */
+fun pickInstagramStory(receivers: List<InstagramReceiver>): InstagramReceiver? =
+    receivers.exportedByName().firstOrNull { it.className.has("story") && !it.className.has("direct") }
+
+private fun List<InstagramReceiver>.exportedByName() = filter { it.exported }.sortedBy { it.className }
+
+private fun String.has(part: String) = contains(part, ignoreCase = true)

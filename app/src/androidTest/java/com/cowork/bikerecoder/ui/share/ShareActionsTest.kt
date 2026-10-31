@@ -96,6 +96,15 @@ class ShareActionsTest {
         assertEquals(0, closes)
     }
 
+    /** An Instagram activity that is not open to the app throws on launch: the same message, the sheet stays. */
+    @Test
+    fun securityExceptionReadsAsNoApp() {
+        actions(launch = { throw SecurityException("not exported") }).handle(ShareEvent.Send(ShareTarget.INSTAGRAM, image, text))
+
+        assertEquals(listOf(MSG_TEXT_COPIED_PASTE, MSG_NO_APP), told)
+        assertEquals(0, closes)
+    }
+
     /** Spec §3.6: label "활동"; "복사했습니다" below Android 13 only (the phone tells it from 13 on). The sheet stays. */
     @Test
     fun copyPutsTheTextOnTheClipboard() {
