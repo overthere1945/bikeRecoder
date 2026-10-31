@@ -68,6 +68,20 @@ class DownloadsWriterTest {
         assertEquals("<kml>2</kml>", read(second.uri.toUri()))
     }
 
+    @Test
+    fun takenGpxNameKeepsItsExtension() {
+        // The S25 renamed a taken "x.gpx" to "x.gpx (1)", which no app opened as GPX; the writer picks "x (1).gpx".
+        val base = "bikeRecoder_test_${stamp}_gpx"
+        val name = "$base.gpx"
+
+        writer.save(name, ExportFormat.GPX.mime, "<gpx>1</gpx>").also { created += it.uri.toUri() }
+        val second = writer.save(name, ExportFormat.GPX.mime, "<gpx>2</gpx>").also { created += it.uri.toUri() }
+
+        assertEquals("$base (1).gpx", second.displayName)
+        assertEquals("$base (1).gpx", row(second.uri.toUri()).name)
+        assertEquals("<gpx>2</gpx>", read(second.uri.toUri()))
+    }
+
     private data class Row(val name: String, val relativePath: String, val pending: Int, val mime: String)
 
     private fun args() = Bundle().apply { putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE) }
