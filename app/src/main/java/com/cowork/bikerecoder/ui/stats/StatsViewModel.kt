@@ -274,9 +274,10 @@ class StatsViewModel(
 
     private fun cumulativeOf(rides: List<RideStat>, period: StatsPeriod, metric: StatMetric, goalKm: GoalKm, today: LocalDate): CumulativeChartState? {
         val series = StatsCalculator.cumulative(rides, period, today) ?: return null
-        // The last day shown (today, or the end of a finished period); the earlier period on that same day, or its end if shorter.
-        val last = series.current.lastIndex
-        val previousAt = series.previous.getOrElse(last) { series.previous.last() }
+        // What the comparison sentence compares with: the earlier period up to the same day while this one is in progress, all of
+        // it once this one is finished.
+        val previousAt = StatsCalculator.comparison(rides, period, today)?.previous
+            ?: series.previous.getOrElse(series.current.lastIndex) { series.previous.last() }
         val goal = when {
             metric != StatMetric.DISTANCE -> null
             period.kind == PeriodKind.WEEK -> goalKm.weekly

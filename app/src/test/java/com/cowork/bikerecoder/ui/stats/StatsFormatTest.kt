@@ -184,6 +184,9 @@ class StatsFormatTest {
         assertEquals("99.9", barShortText(StatMetric.DISTANCE, StatTotals(99_940.0, 1, 0, 0.0)))
         assertEquals("100", barShortText(StatMetric.DISTANCE, StatTotals(99_960.0, 1, 0, 0.0)))
         assertEquals("124", barShortText(StatMetric.DISTANCE, StatTotals(123_700.0, 1, 0, 0.0)))
+        // Thousands are grouped like the ticks and meterText.
+        assertEquals("1,124", barShortText(StatMetric.DISTANCE, StatTotals(1_123_700.0, 1, 0, 0.0)))
+        assertEquals("4,370", barShortText(StatMetric.ASCENT, StatTotals(0.0, 1, 0, 4_370.4)))
         assertEquals("1:45", barShortText(StatMetric.TIME, StatTotals(0.0, 1, 6_300_000, 0.0)))
         assertEquals("0:19", barShortText(StatMetric.TIME, StatTotals(0.0, 1, 19 * 60_000L + 30_000, 0.0)))
         assertEquals("120", barShortText(StatMetric.ASCENT, StatTotals(0.0, 1, 0, 119.6)))

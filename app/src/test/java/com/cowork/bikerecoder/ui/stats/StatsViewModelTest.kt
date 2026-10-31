@@ -673,4 +673,20 @@ class StatsViewModelTest {
         advanceUntilIdle()
         assertEquals(366, vm.state.value!!.cumulative!!.currentDays)
     }
+
+    /** A finished month is compared with all of the month before it: the sentence, the legend and the grey line agree. */
+    @Test
+    fun cumulativeOfAFinishedMonthReadsTheWholePreviousMonth() = runTest(dispatcher) {
+        val vm = viewModel(FakeRides(listOf(ride(1, LocalDate.of(2026, 1, 30), 10.0), ride(2, LocalDate.of(2026, 2, 5), 3.0))))
+
+        vm.show(PeriodKind.MONTH, LocalDate.of(2026, 2, 1))
+        advanceUntilIdle()
+        val cumulative = vm.state.value!!.cumulative!!
+
+        assertEquals(28, cumulative.current.size)
+        assertEquals(31, cumulative.previous.size)
+        assertEquals(10.0, cumulative.previous.last(), 1e-9) // January 30 is in the grey line's end
+        assertEquals("누적 2월 3.0 km, 1월 10.0 km", cumulative.description)
+        assertEquals("1월보다 −7.0 km (−70%)", vm.state.value!!.comparisonText)
+    }
 }

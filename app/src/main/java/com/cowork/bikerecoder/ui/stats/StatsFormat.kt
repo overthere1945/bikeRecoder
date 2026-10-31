@@ -34,20 +34,21 @@ fun metricText(metric: StatMetric, totals: StatTotals): String = when (metric) {
 }
 
 /**
- * The short value written above a bar: "24.1" (km, whole above 100), "1:45" (h:mm), "120" (m); "" when there is none.
+ * The short value written above a bar: "24.1" (km, whole above 100), "1:45" (h:mm), "120" (m), thousands grouped ("1,124");
+ * "" when there is none.
  * The unit is [metricUnitText]; the chart writes it once in its corner.
  */
 fun barShortText(metric: StatMetric, totals: StatTotals): String = when (metric) {
     StatMetric.DISTANCE -> if (totals.distanceM <= 0.0) "" else {
         val km = BigDecimal(totals.distanceM).divide(BigDecimal(1_000), 1, RoundingMode.HALF_UP)
-        if (km >= BigDecimal(100)) km.setScale(0, RoundingMode.HALF_UP).toPlainString() else km.toPlainString()
+        if (km >= BigDecimal(100)) groupedInt(km.setScale(0, RoundingMode.HALF_UP).toInt()) else km.toPlainString()
     }
     StatMetric.TIME -> if (totals.movingTimeMs <= 0L) "" else {
         val minutes = totals.movingTimeMs / 60_000
         "${minutes / 60}:${(minutes % 60).toString().padStart(2, '0')}"
     }
     StatMetric.ASCENT -> if (totals.ascentM <= 0.0) "" else {
-        BigDecimal(totals.ascentM).setScale(0, RoundingMode.HALF_UP).toPlainString()
+        groupedInt(BigDecimal(totals.ascentM).setScale(0, RoundingMode.HALF_UP).toInt())
     }
 }
 

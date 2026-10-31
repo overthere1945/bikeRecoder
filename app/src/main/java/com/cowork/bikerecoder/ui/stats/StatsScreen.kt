@@ -6,6 +6,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -309,8 +310,8 @@ private fun PeriodBlock(
             TotalCell("상승 고도", meterText(state.totals.ascentM), StatsTags.ASCENT, Modifier.weight(1f))
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            // The chips give way to the "?" (which keeps its 48 dp), not the other way round.
-            Row(modifier = Modifier.weight(1f, fill = false), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // The chips wrap onto a second line (at a big font) before they squeeze: the "?" keeps its 48 dp at the end of the row.
+            FlowRow(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for (metric in StatMetric.entries) {
                     FilterChip(
                         selected = state.metric == metric,

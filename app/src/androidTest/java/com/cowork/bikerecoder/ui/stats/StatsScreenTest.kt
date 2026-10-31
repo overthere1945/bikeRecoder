@@ -12,6 +12,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
@@ -22,9 +23,11 @@ import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -528,6 +531,26 @@ class StatsScreenTest {
         show(rides = emptyList(), goals = FakeGoals(null, null))
         composeRule.onNodeWithTag(StatsTags.CUMULATIVE_PLOT).assertContentDescriptionEquals("누적 이번 달 0.0 km, 지난달 0.0 km")
     }
+
+    /** At a big font the chips wrap onto a second line instead of squeezing a label (the "?" keeps its place): each label is one line. */
+    private fun everyChipLabelIsOneLine(fontScale: Float) {
+        show(fontScale = fontScale)
+
+        for (metric in StatMetric.entries) {
+            val label = composeRule.onNode(hasText(metricLabel(metric)) and hasAnyAncestor(hasTestTag(StatsTags.metric(metric))), useUnmergedTree = true)
+            label.assertExists()
+            val layouts = mutableListOf<TextLayoutResult>()
+            label.fetchSemanticsNode().config[SemanticsActions.GetTextLayoutResult].action!!(layouts)
+            assertEquals("$metric at $fontScale", 1, layouts.single().lineCount)
+        }
+        composeRule.onNodeWithContentDescription("도움말: ${StatsHelp.CHART_TOPIC}").assertExists()
+    }
+
+    @Test
+    fun theChipLabelsStayOnOneLineAt1_5xFontSize() = everyChipLabelIsOneLine(1.5f)
+
+    @Test
+    fun theChipLabelsStayOnOneLineAt2xFontSize() = everyChipLabelIsOneLine(2f)
 
     @Test
     fun aHelpBubbleOpensAndTapsOutsideOrBackCloseIt() {
