@@ -360,3 +360,23 @@ data class RideStatRow(
     val ascentM: Double,
     val endedAt: Long,
 )
+
+data class ImportedNameRow(val tripId: Long, val fileName: String)
+
+data class SegmentSpanRow(val spanStart: Long, val spanEnd: Long)
+
+@Dao
+interface ImportDao {
+    @Insert
+    suspend fun insertImport(row: TripImportEntity)
+
+    @Query("SELECT tripId, fileName FROM trip_import")
+    fun observeImported(): Flow<List<ImportedNameRow>>
+
+    @Query("SELECT tripId FROM trip_import ORDER BY tripId")
+    suspend fun importedTripIds(): List<Long>
+
+    /** 모든 구간의 시간 구간. 열린 구간은 끝을 [now]로 본다. */
+    @Query("SELECT startedAt AS spanStart, COALESCE(endedAt, :now) AS spanEnd FROM ride_segment")
+    suspend fun segmentSpans(now: Long): List<SegmentSpanRow>
+}

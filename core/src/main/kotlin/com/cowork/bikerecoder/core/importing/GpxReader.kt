@@ -64,6 +64,8 @@ object GpxReader {
         } catch (e: IOException) {
             throw GpxReadException(ImportProblem.UNREADABLE)
         }
+        // 안드로이드 파서는 disallow-doctype-decl을 무시하고 DOCTYPE을 그냥 읽는다. 읽은 뒤에라도 DOCTYPE이 있으면 거부한다.
+        if (document.doctype != null) throw GpxReadException(ImportProblem.UNREADABLE)
         if (document.documentElement?.localName != "gpx") throw GpxReadException(ImportProblem.NOT_GPX)
 
         val trackPoints = document.getElementsByTagNameNS("*", "trkpt")

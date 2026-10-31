@@ -3,6 +3,7 @@ package com.cowork.bikerecoder
 import android.content.Context
 import android.util.Log
 import com.cowork.bikerecoder.core.routing.Router
+import com.cowork.bikerecoder.core.importing.ImportStore
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.trip.OfflineMapController
 import com.cowork.bikerecoder.core.stats.RideStatsSource
@@ -15,6 +16,7 @@ import com.cowork.bikerecoder.data.DataStoreDayDistances
 import com.cowork.bikerecoder.data.DataStoreRecentPlaces
 import com.cowork.bikerecoder.data.DayDistances
 import com.cowork.bikerecoder.data.RoomFavoriteStore
+import com.cowork.bikerecoder.data.RoomImportStore
 import com.cowork.bikerecoder.data.RoomPostStore
 import com.cowork.bikerecoder.data.RoomRideStatsSource
 import com.cowork.bikerecoder.data.RoomRideStore
@@ -130,6 +132,7 @@ class AppContainer(context: Context) {
     val offline: OfflineMapController = offlineMaps
     val tripManager: TripManager = TripManager(tripStore, offline, clock = System::currentTimeMillis)
     val rideStore: RideStore = RoomRideStore(db)
+    val importStore: ImportStore = RoomImportStore(db)
     val tripLabels: TripLabelStore = RoomTripLabelStore(db)
     val rideStats: RideStatsSource = RoomRideStatsSource(db)
     val favorites: FavoriteRepository = FavoriteRepository(RoomFavoriteStore(db), clock = System::currentTimeMillis)
