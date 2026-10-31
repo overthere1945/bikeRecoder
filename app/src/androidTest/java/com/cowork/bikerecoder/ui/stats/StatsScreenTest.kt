@@ -8,21 +8,32 @@ import android.util.Log
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.positionOnScreen
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
+import android.os.SystemClock
+import android.view.InputDevice
+import android.view.MotionEvent
 import androidx.test.platform.app.InstrumentationRegistry
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.core.post.PeriodFilter
@@ -95,17 +106,55 @@ class StatsScreenTest {
     private lateinit var viewModel: StatsViewModel
 
     /** The state is built on the main thread here (the app builds it off it), so every check sees the newest one. */
-    private fun show(rides: List<RideStat> = this.rides, goals: FakeGoals = this.goals, scrollToTop: Int = 0) {
+    private fun show(
+        rides: List<RideStat> = this.rides,
+        goals: FakeGoals = this.goals,
+        scrollToTop: Int = 0,
+        fontScale: Float? = null,
+    ) {
         viewModel = StatsViewModel(FakeRides(rides), goals, { LocalDate.of(2026, 10, 28) }, WarnLog { _, _ -> }, Dispatchers.Main)
         composeRule.setContent {
-            MaterialTheme {
-                // The tab sits in the app's scaffold; here the system bars are kept off it by hand.
-                Surface(modifier = Modifier.systemBarsPadding()) {
-                    StatsScreen(viewModel, onOpenSegment = { opened += it }, onOpenCumulative = { cumulative += it }, scrollToTop = scrollToTop)
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides if (fontScale == null) density else Density(density.density, fontScale)) {
+                MaterialTheme {
+                    // The tab sits in the app's scaffold; here the system bars are kept off it by hand.
+                    Surface(modifier = Modifier.systemBarsPadding()) {
+                        StatsScreen(viewModel, onOpenSegment = { opened += it }, onOpenCumulative = { cumulative += it }, scrollToTop = scrollToTop)
+                    }
                 }
             }
         }
         composeRule.waitForIdle()
+    }
+
+    /** The Back key, sent to the window in front (the bubble when it is open). */
+    private fun pressBack() {
+        InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("input keyevent KEYCODE_BACK").close()
+        Thread.sleep(500)
+        composeRule.waitForIdle()
+    }
+
+    /** A real tap at the screen point ([x], [y]): the compose test's own clicks never reach the bubble's window. */
+    private fun tapScreen(x: Float, y: Float) {
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val down = SystemClock.uptimeMillis()
+        for ((action, time) in listOf(MotionEvent.ACTION_DOWN to down, MotionEvent.ACTION_UP to down + 50)) {
+            val event = MotionEvent.obtain(down, time, action, x, y, 0)
+            event.source = InputDevice.SOURCE_TOUCHSCREEN
+            automation.injectInputEvent(event, true)
+            event.recycle()
+        }
+        composeRule.waitForIdle()
+    }
+
+    /** A screen point outside the open bubble: 150 px under it, or above it near the bottom of the screen. */
+    private fun pointOutsideTheBubble(): Pair<Float, Float> {
+        val node = composeRule.onNodeWithTag(StatsTags.HELP_TEXT).fetchSemanticsNode()
+        val origin = node.layoutInfo.coordinates.positionOnScreen()
+        val screenHeight = InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.heightPixels
+        val below = origin.y + node.size.height + 150f
+        val y = if (below < screenHeight - 150f) below else maxOf(origin.y - 150f, 150f)
+        return origin.x + node.size.width / 2f to y
     }
 
     /** Nodes inside the goal card, which is one clickable (merged) node. */
@@ -373,6 +422,125 @@ class StatsScreenTest {
         composeRule.waitForIdle()
 
         composeRule.onNodeWithTag(StatsTags.GOAL_CARD).assertIsDisplayed()
+    }
+
+    @Test
+    fun theAscentIsCalledAscentHeight() {
+        show()
+
+        composeRule.onNodeWithTag(StatsTags.metric(StatMetric.ASCENT)).assert(hasText("상승 고도"))
+        // The chip and the small cell (the old name "상승" alone is gone).
+        composeRule.onAllNodesWithText("상승 고도", useUnmergedTree = true).assertCountEquals(2)
+        composeRule.onAllNodesWithText("상승", useUnmergedTree = true).assertCountEquals(0)
+    }
+
+    @Test
+    fun theChipChangesTheValuesWrittenOnTheBars() {
+        show()
+
+        // October's week bars: nothing in the first (10/1~10/4), 24.1 km in the second, 64.3 km in the last.
+        unmerged(StatsTags.BAR_UNIT).assertTextEquals("km")
+        unmerged(StatsTags.barShort(0)).assertDoesNotExist()
+        unmerged(StatsTags.barShort(1)).assertTextEquals("24.1")
+        unmerged(StatsTags.barShort(4)).assertTextEquals("64.3")
+
+        composeRule.onNodeWithTag(StatsTags.metric(StatMetric.TIME)).performClick()
+        unmerged(StatsTags.BAR_UNIT).assertTextEquals("시간")
+        unmerged(StatsTags.barShort(1)).assertTextEquals("1:20")
+        unmerged(StatsTags.barShort(4)).assertTextEquals("3:30")
+
+        composeRule.onNodeWithTag(StatsTags.metric(StatMetric.ASCENT)).performClick()
+        unmerged(StatsTags.BAR_UNIT).assertTextEquals("m")
+        unmerged(StatsTags.barShort(1)).assertTextEquals("95")
+        unmerged(StatsTags.barShort(4)).assertTextEquals("320")
+    }
+
+    @Test
+    fun allWithinAYearHasMonthBars() {
+        show()
+
+        composeRule.onNodeWithTag(StatsTags.kind(PeriodKind.ALL)).performClick()
+        // August to October: the first bar carries the year.
+        listOf("’26.8", "9월", "10월").forEachIndexed { index, label ->
+            composeRule.onNodeWithTag(StatsTags.bar(index)).assertIsDisplayed()
+            composeRule.onAllNodesWithText(label, useUnmergedTree = true).assertCountEquals(1)
+        }
+        composeRule.onNodeWithTag(StatsTags.bar(3)).assertDoesNotExist()
+        unmerged(StatsTags.barShort(0)).assertTextEquals("133")
+        composeRule.onNodeWithTag(StatsTags.bar(2)).performClick()
+        composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals("2026년 10월 · 186.2 km")
+    }
+
+    @Test
+    fun aHelpBubbleOpensAndTapsOutsideOrBackCloseIt() {
+        show()
+
+        composeRule.onNodeWithText(StatsHelp.STREAK).assertDoesNotExist()
+        composeRule.onNodeWithContentDescription("도움말: 연속 주행").performClick()
+        composeRule.onNodeWithText(StatsHelp.STREAK).assertIsDisplayed()
+
+        // A tap outside the bubble closes it.
+        val (x, y) = pointOutsideTheBubble()
+        tapScreen(x, y)
+        composeRule.onNodeWithText(StatsHelp.STREAK).assertDoesNotExist()
+
+        // So does Back; the icon again closes it too.
+        composeRule.onNodeWithContentDescription("도움말: 연속 주행").performClick()
+        composeRule.onNodeWithText(StatsHelp.STREAK).assertIsDisplayed()
+        pressBack()
+        composeRule.onNodeWithText(StatsHelp.STREAK).assertDoesNotExist()
+        composeRule.onNodeWithContentDescription("도움말: 연속 주행").performClick()
+        composeRule.onNodeWithContentDescription("도움말: 연속 주행").performClick()
+        composeRule.onNodeWithText(StatsHelp.STREAK).assertDoesNotExist()
+    }
+
+    @Test
+    fun onlyOneHelpBubbleIsOpen() {
+        show()
+
+        composeRule.onNodeWithContentDescription("도움말: 연속 주행").performClick()
+        composeRule.onNodeWithText(StatsHelp.STREAK).assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("도움말: 비교").performClick()
+        composeRule.onNodeWithText(StatsHelp.COMPARISON).assertIsDisplayed()
+        composeRule.onNodeWithText(StatsHelp.STREAK).assertDoesNotExist()
+    }
+
+    @Test
+    fun everyHelpTipIsThereAndSaysItsText() {
+        show()
+
+        unmerged(StatsTags.help(StatsHelp.GOAL_TOPIC)).performClick()
+        composeRule.onNodeWithText(StatsHelp.GOAL).assertExists()
+        composeRule.onNodeWithContentDescription("도움말: ${StatsHelp.TOTALS_TOPIC}").performClick()
+        composeRule.onNodeWithText(StatsHelp.TOTALS).assertExists()
+        composeRule.onNodeWithContentDescription("도움말: ${StatsHelp.CHART_TOPIC}").performClick()
+        composeRule.onNodeWithText(StatsHelp.CHART).assertExists()
+        scrollTo(StatsTags.RECORDS)
+        composeRule.onNodeWithContentDescription("도움말: ${StatsHelp.RECORDS_TOPIC}").performClick()
+        composeRule.onNodeWithText(StatsHelp.RECORDS).assertExists()
+    }
+
+    /** At a font scale of 2 a value that no longer fits its bar's column is left out, never drawn over the next bar. */
+    @Test
+    fun valuesFitTheirBarsAtTheNormalSize() {
+        show()
+        composeRule.onNodeWithTag(StatsTags.kind(PeriodKind.YEAR)).performClick()
+        unmerged(StatsTags.barShort(7)).assertTextEquals("133") // August fits at the normal size
+    }
+
+    @Test
+    fun valuesDoNotOverflowTheirBarsAtDoubleFontSize() {
+        show(fontScale = 2f)
+        composeRule.onNodeWithTag(StatsTags.kind(PeriodKind.YEAR)).performClick()
+        composeRule.waitForIdle()
+
+        // August (133) is wider than its column now: not written; whatever is written is inside its column.
+        unmerged(StatsTags.barShort(7)).assertDoesNotExist()
+        for (index in 0 until 12) {
+            val value = composeRule.onAllNodes(hasTestTag(StatsTags.barShort(index)), useUnmergedTree = true).fetchSemanticsNodes()
+            val column = composeRule.onNodeWithTag(StatsTags.bar(index)).fetchSemanticsNode()
+            for (node in value) assert(node.size.width <= column.size.width) { "bar $index: ${node.size.width} > ${column.size.width}" }
+        }
     }
 
     /** The two pictures for the record (Download/bikeRecoderTest, pulled by hand): with goals, and without. */

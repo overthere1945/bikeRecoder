@@ -66,8 +66,11 @@ data class GoalProgress(val goalKm: Int, val distanceM: Double) {
     val fraction: Float get() = (distanceM / (goalKm * 1000.0)).coerceIn(0.0, 1.0).toFloat()
 }
 
-/** A bar: [label] under it, [value] its height in the unit of the metric, [valueText] the line shown when it is tapped. */
-data class BarState(val label: String, val value: Double, val valueText: String, val upcoming: Boolean)
+/**
+ * A bar: [label] under it, [value] its height in the unit of the metric, [valueText] the line shown when it is tapped,
+ * [shortText] the short value written above it ("" for an empty bar or one that has not come yet).
+ */
+data class BarState(val label: String, val value: Double, val valueText: String, val upcoming: Boolean, val shortText: String)
 
 /**
  * What the stats tab shows (V1.4.0 spec §3). [records] is empty under two rides; [cumulativeRides] and [cumulativeFilter]
@@ -83,6 +86,7 @@ data class StatsState(
     val bars: List<BarState>,
     val selectedBar: Int?,
     val metric: StatMetric,
+    val unitText: String,
     val weeklyGoal: GoalProgress?,
     val yearlyGoal: GoalProgress?,
     val projectionText: String?,
@@ -227,6 +231,7 @@ class StatsViewModel(
             bars = bars,
             selectedBar = sel.bar?.takeIf { bars.getOrNull(it)?.upcoming == false },
             metric = sel.metric,
+            unitText = metricUnitText(sel.metric),
             weeklyGoal = weeklyGoal,
             yearlyGoal = yearlyGoal,
             projectionText = if (yearlyGoal == null) null else Goals.yearProjectionKm(yearDistance, today)?.let(::projectionText),
@@ -242,6 +247,7 @@ class StatsViewModel(
         value = if (bucket.upcoming) 0.0 else metricValue(metric, bucket.totals),
         valueText = "${barCaptionName(period.kind, bucket.start, period)} · ${metricText(metric, bucket.totals)}",
         upcoming = bucket.upcoming,
+        shortText = if (bucket.upcoming) "" else barShortText(metric, bucket.totals),
     )
 
     private fun filterOf(period: StatsPeriod): PeriodFilter = when (period.kind) {

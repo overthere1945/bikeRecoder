@@ -112,11 +112,50 @@ class StatsCalculatorTest {
         assertEquals(12, year.size)
         assertEquals(d(2026, 2, 1) to d(2026, 2, 28), year[1].start to year[1].endInclusive)
 
-        val rides = listOf(ride(d(2025, 3, 2)), ride(d(2026, 5, 1)))
-        val all = StatsCalculator.buckets(rides, period(PeriodKind.ALL, d(2025, 3, 2), today), today)
-        assertEquals(listOf(d(2025, 1, 1), d(2026, 1, 1)), all.map { it.start })
-        assertEquals(listOf(d(2025, 12, 31), d(2026, 12, 31)), all.map { it.endInclusive })
-        assertEquals(listOf(1, 1), all.map { it.totals.rides })
+        // [전체] of more than 24 months: a bar per year.
+        val rides = listOf(ride(d(2024, 3, 2)), ride(d(2026, 5, 1)))
+        val all = StatsCalculator.buckets(rides, period(PeriodKind.ALL, d(2024, 3, 2), today), today)
+        assertEquals(listOf(d(2024, 1, 1), d(2025, 1, 1), d(2026, 1, 1)), all.map { it.start })
+        assertEquals(listOf(d(2024, 12, 31), d(2025, 12, 31), d(2026, 12, 31)), all.map { it.endInclusive })
+        assertEquals(listOf(1, 0, 1), all.map { it.totals.rides })
+    }
+
+    @Test
+    fun allWithin24MonthsHasMonthBuckets() {
+        val today = d(2026, 10, 31)
+        val rides = listOf(ride(d(2025, 11, 3)), ride(d(2026, 10, 5)))
+        val all = StatsCalculator.buckets(rides, period(PeriodKind.ALL, d(2025, 11, 3), today), today)
+        assertEquals(12, all.size)
+        assertEquals(d(2025, 11, 1) to d(2025, 11, 30), all.first().start to all.first().endInclusive)
+        assertEquals(d(2026, 10, 1) to d(2026, 10, 31), all.last().start to all.last().endInclusive)
+        assertEquals(listOf(1, 1), all.filter { it.totals.rides > 0 }.map { it.totals.rides })
+        assertTrue(all.none { it.upcoming })
+        assertTrue(StatsCalculator.allIsMonthly(period(PeriodKind.ALL, d(2025, 11, 3), today)))
+    }
+
+    @Test
+    fun allOf24MonthsIsMonthly() {
+        val today = d(2026, 10, 31)
+        val start = d(2024, 11, 20)
+        assertEquals(24, StatsCalculator.buckets(emptyList(), period(PeriodKind.ALL, start, today), today).size)
+        assertTrue(StatsCalculator.allIsMonthly(period(PeriodKind.ALL, start, today)))
+    }
+
+    @Test
+    fun allOf25MonthsIsYearly() {
+        val today = d(2026, 10, 31)
+        val start = d(2024, 10, 20)
+        val all = StatsCalculator.buckets(emptyList(), period(PeriodKind.ALL, start, today), today)
+        assertEquals(listOf(d(2024, 1, 1), d(2025, 1, 1), d(2026, 1, 1)), all.map { it.start })
+        assertFalse(StatsCalculator.allIsMonthly(period(PeriodKind.ALL, start, today)))
+    }
+
+    @Test
+    fun allWithNoRidesIsOneMonth() {
+        val today = d(2026, 10, 31)
+        val p = StatsCalculator.periodOf(PeriodKind.ALL, today, emptyList(), today)
+        val all = StatsCalculator.buckets(emptyList(), p, today)
+        assertEquals(listOf(d(2026, 10, 1) to d(2026, 10, 31)), all.map { it.start to it.endInclusive })
     }
 
     @Test

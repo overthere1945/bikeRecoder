@@ -3,6 +3,7 @@ package com.cowork.bikerecoder.core.stats
 import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 import java.time.temporal.TemporalAdjusters
 
 /**
@@ -52,9 +53,19 @@ object StatsCalculator {
         )
     }
 
+    /** [PeriodKind.ALL] 기간이 걸친 달 수가 이 값 이하면 막대를 달마다, 넘으면 해마다 그린다. */
+    private const val ALL_MONTHLY_MAX_MONTHS = 24
+
+    /** [period]([PeriodKind.ALL])의 막대가 달마다인가: 시작한 달부터 끝난 달까지 24달 이하. 아니면 해마다. */
+    fun allIsMonthly(period: StatsPeriod): Boolean = monthsSpanned(period) <= ALL_MONTHLY_MAX_MONTHS
+
+    private fun monthsSpanned(period: StatsPeriod): Long =
+        ChronoUnit.MONTHS.between(period.start.withDayOfMonth(1), period.endInclusive.withDayOfMonth(1)) + 1
+
     /**
      * 막대 그래프 칸. [PeriodKind.WEEK] 7일, [PeriodKind.MONTH] 그 달에 걸친 주마다(그 달 날짜로 자른다),
-     * [PeriodKind.YEAR] 12달, [PeriodKind.ALL] 해마다(그 해 1월 1일~12월 31일).
+     * [PeriodKind.YEAR] 12달, [PeriodKind.ALL] 24달 이하면 달마다(그 달 1일~말일),
+     * 그보다 길면 해마다(그 해 1월 1일~12월 31일). 기준은 [allIsMonthly].
      */
     fun buckets(rides: List<RideStat>, period: StatsPeriod, today: LocalDate): List<Bucket> {
         val ranges: List<Pair<LocalDate, LocalDate>> = when (period.kind) {
@@ -69,7 +80,11 @@ object StatsCalculator {
                 ranges
             }
             PeriodKind.YEAR -> (0L..11L).map { monthOf(period.start.plusMonths(it)) }.map { it.start to it.endInclusive }
-            PeriodKind.ALL -> (period.start.year..period.endInclusive.year).map { LocalDate.of(it, 1, 1) to LocalDate.of(it, 12, 31) }
+            PeriodKind.ALL -> if (allIsMonthly(period)) {
+                (0L until monthsSpanned(period)).map { monthOf(period.start.withDayOfMonth(1).plusMonths(it)) }.map { it.start to it.endInclusive }
+            } else {
+                (period.start.year..period.endInclusive.year).map { LocalDate.of(it, 1, 1) to LocalDate.of(it, 12, 31) }
+            }
         }
         return ranges.map { (start, end) -> Bucket(start, end, totals(rides, start, end), upcoming = start > today) }
     }

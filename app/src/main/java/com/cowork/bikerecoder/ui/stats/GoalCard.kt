@@ -46,7 +46,13 @@ fun GoalCard(
     projectionText: String?,
     onEdit: () -> Unit,
     modifier: Modifier = Modifier,
+    openTip: String? = null,
+    onToggleTip: (String) -> Unit = {},
 ) {
+    // One "?" for the card: by the hint without a goal, else by the title of the first goal.
+    val tip: @Composable () -> Unit = {
+        HelpTip(StatsHelp.GOAL_TOPIC, StatsHelp.GOAL, openTip == StatsHelp.GOAL_TOPIC, onToggle = { onToggleTip(StatsHelp.GOAL_TOPIC) })
+    }
     Surface(
         shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.secondaryContainer,
@@ -58,7 +64,10 @@ fun GoalCard(
             modifier = Modifier.clickable(role = Role.Button, onClick = onEdit).padding(16.dp),
         ) {
             if (weekly == null && yearly == null) {
-                Text(GOAL_EMPTY_HINT, style = MaterialTheme.typography.bodyMedium)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(GOAL_EMPTY_HINT, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    tip()
+                }
                 Button(onClick = onEdit, modifier = Modifier.testTag(StatsTags.GOAL_SET)) { Text(GOAL_SET) }
             }
             if (weekly != null) {
@@ -69,16 +78,17 @@ fun GoalCard(
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f),
                     )
+                    tip()
                     GoalRing(weekly.distanceM, weekly.goalKm, tag = StatsTags.WEEKLY_RING)
                 }
             }
-            if (yearly != null) YearlyGoal(yearly, projectionText)
+            if (yearly != null) YearlyGoal(yearly, projectionText, tip.takeIf { weekly == null })
         }
     }
 }
 
 @Composable
-private fun YearlyGoal(yearly: GoalProgress, projectionText: String?) {
+private fun YearlyGoal(yearly: GoalProgress, projectionText: String?, tip: (@Composable () -> Unit)?) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -87,6 +97,7 @@ private fun YearlyGoal(yearly: GoalProgress, projectionText: String?) {
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f),
             )
+            tip?.invoke()
             Text(
                 goalProgressText(yearly.distanceM, yearly.goalKm),
                 style = MaterialTheme.typography.bodyMedium,

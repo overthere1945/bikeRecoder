@@ -20,9 +20,10 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.temporal.TemporalAdjusters
 
-/** The three values a bar chart and the totals can show (spec §3.3: 거리 · 시간 · 상승). */
+/** The three values a bar chart and the totals can show (spec §3.3: 거리 · 시간 · 상승 고도). */
 enum class StatMetric { DISTANCE, TIME, ASCENT }
 
 /** "24.1 km", "1시간 45분", "123 m": [totals] in the unit of [metric]. */
@@ -30,6 +31,31 @@ fun metricText(metric: StatMetric, totals: StatTotals): String = when (metric) {
     StatMetric.DISTANCE -> kmText(totals.distanceM)
     StatMetric.TIME -> RideFormat.duration(totals.movingTimeMs)
     StatMetric.ASCENT -> meterText(totals.ascentM)
+}
+
+/**
+ * The short value written above a bar: "24.1" (km, whole above 100), "1:45" (h:mm), "120" (m); "" when there is none.
+ * The unit is [metricUnitText]; the chart writes it once in its corner.
+ */
+fun barShortText(metric: StatMetric, totals: StatTotals): String = when (metric) {
+    StatMetric.DISTANCE -> if (totals.distanceM <= 0.0) "" else {
+        val km = BigDecimal(totals.distanceM).divide(BigDecimal(1_000), 1, RoundingMode.HALF_UP)
+        if (km >= BigDecimal(100)) km.setScale(0, RoundingMode.HALF_UP).toPlainString() else km.toPlainString()
+    }
+    StatMetric.TIME -> if (totals.movingTimeMs <= 0L) "" else {
+        val minutes = totals.movingTimeMs / 60_000
+        "${minutes / 60}:${(minutes % 60).toString().padStart(2, '0')}"
+    }
+    StatMetric.ASCENT -> if (totals.ascentM <= 0.0) "" else {
+        BigDecimal(totals.ascentM).setScale(0, RoundingMode.HALF_UP).toPlainString()
+    }
+}
+
+/** The unit [barShortText] is in: "km", "시간", "m". */
+fun metricUnitText(metric: StatMetric): String = when (metric) {
+    StatMetric.DISTANCE -> "km"
+    StatMetric.TIME -> "시간"
+    StatMetric.ASCENT -> "m"
 }
 
 /** The number a bar is as tall as: metres, milliseconds or metres of ascent. */
@@ -109,20 +135,29 @@ private fun mondayOf(date: LocalDate): LocalDate = date.with(TemporalAdjusters.p
 private fun weekNumberIn(period: StatsPeriod, bucketStart: LocalDate): Int =
     CumulativeSummary.weekOf(mondayOf(bucketStart), period.start.year, period.start.monthValue).number
 
-/** What stands under a bar: "월", "3주", "10", "2026". */
+/**
+ * What stands under a bar: "월", "3주", "10", "2026"; a [PeriodKind.ALL] of months (see [StatsCalculator.allIsMonthly]) "10월",
+ * with the year ("’26.1") on the first bar and on every January.
+ */
 fun barAxisLabel(kind: PeriodKind, bucketStart: LocalDate, period: StatsPeriod): String = when (kind) {
     PeriodKind.WEEK -> WEEKDAYS[bucketStart.dayOfWeek.value - 1].toString()
     PeriodKind.MONTH -> "${weekNumberIn(period, bucketStart)}주"
     PeriodKind.YEAR -> "${bucketStart.monthValue}"
-    PeriodKind.ALL -> "${bucketStart.year}"
+    PeriodKind.ALL -> when {
+        !StatsCalculator.allIsMonthly(period) -> "${bucketStart.year}"
+        bucketStart.monthValue == 1 || YearMonth.from(bucketStart) == YearMonth.from(period.start) ->
+            "’${(bucketStart.year % 100).toString().padStart(2, '0')}.${bucketStart.monthValue}"
+        else -> "${bucketStart.monthValue}월"
+    }
 }
 
-/** The bar's name in "10월 3주 · 24.1 km": "10월 25일 (일)", "10월 4주", "10월", "2026년". */
+/** The bar's name in "10월 3주 · 24.1 km": "10월 25일 (일)", "10월 4주", "10월", "2026년" ("2026년 10월" for a [PeriodKind.ALL] of months). */
 fun barCaptionName(kind: PeriodKind, bucketStart: LocalDate, period: StatsPeriod): String = when (kind) {
     PeriodKind.WEEK -> cardDateText(bucketStart)
     PeriodKind.MONTH -> "${period.start.monthValue}월 ${weekNumberIn(period, bucketStart)}주"
     PeriodKind.YEAR -> "${bucketStart.monthValue}월"
-    PeriodKind.ALL -> "${bucketStart.year}년"
+    PeriodKind.ALL ->
+        if (StatsCalculator.allIsMonthly(period)) "${bucketStart.year}년 ${bucketStart.monthValue}월" else "${bucketStart.year}년"
 }
 
 /** One line of 개인 기록: [label] and the value with its date; [target] is where a tap goes (null: nowhere). */

@@ -178,6 +178,48 @@ class StatsFormatTest {
         assertEquals(123.4, metricValue(StatMetric.ASCENT, totals), 1e-9)
     }
 
+    @Test
+    fun barShortTexts() {
+        assertEquals("24.1", barShortText(StatMetric.DISTANCE, StatTotals(24_100.0, 1, 0, 0.0)))
+        assertEquals("99.9", barShortText(StatMetric.DISTANCE, StatTotals(99_940.0, 1, 0, 0.0)))
+        assertEquals("100", barShortText(StatMetric.DISTANCE, StatTotals(99_960.0, 1, 0, 0.0)))
+        assertEquals("124", barShortText(StatMetric.DISTANCE, StatTotals(123_700.0, 1, 0, 0.0)))
+        assertEquals("1:45", barShortText(StatMetric.TIME, StatTotals(0.0, 1, 6_300_000, 0.0)))
+        assertEquals("0:19", barShortText(StatMetric.TIME, StatTotals(0.0, 1, 19 * 60_000L + 30_000, 0.0)))
+        assertEquals("120", barShortText(StatMetric.ASCENT, StatTotals(0.0, 1, 0, 119.6)))
+        // Nothing to write on an empty bar.
+        for (metric in StatMetric.entries) assertEquals("", barShortText(metric, StatTotals(0.0, 0, 0, 0.0)))
+    }
+
+    @Test
+    fun metricUnitTexts() {
+        assertEquals("km", metricUnitText(StatMetric.DISTANCE))
+        assertEquals("시간", metricUnitText(StatMetric.TIME))
+        assertEquals("m", metricUnitText(StatMetric.ASCENT))
+    }
+
+    @Test
+    fun metricLabelsNameTheAscent() {
+        assertEquals("거리", metricLabel(StatMetric.DISTANCE))
+        assertEquals("시간", metricLabel(StatMetric.TIME))
+        assertEquals("상승 고도", metricLabel(StatMetric.ASCENT))
+    }
+
+    @Test
+    fun monthlyAllBarTexts() {
+        val all = StatsPeriod(PeriodKind.ALL, LocalDate.of(2025, 11, 3), LocalDate.of(2026, 10, 31))
+        // The first bar and every January carry the year; the others are just the month.
+        assertEquals("’25.11", barAxisLabel(PeriodKind.ALL, LocalDate.of(2025, 11, 1), all))
+        assertEquals("12월", barAxisLabel(PeriodKind.ALL, LocalDate.of(2025, 12, 1), all))
+        assertEquals("’26.1", barAxisLabel(PeriodKind.ALL, LocalDate.of(2026, 1, 1), all))
+        assertEquals("10월", barAxisLabel(PeriodKind.ALL, LocalDate.of(2026, 10, 1), all))
+        assertEquals("2026년 10월", barCaptionName(PeriodKind.ALL, LocalDate.of(2026, 10, 1), all))
+        // A [전체] of 25 months or more stays yearly.
+        val long = StatsPeriod(PeriodKind.ALL, LocalDate.of(2024, 10, 3), LocalDate.of(2026, 10, 31))
+        assertEquals("2025", barAxisLabel(PeriodKind.ALL, LocalDate.of(2025, 1, 1), long))
+        assertEquals("2025년", barCaptionName(PeriodKind.ALL, LocalDate.of(2025, 1, 1), long))
+    }
+
     /** Review M1: the V1.4.0 screens write metres like kilometres, with a space. */
     @Test
     fun meterTextHasASpaceAndRoundsHalfUp() {

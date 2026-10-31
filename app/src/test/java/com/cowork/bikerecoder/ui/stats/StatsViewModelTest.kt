@@ -211,11 +211,48 @@ class StatsViewModelTest {
         assertFalse(state.canNext)
         assertNull(state.comparisonText)
         assertEquals(60_000.0, state.totals.distanceM, 1e-9)
-        assertEquals(listOf("2026"), state.bars.map { it.label })
+        assertEquals(listOf("’26.9", "10월"), state.bars.map { it.label })
         vm.previous()
         vm.next()
         advanceUntilIdle()
         assertEquals(PeriodKind.ALL, vm.state.value!!.period.kind)
+    }
+
+    @Test
+    fun allWithinAYearHasMonthBars() = runTest(dispatcher) {
+        val vm = viewModel(FakeRides(listOf(ride(1, LocalDate.of(2025, 11, 3), 24.1), ride(2, LocalDate.of(2026, 10, 25), 12.0))))
+
+        vm.selectKind(PeriodKind.ALL)
+        advanceUntilIdle()
+        val bars = vm.state.value!!.bars
+
+        assertEquals(
+            listOf("’25.11", "12월", "’26.1", "2월", "3월", "4월", "5월", "6월", "7월", "8월", "9월", "10월"),
+            bars.map { it.label },
+        )
+        assertEquals("2025년 11월 · 24.1 km", bars.first().valueText)
+        assertEquals("24.1", bars.first().shortText)
+        assertEquals("", bars[1].shortText)
+        assertEquals("12.0", bars.last().shortText)
+        assertEquals("km", vm.state.value!!.unitText)
+    }
+
+    @Test
+    fun barShortTextsAndUnitFollowTheMetric() = runTest(dispatcher) {
+        val vm = viewModel(FakeRides(listOf(ride(1, LocalDate.of(2026, 10, 25), 3.5, minutes = 19, ascent = 120.0))))
+
+        assertEquals(listOf("", "", "", "3.5", ""), vm.state.value!!.bars.map { it.shortText })
+        assertEquals("km", vm.state.value!!.unitText)
+
+        vm.selectMetric(StatMetric.TIME)
+        advanceUntilIdle()
+        assertEquals("0:19", vm.state.value!!.bars[3].shortText)
+        assertEquals("시간", vm.state.value!!.unitText)
+
+        vm.selectMetric(StatMetric.ASCENT)
+        advanceUntilIdle()
+        assertEquals("120", vm.state.value!!.bars[3].shortText)
+        assertEquals("m", vm.state.value!!.unitText)
     }
 
     @Test

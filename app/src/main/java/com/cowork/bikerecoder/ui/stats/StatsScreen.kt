@@ -70,13 +70,17 @@ object StatsTags {
     const val ASCENT = "stats-ascent"
     const val CHART = "stats-chart"
     const val BAR_VALUE = "stats-bar-value"
+    const val BAR_UNIT = "stats-bar-unit"
     const val RECORDS = "stats-records"
     const val CUMULATIVE = "stats-cumulative"
+    const val HELP_TEXT = "stats-help-text"
 
     fun kind(kind: PeriodKind) = "stats-kind-${kind.name}"
     fun metric(metric: StatMetric) = "stats-metric-${metric.name}"
     fun bar(index: Int) = "stats-bar-$index"
+    fun barShort(index: Int) = "stats-bar-short-$index"
     fun record(index: Int) = "stats-record-$index"
+    fun help(topic: String) = "stats-help-$topic"
 }
 
 const val STATS_RECORDS_TITLE = "개인 기록"
@@ -88,10 +92,10 @@ private fun kindLabel(kind: PeriodKind): String = when (kind) {
     PeriodKind.ALL -> "전체"
 }
 
-private fun metricLabel(metric: StatMetric): String = when (metric) {
+internal fun metricLabel(metric: StatMetric): String = when (metric) {
     StatMetric.DISTANCE -> "거리"
     StatMetric.TIME -> "시간"
-    StatMetric.ASCENT -> "상승"
+    StatMetric.ASCENT -> "상승 고도"
 }
 
 /** "누적 지도 · 이 기간 7회 ›". */
@@ -117,11 +121,15 @@ fun StatsScreen(
     // A day may have passed (a new week or month).
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refresh() }
     var goalDialog by rememberSaveable { mutableStateOf(false) }
+    // The topic of the "?" bubble that is open (one at a time). Plain remember: leaving the tab or turning the screen closes it.
+    var openTip by remember { mutableStateOf<String?>(null) }
     // Nothing until the rides and the goals are read (review M2); so the goal window starts from the stored goals.
     val state = loaded ?: return
     StatsContent(
         state = state,
         scrollToTop = scrollToTop,
+        openTip = openTip,
+        onToggleTip = { topic -> openTip = if (openTip == topic) null else topic },
         onEditGoals = { goalDialog = true },
         onSelectKind = viewModel::selectKind,
         onPrevious = viewModel::previous,
@@ -149,6 +157,8 @@ fun StatsScreen(
 internal fun StatsContent(
     state: StatsState,
     scrollToTop: Int,
+    openTip: String?,
+    onToggleTip: (String) -> Unit,
     onEditGoals: () -> Unit,
     onSelectKind: (PeriodKind) -> Unit,
     onPrevious: () -> Unit,
@@ -171,26 +181,34 @@ internal fun StatsContent(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxSize().clearsBarOnOutsideTap { onSelectBar(null) }.testTag(StatsTags.LIST),
     ) {
-        item(key = "goals") { GoalCard(state.weeklyGoal, state.yearlyGoal, state.projectionText, onEditGoals) }
+        item(key = "goals") {
+            GoalCard(state.weeklyGoal, state.yearlyGoal, state.projectionText, onEditGoals, openTip = openTip, onToggleTip = onToggleTip)
+        }
         item(key = "streak") {
-            Text(
-                state.streakText,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 4.dp).testTag(StatsTags.STREAK),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    state.streakText,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 4.dp).testTag(StatsTags.STREAK),
+                )
+                HelpTip(StatsHelp.STREAK_TOPIC, StatsHelp.STREAK, openTip == StatsHelp.STREAK_TOPIC, onToggle = { onToggleTip(StatsHelp.STREAK_TOPIC) })
+            }
         }
         item(key = "period") {
-            PeriodBlock(state, onSelectKind, onPrevious, onNext, onSelectMetric, onSelectBar)
+            PeriodBlock(state, openTip, onToggleTip, onSelectKind, onPrevious, onNext, onSelectMetric, onSelectBar)
         }
         if (state.records.isNotEmpty()) {
             item(key = "records") {
-                Text(
-                    STATS_RECORDS_TITLE,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(top = 4.dp).testTag(StatsTags.RECORDS),
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        STATS_RECORDS_TITLE,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.testTag(StatsTags.RECORDS),
+                    )
+                    HelpTip(StatsHelp.RECORDS_TOPIC, StatsHelp.RECORDS, openTip == StatsHelp.RECORDS_TOPIC, onToggle = { onToggleTip(StatsHelp.RECORDS_TOPIC) })
+                }
             }
             itemsIndexed(state.records, key = { _, row -> row.label }) { index, row ->
                 RecordLine(row, index) { target ->
@@ -223,6 +241,8 @@ private fun Modifier.clearsBarOnOutsideTap(onTap: () -> Unit): Modifier = pointe
 @Composable
 private fun PeriodBlock(
     state: StatsState,
+    openTip: String?,
+    onToggleTip: (String) -> Unit,
     onSelectKind: (PeriodKind) -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
@@ -267,15 +287,21 @@ private fun PeriodBlock(
                 modifier = Modifier.testTag(StatsTags.DISTANCE),
             )
             state.comparisonText?.let {
-                Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag(StatsTags.COMPARISON))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag(StatsTags.COMPARISON))
+                    HelpTip(StatsHelp.COMPARISON_TOPIC, StatsHelp.COMPARISON, openTip == StatsHelp.COMPARISON_TOPIC, onToggle = { onToggleTip(StatsHelp.COMPARISON_TOPIC) })
+                }
             }
+        }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            HelpTip(StatsHelp.TOTALS_TOPIC, StatsHelp.TOTALS, openTip == StatsHelp.TOTALS_TOPIC, onToggle = { onToggleTip(StatsHelp.TOTALS_TOPIC) })
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TotalCell("주행", "${state.totals.rides}회", StatsTags.RIDES, Modifier.weight(1f))
             TotalCell("이동 시간", RideFormat.duration(state.totals.movingTimeMs), StatsTags.TIME, Modifier.weight(1f))
-            TotalCell("상승", meterText(state.totals.ascentM), StatsTags.ASCENT, Modifier.weight(1f))
+            TotalCell("상승 고도", meterText(state.totals.ascentM), StatsTags.ASCENT, Modifier.weight(1f))
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (metric in StatMetric.entries) {
                 FilterChip(
                     selected = state.metric == metric,
@@ -284,8 +310,9 @@ private fun PeriodBlock(
                     modifier = Modifier.testTag(StatsTags.metric(metric)),
                 )
             }
+            HelpTip(StatsHelp.CHART_TOPIC, StatsHelp.CHART, openTip == StatsHelp.CHART_TOPIC, onToggle = { onToggleTip(StatsHelp.CHART_TOPIC) })
         }
-        BarChart(state.bars, state.selectedBar, onSelectBar)
+        BarChart(state.bars, state.selectedBar, state.unitText, onSelectBar)
     }
 }
 
