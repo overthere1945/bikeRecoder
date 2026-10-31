@@ -152,7 +152,7 @@ abstract class RideDao {
     abstract suspend fun openSegments(): List<RideSegmentEntity>
 
     @Query(
-        "SELECT * FROM ride_segment WHERE endedAt IS NOT NULL AND distanceM >= :minDistanceM " +
+        "SELECT * FROM ride_segment WHERE endedAt IS NOT NULL AND distanceM >= :minDistanceM AND movingTimeMs > 0 " +
             "ORDER BY startedAt DESC, id DESC LIMIT :limit",
     )
     abstract suspend fun recentSegments(minDistanceM: Double, limit: Int): List<RideSegmentEntity>

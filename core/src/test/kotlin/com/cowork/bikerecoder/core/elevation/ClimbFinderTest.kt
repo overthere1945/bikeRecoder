@@ -87,6 +87,16 @@ class ClimbFinderTest {
     }
 
     @Test
+    fun averageIsGainOverLength() {
+        // 4% 표본 3개(100 m 간격, 0~200 m)와 10% 표본 10개(210~300 m): 표본 평균 112/13 ≈ 8.6%.
+        // 고도: 200 m까지 8, 210 m에서 8.7, 300 m에서 17.7 -> 평균 17.7 / 300 = 5.9%.
+        val c = find(run(0.0, 200.0, 4.0, step = 100.0) + run(210.0, 300.0, 10.0)).single()
+        assertEquals(17.7, c.gainM, 1e-9)
+        assertEquals(5.9, c.avgGradePct, 1e-9)
+        assertEquals(10.0, c.maxGradePct, 1e-9)
+    }
+
+    @Test
     fun maxGradeReported() {
         val samples = run(0.0, 300.0, 5.0).map { (d, g) -> d to if (d == 150.0) 9.0 else g }
         assertEquals(9.0, find(samples).single().maxGradePct, 1e-9)

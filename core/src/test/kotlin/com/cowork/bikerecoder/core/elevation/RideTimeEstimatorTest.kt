@@ -35,6 +35,14 @@ class RideTimeEstimatorTest {
     }
 
     @Test
+    fun downhillFivePercentIsOnePointOneFive() {
+        val p = elevationProfile(3_000.0) { 1_000.0 - it * 0.05 }
+        // 1 + 0.03 × 5 = 1.15배: 5.75 m/s.
+        assertEquals(5.75, RideTimeEstimator.speedMps(-5.0, 5.0), 1e-12)
+        assertEquals(1_000.0 / 5.75, RideTimeEstimator.seconds(p, 1_000.0, 2_000.0, 5.0), 0.5)
+    }
+
+    @Test
     fun downhillCappedAtOnePointThree() {
         val p = elevationProfile(3_000.0) { 1_000.0 - it * 0.15 }
         // 1 + 0.03 × 15 = 1.45 -> 1.3배: 6.5 m/s.

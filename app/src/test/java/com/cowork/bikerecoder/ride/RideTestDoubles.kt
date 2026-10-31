@@ -84,7 +84,8 @@ class FakeRideStore(private val trips: FakeTripStore, private val clock: () -> L
         segmentsById.values.filter { it.endedAt == null }.sortedByDescending { it.startedAt }
 
     override suspend fun recentSegments(limit: Int): List<RideSegment> =
-        segmentsById.values.filter { it.endedAt != null && it.totals.distanceM >= UsualSpeed.MIN_DISTANCE_M }
+        segmentsById.values
+            .filter { it.endedAt != null && it.totals.distanceM >= UsualSpeed.MIN_DISTANCE_M && it.totals.movingTimeMs > 0 }
             .sortedWith(compareByDescending<RideSegment> { it.startedAt }.thenByDescending { it.id })
             .take(limit)
 

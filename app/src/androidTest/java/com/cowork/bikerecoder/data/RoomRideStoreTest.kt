@@ -83,12 +83,13 @@ class RoomRideStoreTest {
     @Test
     fun recentSegmentsNewestFirstOverOneKm() = runTest {
         val tripId = newTrip()
-        suspend fun closed(startedAt: Long, distanceM: Double): Long {
+        suspend fun closed(startedAt: Long, distanceM: Double, movingTimeMs: Long = 400_000L): Long {
             val id = store.openSegment(tripId, startedAt, day1)
-            store.closeSegment(id, startedAt + 500L, totals(distanceM, 400_000L))
+            store.closeSegment(id, startedAt + 500L, totals(distanceM, movingTimeMs))
             return id
         }
         val oldest = closed(1_000L, 2_000.0)
+        closed(4_000L, 3_000.0, movingTimeMs = 0L) // 이동 시간 0
         closed(3_000L, 999.0) // 1 km 미만
         val middle = closed(2_000L, 1_500.0)
         val newest = closed(5_000L, 1_000.0) // 정확히 1 km는 들어간다

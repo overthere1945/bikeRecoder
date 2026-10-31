@@ -745,6 +745,58 @@ class NavigationSessionTest {
     }
 
     @Test
+    fun deferredClimbDroppedOncePassed() = runTest {
+        val route = climbRoute(turns = mapOf(98 to TurnType.LEFT))
+        val climb = ClimbFinder.find(assertNotNull(ElevationProfile.fromRoute(route))).first()
+        val session = session(route, listOf(destinationOf(route)), FakeRouter { error("no reroute") })
+        val updates = collect(session)
+
+        (0..5).forEach { i -> feed(session, fixAt(i * 100.0, 0.0, i * 20)) }
+        feed(session, fixAt(climb.startM - 300.0, 0.0, 200)) // 회전 안내와 겹쳐 미룸
+        assertTrue(updates[6].utterances.any { it.priority == Priority.TURN }, "${updates[6].utterances}")
+        feed(session, fixAt(climb.startM + 10.0, 0.0, 260)) // 오르막 시작을 지남
+        feed(session, fixAt(climb.startM + 30.0, 0.0, 264))
+
+        assertTrue(updates[7].state.progress.distanceAlongM > climb.startM)
+        assertEquals(0, updates.flatMap { it.utterances }.count { "앞 오르막" in it.text })
+    }
+
+    @Test
+    fun profileFollowsReroutedRoute() = runTest {
+        // 처음 경로: deviate GPX와 같은 동쪽 2 km, 300~900 m가 6% 오르막.
+        val initial = eastRouteWithElevation(2_000.0) { d -> ((d - 300.0) * 0.06).coerceIn(0.0, 36.0) }
+        var newRoute: Route? = null
+        val router = FakeRouter { request ->
+            // 다시 탐색한 경로: 이탈 지점 → 북쪽 100 m 선을 따라 동쪽 2 km → 목적지. 1,000~1,600 m가 5% 오르막.
+            val vertices = listOf(request.start) + (20..200).map { pointAt(it * 10.0, 100.0) } + pointAt(2_000.0, 0.0)
+            val cumulative = GeoMath.cumulativeDistances(vertices)
+            val r = Route(
+                points = vertices,
+                cumulativeM = cumulative,
+                instructions = emptyList(),
+                stopPointIndices = listOf(vertices.size - 1),
+                summary = RouteSummary(cumulative.last(), 0, 0.0, RouteProfile.BALANCED),
+                elevationsM = cumulative.map { d -> ((d - 1_000.0) * 0.05).coerceIn(0.0, 30.0) },
+            )
+            newRoute = r
+            RouteResult.Success(r)
+        }
+        val session = session(initial, listOf(destination), router)
+        val updates = collect(session)
+
+        gpx("deviate").forEach { feed(session, it) }
+
+        val rerouted = assertNotNull(newRoute)
+        val state = updates.last().state
+        assertEquals(rerouted, state.route)
+        assertEquals(rerouted.cumulativeM.last(), assertNotNull(state.profile).totalM, 1e-6)
+        val newClimbs = ClimbFinder.find(assertNotNull(ElevationProfile.fromRoute(rerouted)))
+        assertEquals(1, newClimbs.size)
+        assertEquals(AheadOfRider.state(newClimbs, state.progress.distanceAlongM), state.ahead)
+        assertIs<AheadState.ClimbAhead>(state.ahead)
+    }
+
+    @Test
     fun navStateCarriesProfileAndAhead() = runTest {
         val route = climbRoute()
         val climbs = ClimbFinder.find(assertNotNull(ElevationProfile.fromRoute(route)))
