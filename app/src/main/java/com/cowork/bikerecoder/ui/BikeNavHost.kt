@@ -179,12 +179,11 @@ object Routes {
     /** The record screen; with [tripId] it starts recording that trip once visible. */
     fun record(tripId: Long? = null) = "$RECORD?${RecordViewModel.ARG_TRIP}=${tripId ?: -1}"
 
-    /** "기록 가져오기" (V1.6.0 spec §1.2): the review of the picked files, or (none) the running import. */
+    /**
+     * "기록 가져오기" (V1.6.0 spec §1.2): the review of the files in [AppContainer.importHandoff] (they are not in the route:
+     * there can be thousands), or with none the running import.
+     */
     const val IMPORT = "import"
-    const val IMPORT_PATTERN = "$IMPORT?${ImportViewModel.ARG_URIS}={${ImportViewModel.ARG_URIS}}"
-
-    fun importFiles(uris: List<String>): String =
-        if (uris.isEmpty()) IMPORT else "$IMPORT?${ImportViewModel.ARG_URIS}=${Uri.encode(ImportViewModel.urisArg(uris))}"
 
     /** A [MainTab] name the main screen switches to once (its back stack entry's saved state). */
     const val ARG_OPEN_TAB = "openTab"
@@ -326,13 +325,21 @@ fun BikeNavHost(
     )
 
     // Files to import (V1.6.0 spec §1.1): the review on top of main, unless an import runs ("가져오기가 끝난 뒤 다시 보내
-    // 주세요"). Arriving during onboarding, they wait for its end ([pendingImport], the URIs one per line).
-    var pendingImport by rememberSaveable { mutableStateOf<String?>(null) }
-    val openImport: (List<String>) -> Unit = { uris ->
+    // 주세요"). They go through the in-memory handoff. Arriving during onboarding they wait there for its end
+    // ([pendingImport]); a restart meanwhile loses them (the import screen then closes itself).
+    var pendingImport by rememberSaveable { mutableStateOf(false) }
+    val openHandedOver: () -> Unit = {
         if (container.gpxImportJob.state.value is ImportJobState.Importing) {
+            container.importHandoff.take()
             Toast.makeText(context, IMPORT_BUSY_SHARE, Toast.LENGTH_SHORT).show()
-        } else if (uris.isNotEmpty()) {
-            navController.openOnMain(Routes.importFiles(uris))
+        } else {
+            navController.openOnMain(Routes.IMPORT)
+        }
+    }
+    val openImport: (List<String>) -> Unit = { uris ->
+        if (uris.isNotEmpty()) {
+            container.importHandoff.put(uris)
+            openHandedOver()
         }
     }
 
@@ -348,7 +355,12 @@ fun BikeNavHost(
                 null
             }
             is LaunchRequest.Import -> {
-                if (onboarding) pendingImport = ImportViewModel.urisArg(request.uris) else openImport(request.uris)
+                if (onboarding) {
+                    container.importHandoff.put(request.uris)
+                    pendingImport = true
+                } else {
+                    openImport(request.uris)
+                }
                 null
             }
         }?.let { route -> if (!onboarding) navController.openOnMain(route) }
@@ -390,9 +402,9 @@ fun BikeNavHost(
                     navController.navigate(Routes.MAIN) {
                         popUpTo(Routes.ONBOARDING) { inclusive = true }
                     }
-                    pendingImport?.let { arg ->
-                        pendingImport = null
-                        openImport(ImportViewModel.parseUris(arg))
+                    if (pendingImport) {
+                        pendingImport = false
+                        openHandedOver()
                     }
                 },
             )
@@ -502,7 +514,7 @@ fun BikeNavHost(
                             heartRateGate = heartRateGate,
                             onPhotoAccessGained = container.postProcessor::request,
                             onImportFiles = { uris -> if (isCurrent()) openImport(uris) },
-                            onOpenImport = { if (isCurrent()) navController.openOnMain(Routes.importFiles(emptyList())) },
+                            onOpenImport = { if (isCurrent()) navController.openOnMain(Routes.IMPORT) },
                         )
                     }
                 }
@@ -772,30 +784,25 @@ fun BikeNavHost(
                 onOpenRide = { segmentId -> navController.navigate(Routes.segmentDetail(segmentId)) },
             )
         }
-        composable(
-            Routes.IMPORT_PATTERN,
-            arguments = listOf(
-                navArgument(ImportViewModel.ARG_URIS) {
-                    type = NavType.StringType
-                    nullable = true
-                    defaultValue = null
-                },
-            ),
-        ) {
+        composable(Routes.IMPORT) { entry ->
             val viewModel: ImportViewModel = viewModel(factory = ImportViewModel.factory(container))
+            // Back, [닫기] and a closed screen may all ask: only this screen on top goes back, once.
+            val isCurrent = { navController.currentBackStackEntry?.id == entry.id }
             val pickAgain = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
                 if (uris.isNotEmpty()) viewModel.scan(uris.map { it.toString() })
             }
             ImportScreen(
                 viewModel = viewModel,
-                onBack = { navController.popBackStack() },
+                onBack = { if (isCurrent()) navController.popBackStack() },
                 onOpenSummary = {
                     val main = runCatching { navController.getBackStackEntry(Routes.MAIN) }.getOrNull()
-                    if (main != null) {
-                        main.savedStateHandle[Routes.ARG_OPEN_TAB] = MainTab.FEED.name
-                        navController.popBackStack(Routes.MAIN, inclusive = false)
-                    } else {
-                        navController.popBackStack()
+                    when {
+                        !isCurrent() -> Unit
+                        main != null -> {
+                            main.savedStateHandle[Routes.ARG_OPEN_TAB] = MainTab.FEED.name
+                            navController.popBackStack(Routes.MAIN, inclusive = false)
+                        }
+                        else -> navController.popBackStack()
                     }
                 },
                 onPickAgain = { pickAgain.launch(arrayOf("*/*")) },

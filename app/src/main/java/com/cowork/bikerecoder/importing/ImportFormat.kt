@@ -53,6 +53,9 @@ fun problemText(p: ImportProblem): String = when (p) {
     ImportProblem.UNREADABLE -> PROBLEM_UNREADABLE
 }
 
+/** A file that could not be read, under "가져올 주행을 찾지 못했습니다": "notes.txt: GPX 파일이 아닙니다". */
+fun unreadableText(fileName: String, problem: ImportProblem): String = "$fileName: ${problemText(problem)}"
+
 /** "달리기", "걷기", "등산", else "다른 활동". */
 fun activityText(a: Activity?): String = when (a) {
     Activity.RUNNING -> "달리기"

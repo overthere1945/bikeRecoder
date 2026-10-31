@@ -13,6 +13,69 @@ import java.io.InputStream
 
 class ImportReaderTest {
 
+    /** A kept descriptor: [closed] once closed. */
+    private class Kept(val uri: String) : java.io.Closeable {
+        var closed = 0
+        override fun close() {
+            closed++
+        }
+    }
+
+    @Test
+    fun holdKeepsDescriptorsOfWhatCannotBePersisted() {
+        val opened = mutableListOf<String>()
+        val warnings = mutableListOf<String>()
+        val kept = mutableMapOf<String, Kept>()
+        val grants = UriGrants(
+            take = { if ("shared" in it) throw SecurityException("not persistable") },
+            drop = {},
+            keep = { uri ->
+                opened += uri
+                if (uri.endsWith("/shared-gone")) throw java.io.FileNotFoundException(uri)
+                Kept(uri).also { kept[uri] = it }
+            },
+            limit = 2,
+            keepLimit = 3,
+            onKeepFailed = { uri, _ -> warnings += uri },
+        )
+        // 2 persisted (the limit), then descriptors for the rest up to 3; a failing open is skipped and logged.
+        val uris = listOf("content://x/a", "content://x/shared-1", "content://x/b", "content://x/c", "content://x/shared-gone",
+            "content://x/shared-2", "content://x/shared-3")
+
+        grants.hold(uris)
+
+        assertEquals(listOf("content://x/shared-1", "content://x/c", "content://x/shared-gone", "content://x/shared-2"), opened)
+        assertEquals(listOf("content://x/shared-gone"), warnings)
+        assertEquals(setOf("content://x/shared-1", "content://x/c", "content://x/shared-2"), kept.keys)
+        assertTrue(grants.kept("content://x/shared-1") === kept["content://x/shared-1"])
+        assertEquals(null, grants.kept("content://x/a"), "a persisted file needs no descriptor")
+        assertEquals(null, grants.kept("content://x/shared-3"), "past the descriptor cap")
+
+        // Holding again keeps no second descriptor.
+        grants.hold(listOf("content://x/shared-1"))
+        assertEquals(4, opened.size)
+
+        grants.release(uris)
+        assertTrue(kept.values.all { it.closed == 1 }, "every kept descriptor closed once")
+        assertEquals(null, grants.kept("content://x/shared-1"))
+        grants.release(uris)
+        assertTrue(kept.values.all { it.closed == 1 }, "closed once")
+    }
+
+    @Test
+    fun forgetClosesOneDescriptor() {
+        val k = Kept("content://x/shared")
+        val grants = UriGrants(take = { throw SecurityException() }, drop = {}, keep = { k })
+        grants.hold(listOf("content://x/shared"))
+        assertTrue(grants.kept("content://x/shared") === k)
+
+        grants.forget("content://x/shared")
+
+        assertEquals(1, k.closed)
+        assertEquals(null, grants.kept("content://x/shared"))
+        assertEquals(256, UriGrants.MAX_KEPT_DESCRIPTORS)
+    }
+
     @Test
     fun holdCapsAt128() {
         val taken = mutableListOf<String>()

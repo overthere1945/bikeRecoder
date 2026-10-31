@@ -155,9 +155,17 @@ class ImportScreenTest {
 
     @Test
     fun emptyShowsPickAgain() {
-        show(ImportUiState.Empty)
+        show(
+            ImportUiState.Empty(
+                notices = listOf("묶음.zip: 항목이 너무 많아 처음 2,000개만 읽었습니다"),
+                unreadable = listOf("notes.txt: GPX 파일이 아닙니다", "묶음.zip / a.fit.gz: GPX 파일이 아닙니다"),
+            ),
+        )
 
         composeRule.onNodeWithText("가져올 주행을 찾지 못했습니다").assertIsDisplayed()
+        composeRule.onNodeWithText("묶음.zip: 항목이 너무 많아 처음 2,000개만 읽었습니다").assertIsDisplayed()
+        composeRule.onNodeWithText("notes.txt: GPX 파일이 아닙니다").assertIsDisplayed()
+        composeRule.onNodeWithText("묶음.zip / a.fit.gz: GPX 파일이 아닙니다").assertIsDisplayed()
         composeRule.onNodeWithTag(ImportTags.PICK_AGAIN).assertTextEquals("다른 파일 고르기").performClick()
         assertEquals(listOf("pickAgain"), calls)
     }

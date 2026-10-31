@@ -92,7 +92,7 @@ class SettingsScreenTest {
             mapStorage = storage,
             importedCount = importedCount,
             importState = importState,
-            deleteAllImported = {
+            deleteImportedTrips = {
                 importedDeletes++
                 importedCount.value.also { importedCount.value = 0 }
             },

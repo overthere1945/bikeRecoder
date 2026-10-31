@@ -19,6 +19,7 @@ import com.cowork.bikerecoder.data.RoomFavoriteStore
 import com.cowork.bikerecoder.data.RoomImportStore
 import com.cowork.bikerecoder.importing.ContentImportReader
 import com.cowork.bikerecoder.importing.GpxImportJob
+import com.cowork.bikerecoder.importing.ImportHandoff
 import com.cowork.bikerecoder.importing.ImportReader
 import com.cowork.bikerecoder.data.RoomPostStore
 import com.cowork.bikerecoder.data.RoomRideStatsSource
@@ -249,6 +250,9 @@ class AppContainer(context: Context) {
 
     /** The picked GPX/ZIP files of the import (V1.6.0 spec §3.3). */
     val importReader: ImportReader = ContentImportReader(appContext)
+
+    /** The picked files on their way to the import screen (in memory only). */
+    val importHandoff: ImportHandoff = ImportHandoff()
 
     /**
      * The one GPX import job (V1.6.0 spec §3.4), outside any screen; it stops with the process. The trip's route profile

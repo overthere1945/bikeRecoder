@@ -78,7 +78,7 @@ class SettingsViewModel(
     /** The one GPX import job's state. */
     importState: Flow<ImportJobState> = flowOf(ImportJobState.Idle),
     /** Deletes every imported trip; returns how many. */
-    deleteAllImported: suspend () -> Int = { 0 },
+    private val deleteImportedTrips: suspend () -> Int = { 0 },
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SettingsUiState(segments = segments.list()))
@@ -222,19 +222,18 @@ class SettingsViewModel(
 
     // ---- imported trips ----
 
-    private val deleteImported = deleteAllImported
-    private var importedJob: Job? = null
+    private var deleteImportedRun: Job? = null
 
     /**
      * [모두 지우기] (V1.6.0 spec §4.3) after its confirmation: every imported trip. Ignored while importing or deleting;
      * "가져온 기록을 지웠습니다" follows ([SettingsUiState.importedDeleted]).
      */
     fun deleteAllImported() {
-        if (importedJob?.isActive == true || _state.value.importing) return
+        if (deleteImportedRun?.isActive == true || _state.value.importing) return
         _state.update { it.copy(deletingImported = true) }
-        importedJob = viewModelScope.launch {
+        deleteImportedRun = viewModelScope.launch {
             val deleted = try {
-                deleteImported()
+                deleteImportedTrips()
                 true
             } catch (e: CancellationException) {
                 throw e
@@ -262,7 +261,7 @@ class SettingsViewModel(
                     mapStorage = container.offlineMaps,
                     importedCount = container.importStore.observeImported().map { it.size },
                     importState = container.gpxImportJob.state,
-                    deleteAllImported = container.importStore::deleteAllImported,
+                    deleteImportedTrips = container.importStore::deleteAllImported,
                 )
             }
         }

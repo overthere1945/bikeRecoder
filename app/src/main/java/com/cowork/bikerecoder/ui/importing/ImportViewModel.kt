@@ -2,13 +2,13 @@ package com.cowork.bikerecoder.ui.importing
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.core.importing.RideStatus
 import com.cowork.bikerecoder.importing.GpxImportJob
+import com.cowork.bikerecoder.importing.ImportHandoff
 import com.cowork.bikerecoder.importing.ImportJobState
 import com.cowork.bikerecoder.importing.ImportScanner
 import com.cowork.bikerecoder.importing.RideKey
@@ -16,6 +16,7 @@ import com.cowork.bikerecoder.importing.ScanResult
 import com.cowork.bikerecoder.importing.ScanRow
 import com.cowork.bikerecoder.importing.filesText
 import com.cowork.bikerecoder.importing.headerText
+import com.cowork.bikerecoder.importing.unreadableText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineStart
@@ -53,8 +54,14 @@ sealed interface ImportUiState {
         val allChecked: Boolean get() = selectable.let { it.isNotEmpty() && checked.containsAll(it) }
     }
 
-    /** "가져올 주행을 찾지 못했습니다" with [다른 파일 고르기]. */
-    data object Empty : ImportUiState
+    /**
+     * No ride found: "가져올 주행을 찾지 못했습니다" with [다른 파일 고르기], then the limits hit ([notices]) and why each
+     * file could not be read ([unreadable], "notes.txt: GPX 파일이 아닙니다").
+     */
+    data class Empty(val notices: List<String> = emptyList(), val unreadable: List<String> = emptyList()) : ImportUiState
+
+    /** Nothing to show (no files were handed over and no import runs, e.g. after a restart): the screen goes back. */
+    data object Closed : ImportUiState
 
     /** The import job: its progress, then its result. */
     data class Job(val state: ImportJobState) : ImportUiState
@@ -65,22 +72,23 @@ fun ScanRow.isSelectable(): Boolean = status == RideStatus.New || status == Ride
 
 /**
  * The review list of the picked files and the hand-over to the one import job (V1.6.0 spec §1.2, §1.3). It lives as
- * long as the screen's back stack entry, so the list and the checks survive a rotation. Opened with [uris] it reads them
- * at once; opened with none (the settings row during an import) it shows the job.
+ * long as the screen's back stack entry, so the list and the checks survive a rotation. When created it takes the files
+ * of [handoff] and reads them; with none (the settings row during an import) it shows the job, or, when no import runs
+ * either (the process was restarted on this screen), [ImportUiState.Closed].
  *
  * [GpxImportJob.start] keeps the files readable with up to 128 binder calls, so it runs on [io].
  */
 class ImportViewModel(
     private val scanner: ImportScanner,
     private val job: GpxImportJob,
-    uris: List<String> = emptyList(),
+    handoff: ImportHandoff,
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : ViewModel() {
 
     private sealed interface Phase {
         data class Reading(val done: Int, val total: Int) : Phase
         data class Review(val result: ScanResult, val checked: Set<RideKey>) : Phase
-        data object Empty : Phase
+        data class Empty(val notices: List<String>, val unreadable: List<String>) : Phase
 
         /** Handed to the job, whose [GpxImportJob.start] has not returned yet. */
         data class Starting(val total: Int) : Phase
@@ -96,7 +104,8 @@ class ImportViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, uiStateOf(phase.value, job.state.value))
 
     init {
-        if (uris.isNotEmpty()) scan(uris)
+        val uris = handoff.take()
+        if (!uris.isNullOrEmpty()) scan(uris)
     }
 
     /** Reads [uris] into the review list ("파일을 읽는 중…"); a reading still going on is dropped. */
@@ -115,7 +124,14 @@ class ImportViewModel(
                 null
             }
             phase.value = when {
-                result == null || result.rows.isEmpty() -> Phase.Empty
+                result == null -> Phase.Empty(emptyList(), emptyList())
+                // No ride: only why each file could not be read.
+                result.rows.none { it.startedAt != null } -> Phase.Empty(
+                    result.notices,
+                    result.rows.mapNotNull { row ->
+                        (row.status as? RideStatus.Unreadable)?.let { unreadableText(row.fileName, it.problem) }
+                    },
+                )
                 else -> Phase.Review(result, result.rows.filter { it.status == RideStatus.New }.mapTo(LinkedHashSet()) { it.key })
             }
         }
@@ -175,25 +191,19 @@ class ImportViewModel(
             ),
             files = filesText(p.result.sources.size),
         )
-        Phase.Empty -> ImportUiState.Empty
+        is Phase.Empty -> ImportUiState.Empty(p.notices, p.unreadable)
         is Phase.Starting -> ImportUiState.Job(ImportJobState.Importing(0, p.total))
-        Phase.Job -> ImportUiState.Job(jobState)
+        // No run to follow (none was handed over, or its result was seen): nothing to show.
+        Phase.Job -> if (jobState == ImportJobState.Idle) ImportUiState.Closed else ImportUiState.Job(jobState)
     }
 
     companion object {
-        /** The picked URIs, one per line (a URI never holds a raw line break). */
-        const val ARG_URIS = "uris"
-
-        fun urisArg(uris: List<String>): String = uris.joinToString("\n")
-
-        fun parseUris(arg: String?): List<String> = arg?.split('\n')?.filter { it.isNotBlank() }.orEmpty()
-
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer {
                 ImportViewModel(
                     scanner = ImportScanner(container.importReader, container.importStore, clock = System::currentTimeMillis),
                     job = container.gpxImportJob,
-                    uris = parseUris(createSavedStateHandle().get<String>(ARG_URIS)),
+                    handoff = container.importHandoff,
                 )
             }
         }

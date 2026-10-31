@@ -297,7 +297,7 @@ class SettingsViewModelTest {
             settings, { transform -> settings.value = transform(settings.value) }, repo, storage,
             importedCount = count,
             importState = job,
-            deleteAllImported = {
+            deleteImportedTrips = {
                 deletes++
                 gate.await()
                 count.value = 0

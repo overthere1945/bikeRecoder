@@ -7,12 +7,14 @@ import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.importing.FakeImportReader
 import com.cowork.bikerecoder.importing.FakeImportStore
 import com.cowork.bikerecoder.importing.GpxImportJob
+import com.cowork.bikerecoder.importing.ImportHandoff
 import com.cowork.bikerecoder.importing.ImportJobState
 import com.cowork.bikerecoder.importing.ImportScanner
 import com.cowork.bikerecoder.importing.RideKey
 import com.cowork.bikerecoder.importing.T0
 import com.cowork.bikerecoder.importing.gpx
 import com.cowork.bikerecoder.importing.zip
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -58,14 +60,23 @@ class ImportViewModelTest {
         io = StandardTestDispatcher()
     }
 
+    /** Every view model made here: stopped before Main is reset, so none touches it afterwards. */
+    private val made = mutableListOf<ImportViewModel>()
+
     @AfterEach
     fun tearDown() {
+        made.forEach { it.viewModelScope.cancel() }
         scope.cancel()
         Dispatchers.resetMain()
     }
 
-    private fun viewModel(uris: List<String> = emptyList()) =
-        ImportViewModel(ImportScanner(reader, store, clock = { now }), job, uris, io = io)
+    /** The screen opened with [uris] handed over (null: nothing handed over, e.g. after the process was restarted). */
+    private fun viewModel(uris: List<String>? = null) = ImportViewModel(
+        ImportScanner(reader, store, clock = { now }),
+        job,
+        ImportHandoff().apply { if (uris != null) put(uris) },
+        io = io,
+    ).also { made += it }
 
     private fun ImportViewModel.await(predicate: (ImportUiState) -> Boolean): ImportUiState =
         runBlocking { withTimeout(20_000) { uiState.first(predicate) } }
@@ -92,7 +103,7 @@ class ImportViewModelTest {
     @Test
     fun notCyclingStartsUncheckedButToggles() {
         val run = reader.add("run.gpx", gpx(T0, type = "running"))
-        val vm = viewModel()
+        val vm = viewModel(emptyList())
         vm.scan(listOf(run))
 
         val review = vm.review()
@@ -216,6 +227,72 @@ class ImportViewModelTest {
         val empty = reader.add("empty.zip", zip("activities/" to ByteArray(0)))
         val vm = viewModel(listOf(empty))
 
-        assertEquals(ImportUiState.Empty, vm.await { it !is ImportUiState.Reading })
+        assertEquals(ImportUiState.Empty(), vm.await { it !is ImportUiState.Reading })
+    }
+
+    @Test
+    fun emptyWhenNoRideOnlyUnreadable() {
+        val text = reader.add("notes.txt", "hello".toByteArray())
+        val vm = viewModel(listOf(text, "content://x/gone.gpx"))
+
+        assertEquals(
+            ImportUiState.Empty(unreadable = listOf("notes.txt: GPX 파일이 아닙니다", "gone.gpx: 파일을 읽을 수 없습니다")),
+            vm.await { it !is ImportUiState.Reading },
+        )
+    }
+
+    @Test
+    fun nothingHandedOverWhileIdleCloses() {
+        // The process was restarted on this screen: the picked files are gone and nothing runs.
+        assertEquals(ImportUiState.Closed, viewModel().uiState.value)
+    }
+
+    @Test
+    fun nothingHandedOverWhileImportingShowsTheJob() {
+        val gate = CountDownLatch(1)
+        val a = reader.add("a.gpx", gpx(T0))
+        val picks = viewModel(listOf(a)).review().rows
+        reader.wrap = { gate.await(20, TimeUnit.SECONDS); it }
+        assertTrue(job.start(listOf(a), picks))
+
+        // The settings row during the import.
+        assertEquals(ImportUiState.Job(ImportJobState.Importing(0, 1)), viewModel().uiState.value)
+        gate.countDown()
+        runBlocking { withTimeout(20_000) { job.state.first { it is ImportJobState.Finished } } }
+    }
+
+    @Test
+    fun closeLeavesARunningImportAlone() {
+        val gate = CountDownLatch(1)
+        val a = reader.add("a.gpx", gpx(T0))
+        val vm = viewModel(listOf(a))
+        vm.review()
+        reader.wrap = { gate.await(20, TimeUnit.SECONDS); it }
+        vm.importChecked()
+        io.scheduler.advanceUntilIdle()
+        assertEquals(ImportJobState.Importing(0, 1), job.state.value)
+
+        vm.close()
+        assertEquals(ImportJobState.Importing(0, 1), job.state.value)
+
+        gate.countDown()
+        val done = vm.await { (it as? ImportUiState.Job)?.state is ImportJobState.Finished } as ImportUiState.Job
+        assertEquals(ImportJobState.Finished(imported = 1, skipped = 0, stopped = false), done.state)
+        assertEquals(1, store.saved.size)
+    }
+
+    @Test
+    fun scanAcknowledgesAStaleResult() {
+        val a = reader.add("a.gpx", gpx(T0))
+        val picks = viewModel(listOf(a)).review().rows
+        assertTrue(job.start(listOf(a), picks))
+        runBlocking { withTimeout(20_000) { job.state.first { it is ImportJobState.Finished } } }
+
+        // A result no screen showed; new files come in.
+        val b = reader.add("b.gpx", gpx(T0 + hour))
+        val vm = viewModel(listOf(b))
+
+        assertEquals(ImportJobState.Idle, job.state.value)
+        assertEquals(listOf("b.gpx"), vm.review().rows.map { it.fileName })
     }
 }

@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,6 +26,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -97,6 +99,10 @@ fun ImportScreen(
         onBack()
     }
     BackHandler(onBack = back)
+    // Nothing to show (e.g. the process was restarted here, so the picked files are gone): back to where it came from.
+    LaunchedEffect(state) {
+        if (state == ImportUiState.Closed) onBack()
+    }
     ImportContent(
         state = state,
         onBack = back,
@@ -134,12 +140,8 @@ internal fun ImportContent(
             when (state) {
                 is ImportUiState.Reading -> Progress(readingText(state.done, state.total), state.done, state.total)
                 is ImportUiState.Review -> Review(state, onToggle, onToggleAll, onImport)
-                ImportUiState.Empty -> Centered {
-                    Text(IMPORT_NOTHING_FOUND, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
-                    OutlinedButton(onClick = onPickAgain, modifier = Modifier.testTag(ImportTags.PICK_AGAIN)) {
-                        Text(IMPORT_PICK_OTHER)
-                    }
-                }
+                is ImportUiState.Empty -> NothingFound(state, onPickAgain)
+                ImportUiState.Closed -> Unit
                 is ImportUiState.Job -> when (val job = state.state) {
                     is ImportJobState.Importing -> Progress(importingText(job.done, job.total), job.done, job.total) {
                         OutlinedButton(onClick = onStop, modifier = Modifier.testTag(ImportTags.STOP)) { Text(IMPORT_STOP) }
@@ -159,6 +161,39 @@ internal fun ImportContent(
                     ImportJobState.Idle -> Unit
                 }
             }
+        }
+    }
+}
+
+/**
+ * "가져올 주행을 찾지 못했습니다" and [다른 파일 고르기], then in small lines the limits hit and why each file could not be
+ * read (scrolling when there are many).
+ */
+@Composable
+private fun NothingFound(state: ImportUiState.Empty, onPickAgain: () -> Unit) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 24.dp, vertical = 48.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        item {
+            Text(IMPORT_NOTHING_FOUND, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
+        }
+        item {
+            OutlinedButton(
+                onClick = onPickAgain,
+                modifier = Modifier.padding(top = 12.dp, bottom = 16.dp).testTag(ImportTags.PICK_AGAIN),
+            ) { Text(IMPORT_PICK_OTHER) }
+        }
+        items(state.notices + state.unreadable) { line ->
+            Text(
+                line,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 }
@@ -243,7 +278,7 @@ private fun Review(
 /**
  * One ride (spec §1.2): checkbox, 44 dp route drawing, the start "2023년 5월 14일 (일) 오전 9:12" (the file name when it
  * cannot be read) and the status line. Rows that cannot be picked are dimmed; an unreadable one's reason is in the error
- * colour.
+ * colour, dimmed too.
  */
 @Composable
 private fun ReviewRow(row: ScanRow, checked: Boolean, selectable: Boolean, onToggle: () -> Unit) {
@@ -277,7 +312,7 @@ private fun ReviewRow(row: ScanRow, checked: Boolean, selectable: Boolean, onTog
                 statusLine(row),
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (unreadable) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = if (unreadable) Modifier else dim,
+                modifier = dim,
             )
         }
     }
