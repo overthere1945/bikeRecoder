@@ -30,10 +30,12 @@ object BRouterGeoJsonParser {
         val feature = Json.parseToJsonElement(json).jsonObject["features"]!!.jsonArray.first().jsonObject
         val properties = feature["properties"]?.jsonObject ?: JsonObject(emptyMap())
 
-        val points = feature["geometry"]!!.jsonObject["coordinates"]!!.jsonArray.map { c ->
-            val coord = c.jsonArray
+        val coordinates = feature["geometry"]!!.jsonObject["coordinates"]!!.jsonArray.map { it.jsonArray }
+        val points = coordinates.map { coord ->
             GeoPoint(lat = coord[1].jsonPrimitive.content.toDouble(), lon = coord[0].jsonPrimitive.content.toDouble())
         }
+        // The third value of a GeoJSON position is the elevation; absent or non-numeric means unknown.
+        val elevations = coordinates.map { coord -> coord.getOrNull(2).asDouble() }
         val cumulativeM = GeoMath.cumulativeDistances(points)
 
         return Route(
@@ -47,6 +49,7 @@ object BRouterGeoJsonParser {
                 cyclewayRatio = cyclewayRatio(properties["messages"]),
                 profile = profile,
             ),
+            elevationsM = if (elevations.all { it == null }) emptyList() else elevations,
         )
     }
 
