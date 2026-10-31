@@ -14,8 +14,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -227,7 +227,7 @@ private fun TripTitleRow(title: String, onRename: () -> Unit, onShare: (() -> Un
         )
         if (onShare != null) {
             IconButton(onClick = onShare, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "공유")
+                Icon(Icons.Filled.Share, contentDescription = "공유")
             }
         }
         IconButton(onClick = onRename) { Icon(Icons.Filled.Edit, contentDescription = RENAME_TITLE) }

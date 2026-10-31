@@ -6,7 +6,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -327,7 +327,7 @@ fun SummaryShareButton(state: SummaryExtrasState, onShare: (tripId: Long) -> Uni
         shape = MaterialTheme.shapes.medium,
         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
     ) {
-        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(18.dp))
+        Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
         Text("공유")
     }
