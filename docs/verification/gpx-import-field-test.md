@@ -21,11 +21,11 @@
 
 | 모음 | 클래스 수 | 테스트 수 | 실패 | 건너뜀 |
 |---|---|---|---|---|
-| `:core:test` | 48 | 442 | 0 | 0 |
-| `:app:testDebugUnitTest` | 96 | 1123 | 0 | 0 |
-| 합계 | 144 | 1565 | 0 | 0 |
+| `:core:test` | 48 | 443 | 0 | 0 |
+| `:app:testDebugUnitTest` | 96 | 1127 | 0 | 0 |
+| 합계 | 144 | 1570 | 0 | 0 |
 
-수는 이 실행이 만든 JUnit XML(`*/build/test-results/{test,testDebugUnitTest}/TEST-*.xml`)에서 셌습니다. `:routing-brouter:test`는 이 명령에 들어 있지 않고 이번 작업에서 그 모듈을 바꾸지 않았습니다. V1.5.0 기록(`:core:test` 387개, `:app:testDebugUnitTest` 1068개)보다 core가 55개(클래스 4개), 앱이 55개(클래스 6개) 늘었습니다.
+수는 이 실행이 만든 JUnit XML(`*/build/test-results/{test,testDebugUnitTest}/TEST-*.xml`)에서 셌습니다. `:routing-brouter:test`는 이 명령에 들어 있지 않고 이번 작업에서 그 모듈을 바꾸지 않았습니다. V1.5.0 기록(`:core:test` 387개, `:app:testDebugUnitTest` 1068개)보다 core가 56개(클래스 4개), 앱이 59개(클래스 6개) 늘었습니다. 위 수는 최종 수정(OOM 방어·고른 파일만 유지·조건부 [모두 지우기]) 뒤 다시 돌린 결과입니다(`39ce061` + 주석 줄 바꿈).
 
 컴파일 경고는 이번에 손대지 않은 두 파일의 이전부터 있던 것뿐입니다(`GlyphIcon.kt`의 `invisibleToUser` 1개, `PostProcessorTest.kt`의 opt-in 11개).
 
@@ -51,7 +51,25 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.te
 
 디버그 빌드에만 `${applicationId}.testfiles` FileProvider가 들어갑니다(`app/src/debug/AndroidManifest.xml`, 내보내지 않음). 들어오는 인텐트 시험(`importing.MainActivityImportIntentTest`)이 앱 캐시의 가짜 파일을 이 주소로 `ACTION_SEND`·`ACTION_VIEW`에 담아 보냅니다. 릴리스 빌드에는 이 FileProvider가 없습니다.
 
-**S22 전체 시험**: 최종 수정 뒤 기록
+**S22 전체 시험** (2026-10-31, 최종 수정 뒤 `39ce061`): androidTest 62클래스 466개를 클래스 하나씩 실행, 모든 클래스 종료 코드 0. V1.5.0의 58클래스 435개에 새 클래스 4개(`data.RoomImportStoreTest` 8, `importing.GpxReaderAndroidTest`, `importing.MainActivityImportIntentTest` 4, `ui.importing.ImportScreenTest` 9)와 기존 클래스의 새 시험이 더해졌습니다. XML에 실패 1개로 잡히는 `video.FrameRendererTest`·`video.SummaryImageRendererTest`는 V1.5.0 때와 같은 가정 건너뜀(`AssumptionViolatedException`)입니다.
+
+| 클래스 | 테스트 수 | 결과 |
+|---|---|---|
+| `data.RideDatabaseMigrationTest` (7→8 포함) | 7 | 통과 |
+| `data.RoomImportStoreTest` | 8 | 통과 |
+| `importing.MainActivityImportIntentTest` | 4 | 통과 |
+| `ui.importing.ImportScreenTest` | 9 | 통과 |
+| `ui.settings.SettingsScreenTest` | 20 | 통과 |
+| `ui.feed.FeedScreenTest` | 23 | 통과 |
+| `ui.history.TripDetailScreenTest` | 6 | 통과 |
+| `ui.main.MainTabsTest` | 12 | 통과 |
+| 나머지 54클래스 | 377 | 통과(가정 건너뜀 2개 포함) |
+
+**S22 실제 가져오기** (2026-10-31, `installDebug`, 앱 DB는 S25 기록 사본 v7 → 첫 실행에서 v8로 옮겨짐): 시험용 파일 두 개(`test-ride-2018-04-07.gpx`, `test-export-2018.zip` — 자전거·달리기·같은 주행 복사본·`notes.txt`)를 [설정] → [지난 기록 가져오기 (GPX)] → 문서 선택기 다운로드에서 함께 고름.
+- 확인 목록: "찾은 주행 4개 · 새로 2개", "파일 2개에서". 자전거 2개 체크, 달리기 "자전거가 아님" 꺼짐, 복사본 "목록에 같은 주행이 있습니다" 흐림, `notes.txt` "GPX 파일이 아닙니다". 시각은 서울 기준(UTC 22:00 → 다음 날 오전 7:00).
+- [2개 가져오기] → "2개를 가져왔습니다" → [요약 보기]: 2018년 4월·5월 카드에 " · 가져옴", 위성 사진·제목("아침 라이딩 · 서울 용산구")·🏆가 뒷정리로 만들어짐. 12.0 km · 39분 · 평균 18.0 km/h(5 m/s로 만든 파일과 일치).
+- 여행 기록 화면: 제목 아래 "test-ride-2018-04-07.gpx에서 가져옴".
+- [설정] "가져온 기록 2개" → [모두 지우기] → 확인 창 "가져온 기록 2개를 지울까요? 이 휴대폰에서 기록한 주행은 남습니다." → [지우기] 뒤 줄이 사라지고, DB 사본에서 여행 4개·구간 2개(가져오기 전과 같음), `trip_import` 0행, `user_version` 8 확인.
 
 스펙 §7.2의 S22 확인 범위(전체 시험 때 이 범위가 모두 들어 있는지 확인):
 - DB 7→8 옮기기(`MigrationTestHelper`): 기존 여행·구간·이름표(공유 글 포함)가 그대로, `trip_import`는 빈 표
@@ -61,11 +79,6 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.te
 - 스크린샷: `v160-import-review.png`, `v160-import-progress.png`, `v160-import-done.png` (`Download/bikeRecoderTest/`)
 - 이전 버전 클래스 전체 회귀
 
-이 기록 문서를 쓸 때 S22에서 돌린 것은 버전 표기를 바꾼 `ui.settings.SettingsScreenTest`(기대 문구 `V1.6.0`)뿐입니다.
-
-| 클래스 | 테스트 수 | 결과 |
-|---|---|---|
-| `ui.settings.SettingsScreenTest` | 20 | 20/20 통과 (2026-10-31) |
 
 ## 알려진 한계
 

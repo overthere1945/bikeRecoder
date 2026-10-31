@@ -19,7 +19,7 @@
 ### 변경
 - 저장소 DB 8판: 새 표 `trip_import`(`tripId` 기본 키·여행 삭제 시 CASCADE, `fileName`, `importedAt`). 7→8은 자동 이전(AutoMigration), 기존 기록 유지
 - `AndroidManifest.xml`: `MainActivity`에 `ACTION_SEND`·`ACTION_SEND_MULTIPLE`·`ACTION_VIEW` 인텐트 필터(`application/gpx+xml`, `application/xml`, `text/xml`, `application/zip`, `application/x-zip-compressed`, `application/gzip`, `application/octet-stream`). 새 권한은 없음
-- 가져오기용 GPX 읽기 `GpxReader`를 새로 더함(시간 없는 점·좌표 검사·첫 `trk`의 `type`과 `name`). `GpxParser`와는 보안 설정 `secureDocumentBuilderFactory`만 같이 쓰고, `GpxParser.parse`는 바꾸지 않음(기존 시험·재생 호출 동작 그대로)
+- 가져오기용 GPX 읽기 `GpxReader`를 새로 더함(시간 없는 점·좌표 검사·첫 `trk`의 `type`과 `name`). `GpxParser`와는 보안 설정 `secureDocumentBuilderFactory`만 같이 쓰고, `GpxParser.parse`의 동작은 그대로(공용 설정을 쓰도록 옮긴 것뿐, 기존 시험·재생 호출 결과 같음)
 - 버전 1.6.0(versionCode 10600, debug `1.6.0-dev`)
 
 ### 알려진 한계

@@ -40,12 +40,12 @@ sealed interface ImportJobState {
 /**
  * The one import job (spec §3.3, §3.4), outside any screen, in [scope]: the picked rides are read again and saved.
  *
- * The files with picked rides are kept readable for the run ([ImportReader.hold] / [ImportReader.release]). Each file is opened once and
- * only its picked items are handled: read → replay → skipped when its start or end differs from the review row (the file
- * changed) → skipped when it now overlaps a segment of the app ([ImportStore.segmentSpans], which includes the rides
- * saved earlier in this run) → [ImportStore.saveImported]. One ride's failure is logged and counted as skipped. A picked
- * ride whose item is gone is skipped too. [stop] ends the run after the ride being saved. When at least one ride was
- * saved, [postProcessor] is asked once at the end.
+ * The files with picked rides are kept readable for the run ([ImportReader.hold] / [ImportReader.release]). Each file
+ * is opened once and only its picked items are handled: read → replay → skipped when its start or end differs from the
+ * review row (the file changed) → skipped when it now overlaps a segment of the app ([ImportStore.segmentSpans], which
+ * includes the rides saved earlier in this run) → [ImportStore.saveImported]. One ride's failure is logged and counted
+ * as skipped. A picked ride whose item is gone is skipped too. [stop] ends the run after the ride being saved. When at
+ * least one ride was saved, [postProcessor] is asked once at the end.
  */
 class GpxImportJob(
     private val reader: ImportReader,
@@ -85,7 +85,8 @@ class GpxImportJob(
         } catch (e: Exception) {
             log.warn("Could not keep the picked files readable", e)
         }
-        // ATOMIC: even a run cancelled at once reaches its `finally`, which releases the files, ends the state and frees the job.
+        // ATOMIC: even a run cancelled at once reaches its `finally`, which releases the files, ends the state and
+        // frees the job.
         scope.launch(start = CoroutineStart.ATOMIC) { run(sources, picks) }
         return true
     }
