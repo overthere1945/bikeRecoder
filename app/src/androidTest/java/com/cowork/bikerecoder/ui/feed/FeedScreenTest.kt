@@ -16,6 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasTestTag
@@ -103,6 +104,7 @@ class FeedScreenTest {
     private val months = listOf(FeedMonth("2026년 10월 · 32.1 km · 1회", listOf(cardA())), FeedMonth("2026년 9월 · 1.6 km · 1회", listOf(cardB)))
 
     private val opened = mutableListOf<Long>()
+    private val shared = mutableListOf<Long>()
     private val videos = mutableListOf<TripMedia>()
     private val requested = mutableListOf<Long>()
     private val shown = mutableListOf<Long>()
@@ -150,6 +152,7 @@ class FeedScreenTest {
                     onConfirmCleanup = onConfirmCleanup,
                     onCardShown = { shown += it },
                     onCardHidden = { hidden += it },
+                    onShare = { shared += it },
                 )
             }
         }
@@ -182,6 +185,26 @@ class FeedScreenTest {
         composeRule.onNodeWithTag(FeedTags.video(3), useUnmergedTree = true).assertDoesNotExist()
         composeRule.onNodeWithTag(FeedTags.trophy(3), useUnmergedTree = true).assertDoesNotExist()
         composeRule.onNodeWithTag(FeedTags.photo(3, 0), useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    /** V1.5.0 spec §1.1: the paper plane at the end of the numbers opens the share sheet of the trip, not the trip. */
+    @Test
+    fun shareIconOnCardWithRide() {
+        show(months = listOf(FeedMonth("2026년 10월 · 32.1 km · 1회", listOf(cardA().copy(canShare = true)))))
+
+        composeRule.onNodeWithContentDescription("공유").assertIsDisplayed().assertHeightIsAtLeast(48.dp).performClick()
+
+        assertEquals(listOf(7L), shared)
+        assertEquals(emptyList<Long>(), opened)
+    }
+
+    /** A trip without a finished ride of 10 m or more has nothing to share. */
+    @Test
+    fun noShareIconWithoutRide() {
+        show(months = listOf(FeedMonth("2026년 9월 · 0 m · 1회", listOf(cardB.copy(distanceM = 0.0, canShare = false)))))
+
+        composeRule.onNodeWithText("2일 여행").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("공유").assertDoesNotExist()
     }
 
     @Test

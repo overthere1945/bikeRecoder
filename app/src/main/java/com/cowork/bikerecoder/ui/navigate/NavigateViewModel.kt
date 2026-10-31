@@ -28,6 +28,7 @@ import com.cowork.bikerecoder.ride.recordingTripId
 import com.cowork.bikerecoder.tts.VoiceOutput
 import com.cowork.bikerecoder.ui.record.SummaryExtras
 import com.cowork.bikerecoder.ui.record.SummaryExtrasState
+import com.cowork.bikerecoder.ui.share.shareTripOf
 import com.cowork.bikerecoder.ui.trip.EndAction
 import com.cowork.bikerecoder.ui.trip.canConvertToMultiDay
 import kotlinx.coroutines.CancellationException
@@ -84,6 +85,8 @@ class NavigateViewModel(
     goals: Flow<Pair<Int?, Int?>> = flowOf(null to null),
     /** The summary's trip when it offers [영상 만들기] [이미지 만들기] ([SummaryExtras]); none by default. */
     mediaTrip: suspend (segmentId: Long) -> Long? = { null },
+    /** The summary's trip when it offers [공유] ([SummaryExtras]); none by default. */
+    shareTrip: suspend (segmentId: Long) -> Long? = { null },
 ) : ViewModel() {
 
     val ui: StateFlow<NavUiState> = controller.ui
@@ -97,6 +100,7 @@ class NavigateViewModel(
         rideStats = rideStats,
         goals = goals,
         mediaTrip = mediaTrip,
+        shareTrip = shareTrip,
     )
 
     /**
@@ -292,6 +296,7 @@ class NavigateViewModel(
                     rideStats = container.rideStats.observeRides(),
                     goals = container.settings.settings.map { it.weeklyGoalKm to it.yearlyGoalKm }.distinctUntilChanged(),
                     mediaTrip = { id -> mediaTripOf(id, container.rideStore, container.tripStore) },
+                    shareTrip = { id -> shareTripOf(id, container.rideStore) },
                 )
             }
         }

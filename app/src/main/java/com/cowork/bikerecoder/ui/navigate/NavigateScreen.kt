@@ -145,6 +145,8 @@ fun NavigateScreen(
     heartRateGate: HeartRateGate? = null,
     /** Under a completed trip's summary: [영상 만들기] [이미지 만들기] of that trip (V1.3.0 spec §1.1). */
     mediaEntry: @Composable (tripId: Long) -> Unit = {},
+    /** [공유] under the segment summary: the share sheet of its whole trip (V1.5.0 spec §1.1). */
+    onShare: (tripId: Long) -> Unit = {},
 ) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val summaryExtras by viewModel.summaryExtras.collectAsStateWithLifecycle()
@@ -258,6 +260,7 @@ fun NavigateScreen(
                                 viewModel::summaryOnScreen,
                                 onDiscard = viewModel::discardShortRide,
                                 onKeep = viewModel::keepShortRide,
+                                onShare = onShare,
                             )
                             if (view.completed) Text(TRIP_COMPLETED, style = MaterialTheme.typography.headlineSmall)
                             // Under "여행을 완료했습니다" (spec §1.1).

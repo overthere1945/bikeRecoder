@@ -33,6 +33,7 @@ import com.cowork.bikerecoder.ui.health.TrackColorMode
 import com.cowork.bikerecoder.ui.photo.RidePhotos
 import com.cowork.bikerecoder.ui.photo.observeRidePhotos
 import com.cowork.bikerecoder.ui.photo.setPhotoHidden
+import com.cowork.bikerecoder.ui.share.canShare
 import com.cowork.bikerecoder.ui.video.canMakeMedia
 import com.cowork.bikerecoder.ui.video.missingMedia
 import com.cowork.bikerecoder.video.TripMedia
@@ -105,6 +106,11 @@ class TripDetailViewModel(
 
     /** [영상 만들기] [이미지 만들기] are offered. */
     val canMakeMedia: StateFlow<Boolean> = _canMakeMedia.asStateFlow()
+
+    private val _canShare = MutableStateFlow(false)
+
+    /** [공유] is offered (V1.5.0 spec §1.1): a finished ride of 10 m or more, also while the trip goes on. */
+    val canShare: StateFlow<Boolean> = _canShare.asStateFlow()
 
     /** "만든 영상·이미지", newest first. */
     val media: StateFlow<List<TripMedia>> = (tripMedia?.observe(tripId) ?: emptyFlow())
@@ -313,6 +319,7 @@ class TripDetailViewModel(
             // Empty segments are kept in the store but not listed (nor counted in the totals).
             val all = rideStore.segments(tripId)
             val segments = all.filterNot { it.isEmpty }
+            _canShare.value = canShare(all)
             tripStore?.let { trips ->
                 _canMakeMedia.value = guarded("Could not read trip $tripId") { canMakeMedia(trips.trip(tripId), all) } ?: false
             }

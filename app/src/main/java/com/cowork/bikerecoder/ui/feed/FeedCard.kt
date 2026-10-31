@@ -14,8 +14,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -59,6 +65,7 @@ private const val PHOTO_THUMB_PX = 320
  * A trip's card (V1.4.0 spec §2.3): title, date line, the satellite picture 16:9 (the line drawing until it exists) with 🏆 at
  * the top left and [▶ 영상] at the bottom right, the three big numbers, the average line and up to three photos (+N on the
  * third). A tap opens the trip ([onClick]), a long press asks to delete it ([onLongClick]); [photo] reads a gallery thumbnail.
+ * With [FeedCardState.canShare] the numbers end in the paper plane "공유" ([onShare], V1.5.0 spec §1.1).
  */
 @Composable
 fun FeedCard(
@@ -67,6 +74,7 @@ fun FeedCard(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onOpenVideo: (TripMedia) -> Unit,
+    onShare: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -92,12 +100,26 @@ fun FeedCard(
         }
         CardPicture(card, onOpenVideo)
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = if (card.canShare) 4.dp else 16.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            BigNumber("거리", kmText(card.distanceM))
-            BigNumber("이동 시간", RideFormat.duration(card.movingTimeMs))
-            BigNumber("상승", meterText(card.ascentM))
+            Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.SpaceBetween) {
+                BigNumber("거리", kmText(card.distanceM))
+                BigNumber("이동 시간", RideFormat.duration(card.movingTimeMs))
+                BigNumber("상승", meterText(card.ascentM))
+            }
+            if (card.canShare) {
+                Spacer(Modifier.width(8.dp))
+                IconButton(onClick = onShare, modifier = Modifier.size(48.dp).testTag(FeedTags.share(card.tripId))) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Send,
+                        contentDescription = "공유",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
         Text(
             averageLineText(card.avgSpeedMps, card.avgBpm),

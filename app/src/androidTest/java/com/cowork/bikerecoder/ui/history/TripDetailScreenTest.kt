@@ -7,12 +7,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import java.time.LocalDate
@@ -128,5 +131,39 @@ class TripDetailScreenTest {
         }
 
         composeRule.onNodeWithText("다시 가져오기").assertDoesNotExist()
+    }
+
+    /** V1.5.0 spec §1.1: the paper plane before [✎] on the title row opens the share sheet; none without [onShare]. */
+    @Test
+    fun shareIconOpens() {
+        var shares = 0
+        var canShare by mutableStateOf(true)
+        composeRule.setContent {
+            MaterialTheme {
+                TripDetailContent(
+                    segmentsByDate = mapOf(date to listOf(segment)),
+                    total = segment.totals,
+                    dialog = null,
+                    onOpenSegment = {},
+                    onRequestDelete = {},
+                    onConfirmDelete = {},
+                    onDismiss = {},
+                    onBack = {},
+                    title = "저녁 라이딩 · 서울 강서구",
+                    onRename = {},
+                    onShare = if (canShare) ({ shares++ }) else null,
+                )
+            }
+        }
+
+        val share = composeRule.onNodeWithContentDescription("공유").assertIsDisplayed()
+        val rename = composeRule.onNodeWithContentDescription(RENAME_TITLE).assertIsDisplayed()
+        assertTrue("before ✎", share.getBoundsInRoot().right <= rename.getBoundsInRoot().left)
+        share.performClick()
+        assertEquals(1, shares)
+
+        canShare = false
+        composeRule.onNodeWithContentDescription("공유").assertDoesNotExist()
+        composeRule.onNodeWithContentDescription(RENAME_TITLE).assertIsDisplayed()
     }
 }

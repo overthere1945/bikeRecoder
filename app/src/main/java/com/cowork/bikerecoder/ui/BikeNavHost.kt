@@ -69,6 +69,8 @@ import com.cowork.bikerecoder.ui.pick.MapPickScreen
 import com.cowork.bikerecoder.ui.pick.MapPickViewModel
 import com.cowork.bikerecoder.ui.search.SearchScreen
 import com.cowork.bikerecoder.ui.settings.SettingsScreen
+import com.cowork.bikerecoder.ui.share.ShareHost
+import com.cowork.bikerecoder.ui.share.ShareViewModel
 import com.cowork.bikerecoder.ui.stats.GoalDialog
 import com.cowork.bikerecoder.ui.stats.StatsScreen
 import com.cowork.bikerecoder.ui.stats.StatsViewModel
@@ -89,6 +91,7 @@ import com.cowork.bikerecoder.ui.trip.TripStartViewModel
 import com.cowork.bikerecoder.ui.video.MediaEntry
 import com.cowork.bikerecoder.ui.video.MediaPreviewScreen
 import com.cowork.bikerecoder.ui.video.VideoHost
+import com.cowork.bikerecoder.ui.video.VideoOutcome
 import com.cowork.bikerecoder.ui.video.VideoViewModel
 import com.cowork.bikerecoder.ui.video.galleryThumbnail
 import com.cowork.bikerecoder.ui.video.shareMedia
@@ -295,6 +298,11 @@ fun BikeNavHost(
         factory = VideoViewModel.factory(container),
     )
     val mediaThumbnail = remember(container) { galleryThumbnail(container.appContext.contentResolver) }
+    // Activity-scoped: the "활동 공유하기" sheet over every screen; its text survives a rotation (V1.5.0 spec §1).
+    val shareViewModel: ShareViewModel = viewModel(
+        viewModelStoreOwner = context.findActivity(),
+        factory = ShareViewModel.factory(container),
+    )
 
     LaunchedEffect(launchRequest) {
         val request = launchRequest ?: return@LaunchedEffect
@@ -312,10 +320,13 @@ fun BikeNavHost(
     }
 
     // A finished job while the app is on screen: the preview (or its failure's message), once. Not over a recording
-    // that started meanwhile: then the "영상을 만들었습니다" notification stays to open it.
+    // that started meanwhile: then the "영상을 만들었습니다" notification stays to open it. Not while the share sheet makes
+    // its image either ([hostOutcome]); should the making end with the outcome still there, it is shown here then.
     val videoOutcome by videoViewModel.outcome.collectAsStateWithLifecycle()
-    LaunchedEffect(videoOutcome) {
-        val outcome = videoOutcome ?: return@LaunchedEffect
+    val shareSheet by shareViewModel.sheet.collectAsStateWithLifecycle()
+    val shareMaking = shareSheet?.making == true
+    LaunchedEffect(videoOutcome, shareMaking) {
+        val outcome = hostOutcome(videoOutcome, shareMaking) ?: return@LaunchedEffect
         val preview = videoViewModel.previewToOpen(outcome)
         if (preview != null && navController.currentDestination?.route != Routes.ONBOARDING) {
             navController.openPreview(preview.uri, preview.kind, preview.downscaled, preview.satelliteFallback)
@@ -425,6 +436,7 @@ fun BikeNavHost(
                             onStartRecording = { select(MainTab.MAP) },
                             onSetGoals = { goalDialog = true },
                             scrollToTop = scrollToTop,
+                            onShare = shareViewModel::open,
                         )
                     }
                     MainTab.STATS -> StatsScreen(
@@ -655,6 +667,7 @@ fun BikeNavHost(
                 photoPrompt = { PhotoPrompt(container) },
                 heartRateGate = heartRateGate,
                 mediaEntry = mediaEntry,
+                onShare = shareViewModel::open,
             )
         }
         composable(
@@ -682,6 +695,7 @@ fun BikeNavHost(
                 photoPrompt = { PhotoPrompt(container) },
                 heartRateGate = heartRateGate,
                 mediaEntry = mediaEntry,
+                onShare = shareViewModel::open,
             )
         }
         composable(
@@ -727,6 +741,7 @@ fun BikeNavHost(
                 mediaEntry = { mediaEntry(tripId) },
                 mediaThumbnail = mediaThumbnail,
                 onOpenMedia = { media -> context.viewMedia(media.uri, media.kind) },
+                onShare = { shareViewModel.open(tripId) },
             )
         }
         composable(
@@ -812,7 +827,14 @@ fun BikeNavHost(
         onConfirmCurrent = favoritesViewModel::confirmCurrent,
     )
     VideoHost(videoViewModel)
+    ShareHost(shareViewModel)
 }
+
+/**
+ * The job's [outcome] as this host shows it (the preview, or the failure's message): none while the share sheet makes its
+ * image ([shareMaking]) — that Done or Failed is the sheet's, which sends the image on (V1.5.0 spec §2.4).
+ */
+internal fun hostOutcome(outcome: VideoOutcome?, shareMaking: Boolean): VideoOutcome? = outcome.takeUnless { shareMaking }
 
 /** The made file's preview on top (a second one of the same file is not pushed). */
 private fun NavController.openPreview(uri: String, kind: MediaKind, downscaled: Boolean, satelliteFallback: Boolean) {

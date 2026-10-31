@@ -1,5 +1,8 @@
 package com.cowork.bikerecoder.ui.share
 
+import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
+import com.cowork.bikerecoder.core.recording.RideSegment
+import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.share.Mood
 import com.cowork.bikerecoder.share.ShareCandidate
 import com.cowork.bikerecoder.share.SharePick
@@ -53,12 +56,25 @@ data class ShareSheetState(
 
 /** One-shot results of the sheet's buttons, each handled once by the screen. */
 sealed interface ShareEvent {
-    /** Open the app of [target] with [file] and [text]; a null [file] sends the text only. */
-    data class Send(val target: ShareTarget, val file: ShareCandidate?, val text: String) : ShareEvent
+    /**
+     * Open the app of [target] with [file] and [text]; a null [file] sends the text only. [made]: the sheet has just made
+     * [file] for this press ("영상을 만들었습니다" need not stay).
+     */
+    data class Send(val target: ShareTarget, val file: ShareCandidate?, val text: String, val made: Boolean = false) : ShareEvent
 
     /** [복사]: put [text] on the clipboard. */
     data class Copy(val text: String) : ShareEvent
 
     /** A short message ("갤러리에 저장했습니다"). */
     data class Notice(val message: String) : ShareEvent
+}
+
+/** [공유] is offered (spec §1.1): the trip has a finished ride of [MIN_RIDE_DISTANCE_M] or more; it may still go on. */
+fun canShare(segments: List<RideSegment>): Boolean =
+    segments.any { it.endedAt != null && it.totals.distanceM >= MIN_RIDE_DISTANCE_M }
+
+/** The trip of segment [segmentId] when its summary offers [공유] ([canShare]): the whole trip is shared. */
+suspend fun shareTripOf(segmentId: Long, rideStore: RideStore): Long? {
+    val tripId = rideStore.segment(segmentId)?.tripId ?: return null
+    return tripId.takeIf { canShare(rideStore.segments(tripId)) }
 }

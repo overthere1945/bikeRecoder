@@ -90,6 +90,30 @@ class SummaryExtrasTest {
         assertEquals(null, extras.state.value.mediaTripId)
     }
 
+    /**
+     * V1.5.0 spec §1.1: [공유] under the summary shares its whole trip once that has a finished ride of 10 m or more, also
+     * while the trip goes on; a short ride's trip has none.
+     */
+    @Test
+    fun offersSharingForATripWithARide() = runTest {
+        val (id, _) = setup(status = TripStatus.ACTIVE)
+        val processor = PostProcessor(rides, store, FakePhotoSource(), heartRate, clock = { 0L }, scope = backgroundScope, warnLog = { _, _ -> })
+        val extras = SummaryExtras(
+            shown, store, processor, shortRides, backgroundScope,
+            shareTrip = { segment -> com.cowork.bikerecoder.ui.share.shareTripOf(segment, rides) },
+        )
+        shown.value = id
+        runCurrent()
+        assertEquals(TRIP, extras.state.value.shareTripId)
+        assertEquals(null, extras.state.value.mediaTripId)
+
+        val (short, _) = setup(totals = TOTALS.copy(distanceM = 9.0))
+        rides.deleteSegment(id)
+        shown.value = short
+        runCurrent()
+        assertEquals(null, extras.state.value.shareTripId)
+    }
+
     /** Reads of the heart-rate source other than the one pass the summary asks for when it appears. */
     private fun refetches() = heartRate.calls.size - 1
 

@@ -266,7 +266,7 @@ class ShareViewModel(
         if (m.target == ShareTarget.SAVE) return emit(ShareEvent.Notice(MSG_SAVED))
         val file = (picks?.of(m.target) as? SharePick.File)?.file
             ?: ShareCandidate(made.uri, made.kind, Aspect.PORTRAIT, made.createdAt, sizeBytes = null)
-        emit(ShareEvent.Send(m.target, file, m.text))
+        emit(ShareEvent.Send(m.target, file, m.text, made = true))
     }
 
     /** [m] is over: it is no longer waited for, and its sheet is updated by [change]. */

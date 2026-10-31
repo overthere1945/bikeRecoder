@@ -384,4 +384,35 @@ class RecordScreenTest {
         assertEquals(1, keeps)
         composeRule.onNodeWithText("거의 움직이지 않은 기록입니다. 저장할까요?").assertDoesNotExist()
     }
+
+    /** V1.5.0 spec §1.1: [공유] under the summary shares the segment's whole trip; none when the trip has nothing to share. */
+    @Test
+    fun summaryShareButton() {
+        var state by mutableStateOf(SummaryExtrasState(shareTripId = 7))
+        val shared = mutableListOf<Long>()
+        composeRule.setContent {
+            MaterialTheme {
+                SegmentSummaryContent(
+                    segment = RideSegment(
+                        id = 1,
+                        tripId = 7,
+                        startedAt = 0L,
+                        endedAt = 600_000L,
+                        localDate = LocalDate.of(2026, 10, 18),
+                        totals = SegmentTotals.ZERO.copy(distanceM = 3_010.0, movingTimeMs = 600_000),
+                    ),
+                    map = {},
+                    onConfirm = {},
+                    footer = { SummaryExtrasContent(state, photoPrompt = {}, onShare = { shared += it }) },
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("공유").assertIsDisplayed().assertHeightIsAtLeast(48.dp).performClick()
+        assertEquals(listOf(7L), shared)
+
+        state = SummaryExtrasState(shareTripId = null)
+        composeRule.onNodeWithText("공유").assertDoesNotExist()
+        composeRule.onNodeWithText("확인").assertIsDisplayed()
+    }
 }

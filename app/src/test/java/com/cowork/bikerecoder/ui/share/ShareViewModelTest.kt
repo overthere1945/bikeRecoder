@@ -347,7 +347,8 @@ class ShareViewModelTest {
         job.state.value = VideoJobState.Done(image, downscaled = false)
         advanceUntilIdle()
 
-        assertEquals(listOf<ShareEvent>(ShareEvent.Send(ShareTarget.STORY, candidate(image), AUTO)), events)
+        // Made here: the screen takes "영상을 만들었습니다" away.
+        assertEquals(listOf<ShareEvent>(ShareEvent.Send(ShareTarget.STORY, candidate(image), AUTO, made = true)), events)
         assertEquals(1, job.acknowledges)
         val s = vm.sheet.value!!
         assertFalse(s.making)
@@ -602,7 +603,7 @@ class ShareViewModelTest {
 
         val image = done()
         advanceUntilIdle()
-        assertEquals(listOf<ShareEvent>(ShareEvent.Send(ShareTarget.INSTAGRAM, candidate(image), AUTO)), events)
+        assertEquals(listOf<ShareEvent>(ShareEvent.Send(ShareTarget.INSTAGRAM, candidate(image), AUTO, made = true)), events)
     }
 
     // --- an unfinished trip ------------------------------------------------------------------------------------------

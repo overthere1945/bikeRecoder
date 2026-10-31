@@ -17,6 +17,7 @@ import com.cowork.bikerecoder.ride.RideController
 import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.ride.ScreenNotice
 import com.cowork.bikerecoder.ride.ShortRides
+import com.cowork.bikerecoder.ui.share.shareTripOf
 import com.cowork.bikerecoder.ui.video.mediaTripOf
 import com.cowork.bikerecoder.core.stats.RideStat
 import kotlinx.coroutines.flow.Flow
@@ -55,6 +56,8 @@ class RecordViewModel(
     goals: Flow<Pair<Int?, Int?>> = flowOf(null to null),
     /** The summary's trip when it offers [영상 만들기] [이미지 만들기] ([SummaryExtras]); none by default. */
     mediaTrip: suspend (segmentId: Long) -> Long? = { null },
+    /** The summary's trip when it offers [공유] ([SummaryExtras]); none by default. */
+    shareTrip: suspend (segmentId: Long) -> Long? = { null },
 ) : ViewModel() {
 
     val ui: StateFlow<RideUiState> = ride.ui
@@ -68,6 +71,7 @@ class RecordViewModel(
         rideStats = rideStats,
         goals = goals,
         mediaTrip = mediaTrip,
+        shareTrip = shareTrip,
     )
 
     /**
@@ -154,6 +158,7 @@ class RecordViewModel(
                     rideStats = container.rideStats.observeRides(),
                     goals = container.settings.settings.map { it.weeklyGoalKm to it.yearlyGoalKm }.distinctUntilChanged(),
                     mediaTrip = { id -> mediaTripOf(id, container.rideStore, container.tripStore) },
+                    shareTrip = { id -> shareTripOf(id, container.rideStore) },
                 )
             }
         }

@@ -87,6 +87,7 @@ data class FeedMonth(val header: String, val cards: List<FeedCardState>)
  * [thumbKey] names the satellite picture to draw (null when it cannot be drawn: the trip is in progress or has no such
  * segment), [thumbFile] is that picture if it exists; without it the card draws [routes] (each segment's simplified route and
  * the colour of its place in the trip; segments without a route yet are left out). [regionKnown]: the label has a region.
+ * [canShare]: the trip has a finished ride of 10 m or more, so the card offers [공유] (V1.5.0 spec §1.1).
  */
 data class FeedCardState(
     val tripId: Long,
@@ -106,6 +107,7 @@ data class FeedCardState(
     val thumbFile: File?,
     val routes: List<Pair<List<GeoPoint>, String>>,
     val regionKnown: Boolean = true,
+    val canShare: Boolean = false,
 ) {
     val videoUri: String? get() = video?.uri
 }
@@ -541,6 +543,7 @@ class FeedViewModel(
             thumbFile = thumbKey?.let { key -> file?.takeIf { it.name == feedThumbName(id, key) } },
             routes = facts.cards.mapIndexedNotNull { index, s -> s.route?.let { it to RideColors.colorAt(index) } },
             regionKnown = !label.regionName.isNullOrBlank(),
+            canShare = rides.isNotEmpty(),
         )
     }
 
