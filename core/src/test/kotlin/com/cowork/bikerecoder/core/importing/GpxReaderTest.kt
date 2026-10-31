@@ -274,4 +274,35 @@ class GpxReaderTest {
         assertEquals(2, track.fixes.size)
         assertEquals(1, track.droppedPoints)
     }
+
+    private val doctypeGpx = """<?xml version="1.0"?>
+<!DOCTYPE gpx [<!ENTITY e "boom">]>
+<gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1"><trk><name>&e;</name><trkseg>${pt("37.5", "127.0", "2026-10-06T00:00:00Z")}</trkseg></trk></gpx>"""
+
+    @Test
+    fun doctypeRejectedBeforeParsing() {
+        val e = assertFailsWith<GpxReadException> { read(doctypeGpx) }
+        assertEquals(ImportProblem.UNREADABLE, e.problem)
+    }
+
+    @Test
+    fun utf16DoctypeRejected() {
+        val text = doctypeGpx.replace("""<?xml version="1.0"?>""", """<?xml version="1.0" encoding="UTF-16"?>""")
+        val bomBe = byteArrayOf(0xFE.toByte(), 0xFF.toByte())
+        val bomLe = byteArrayOf(0xFF.toByte(), 0xFE.toByte())
+        val cases = listOf(
+            text.toByteArray(Charsets.UTF_16LE),
+            text.toByteArray(Charsets.UTF_16BE),
+            bomLe + text.toByteArray(Charsets.UTF_16LE),
+            bomBe + text.toByteArray(Charsets.UTF_16BE),
+        )
+        for (bytes in cases) assertFailsWith<GpxReadException> { GpxReader.read(bytes) }
+    }
+
+    @Test
+    fun doctypeInNonGpxXmlIsNotGpx() {
+        val html = """<?xml version="1.0"?><!DOCTYPE html><html><body>hi</body></html>"""
+        val e = assertFailsWith<GpxReadException> { read(html) }
+        assertEquals(ImportProblem.NOT_GPX, e.problem)
+    }
 }

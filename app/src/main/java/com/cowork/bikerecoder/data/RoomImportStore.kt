@@ -42,7 +42,7 @@ class RoomImportStore(private val db: AppDatabase) : ImportStore {
             ).toEntity(),
         )
         rideDao.insertPoints(replayed.points.map { it.toEntity(segmentId) })
-        importDao.insertImport(TripImportEntity(tripId, ride.fileName.take(MAX_FILE_NAME), ride.importedAt))
+        importDao.insertImport(TripImportEntity(tripId, cutFileName(ride.fileName), ride.importedAt))
         tripId
     }
 
@@ -52,11 +52,21 @@ class RoomImportStore(private val db: AppDatabase) : ImportStore {
     override fun observeImported(): Flow<Map<Long, String>> =
         importDao.observeImported().map { rows -> rows.associate { it.tripId to it.fileName } }
 
-    /** Deletes through the existing trip delete (CASCADE takes segments, points, photos, labels, media rows, import row). */
+    /**
+     * Deletes through the DAO's trip delete (CASCADE takes segments, points, photos, labels, media rows, import row).
+     * The DAO is used directly, not [com.cowork.bikerecoder.core.trip.TripManager]: imported trips are always COMPLETED
+     * and never have offline maps or stops to clean up.
+     */
     override suspend fun deleteAllImported(): Int = db.withTransaction {
         val ids = importDao.importedTripIds()
         ids.forEach { tripDao.deleteTrip(it) }
         ids.size
+    }
+
+    /** Cuts to [MAX_FILE_NAME] chars without leaving half of a surrogate pair at the end. */
+    private fun cutFileName(name: String): String {
+        val cut = name.take(MAX_FILE_NAME)
+        return if (cut.isNotEmpty() && cut.length < name.length && cut.last().isHighSurrogate()) cut.dropLast(1) else cut
     }
 
     private companion object {

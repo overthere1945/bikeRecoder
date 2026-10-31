@@ -44,6 +44,10 @@ object GpxReader {
     private const val ACCURACY_M = 5f
 
     fun read(bytes: ByteArray): GpxTrack {
+        // 파서가 DOCTYPE을 받아 엔티티를 펼치기 전에 막는다(안드로이드 파서는 펼친 뒤에야 알려 준다). 분류는 SAXException 경로와 같다.
+        if (containsDoctype(bytes)) {
+            throw GpxReadException(if (ImportUnpacker.looksLikeGpx(bytes)) ImportProblem.UNREADABLE else ImportProblem.NOT_GPX)
+        }
         val document = try {
             val builder = secureDocumentBuilderFactory().newDocumentBuilder()
             // 파서가 DOCTYPE 차단을 지원하지 않아도 외부 자원은 읽지 않는다.
@@ -64,7 +68,7 @@ object GpxReader {
         } catch (e: IOException) {
             throw GpxReadException(ImportProblem.UNREADABLE)
         }
-        // 안드로이드 파서는 disallow-doctype-decl을 무시하고 DOCTYPE을 그냥 읽는다. 읽은 뒤에라도 DOCTYPE이 있으면 거부한다.
+        // 두 번째 방어선: disallow-doctype-decl은 안드로이드에서 지원되지 않는다(ParserConfigurationException을 삼킨다). 읽은 뒤에라도 DOCTYPE이 있으면 거부한다.
         if (document.doctype != null) throw GpxReadException(ImportProblem.UNREADABLE)
         if (document.documentElement?.localName != "gpx") throw GpxReadException(ImportProblem.NOT_GPX)
 
@@ -113,6 +117,22 @@ object GpxReader {
         null
     } catch (_: ArithmeticException) {
         null
+    }
+
+    /** `<!DOCTYPE`의 US-ASCII, UTF-16LE, UTF-16BE 바이트 열. 단순 바이트 검색용. */
+    private val doctypePatterns: List<ByteArray> = listOf(Charsets.US_ASCII, Charsets.UTF_16LE, Charsets.UTF_16BE)
+        .map { "<!DOCTYPE".toByteArray(it) }
+
+    private fun containsDoctype(bytes: ByteArray): Boolean = doctypePatterns.any { indexOf(bytes, it) >= 0 }
+
+    private fun indexOf(bytes: ByteArray, pattern: ByteArray): Int {
+        val last = bytes.size - pattern.size
+        var i = 0
+        outer@ while (i <= last) {
+            for (j in pattern.indices) if (bytes[i + j] != pattern[j]) { i++; continue@outer }
+            return i
+        }
+        return -1
     }
 
     /**

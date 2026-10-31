@@ -163,4 +163,16 @@ class RoomImportStoreTest {
 
         assertEquals("x".repeat(200), store.observeImported().first()[tripId])
     }
+
+    @Test
+    fun fileNameCutKeepsSurrogatePairs() = runTest {
+        // The emoji (2 chars) sits across the 200 cut: 199 chars + high surrogate + low surrogate.
+        val tripId = store.saveImported(imported(fileName = "x".repeat(199) + "\uD83D\uDEB4" + "tail"))
+        val kept = store.observeImported().first()[tripId]!!
+        assertEquals("x".repeat(199), kept)
+
+        // A pair that fits whole is kept.
+        val fits = store.saveImported(imported(startedAt = 2_000_000, fileName = "x".repeat(198) + "\uD83D\uDEB4" + "tail"))
+        assertEquals("x".repeat(198) + "\uD83D\uDEB4", store.observeImported().first()[fits])
+    }
 }

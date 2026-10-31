@@ -6,6 +6,7 @@ import com.cowork.bikerecoder.core.importing.GpxReadException
 import com.cowork.bikerecoder.core.importing.GpxReader
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -45,5 +46,20 @@ class GpxReaderAndroidTest {
         } finally {
             secret.delete()
         }
+    }
+
+    @Test
+    fun nestedEntitiesRejectedQuickly() {
+        // 10 levels of 10 references each would expand to 10^10 characters if the parser were allowed to.
+        val entities = StringBuilder("<!ENTITY l0 \"lol\">")
+        for (level in 1..10) {
+            entities.append("<!ENTITY l$level \"").append("&l${level - 1};".repeat(10)).append("\">")
+        }
+        val bomb = gpx("<!DOCTYPE gpx [$entities]>\n", name = "&l10;")
+
+        val start = System.nanoTime()
+        assertThrows(GpxReadException::class.java) { GpxReader.read(bomb) }
+        val elapsedMs = (System.nanoTime() - start) / 1_000_000
+        assertTrue("took ${elapsedMs}ms", elapsedMs < 2_000)
     }
 }
