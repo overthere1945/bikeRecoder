@@ -1,9 +1,13 @@
 package com.cowork.bikerecoder.nav
 
+import com.cowork.bikerecoder.core.elevation.RideTimeEstimator
+import com.cowork.bikerecoder.core.elevation.UsualSpeed
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.navigation.KmAnnouncementSource
+import com.cowork.bikerecoder.core.recording.RideSegment
+import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.routing.RouteFailure
 import com.cowork.bikerecoder.core.routing.RouteResult
 import com.cowork.bikerecoder.core.trip.TripManager
@@ -65,6 +69,7 @@ class NavigationControllerTest {
         var source: ScriptedLocationSource,
         voiceEnabled: Flow<Boolean>,
         val dayDistances: MemoryDayDistances = MemoryDayDistances(),
+        recentSegments: suspend (Int) -> List<RideSegment> = { emptyList() },
     ) {
         val tripManager = TripManager(store, offline, clock = { scope.testScheduler.currentTime })
         val controller = NavigationController(
@@ -79,6 +84,7 @@ class NavigationControllerTest {
             clock = { scope.testScheduler.currentTime },
             log = log,
             dayDistances = dayDistances,
+            recentSegments = recentSegments,
         )
 
         suspend fun trip(type: TripType, vararg stops: TripStop): Long =
@@ -93,6 +99,16 @@ class NavigationControllerTest {
         routes: List<String> = listOf(follow),
         voiceEnabled: Flow<Boolean> = flowOf(true),
     ) = Harness(this, AssetRouter(routes), ScriptedLocationSource(gpxFixture(gpx)), voiceEnabled)
+
+    /** A finished ride of [distanceM] in [movingSec] seconds of moving time. */
+    private fun ride(id: Long, distanceM: Double, movingSec: Long) = RideSegment(
+        id = id,
+        tripId = 99,
+        startedAt = id * 1_000,
+        endedAt = id * 1_000 + movingSec * 1_000,
+        localDate = LocalDate.of(2026, 10, 1),
+        totals = SegmentTotals.ZERO.copy(distanceM = distanceM, movingTimeMs = movingSec * 1_000),
+    )
 
     private fun turnWords(spoken: List<String>) =
         spoken.mapNotNull { s -> listOf("우회전", "좌회전").firstOrNull { it in s }?.let { w -> if ("앞에서" in s) "far $w" else "near $w" } }
@@ -118,6 +134,48 @@ class NavigationControllerTest {
         assertEquals(listOf(destination), request.stops)
         assertEquals(RouteProfile.CYCLEWAY_FIRST, request.profile)
         assertFalse(h.source.collecting, "location source stopped at arrival")
+    }
+
+    /** The session's arrival time starts from the usual speed of the recent rides (spec §1.6, §3.2). */
+    @Test
+    fun sessionGetsUsualSpeed() = runTest {
+        val asked = mutableListOf<Int>()
+        val h = Harness(
+            this, AssetRouter(listOf(follow)), ScriptedLocationSource(gpxFixture("scenario_follow.gpx")), flowOf(true),
+            recentSegments = { limit ->
+                asked += limit
+                listOf(ride(1, 18_000.0, 3_600), ride(2, 2_000.0, 400)) // 20 km in 4,000 s = 5 m/s
+            },
+        )
+        val tripId = h.trip(TripType.SINGLE_DAY, stop("도착", destination, isDestination = true))
+
+        h.controller.begin(tripId)
+        val active = h.awaitActive()
+
+        assertEquals(listOf(UsualSpeed.RECENT), asked)
+        val nav = active.state
+        val expected = RideTimeEstimator.seconds(nav.profile, nav.progress.distanceAlongM, nav.route.cumulativeM.last(), 5.0)
+        val atDefault =
+            RideTimeEstimator.seconds(nav.profile, nav.progress.distanceAlongM, nav.route.cumulativeM.last(), UsualSpeed.DEFAULT_MPS)
+        assertEquals(expected, (nav.etaMillis - active.fix!!.timeMillis) / 1_000.0, 0.01)
+        assertTrue(atDefault - expected > 60.0, "5 m/s is clearly faster than the default 15 km/h")
+    }
+
+    @Test
+    fun aFailedUsualSpeedReadStartsWithTheDefault() = runTest {
+        val h = Harness(
+            this, AssetRouter(listOf(follow)), ScriptedLocationSource(gpxFixture("scenario_follow.gpx")), flowOf(true),
+            recentSegments = { throw IllegalStateException("db") },
+        )
+        val tripId = h.trip(TripType.SINGLE_DAY, stop("도착", destination, isDestination = true))
+
+        h.controller.begin(tripId)
+        val active = h.awaitActive()
+
+        val nav = active.state
+        val expected =
+            RideTimeEstimator.seconds(nav.profile, nav.progress.distanceAlongM, nav.route.cumulativeM.last(), UsualSpeed.DEFAULT_MPS)
+        assertEquals(expected, (nav.etaMillis - active.fix!!.timeMillis) / 1_000.0, 0.01)
     }
 
     /** The test clock starts at epoch 0 = 1970-01-01 09:00 in Asia/Seoul. */

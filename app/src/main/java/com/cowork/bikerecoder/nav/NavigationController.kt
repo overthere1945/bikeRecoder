@@ -3,6 +3,7 @@ package com.cowork.bikerecoder.nav
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.elevation.UsualSpeed
 import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.model.Stop
 import com.cowork.bikerecoder.core.navigation.KmAnnouncementSource
@@ -10,6 +11,7 @@ import com.cowork.bikerecoder.core.navigation.NavEvent
 import com.cowork.bikerecoder.core.navigation.NavState
 import com.cowork.bikerecoder.core.navigation.NavUpdate
 import com.cowork.bikerecoder.core.navigation.NavigationSession
+import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.routing.RouteFailure
 import com.cowork.bikerecoder.core.routing.RouteRequest
 import com.cowork.bikerecoder.core.routing.RouteResult
@@ -30,6 +32,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
@@ -109,7 +112,8 @@ val NavUiState.guidingTripId: Long?
  * [stopToday], [completeTrip], [close], a new start) stops the location source and the ticks. A location stream
  * that fails after the start point was taken is subscribed again every [LOCATION_RETRY_MS] until it works.
  * While [kmSource] is set (a recording runs), the 1 km announcements count its distance and speak its combined
- * sentence instead.
+ * sentence instead. Each session gets the usual speed of the [recentSegments] (V1.7.0 spec §1.6, read at its start; the
+ * default 15 km/h if that fails) as the base of its arrival time until it has its own recent speed (spec §3.2).
  *
  * Threading: every public method must be called on [scope]'s single thread (Main in the app); the session
  * runs on the same [scope]. Trip writes run in [scope], so they finish even if the caller goes away.
@@ -131,6 +135,7 @@ class NavigationController(
     private val log: WarnLog = androidWarnLog(TAG),
     private val dayDistances: DayDistances = MemoryDayDistances(),
     private val zone: ZoneId = ZoneId.of("Asia/Seoul"),
+    private val recentSegments: suspend (limit: Int) -> List<RideSegment> = { emptyList() },
 ) {
     constructor(container: AppContainer, scope: CoroutineScope) : this(
         router = container.router,
@@ -142,6 +147,7 @@ class NavigationController(
         voiceEnabled = container.settings.settings.map { it.voiceEnabled },
         scope = scope,
         dayDistances = container.dayDistances,
+        recentSegments = { limit -> withContext(Dispatchers.IO) { container.rideStore.recentSegments(limit) } },
     )
 
     private val _ui = MutableStateFlow<NavUiState>(NavUiState.Idle)
@@ -381,7 +387,19 @@ class NavigationController(
         r.day = day
         r.savedKm = floor(ridden / 1_000.0).toInt()
 
-        val session = NavigationSession(route, stops, trip.profile, router, phrases, scope, initialDistanceM = ridden)
+        val usualSpeedMps = try {
+            UsualSpeed.of(recentSegments(UsualSpeed.RECENT))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn("Could not read the recent rides; the usual speed is the default", e)
+            UsualSpeed.DEFAULT_MPS
+        }
+        if (run !== r) return
+
+        val session = NavigationSession(
+            route, stops, trip.profile, router, phrases, scope, initialDistanceM = ridden, usualSpeedMps = usualSpeedMps,
+        )
         kmSource?.let(session::setKmSource)
         r.stops = stops
         r.session = session

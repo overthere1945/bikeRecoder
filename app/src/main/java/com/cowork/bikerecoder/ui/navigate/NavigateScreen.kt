@@ -71,6 +71,8 @@ import com.cowork.bikerecoder.map.BikeMap
 import com.cowork.bikerecoder.map.CameraFit
 import com.cowork.bikerecoder.map.CameraMode
 import com.cowork.bikerecoder.map.MapOverlay
+import com.cowork.bikerecoder.map.ROUTE_COLOR
+import com.cowork.bikerecoder.map.routeColors
 import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.nav.NavigationService
@@ -79,6 +81,7 @@ import com.cowork.bikerecoder.ride.ScreenNotice
 import com.cowork.bikerecoder.ui.common.KeepScreenOn
 import com.cowork.bikerecoder.ui.health.HeartRateGate
 import com.cowork.bikerecoder.ui.common.NoticeSnackbarHost
+import com.cowork.bikerecoder.ui.elevation.ElevationStrip
 import com.cowork.bikerecoder.ui.record.AutoPauseChip
 import com.cowork.bikerecoder.ui.record.PageDots
 import com.cowork.bikerecoder.ui.record.PauseBand
@@ -115,6 +118,7 @@ object NavigateTags {
     const val RESUME = "navigate-record-resume"
     const val END_RECORDING = "navigate-record-end"
     const val RIDE_FAILURE = "navigate-ride-failure"
+    const val AHEAD_LINE = "navigate-ahead-line"
 }
 
 private const val PAUSED_ALPHA = 0.4f
@@ -340,6 +344,9 @@ private fun ActiveContent(
         cameraMode = CameraMode.FREE
         fit = CameraFit(nav.route.points)
     }
+    // The grade colours of the line (V1.7.0 spec §3.1; FLAT keeps the guidance blue), built once per route and profile:
+    // a reroute brings both at once, so the new route is never drawn with the old colours.
+    val lineColors = remember(nav.route, nav.profile) { routeColors(nav.route, nav.profile, flatHex = ROUTE_COLOR) }
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -354,7 +361,7 @@ private fun ActiveContent(
                     Box(modifier = Modifier.fillMaxSize()) {
                         BikeMap(
                             tileSource = tileSource,
-                            overlay = MapOverlay(route = nav.route, stops = state.stops, user = state.fix),
+                            overlay = MapOverlay(route = nav.route, stops = state.stops, user = state.fix, routeColors = lineColors),
                             cameraMode = cameraMode,
                             onLongPress = {},
                             onUserGesture = { cameraMode = CameraMode.FREE },
@@ -493,7 +500,7 @@ private class RecordControls(
 )
 
 @Composable
-private fun TurnCard(nav: NavState) {
+internal fun TurnCard(nav: NavState) {
     val progress = nav.progress
     val next = progress.nextInstruction
     val instructions = nav.route.instructions
@@ -570,8 +577,12 @@ private fun Banner(text: String, modifier: Modifier = Modifier) {
     )
 }
 
+/**
+ * Remaining distance / ETA / speed and the guidance buttons; above the numbers, for a route with elevation, the
+ * "앞길 고도" line and strip ([aheadPanel], V1.7.0 spec §3.2).
+ */
 @Composable
-private fun BottomPanel(
+internal fun BottomPanel(
     nav: NavState,
     recording: Boolean,
     muted: Boolean,
@@ -583,6 +594,17 @@ private fun BottomPanel(
 ) {
     Surface(shape = RoundedCornerShape(16.dp), shadowElevation = 4.dp, modifier = modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            val ahead = remember(nav) { aheadPanel(nav) }
+            if (ahead != null) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        ahead.line,
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.testTag(NavigateTags.AHEAD_LINE),
+                    )
+                    ElevationStrip(ahead.strip, reachesDestination = ahead.reachesDestination, dimmed = ahead.dimmed)
+                }
+            }
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 Stat("남은 거리", SummaryFormatter.distance(nav.progress.remainingM))
                 Stat("도착 예정", if (nav.etaMillis > 0) etaText(nav.etaMillis) else "--")

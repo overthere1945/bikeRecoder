@@ -24,4 +24,12 @@ class SummaryFormatterTest {
         assertEquals("약 1분", SummaryFormatter.duration(10.0))
         assertEquals("약 1시간 30분", SummaryFormatter.duration(30_000.0, speedKmh = 20.0))
     }
+
+    @Test
+    fun `duration of seconds rounds to minutes like duration`() {
+        assertEquals("약 5시간 50분", SummaryFormatter.durationOf(20_976.0)) // 349.6분
+        assertEquals("약 1시간", SummaryFormatter.durationOf(3_629.0)) // 60.48분
+        assertEquals("약 1분", SummaryFormatter.durationOf(5.0))
+        assertEquals("약 3분", SummaryFormatter.durationOf(150.0)) // 2.5분 → 3분
+    }
 }

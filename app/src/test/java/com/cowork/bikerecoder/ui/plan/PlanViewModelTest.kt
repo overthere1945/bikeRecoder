@@ -1,5 +1,7 @@
 package com.cowork.bikerecoder.ui.plan
 
+import com.cowork.bikerecoder.core.elevation.RideTimeEstimator
+import com.cowork.bikerecoder.core.elevation.UsualSpeed
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.model.Route
@@ -11,6 +13,8 @@ import com.cowork.bikerecoder.core.routing.RouteResult
 import com.cowork.bikerecoder.core.routing.Router
 import com.cowork.bikerecoder.favorite.Favorite
 import com.cowork.bikerecoder.favorite.FavoriteKind
+import com.cowork.bikerecoder.ui.elevation.ElevationHandoff
+import com.cowork.bikerecoder.ui.elevation.ElevationText
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -27,6 +31,9 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -69,6 +76,8 @@ class PlanViewModelTest {
     }
 
     private var addresses: suspend (GeoPoint) -> String? = { null }
+    private var usualSpeed: suspend () -> Double = { UsualSpeed.DEFAULT_MPS }
+    private val handoff = ElevationHandoff()
 
     private fun viewModel() = PlanViewModel(
         router = router,
@@ -77,6 +86,9 @@ class PlanViewModelTest {
         segmentsReady = { segmentsReady },
         clock = { now },
         addressOf = { addresses(it) },
+        usualSpeed = { usualSpeed() },
+        handoff = handoff,
+        compute = Dispatchers.Main,
     )
 
     private fun TestScope.settle() {
@@ -359,7 +371,7 @@ class PlanViewModelTest {
     @Test
     fun `clear empties the plan and re-applies the current default profile`() = runTest {
         val default = MutableStateFlow(RouteProfile.BALANCED)
-        val vm = PlanViewModel(router, default, locations, { true }, { now })
+        val vm = PlanViewModel(router, default, locations, { true }, { now }, compute = Dispatchers.Main)
         runCurrent()
         vm.setDestination("A", a)
         vm.setProfile(RouteProfile.SHORTEST)
@@ -422,7 +434,113 @@ class PlanViewModelTest {
         assertEquals(RouteProfile.SHORTEST, vm2.state.value.profile)
     }
 
+    @Test
+    fun durationUsesUsualSpeedAndClimbs() = runTest {
+        usualSpeed = { 18.0 / 3.6 }
+        val hilly = hillyRoute()
+        router.result = { RouteResult.Success(hilly) }
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+
+        val s = vm.state.value
+        val profile = s.elevation
+        assertNotNull(profile)
+        assertEquals(18.0 / 3.6, s.usualSpeedMps, 1e-9)
+        assertEquals(RideTimeEstimator.seconds(profile, 0.0, 14_000.0, 18.0 / 3.6), s.durationSeconds!!, 1e-6)
+        // The 4 km climb at 5% is slower than the flat 2,800 s at 18 km/h.
+        assertTrue(s.durationSeconds!! > 14_000.0 / (18.0 / 3.6) + 300.0, "${s.durationSeconds}")
+    }
+
+    @Test
+    fun noElevationUsesUsualSpeedOnly() = runTest {
+        usualSpeed = { 18.0 / 3.6 }
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+
+        val s = vm.state.value
+        assertInstanceOf(RouteUiState.Ready::class.java, s.route)
+        assertNull(s.elevation)
+        assertEquals(2_800.0, s.durationSeconds!!, 1e-6) // 14 km at 5 m/s
+    }
+
+    @Test
+    fun usualSpeedLine() = runTest {
+        usualSpeed = { 18.4 / 3.6 }
+        val vm = viewModel()
+        runCurrent()
+
+        assertEquals(18.4 / 3.6, vm.state.value.usualSpeedMps, 1e-9)
+        assertEquals("평소 속도 18 km/h 기준", ElevationText.usualSpeedLine(vm.state.value.usualSpeedMps))
+    }
+
+    @Test
+    fun aFailedUsualSpeedReadUsesTheDefault() = runTest {
+        usualSpeed = { throw IllegalStateException("db") }
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+
+        assertEquals(UsualSpeed.DEFAULT_MPS, vm.state.value.usualSpeedMps, 1e-9)
+        assertEquals(14_000.0 / UsualSpeed.DEFAULT_MPS, vm.state.value.durationSeconds!!, 1e-6)
+    }
+
+    @Test
+    fun elevationAndDurationAreClearedWhileRecomputing() = runTest {
+        router.result = { RouteResult.Success(hillyRoute()) }
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+        assertNotNull(vm.state.value.elevation)
+
+        vm.addWaypoint("B", b)
+        assertEquals(RouteUiState.Loading, vm.state.value.route)
+        assertNull(vm.state.value.elevation)
+        assertNull(vm.state.value.durationSeconds)
+    }
+
+    @Test
+    fun openElevationPutsHandoff() = runTest {
+        val hilly = hillyRoute()
+        router.result = { RouteResult.Success(hilly) }
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+
+        assertTrue(vm.openElevation())
+        val (profile, path) = handoff.take()!!
+        assertSame(vm.state.value.elevation, profile)
+        assertEquals(hilly.points, path)
+    }
+
+    @Test
+    fun openElevationWithoutElevationPutsNothing() = runTest {
+        val vm = viewModel()
+        assertFalse(vm.openElevation()) // no route yet
+        vm.setDestination("A", a)
+        settle()
+
+        assertFalse(vm.openElevation())
+        assertNull(handoff.take())
+    }
+
     companion object {
+        /** 14 km: flat for 5 km, 5% up for 4 km (200 m), flat to the end; a point every km. */
+        fun hillyRoute(profile: RouteProfile = RouteProfile.CYCLEWAY_FIRST): Route {
+            val n = 15
+            val pts = (0 until n).map { GeoPoint(35.1 + it * 0.009, 129.0) }
+            val elevations = (0 until n).map { km -> 10.0 + 50.0 * (km - 5).coerceIn(0, 4) }
+            return Route(
+                points = pts,
+                cumulativeM = (0 until n).map { it * 1_000.0 },
+                instructions = emptyList(),
+                stopPointIndices = listOf(n - 1),
+                summary = RouteSummary(14_000.0, 200, 0.5, profile),
+                elevationsM = elevations,
+            )
+        }
+
         fun route(profile: RouteProfile): Route {
             val pts = listOf(GeoPoint(35.1, 129.0), GeoPoint(35.2, 129.1))
             return Route(

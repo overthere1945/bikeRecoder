@@ -6,6 +6,9 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
+import com.cowork.bikerecoder.core.elevation.ElevationProfile
+import com.cowork.bikerecoder.core.elevation.RideTimeEstimator
+import com.cowork.bikerecoder.core.elevation.UsualSpeed
 import com.cowork.bikerecoder.core.model.GeoMath
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.LocationFix
@@ -19,7 +22,12 @@ import com.cowork.bikerecoder.ui.common.PlaceLookup
 import com.cowork.bikerecoder.ui.common.PressedPlace
 import com.cowork.bikerecoder.ui.common.addressOrNull
 import com.cowork.bikerecoder.ui.common.routeFailureText
+import com.cowork.bikerecoder.ui.elevation.ElevationHandoff
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,6 +38,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * The route being planned. Scoped to the Activity so the main screen's long-press sheet, the search
@@ -42,6 +51,10 @@ import kotlinx.coroutines.launch
  * @param defaultProfile the profile preselected from settings (used unless the user already picked one).
  * @param locations the shared current-location state; fixes older than [MAX_FIX_AGE_MS] (by `timeMillis`
  *   against [clock]) are ignored and the computation waits for a fresh one.
+ * @param usualSpeed reads the usual speed (V1.7.0 spec §1.6) once, when the view model is created; a failed read is
+ *   [UsualSpeed.DEFAULT_MPS]. A route is published once it is known, with its time at that speed corrected for the
+ *   climbs ([RideTimeEstimator], spec §2.5) and its elevation profile computed on [compute].
+ * @param handoff where [openElevation] hands the profile and route line to the "고도" map screen.
  */
 class PlanViewModel(
     private val router: Router,
@@ -51,6 +64,9 @@ class PlanViewModel(
     private val clock: () -> Long = System::currentTimeMillis,
     /** Address of a long-pressed point, null when unknown. */
     addressOf: suspend (GeoPoint) -> String? = { null },
+    usualSpeed: suspend () -> Double = { UsualSpeed.DEFAULT_MPS },
+    private val handoff: ElevationHandoff = ElevationHandoff(),
+    private val compute: CoroutineDispatcher = Dispatchers.Default,
 ) : ViewModel() {
 
     private val lookup = PlaceLookup(addressOf, viewModelScope)
@@ -69,6 +85,19 @@ class PlanViewModel(
     private var nextKey = 1L
     private var profileChosen = false
     private var latestDefault = RouteProfile.CYCLEWAY_FIRST
+
+    /** The usual speed, read once; routes wait for it so their time is shown only once. */
+    private val usualSpeedRead: Deferred<Double> = viewModelScope.async {
+        val mps = try {
+            usualSpeed()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            UsualSpeed.DEFAULT_MPS
+        }
+        _state.update { it.copy(usualSpeedMps = mps) }
+        mps
+    }
 
     init {
         viewModelScope.launch {
@@ -138,6 +167,18 @@ class PlanViewModel(
         if (stale) changes.update { it + 1 }
     }
 
+    /**
+     * The elevation chart was tapped: hands the ready route's profile and line to the "고도" map screen
+     * ([ElevationHandoff]). False (nothing handed over) without a ready route with elevation.
+     */
+    fun openElevation(): Boolean {
+        val s = _state.value
+        val route = (s.route as? RouteUiState.Ready)?.route ?: return false
+        val profile = s.elevation ?: return false
+        handoff.put(profile, route.points)
+        return true
+    }
+
     /** Empties the plan and goes back to the settings' default profile (call when navigation starts). */
     fun clear() {
         profileChosen = false
@@ -165,6 +206,8 @@ class PlanViewModel(
             profile = profile,
             route = if (stops.isEmpty()) RouteUiState.Idle else RouteUiState.Loading,
             canStart = false,
+            elevation = null,
+            durationSeconds = null,
         )
     }
 
@@ -201,15 +244,39 @@ class PlanViewModel(
             RouteResult.Failure(RouteFailure.OTHER, e.message.orEmpty())
         }
         when (result) {
-            is RouteResult.Success -> publish(stops, profile, RouteUiState.Ready(result.route), startable = dataReady)
+            is RouteResult.Success -> {
+                val route = result.route
+                val elevation = withContext(compute) { ElevationProfile.fromRoute(route) }
+                val seconds = RideTimeEstimator.seconds(elevation, 0.0, route.summary.totalDistanceM, usualSpeedRead.await())
+                publish(stops, profile, RouteUiState.Ready(route), startable = dataReady, elevation, seconds)
+            }
             is RouteResult.Failure -> publish(stops, profile, RouteUiState.Error(routeFailureText(result.reason)), startable = false)
         }
     }
 
-    /** Publishes only if the inputs are still the ones this computation started from. */
-    private fun publish(stops: List<PlannedStop>, profile: RouteProfile, route: RouteUiState, startable: Boolean) {
+    /**
+     * Publishes only if the inputs are still the ones this computation started from. [elevation] and [durationSeconds]
+     * belong to a Ready [route] (null otherwise).
+     */
+    private fun publish(
+        stops: List<PlannedStop>,
+        profile: RouteProfile,
+        route: RouteUiState,
+        startable: Boolean,
+        elevation: ElevationProfile? = null,
+        durationSeconds: Double? = null,
+    ) {
         _state.update { s ->
-            if (s.stops != stops || s.profile != profile) s else s.copy(route = route, canStart = startable && route is RouteUiState.Ready)
+            if (s.stops != stops || s.profile != profile) {
+                s
+            } else {
+                s.copy(
+                    route = route,
+                    canStart = startable && route is RouteUiState.Ready,
+                    elevation = elevation,
+                    durationSeconds = durationSeconds,
+                )
+            }
         }
     }
 
@@ -229,6 +296,10 @@ class PlanViewModel(
                     locations = container.currentLocation,
                     segmentsReady = { container.segments.hasRequired() },
                     addressOf = { container.placeSearch.addressOrNull(it) },
+                    usualSpeed = {
+                        withContext(Dispatchers.IO) { UsualSpeed.of(container.rideStore.recentSegments(UsualSpeed.RECENT)) }
+                    },
+                    handoff = container.elevationHandoff,
                 )
             }
         }

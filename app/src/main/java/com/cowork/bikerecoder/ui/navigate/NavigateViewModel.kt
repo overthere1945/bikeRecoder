@@ -10,6 +10,9 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.elevation.ElevationProfile
+import com.cowork.bikerecoder.core.navigation.AheadOfRider
+import com.cowork.bikerecoder.core.navigation.NavState
 import com.cowork.bikerecoder.core.stats.RideStat
 import com.cowork.bikerecoder.core.voice.KoreanPhrases
 import com.cowork.bikerecoder.nav.FinishReason
@@ -26,6 +29,7 @@ import com.cowork.bikerecoder.ride.ScreenNotice
 import com.cowork.bikerecoder.ride.ShortRides
 import com.cowork.bikerecoder.ride.recordingTripId
 import com.cowork.bikerecoder.tts.VoiceOutput
+import com.cowork.bikerecoder.ui.elevation.ElevationText
 import com.cowork.bikerecoder.ui.record.SummaryExtras
 import com.cowork.bikerecoder.ui.record.SummaryExtrasState
 import com.cowork.bikerecoder.ui.share.shareTripOf
@@ -318,6 +322,38 @@ fun goesToRecordAfterGuidance(ride: RideUiState): Boolean = isRecording(ride)
 /** The message of a recording of the guided trip [tripId] that could not start (shown as a banner); else null. */
 fun guidedRideFailure(tripId: Long, ride: RideUiState): String? =
     (ride as? RideUiState.Failed)?.takeIf { it.tripId == tripId }?.message
+
+/**
+ * The guidance panel's "앞길 고도" (V1.7.0 spec §3.2): [line] ([ElevationText.aheadLine]) over the [strip] of the next
+ * [AheadOfRider.WINDOW_M] (null when less than 50 m are left), with a flag when it [reachesDestination], [dimmed] while
+ * rerouting or off the route.
+ */
+data class AheadPanel(
+    val line: String,
+    val strip: ElevationProfile?,
+    val reachesDestination: Boolean,
+    val dimmed: Boolean,
+)
+
+/**
+ * The "앞길 고도" of [nav] at its distance along the route; null for a route without elevation (no profile or no
+ * [NavState.ahead]), where the panel stays as it was before V1.7.0 (spec §3.4). Off the route means the rider is at least
+ * [OFF_ROUTE_M] beside it (the session's own off-route distance), as well as while a reroute runs.
+ */
+fun aheadPanel(nav: NavState): AheadPanel? {
+    val profile = nav.profile ?: return null
+    val ahead = nav.ahead ?: return null
+    val d = nav.progress.distanceAlongM
+    return AheadPanel(
+        line = ElevationText.aheadLine(ahead),
+        strip = AheadOfRider.strip(profile, d),
+        reachesDestination = d + AheadOfRider.WINDOW_M >= nav.route.cumulativeM.last(),
+        dimmed = nav.rerouting || nav.progress.lateralOffsetM >= OFF_ROUTE_M,
+    )
+}
+
+/** How far beside the route the rider is off it (the same 40 m as [com.cowork.bikerecoder.core.navigation.OffRouteDetector]). */
+const val OFF_ROUTE_M = 40.0
 
 /** What the guidance screen shows once guidance finished (spec §3.3, §3.4). */
 sealed interface FinishedView {

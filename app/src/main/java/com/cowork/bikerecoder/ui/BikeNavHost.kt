@@ -681,6 +681,8 @@ fun BikeNavHost(
                     tripStart.onStartPressed(StartPlan(plan.profile, plan.stops))
                 },
                 onSaveFavorite = favoritesViewModel::startSave,
+                // The route was handed over to [AppContainer.elevationHandoff] by the plan view model.
+                onOpenElevation = { if (isCurrent()) navController.openElevation(ElevationSource.Plan) },
             )
             TripStartDialogs(
                 state = startState,
