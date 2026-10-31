@@ -2,7 +2,7 @@
 
 이 파일은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/) 형식을 따르며, 버전 규칙은 [docs/VERSIONING.md](docs/VERSIONING.md)를 따른다.
 
-## [1.6.0] - 개발 중
+## [1.6.0] - 2026-10-31
 
 다른 앱에서 기록한 주행(GPX 파일, ZIP 묶음)을 여행으로 가져오는 "기록 가져오기"를 더함. 서버·계정 연동 없이 휴대폰에 있는 파일만 읽음. 기록 엔진(`RecordingSession`)·뒷정리(`PostProcessor`)의 규칙, 영상·공유 기능은 그대로.
 
