@@ -166,4 +166,35 @@ class TripDetailScreenTest {
         composeRule.onNodeWithContentDescription("공유").assertDoesNotExist()
         composeRule.onNodeWithContentDescription(RENAME_TITLE).assertIsDisplayed()
     }
+
+    /** V1.6.0 spec §4.2: "{파일 이름}에서 가져옴" under the title row of an imported trip; nothing for a trip recorded here. */
+    @Test
+    fun importedFromLine() {
+        var importedFrom by mutableStateOf<String?>("Relive_0514.gpx")
+        composeRule.setContent {
+            MaterialTheme {
+                TripDetailContent(
+                    segmentsByDate = mapOf(date to listOf(segment)),
+                    total = segment.totals,
+                    dialog = null,
+                    onOpenSegment = {},
+                    onRequestDelete = {},
+                    onConfirmDelete = {},
+                    onDismiss = {},
+                    onBack = {},
+                    title = "저녁 라이딩 · 서울 강서구",
+                    onRename = {},
+                    importedFrom = importedFrom,
+                )
+            }
+        }
+
+        val title = composeRule.onNodeWithText("저녁 라이딩 · 서울 강서구").assertIsDisplayed()
+        val line = composeRule.onNodeWithText("Relive_0514.gpx에서 가져옴").assertIsDisplayed()
+        assertTrue("under the title", line.getBoundsInRoot().top >= title.getBoundsInRoot().bottom)
+
+        importedFrom = null
+        composeRule.onNodeWithText("Relive_0514.gpx에서 가져옴").assertDoesNotExist()
+        composeRule.onNodeWithText("저녁 라이딩 · 서울 강서구").assertIsDisplayed()
+    }
 }

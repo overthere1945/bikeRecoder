@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 디버그 빌드의 시험용 FileProvider가 내주는 곳: 앱 캐시의 import-test/ 하나. -->
+<paths>
+    <cache-path name="import_test" path="import-test/" />
+</paths>

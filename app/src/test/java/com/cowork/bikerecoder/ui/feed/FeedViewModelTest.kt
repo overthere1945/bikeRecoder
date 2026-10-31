@@ -110,6 +110,9 @@ class FeedViewModelTest {
     private val pictures = FakeFeedPictures()
     private val weeklyGoal = MutableStateFlow<Int?>(null)
 
+    /** The imported trips (V1.6.0): trip id to the file it came from. */
+    private val imported = MutableStateFlow<Map<Long, String>>(emptyMap())
+
     /** (trip, first point) of every region lookup the feed asked for. */
     private val regionAsks = mutableListOf<Pair<Long, GeoPoint>>()
 
@@ -145,6 +148,7 @@ class FeedViewModelTest {
         clock = { nowMs },
         zone = SEOUL,
         compute = dispatcher,
+        imported = imported,
     )
 
     private val postStore = FakePostStore { trips.trips.keys.flatMap { rides.segments(it) } }
@@ -162,7 +166,8 @@ class FeedViewModelTest {
         warnLog = { _, _ -> },
     )
 
-    private fun TestScope.tripDetail() = TripDetailViewModel(rides, 1, postStore, postProcessor(), compute = dispatcher)
+    private fun TestScope.tripDetail() =
+        TripDetailViewModel(rides, 1, postStore, postProcessor(), compute = dispatcher, imported = imported)
 
     private fun TestScope.segmentDetail(id: Long) =
         SegmentDetailViewModel(rides, id, postStore, postProcessor(), log, compute = dispatcher)
@@ -714,6 +719,39 @@ class FeedViewModelTest {
         assertEquals("10월 18일~20일", vm.card(2).dateLine)
         assertEquals("10월 31일~11월 1일", vm.card(3).dateLine)
         assertFalse(vm.card(1).inProgress)
+    }
+
+    /** V1.6.0 spec §4.2: an imported trip's card says so (" · 가져옴"), following the store (e.g. [모두 지우기]). */
+    @Test
+    fun importedCardIsMarked() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        trip(2, TripStatus.COMPLETED)
+        segment(1, startedAt = 100)
+        segment(2, startedAt = 200)
+        imported.value = mapOf(1L to "Relive_0514.gpx")
+        val vm = history()
+        advanceUntilIdle()
+
+        assertTrue(vm.card(1).imported)
+        assertFalse(vm.card(2).imported, "recorded on this phone")
+
+        imported.value = emptyMap()
+        advanceUntilIdle()
+        assertFalse(vm.card(1).imported)
+    }
+
+    /** V1.6.0 spec §4.2: the trip screen names the file an imported trip came from; null for a trip recorded here. */
+    @Test
+    fun tripDetailNamesTheImportedFile() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        segment(1, startedAt = 100)
+        val vm = tripDetail()
+        advanceUntilIdle()
+        assertNull(vm.importedFrom.value)
+
+        imported.value = mapOf(1L to "Relive_0514.gpx", 2L to "other.gpx")
+        advanceUntilIdle()
+        assertEquals("Relive_0514.gpx", vm.importedFrom.value)
     }
 
     @Test

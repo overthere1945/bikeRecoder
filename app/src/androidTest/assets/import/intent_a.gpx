@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="bikeRecoder test" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <name>intent a</name>
+    <trkseg>
+      <trkpt lat="37.500" lon="127.000"><ele>30</ele><time>2001-05-14T00:12:00Z</time></trkpt>
+      <trkpt lat="37.501" lon="127.000"><ele>31</ele><time>2001-05-14T00:12:30Z</time></trkpt>
+      <trkpt lat="37.502" lon="127.000"><ele>32</ele><time>2001-05-14T00:13:00Z</time></trkpt>
+      <trkpt lat="37.503" lon="127.000"><ele>33</ele><time>2001-05-14T00:13:30Z</time></trkpt>
+      <trkpt lat="37.504" lon="127.000"><ele>34</ele><time>2001-05-14T00:14:00Z</time></trkpt>
+      <trkpt lat="37.505" lon="127.000"><ele>35</ele><time>2001-05-14T00:14:30Z</time></trkpt>
+      <trkpt lat="37.506" lon="127.000"><ele>36</ele><time>2001-05-14T00:15:00Z</time></trkpt>
+      <trkpt lat="37.507" lon="127.000"><ele>37</ele><time>2001-05-14T00:15:30Z</time></trkpt>
+      <trkpt lat="37.508" lon="127.000"><ele>38</ele><time>2001-05-14T00:16:00Z</time></trkpt>
+      <trkpt lat="37.509" lon="127.000"><ele>39</ele><time>2001-05-14T00:16:30Z</time></trkpt>
+    </trkseg>
+  </trk>
+</gpx>

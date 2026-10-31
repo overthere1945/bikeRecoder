@@ -53,6 +53,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -88,6 +89,7 @@ data class FeedMonth(val header: String, val cards: List<FeedCardState>)
  * segment), [thumbFile] is that picture if it exists; without it the card draws [routes] (each segment's simplified route and
  * the colour of its place in the trip; segments without a route yet are left out). [regionKnown]: the label has a region.
  * [canShare]: the trip has a finished ride of 10 m or more, so the card offers [공유] (V1.5.0 spec §1.1).
+ * [imported]: the trip came from a GPX file (V1.6.0 spec §4.2), so the date line ends in " · 가져옴".
  */
 data class FeedCardState(
     val tripId: Long,
@@ -108,6 +110,7 @@ data class FeedCardState(
     val routes: List<Pair<List<GeoPoint>, String>>,
     val regionKnown: Boolean = true,
     val canShare: Boolean = false,
+    val imported: Boolean = false,
 ) {
     val videoUri: String? get() = video?.uri
 }
@@ -170,6 +173,8 @@ class FeedViewModel(
     private val zone: ZoneId = SEOUL,
     /** Where the cards and the strip are built: off the main thread (review M4). */
     compute: CoroutineDispatcher = Dispatchers.Default,
+    /** The imported trips, id to file name (V1.6.0 spec §4.2), followed live. */
+    imported: Flow<Map<Long, String>> = flowOf(emptyMap()),
 ) : ViewModel() {
 
     /** Every trip delete here goes through it: conditional, then the offline maps (ruling R20). */
@@ -192,9 +197,9 @@ class FeedViewModel(
         allRides,
         labels.observeLabels().safely(emptyMap(), "trip labels"),
         tripMedia.observeVideos().safely(emptyList(), "made videos"),
-        pictures.files.safely(emptyMap(), "feed pictures"),
-    ) { loaded, rides, labelMap, videos, files ->
-        buildFeed(loaded, rides, labelMap, videos, files)
+        combine(pictures.files.safely(emptyMap(), "feed pictures"), imported.safely(emptyMap(), "imported trips"), ::Pair),
+    ) { loaded, rides, labelMap, videos, (files, importedIds) ->
+        buildFeed(loaded, rides, labelMap, videos, files, importedIds.keys)
     }.flowOn(compute).stateIn(viewModelScope, SharingStarted.Eagerly, FeedData.EMPTY)
 
     /** The listed trips' cards by month of their first date, newest month first; the cards by first start, newest first. */
@@ -477,6 +482,7 @@ class FeedViewModel(
         labels: Map<Long, TripLabel>,
         videos: List<TripMedia>,
         files: Map<Long, File>,
+        imported: Set<Long>,
     ): FeedData {
         val trophies = RideRecords.recordHolderTrips(rides)
         val ridesOf = StatsCalculator.rides(rides).groupBy { it.tripId }
@@ -486,6 +492,7 @@ class FeedViewModel(
             val id = summary.trip.id
             val facts = loaded.facts.getValue(id)
             id to cardOf(summary, facts, ridesOf[id].orEmpty(), labels[id] ?: TripLabel(), videoOf[id], id in trophies, files[id])
+                .copy(imported = id in imported)
         }
         /** Spec §2.2: newest first by the first segment's start (a trip with no ride yet: its latest start). */
         fun firstStart(summary: TripRideSummary) = ridesOf[summary.trip.id]?.firstOrNull()?.startedAt ?: summary.lastStartedAt
@@ -600,6 +607,7 @@ class FeedViewModel(
                     tripMedia = container.tripMedia,
                     pictures = FeedThumbnailsPictures(thumbnails),
                     ensureRegion = container.tripRegions::ensure,
+                    imported = container.importStore.observeImported(),
                 )
             }
         }

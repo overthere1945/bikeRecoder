@@ -97,15 +97,17 @@ class ImportViewModel(
         data object Job : Phase
     }
 
-    private val phase = MutableStateFlow<Phase>(Phase.Job)
+    /** The files handed over, taken first: the state starts as their reading, never as [ImportUiState.Closed]. */
+    private val handedOver: List<String>? = handoff.take()?.takeIf { it.isNotEmpty() }
+
+    private val phase = MutableStateFlow<Phase>(handedOver?.let { Phase.Reading(0, it.size) } ?: Phase.Job)
     private var scanJob: Job? = null
 
     val uiState: StateFlow<ImportUiState> = combine(phase, job.state, ::uiStateOf)
         .stateIn(viewModelScope, SharingStarted.Eagerly, uiStateOf(phase.value, job.state.value))
 
     init {
-        val uris = handoff.take()
-        if (!uris.isNullOrEmpty()) scan(uris)
+        handedOver?.let(::scan)
     }
 
     /** Reads [uris] into the review list ("파일을 읽는 중…"); a reading still going on is dropped. */

@@ -38,6 +38,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.SegmentTotals
+import com.cowork.bikerecoder.importing.importedFromText
 import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.post.PhotoThumbnails
 import com.cowork.bikerecoder.ui.health.HR_REFETCH
@@ -93,6 +94,7 @@ fun TripDetailScreen(
     val title by viewModel.title.collectAsStateWithLifecycle()
     val customTitle by viewModel.customTitle.collectAsStateWithLifecycle()
     val autoTitle by viewModel.autoTitle.collectAsStateWithLifecycle()
+    val importedFrom by viewModel.importedFrom.collectAsStateWithLifecycle()
     var renaming by rememberSaveable { mutableStateOf(false) }
     val access = rememberHeartRateAccess(heartRateGate)
     val viewer = rememberPhotoViewerState()
@@ -105,6 +107,7 @@ fun TripDetailScreen(
         title = title,
         onRename = { renaming = true },
         onShare = onShare.takeIf { canShare },
+        importedFrom = importedFrom,
         dialog = dialog,
         onOpenSegment = onOpenSegment,
         onRequestDelete = viewModel::requestDeleteSegment,
@@ -169,7 +172,8 @@ internal fun tripRefetchAction(access: HeartRateAccess, refetch: () -> Unit): ((
 
 /**
  * The trip's title row ([title] with [✎] that calls [onRename], V1.4.0 spec §2.5; the paper plane [onShare] before it,
- * V1.5.0 spec §1.1) above everything else, then the map ([map], every day's track and photos; outside the scrolling part, so it keeps its drags), then
+ * V1.5.0 spec §1.1) above everything else, under it "{파일 이름}에서 가져옴" of an imported trip ([importedFrom], V1.6.0
+ * spec §4.2), then the map ([map], every day's track and photos; outside the scrolling part, so it keeps its drags), then
  * [videos] ([영상 만들기] [이미지 만들기] and "만든 영상·이미지", V1.3.0 spec §1.1, §5.1),
  * [photos] (the photo strip and card, spec §2.3), the totals (with the trip's [heartRate], spec §3.3) and its segments
  * under a header per date (with that day's average heart rate); a long press asks to delete.
@@ -193,6 +197,7 @@ fun TripDetailContent(
     title: String? = null,
     onRename: (() -> Unit)? = null,
     onShare: (() -> Unit)? = null,
+    importedFrom: String? = null,
 ) {
     HistoryScaffold(title = "여행 기록", onBack = onBack) {
         if (segmentsByDate.isEmpty()) {
@@ -200,6 +205,16 @@ fun TripDetailContent(
         } else {
             Column(modifier = Modifier.fillMaxSize()) {
                 if (title != null && onRename != null) TripTitleRow(title, onRename, onShare)
+                if (importedFrom != null) {
+                    Text(
+                        importedFromText(importedFrom),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+                    )
+                }
                 map?.invoke(Modifier.fillMaxWidth().height(240.dp))
                 TripDetailList(
                     segmentsByDate, total, heartRate, onOpenSegment, onRequestDelete, videos, photos, onRefetchHeartRate,

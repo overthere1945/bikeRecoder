@@ -45,6 +45,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cowork.bikerecoder.core.format.RideFormat
+import com.cowork.bikerecoder.importing.IMPORT_CARD_SUFFIX
 import com.cowork.bikerecoder.ui.history.RouteDrawing
 import com.cowork.bikerecoder.video.TripMedia
 import kotlinx.coroutines.CancellationException
@@ -93,7 +94,12 @@ fun FeedCard(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                card.dateLine + if (card.inProgress) " · 진행 중" else "",
+                // An imported trip is always finished, so never both.
+                card.dateLine + when {
+                    card.inProgress -> " · 진행 중"
+                    card.imported -> IMPORT_CARD_SUFFIX
+                    else -> ""
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

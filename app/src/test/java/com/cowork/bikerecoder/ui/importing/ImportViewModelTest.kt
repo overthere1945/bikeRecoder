@@ -85,6 +85,21 @@ class ImportViewModelTest {
 
     private fun ImportUiState.Review.keyOf(fileName: String): RideKey = rows.single { it.fileName == fileName }.key
 
+    /**
+     * Files handed over (share / open with) show the reading from the start: the screen goes back on [ImportUiState.Closed],
+     * so the state must never be that before the reading has begun, whatever the dispatcher.
+     */
+    @Test
+    fun handedOverFilesNeverStartClosed() {
+        Dispatchers.resetMain()
+        Dispatchers.setMain(StandardTestDispatcher())
+        val a = reader.add("a.gpx", gpx(T0))
+
+        val vm = viewModel(listOf(a))
+
+        assertEquals(ImportUiState.Reading(0, 1), vm.uiState.value)
+    }
+
     @Test
     fun newRowsStartChecked() {
         val a = reader.add("a.gpx", gpx(T0))
