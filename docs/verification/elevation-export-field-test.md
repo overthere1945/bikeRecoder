@@ -56,9 +56,17 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.te
 
 **버전 올린 직후 확인** (2026-11-01): `ui.settings.SettingsScreenTest` 20개 통과(`V1.7.0` 표시 포함).
 
-**S22 전체 시험**: 최종 수정 뒤 기록
+**S22 전체 시험** (2026-11-01, 최종 수정 4d3c1eb 뒤): androidTest 67개 클래스를 하나씩 실행해 505개 중 503개 통과, 실패 0. 나머지 2개(`video.FrameRendererTest.screenshots`, `video.SummaryImageRendererTest.screenshots`)는 켜야만 도는 스크린샷 시험이라 `assume`으로 건너뛰었습니다(JUnit XML에는 failure로 남음, V1.6.0과 같음). 스크린샷 `v170-elevation-trip`, `v170-elevation-map`, `v170-plan`, `v170-navigate`, `v170-export`를 받아 눈으로 확인했습니다.
 
-**S22 실제 확인**: 최종 수정 뒤 기록
+**S22 실제 확인** (2026-11-01, `installDebug` `1.7.0-dev`, 시험용 기록 사본을 다시 넣은 뒤):
+- 여행 화면(10월 25일 저녁 라이딩 1.58 km): 합계 셋째 줄 `누적 상승 0m · 누적 하강 0m · 최고 고도 12m`, 아래 고도 그래프(10~11m, 평지 파랑)와 [지도에 표시]. 제목 줄에 [⋮](`더 보기`).
+- 큰 "고도" 지도: 실제 앱에서는 바탕 지도 타일이 보이고, 그래프를 끌면 지도 점이 경로를 따라 움직이며 `1.1km · 11m · 경사 0%` 줄이 나옴. 범례 7칸, [×]로 돌아감.
+- 내보내기: [⋮] → `GPX로 내보내기` → `Download/bikeRecoder/bikeRecoder_20261025_2047.gpx`(178 KB, 점 1,098개, 심박 649개, XML 정상, creator `bikeRecoder 1.7.0-dev`). 경로 미리보기 [⋮] → `KML로 내보내기` → `bikeRecoder_route_20261101_0304.kml`(이름 `bikeRecoder 경로 · {목적지}`, 좌표 `경도,위도,고도`). [공유]는 공유 창이 그 파일로 열리는 것만 보고 닫음.
+- [파일 열기]: S22에는 GPX를 여는 다른 앱이 없어 bikeRecoder 자신의 `기록 가져오기` 화면이 열렸고, "이미 있는 주행과 겹칩니다"로 가져올 것 0개를 보여 줌(가져오지 않고 돌아감).
+- 경로 미리보기(655 m): `655m · 약 4분`, `평소 속도 11 km/h 기준`(시험용 기록에서 계산), 100dp 그래프, [지도에 표시] → 큰 지도.
+- 길안내 시작: 판에 `앞 2 km 평탄`과 띠(목적지 깃발). 실내라 경로에서 40 m 넘게 떨어져 띠가 흐리게 보임(설계대로). 거의 움직이지 않은 시험 주행은 버림.
+- 남은 파일: 위 GPX·KML 두 개는 S22 `Download/bikeRecoder/`에 그대로 둠.
+- 참고: 여행 합계의 최고 고도(12m)는 저장된 구간 값이고, 그래프의 최고(11m)는 50 m로 다듬은 단면 값이라 1m 차이가 납니다.
 
 스펙 §7.2의 S22 확인 범위(전체 시험 때 이 범위가 모두 들어 있는지 확인):
 - `ElevationChart`: 색칠, 훑기 → 줄·콜백, 고도 없음 문구, 낭독
@@ -74,7 +82,8 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.te
 
 - 내보내는 파일 전체를 메모리에서 만듭니다. 아주 큰 여러 날 여행은 무거울 수 있습니다(스트리밍은 나중에 합니다).
 - S22의 MediaStore는 `.gpx`의 MIME을 `application/octet-stream`으로 저장합니다. [공유]·[파일 열기] 인텐트는 그래도 `application/gpx+xml`로 보냅니다.
-- 기기 시험의 큰 지도 스크린샷(`v170-elevation-map.png`)에는 바탕 지도 타일이 없습니다. 시험 프로세스 안에서 MapLibre의 타일 요청이 멈추기 때문이며, 실제 앱에는 영향이 없습니다.
+- 기기 시험의 큰 지도 스크린샷(`v170-elevation-map.png`)에는 바탕 지도 타일이 없습니다. 시험 프로세스 안에서 MapLibre의 타일 요청이 멈추기 때문이며, 실제 앱에는 영향이 없습니다(S22 실제 확인에서 타일이 보임).
+- [파일 열기]는 GPX를 여는 다른 앱이 없으면 bikeRecoder 자신의 가져오기 화면으로 열립니다(V1.6.0 GPX 열기 등록 때문).
 
 ## 이 버전에서 정한 판정
 
