@@ -712,4 +712,25 @@ class PlanViewModelTest {
         exportRoute = null
         assertFalse(viewModel().canExport)
     }
+
+    /** Guidance starting ([PlanViewModel.clear]) forgets a route export still running: no dialog on a later plan. */
+    @Test
+    fun `clear discards a running export`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        exportRoute = { _, _, _, format ->
+            gate.await()
+            ExportResult.Saved("content://downloads/1", "bikeRecoder_route_20261101_0900.gpx", format.mime)
+        }
+        val vm = viewModel()
+        vm.setDestination("해운대", c)
+        settle()
+        vm.export(ExportFormat.GPX)
+        runCurrent()
+        assertEquals(ExportState.Running, vm.exportState.value)
+
+        vm.clear()
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(ExportState.Idle, vm.exportState.value)
+    }
 }

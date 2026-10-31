@@ -202,8 +202,12 @@ class PlanViewModel(
     /** The export's outcome has been shown (dialog closed, Toast posted). */
     fun clearExport() = exporter.clear()
 
-    /** Empties the plan and goes back to the settings' default profile (call when navigation starts). */
+    /**
+     * Empties the plan and goes back to the settings' default profile (call when navigation starts). An export of the old
+     * route still running is forgotten, so its dialog does not show up on a later plan.
+     */
     fun clear() {
+        exporter.discard()
         profileChosen = false
         edit { it.withInputs(stops = emptyList(), profile = latestDefault) }
     }

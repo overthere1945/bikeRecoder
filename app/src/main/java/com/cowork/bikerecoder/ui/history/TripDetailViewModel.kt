@@ -14,6 +14,7 @@ import com.cowork.bikerecoder.export.ExportFormat
 import com.cowork.bikerecoder.export.ExportResult
 import com.cowork.bikerecoder.export.ExportRunner
 import com.cowork.bikerecoder.export.ExportState
+import com.cowork.bikerecoder.export.TripExporter
 import com.cowork.bikerecoder.feed.TripRegions
 import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.post.HeartRateColor
@@ -356,11 +357,24 @@ class TripDetailViewModel(
         viewModelScope.launch { guarded("Could not save the title of trip $tripId") { store.setCustomTitle(tripId, cleaned) } }
     }
 
-    /** "GPX로 내보내기" / "KML로 내보내기": the trip under its shown title (nothing while it has none). */
+    /**
+     * "GPX로 내보내기" / "KML로 내보내기": the trip under its shown title; a trip without one yet (no finished ride of 10 m)
+     * under [fallbackTitle].
+     */
     fun export(format: ExportFormat) {
         val run = exportTrip ?: return
-        val shown = title.value ?: return
+        val shown = title.value ?: fallbackTitle()
         exporter.run { run(tripId, format, shown) }
+    }
+
+    /**
+     * The title rule (spec §2.5) over every listed segment, open or short ones too ("저녁 라이딩"); "bikeRecoder" when
+     * none is listed.
+     */
+    private fun fallbackTitle(): String {
+        val listed = _segmentsByDate.value.values.flatten()
+        if (listed.isEmpty()) return label.value.customTitle?.takeIf { it.isNotBlank() } ?: TripExporter.TRIP_PREFIX
+        return RideTitle.shown(label.value, listed.minOf { it.startedAt }, listed.map { it.localDate }.distinct().size, zone)
     }
 
     /** The export's outcome has been shown (dialog closed, Toast posted). */

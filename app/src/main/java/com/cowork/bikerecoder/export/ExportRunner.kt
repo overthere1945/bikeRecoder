@@ -27,15 +27,20 @@ sealed interface ExportState {
 
 /**
  * One export at a time for a screen's view model, in its [scope]. [run] is ignored while one is running; [clear] goes
- * back to [ExportState.Idle] once the screen has shown the outcome.
+ * back to [ExportState.Idle] once the screen has shown the outcome; [discard] forgets a running export (its outcome is
+ * never shown — the file may still be saved). Call it from the scope's thread.
  */
 class ExportRunner(private val scope: CoroutineScope, private val log: WarnLog) {
     private val _state = MutableStateFlow<ExportState>(ExportState.Idle)
+
+    /** Bumped by [discard]: a job of an older generation drops its outcome. */
+    private var generation = 0
     val state: StateFlow<ExportState> = _state.asStateFlow()
 
     fun run(export: suspend () -> ExportResult) {
         if (_state.value == ExportState.Running) return
         _state.value = ExportState.Running
+        val started = generation
         scope.launch {
             val result = try {
                 export()
@@ -45,12 +50,19 @@ class ExportRunner(private val scope: CoroutineScope, private val log: WarnLog) 
                 log.warn("Export failed", e)
                 ExportResult.Failed
             }
+            if (started != generation) return@launch
             _state.value = when (result) {
                 is ExportResult.Saved -> ExportState.Done(result)
                 ExportResult.Failed -> ExportState.Failed
                 ExportResult.Recording -> ExportState.Recording
             }
         }
+    }
+
+    /** Forgets the running export and any outcome not shown yet; back to [ExportState.Idle]. */
+    fun discard() {
+        generation++
+        _state.value = ExportState.Idle
     }
 
     fun clear() {

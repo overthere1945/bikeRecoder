@@ -218,7 +218,12 @@ class TripDetailScreenTest {
         composeRule.onNodeWithText("저녁 라이딩 · 서울 강서구").assertIsDisplayed()
     }
 
-    private fun showExportable(onExport: (ExportFormat) -> Unit, enabled: () -> Boolean = { true }, exporting: () -> Boolean = { false }) {
+    private fun showExportable(
+        onExport: (ExportFormat) -> Unit,
+        enabled: () -> Boolean = { true },
+        exporting: () -> Boolean = { false },
+        title: String? = "저녁 라이딩 · 서울 강서구",
+    ) {
         composeRule.setContent {
             MaterialTheme {
                 TripDetailContent(
@@ -230,7 +235,7 @@ class TripDetailScreenTest {
                     onConfirmDelete = {},
                     onDismiss = {},
                     onBack = {},
-                    title = "저녁 라이딩 · 서울 강서구",
+                    title = title,
                     onRename = {},
                     onShare = {},
                     onExport = onExport,
@@ -282,6 +287,31 @@ class TripDetailScreenTest {
         composeRule.onNodeWithContentDescription("더 보기").assertIsEnabled().performClick()
         composeRule.onNodeWithText("GPX로 내보내기").assertIsDisplayed().assertIsNotEnabled().performClick()
         composeRule.onNodeWithText("KML로 내보내기").assertIsDisplayed().assertIsNotEnabled().performClick()
+        composeRule.onNodeWithText("기록을 마친 뒤 내보낼 수 있습니다").assertIsDisplayed()
+        assertTrue(asked.isEmpty())
+    }
+
+    /** A trip without a title yet (no ride of 10 m finished) still has the [⋮], at the right end of an empty title row. */
+    @Test
+    fun untitledTripHasMenu() {
+        val asked = mutableListOf<ExportFormat>()
+        showExportable(onExport = { asked += it }, title = null)
+
+        composeRule.onNodeWithContentDescription("더 보기").assertIsDisplayed().performClick()
+        composeRule.onNodeWithContentDescription(RENAME_TITLE).assertDoesNotExist()
+        composeRule.onNodeWithText("KML로 내보내기").performClick()
+        assertEquals(listOf(ExportFormat.KML), asked)
+    }
+
+    /** A new trip's first segment being recorded: no title yet, the menu is there but dimmed with the note. */
+    @Test
+    fun untitledRecordingTripMenuDisabled() {
+        val asked = mutableListOf<ExportFormat>()
+        showExportable(onExport = { asked += it }, enabled = { false }, title = null)
+
+        composeRule.onNodeWithContentDescription("더 보기").assertIsDisplayed().performClick()
+        composeRule.onNodeWithText("GPX로 내보내기").assertIsNotEnabled().performClick()
+        composeRule.onNodeWithText("KML로 내보내기").assertIsNotEnabled()
         composeRule.onNodeWithText("기록을 마친 뒤 내보낼 수 있습니다").assertIsDisplayed()
         assertTrue(asked.isEmpty())
     }

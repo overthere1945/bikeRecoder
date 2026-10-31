@@ -200,7 +200,7 @@ internal fun tripRefetchAction(access: HeartRateAccess, refetch: () -> Unit): ((
  * the ascent, descent and highest altitude, V1.7.0 spec §2.3), under them the small elevation chart of [profile] (with
  * [지도에 표시], opening the "고도" map screen through [onOpenElevation]; nothing while [profileLoaded] is false) and its
  * segments under a header per date (with that day's average heart rate); a long press asks to delete.
- * [onExport]: the title row's [⋮] at its right end with "GPX로 내보내기" and "KML로 내보내기" (V1.7.0 spec §4.1), dimmed
+ * [onExport]: the title row's [⋮] at its right end (the row is drawn for it even while there is no [title]) with "GPX로 내보내기" and "KML로 내보내기" (V1.7.0 spec §4.1), dimmed
  * with "기록을 마친 뒤 내보낼 수 있습니다" while [exportEnabled] is false; [exporting] shows a small progress indicator
  * over the screen's content (§4.2).
  */
@@ -236,8 +236,14 @@ fun TripDetailContent(
             EmptyText()
         } else {
             Column(modifier = Modifier.fillMaxSize()) {
-                if (title != null && onRename != null) {
-                    TripTitleRow(title, onRename, onShare) {
+                // A trip without a title yet (no ride of 10 m finished) still gets the row for its [⋮].
+                val titled = title != null && onRename != null
+                if (titled || onExport != null) {
+                    TripTitleRow(
+                        title = if (titled) title else null,
+                        onRename = if (titled) onRename else null,
+                        onShare = if (titled) onShare else null,
+                    ) {
                         if (onExport != null) ExportMenu(onExport, enabled = exportEnabled, running = exporting)
                     }
                 }
@@ -265,28 +271,34 @@ fun TripDetailContent(
 }
 
 /**
- * The shown title in `titleLarge`, and on the right the paper plane "공유" (when [onShare]), [✎]: "제목 바꾸기", and at
- * the end [more] (the export [⋮]).
+ * The shown title in `titleLarge` (an empty area when [title] is null), and on the right the paper plane "공유" (when
+ * [onShare]), [✎]: "제목 바꾸기" (when [onRename]), and at the end [more] (the export [⋮]).
  */
 @Composable
-private fun TripTitleRow(title: String, onRename: () -> Unit, onShare: (() -> Unit)?, more: @Composable () -> Unit) {
+private fun TripTitleRow(title: String?, onRename: (() -> Unit)?, onShare: (() -> Unit)?, more: @Composable () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            title,
-            style = MaterialTheme.typography.titleLarge,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).padding(vertical = 8.dp),
-        )
+        if (title != null) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleLarge,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(vertical = 8.dp),
+            )
+        } else {
+            Spacer(Modifier.weight(1f))
+        }
         if (onShare != null) {
             IconButton(onClick = onShare, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.Filled.Share, contentDescription = "공유")
             }
         }
-        IconButton(onClick = onRename) { Icon(Icons.Filled.Edit, contentDescription = RENAME_TITLE) }
+        if (onRename != null) {
+            IconButton(onClick = onRename) { Icon(Icons.Filled.Edit, contentDescription = RENAME_TITLE) }
+        }
         more()
     }
 }

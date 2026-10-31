@@ -20,6 +20,7 @@ import com.cowork.bikerecoder.post.FakePhotoSource
 import com.cowork.bikerecoder.post.FakePostStore
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.ride.FakeRideStore
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -68,6 +69,7 @@ class TripDetailViewModelTest {
     }
 
     private val exports = mutableListOf<Triple<Long, ExportFormat, String>>()
+    private var exportGate: CompletableDeferred<Unit>? = null
     private var exportResult: ExportResult = ExportResult.Saved("content://downloads/7", "bikeRecoder_20261025_1900 (1).gpx", "application/gpx+xml")
 
     private fun TestScope.detail(imported: Flow<Map<Long, String>> = flowOf(emptyMap())) = TripDetailViewModel(
@@ -80,6 +82,7 @@ class TripDetailViewModelTest {
         imported = imported,
         exportTrip = { id, format, title ->
             exports += Triple(id, format, title)
+            exportGate?.await()
             exportResult
         },
     )
@@ -283,6 +286,45 @@ class TripDetailViewModelTest {
         vm.export(ExportFormat.KML)
         advanceUntilIdle()
         assertEquals(ExportState.Recording, vm.exportState.value)
+    }
+
+    /** A 5 m trip has no title yet (no ride of 10 m); it is still exported, under the title rule without the 10 m. */
+    @Test
+    fun shortTripExportsWithAFallbackTitle() = runTest(dispatcher) {
+        openTrip()
+        val day = LocalDate.of(2026, 10, 25)
+        val startedAt = day.atTime(19, 0).atZone(SEOUL).toInstant().toEpochMilli()
+        ride(startedAt, day, track(startedAt, 37.5, 2) { null }, SegmentTotals.ZERO.copy(distanceM = 5.0, movingTimeMs = 2_000))
+        val vm = detail()
+        advanceUntilIdle()
+        assertNull(vm.title.value)
+
+        vm.export(ExportFormat.GPX)
+        advanceUntilIdle()
+
+        assertEquals(listOf(Triple(TRIP, ExportFormat.GPX, "저녁 라이딩")), exports)
+    }
+
+    /** A second tap while the first export runs starts nothing. */
+    @Test
+    fun exportTwiceWhileRunningExportsOnce() = runTest(dispatcher) {
+        evening()
+        val gate = CompletableDeferred<Unit>()
+        exportGate = gate
+        val vm = detail()
+        advanceUntilIdle()
+
+        vm.export(ExportFormat.GPX)
+        advanceUntilIdle()
+        vm.export(ExportFormat.KML)
+        advanceUntilIdle()
+        assertEquals(ExportState.Running, vm.exportState.value)
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(1, exports.size)
+        assertEquals(ExportFormat.GPX, exports.single().second)
+        assertEquals(ExportState.Done(exportResult as ExportResult.Saved), vm.exportState.value)
     }
 
     private companion object {

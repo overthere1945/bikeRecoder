@@ -4,17 +4,25 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import java.time.LocalDateTime
 import java.time.ZoneOffset
+import java.util.TimeZone
 
 /** File names of the exports (spec §4.2): the time in Asia/Seoul, whatever the JVM's zone. */
 class ExportFileNameTest {
 
     @Test
     fun tripNameUsesSeoulStart() {
-        // 2026-10-30 22:05 UTC = 2026-10-31 07:05 Seoul: the date and the hour both follow Seoul.
-        val start = LocalDateTime.of(2026, 10, 30, 22, 5, 59).toInstant(ZoneOffset.UTC).toEpochMilli()
+        // 2026-10-30 22:05 UTC = 2026-10-31 07:05 Seoul: the date and the hour both follow Seoul. The JVM's own zone is
+        // set to UTC meanwhile, so a name made in the default zone fails here even on a phone or PC set to Seoul.
+        val saved = TimeZone.getDefault()
+        TimeZone.setDefault(TimeZone.getTimeZone("UTC"))
+        try {
+            val start = LocalDateTime.of(2026, 10, 30, 22, 5, 59).toInstant(ZoneOffset.UTC).toEpochMilli()
 
-        assertEquals("bikeRecoder_20261031_0705.gpx", exportFileName(TripExporter.TRIP_PREFIX, start, ExportFormat.GPX))
-        assertEquals("bikeRecoder_20261031_0705.kml", exportFileName(TripExporter.TRIP_PREFIX, start, ExportFormat.KML))
+            assertEquals("bikeRecoder_20261031_0705.gpx", exportFileName(TripExporter.TRIP_PREFIX, start, ExportFormat.GPX))
+            assertEquals("bikeRecoder_20261031_0705.kml", exportFileName(TripExporter.TRIP_PREFIX, start, ExportFormat.KML))
+        } finally {
+            TimeZone.setDefault(saved)
+        }
     }
 
     @Test
