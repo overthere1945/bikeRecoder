@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.ride
 
+import com.cowork.bikerecoder.core.elevation.UsualSpeed
 import com.cowork.bikerecoder.core.recording.DayTotals
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStore
@@ -81,6 +82,11 @@ class FakeRideStore(private val trips: FakeTripStore, private val clock: () -> L
 
     override suspend fun openSegments(): List<RideSegment> =
         segmentsById.values.filter { it.endedAt == null }.sortedByDescending { it.startedAt }
+
+    override suspend fun recentSegments(limit: Int): List<RideSegment> =
+        segmentsById.values.filter { it.endedAt != null && it.totals.distanceM >= UsualSpeed.MIN_DISTANCE_M }
+            .sortedWith(compareByDescending<RideSegment> { it.startedAt }.thenByDescending { it.id })
+            .take(limit)
 
     override suspend fun segment(id: Long): RideSegment? = segmentsById[id]
 

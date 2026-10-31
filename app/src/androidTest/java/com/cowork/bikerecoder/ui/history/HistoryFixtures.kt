@@ -23,6 +23,8 @@ internal class ReadOnlyRides(private val segments: List<RideSegment>, private va
         }
     }
     override suspend fun openSegments() = segments.filter { it.endedAt == null }
+    override suspend fun recentSegments(limit: Int) =
+        segments.filter { it.endedAt != null && it.totals.distanceM >= 1_000.0 }.sortedByDescending { it.startedAt }.take(limit)
     override suspend fun openSegment(tripId: Long, startedAt: Long, localDate: LocalDate): Long = error("read only")
     override suspend fun appendPoints(segmentId: Long, points: List<TrackPoint>, totals: SegmentTotals) = error("read only")
     override suspend fun closeSegment(segmentId: Long, endedAt: Long, totals: SegmentTotals) = error("read only")

@@ -81,3 +81,23 @@ fun loopRoute(): Route {
     )
     return buildRoute(points)
 }
+
+/**
+ * 동쪽 [fromEastM]에서 시작해 [lengthM]를 [spacingM] 간격 꼭짓점으로 가는 직선 경로. 고도는 경로 위 거리의 함수 [elevation].
+ * [turns]는 꼭짓점 인덱스 → 회전 종류.
+ */
+fun eastRouteWithElevation(
+    lengthM: Double,
+    fromEastM: Double = 0.0,
+    spacingM: Double = 10.0,
+    turns: Map<Int, com.cowork.bikerecoder.core.model.TurnType> = emptyMap(),
+    elevation: (Double) -> Double,
+): Route {
+    val n = Math.round(lengthM / spacingM).toInt()
+    val points = (0..n).map { pointAt(fromEastM + it * spacingM, 0.0) }
+    val cumulative = GeoMath.cumulativeDistances(points)
+    return buildRoute(
+        points,
+        turns.toSortedMap().map { (idx, type) -> Instruction(idx, type, 0, cumulative[idx]) },
+    ).copy(elevationsM = cumulative.map(elevation))
+}

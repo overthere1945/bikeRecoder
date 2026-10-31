@@ -81,6 +81,27 @@ class RoomRideStoreTest {
         TrackPoint(timeMillis, GeoPoint(37.5, 127.0), altitudeM = 12.0, speedMps = 5f, accuracyM = 4f)
 
     @Test
+    fun recentSegmentsNewestFirstOverOneKm() = runTest {
+        val tripId = newTrip()
+        suspend fun closed(startedAt: Long, distanceM: Double): Long {
+            val id = store.openSegment(tripId, startedAt, day1)
+            store.closeSegment(id, startedAt + 500L, totals(distanceM, 400_000L))
+            return id
+        }
+        val oldest = closed(1_000L, 2_000.0)
+        closed(3_000L, 999.0) // 1 km 미만
+        val middle = closed(2_000L, 1_500.0)
+        val newest = closed(5_000L, 1_000.0) // 정확히 1 km는 들어간다
+        store.openSegment(tripId, 6_000L, day1).also { // 열린 구간은 빠진다
+            store.appendPoints(it, listOf(point(6_100L)), totals(3_000.0))
+        }
+
+        assertEquals(listOf(newest, middle, oldest), store.recentSegments(10).map { it.id })
+        assertEquals(listOf(newest, middle), store.recentSegments(2).map { it.id })
+        assertEquals(1_500.0, store.recentSegments(10)[1].totals.distanceM, 0.0)
+    }
+
+    @Test
     fun appendUpdatesPointsAndTotalsTogether() = runTest {
         val segmentId = store.openSegment(newTrip(), startedAt = 10_000L, localDate = day2)
 

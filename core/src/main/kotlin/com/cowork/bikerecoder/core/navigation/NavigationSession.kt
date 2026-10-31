@@ -1,5 +1,10 @@
 package com.cowork.bikerecoder.core.navigation
 
+import com.cowork.bikerecoder.core.elevation.Climb
+import com.cowork.bikerecoder.core.elevation.ClimbFinder
+import com.cowork.bikerecoder.core.elevation.ElevationProfile
+import com.cowork.bikerecoder.core.elevation.RideTimeEstimator
+import com.cowork.bikerecoder.core.elevation.UsualSpeed
 import com.cowork.bikerecoder.core.model.GeoMath
 import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.model.Route
@@ -40,6 +45,10 @@ data class NavState(
     val etaMillis: Long,
     val gpsWeak: Boolean,
     val rerouting: Boolean,
+    /** 현재 경로의 고도 단면. 경로에 고도가 없으면 null. */
+    val profile: ElevationProfile? = null,
+    /** 앞길 안내 줄 상태. [profile]이 없으면 null. */
+    val ahead: AheadState? = null,
 )
 
 sealed interface NavEvent {
@@ -73,6 +82,11 @@ data class NavUpdate(val state: NavState, val utterances: List<Utterance>, val e
  * 재탐색 결과도 그 [scope]의 코루틴 안에서 적용되므로 잠금을 쓰지 않는다.
  * 위치·감지기·ETA 시각은 `fix.timeMillis`, GPS 감시는 `onTick(nowMillis)`만 쓴다.
  *
+ * 고도(V1.7.0): 경로가 정해지거나 바뀔 때마다 단면과 오르막을 다시 만든다. 도착 예정은 남은 경로를
+ * [RideTimeEstimator]로 계산하고, 기준 속도는 [EtaEstimator]의 최근 이동 속도(처음 5분은 [usualSpeedMps]).
+ * 오르막 음성은 [ClimbAnnouncer]가 고르고, 같은 업데이트에 회전 안내가 있으면 다음 업데이트로 미룬다
+ * (오르막 시작을 지나면 버린다). 경로에 고도가 없으면 단면·앞길·오르막 음성 없이 동작한다.
+ *
  * [initialDistanceM]: 같은 날 이어서 안내할 때 그날 이미 이동한 거리. 주행 거리([sessionDistanceM])는 여기서부터
  * 이어지고, 1km 안내는 이미 지난 km를 다시 말하지 않는다(스펙 §6.6 "오늘 이동 거리").
  */
@@ -86,6 +100,7 @@ class NavigationSession(
     private val gpsTimeoutMs: Long = 10_000,
     private val rerouteRetryMs: Long = 30_000,
     initialDistanceM: Double = 0.0,
+    usualSpeedMps: Double = UsualSpeed.DEFAULT_MPS,
 ) {
 
     private companion object {
@@ -101,12 +116,20 @@ class NavigationSession(
     /** 오늘 이동 거리: [initialDistanceM] + 이 세션에서 이동한 거리. */
     val sessionDistanceM: Double get() = odometer.distanceM
 
-    private val eta = EtaEstimator()
+    private val eta = EtaEstimator(defaultSpeedMps = usualSpeedMps)
     private val offRoute = OffRouteDetector()
     private val scheduler = VoiceScheduler(initialRoute, phrases, initialDistanceM = initialDistanceM)
 
     private var route: Route = initialRoute
     private var tracker = RouteProgressTracker(initialRoute)
+
+    /** 현재 경로의 고도 단면과 오르막. 경로가 바뀔 때마다 [setElevation]으로 다시 만든다. */
+    private var elevation: ElevationProfile? = null
+    private var climbs: List<Climb> = emptyList()
+    private val climbAnnouncer = ClimbAnnouncer()
+
+    /** 회전 안내와 겹쳐 미룬 오르막 음성. */
+    private var pendingClimb: Climb? = null
 
     /** 아직 도달하지 않은 경유지들과 목적지(순서대로). */
     private val remainingStops: MutableList<Stop> = stops.toMutableList()
@@ -132,6 +155,10 @@ class NavigationSession(
     /** 다음 방출에 실을 이벤트. */
     private val pendingEvents = mutableListOf<NavEvent>()
 
+    init {
+        setElevation(initialRoute)
+    }
+
     fun onFix(fix: LocationFix) {
         if (finished) return
         fixSinceLastTick = true
@@ -150,7 +177,13 @@ class NavigationSession(
             if (!finished) checkOffRoute(fix)
         }
 
-        etaMillis = eta.etaMillis(fix.timeMillis, progress.remainingM)
+        val seconds = RideTimeEstimator.seconds(
+            elevation,
+            progress.distanceAlongM,
+            route.cumulativeM.last(),
+            eta.baseSpeedMps(fix.timeMillis),
+        )
+        etaMillis = fix.timeMillis + (seconds * 1_000.0).toLong()
         val source = kmSource
         val utterances = if (source != null) {
             val currentProgress = progress
@@ -161,7 +194,35 @@ class NavigationSession(
         } else {
             scheduler.onUpdate(progress, speedMps, odometer.distanceM, etaMillis)
         }
-        emit(utterances)
+        emit(withClimbVoice(utterances))
+    }
+
+    /**
+     * 이번에 말할 오르막이 있으면 [utterances] 끝에 [Priority.PERIODIC]으로 붙인다. 회전 안내가 있으면 다음 업데이트로
+     * 미루고, 미룬 오르막은 시작을 지나면(남은 거리 < 0) 버린다.
+     */
+    private fun withClimbVoice(utterances: List<Utterance>): List<Utterance> {
+        val profile = elevation ?: return utterances
+        if (finished) return utterances
+        val d = progress.distanceAlongM
+        climbAnnouncer.onProgress(climbs, profile, d)?.let { pendingClimb = it }
+        val climb = pendingClimb ?: return utterances
+        val gap = climb.startM - d
+        if (gap < 0) {
+            pendingClimb = null
+            return utterances
+        }
+        if (utterances.any { it.priority == Priority.TURN }) return utterances
+        pendingClimb = null
+        return utterances + Utterance(phrases.climb(gap, climb.lengthM, climb.avgGradePct), Priority.PERIODIC)
+    }
+
+    /** [route]의 고도 단면과 오르막을 만든다. 미룬 오르막 음성은 이전 경로 거리 기준이므로 버린다. */
+    private fun setElevation(route: Route) {
+        val profile = ElevationProfile.fromRoute(route)
+        elevation = profile
+        climbs = profile?.let(ClimbFinder::find).orEmpty()
+        pendingClimb = null
     }
 
     /**
@@ -210,6 +271,8 @@ class NavigationSession(
         }
         scheduler.enqueueEvent(phrases.arrivedDestination)
         finished = true
+        climbAnnouncer.reset()
+        pendingClimb = null
         retryAtMillis = null
         rerouteJob?.cancel()
         rerouteJob = null
@@ -282,6 +345,7 @@ class NavigationSession(
                 val newRoute = result.route
                 route = newRoute
                 tracker = RouteProgressTracker(newRoute)
+                setElevation(newRoute)
                 // 요청 이후 도달한 경유지가 있으면 그만큼 앞쪽 stop 인덱스를 버린다.
                 val stopIndices = newRoute.stopPointIndices.takeLast(remainingStops.size)
                 arrival = ArrivalDetector(remainingStops.toList(), stopIndices.map { newRoute.cumulativeM[it] })
@@ -307,7 +371,17 @@ class NavigationSession(
             route.stopPointIndices.all { it in route.points.indices }
 
     private fun emit(utterances: List<Utterance>) {
-        val state = NavState(route, progress, speedMps, etaMillis, gpsWeak, rerouting = rerouteJob != null)
+        val profile = elevation
+        val state = NavState(
+            route,
+            progress,
+            speedMps,
+            etaMillis,
+            gpsWeak,
+            rerouting = rerouteJob != null,
+            profile = profile,
+            ahead = profile?.let { AheadOfRider.state(climbs, progress.distanceAlongM) },
+        )
         val update = NavUpdate(state, utterances, pendingEvents.toList())
         pendingEvents.clear()
         _updates.tryEmit(update)
