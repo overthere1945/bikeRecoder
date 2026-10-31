@@ -40,10 +40,14 @@ class MetricSeriesTest {
     @Test
     fun speedFallsBackToPairSpeed() {
         // speedMps 없음: 5 m / 1 s = 18 km/h. 첫 점은 앞 점이 없어 null.
-        val pair = assertNotNull(speedOf(segment(21)))
+        // 둘째 구간은 첫 구간 끝에서 5 m·1 s 뒤에 시작한다. 구간을 넘어 짝을 지으면 18 km/h가 나올 자리다.
+        val second = segment(21, startLat = 37.0 + 105.0 / 111_195.0, startMs = 21_000L)
+        val pair = assertNotNull(speedOf(segment(21), second))
         assertEquals(MetricKind.SPEED, pair.kind)
         assertNull(pair.values[0])
         for (i in 1..20) assertEquals(18.0, pair.values[i]!!, 0.05, "index $i")
+        assertNull(pair.values[21]) // 둘째 구간 첫 점: 구간을 넘어 구간 속도를 만들지 않는다
+        for (i in 22..41) assertEquals(18.0, pair.values[i]!!, 0.05, "index $i")
 
         // speedMps가 있으면 그것을 쓴다: 2 m/s = 7.2 km/h(구간 속도 18이 아니라).
         val reported = assertNotNull(speedOf(segment(21) { 2f }))
@@ -157,6 +161,39 @@ class MetricSeriesTest {
         assertTrue(s.values.any { it == null })
         assertNull(s.valueAt(axis.distancesM[510]))
         s.values.filterNotNull().forEach { assertEquals(18.0, it, 1e-4) } // null 너머와 섞이지 않는다
+    }
+
+    @Test
+    fun downsampleMajorityRule() {
+        // 8점 → 4점: 첫·끝 점과, 사이 6점을 [1..3], [4..6] 두 묶음으로.
+        val d = DoubleArray(8) { it * 10.0 }
+        val (outD, outV) = MetricSeries.downsample(d, listOf(1.0, null, 10.0, 20.0, null, null, 30.0, 2.0), 4)
+        assertEquals(listOf(1.0, 15.0, null, 2.0), outV) // 3점 중 null 하나 → 나머지 평균, null 둘 → null
+        assertEquals(listOf(0.0, 20.0, 50.0, 70.0), outD.toList()) // 거리는 묶음 전체 평균
+
+        // 묶음 크기 4에 null이 꼭 절반이면 값이 남는다.
+        val (_, half) = MetricSeries.downsample(DoubleArray(10) { it * 1.0 }, listOf(0.0, null, null, 4.0, 8.0, 1.0, 1.0, 1.0, 1.0, 0.0), 4)
+        assertEquals(6.0, half[1])
+    }
+
+    @Test
+    fun isolatedNullKeepsBucketValue() {
+        // 500번 점: speedMps 없고 499번과 시각이 같아 null. 줄인 뒤에도 그 묶음은 값이 있다.
+        val points = segment(1_000) { i -> if (i == 500) null else 5f }
+            .mapIndexed { i, p -> if (i == 500) p.copy(timeMillis = 499_000L) else p }
+        val axis = assertNotNull(TrackAxis.of(listOf(points)))
+        val s = assertNotNull(MetricSeries.speed(axis, listOf(points)))
+        assertEquals(MetricSeries.MAX_POINTS, s.values.size)
+        assertTrue(s.values.none { it == null })
+        assertEquals(18.0, s.valueAt(axis.distancesM[500])!!, 1e-4)
+    }
+
+    @Test
+    fun sparseHeartRateIsNull() {
+        // 5시간, 1 Hz. 표본은 10분마다 하나(±30 s만 붙는다) → 줄인 뒤 이웃한 두 값이 없다.
+        val track = segment(5 * 3_600, spacingM = 5.0)
+        val samples = (0 until 30).map { HeartRateSample(300_000L + it * 600_000L, 130) }
+        assertNull(heartOf(samples, track))
     }
 
     @Test

@@ -15,6 +15,7 @@ enum class MetricKind { SPEED, HEART_RATE }
  *
  * 점별 원래 값 → (속도) [MAX_SPEED_KMH] 넘는 값은 null → [SeriesSmoother.smooth] → [MAX_POINTS]점 이하로 줄이기 순서로 만든다.
  * [values]의 null은 값이 없는 곳이며, 그래프는 그 자리에서 끊긴다.
+ * 이웃한 두 값이 모두 있는 곳이 하나도 없으면(그릴 선분이 없으면) 계열을 만들지 않는다.
  */
 class MetricSeries private constructor(
     val kind: MetricKind,
@@ -65,7 +66,7 @@ class MetricSeries private constructor(
 
         /**
          * 속도 계열(km/h). 점의 값은 `speedMps`, 없으면 같은 구간 바로 앞 점과의 구간 속도다.
-         * 시각 차가 0 이하면 구간 속도도 null이다. 값 있는 점이 2개 미만이면 null.
+         * 시각 차가 0 이하면 구간 속도도 null이다. 값 있는 점이 2개 미만이거나 그릴 선분이 없으면 null.
          * [segments]는 [axis]를 만든 것과 같은 목록이어야 한다.
          */
         fun speed(axis: TrackAxis, segments: List<List<TrackPoint>>): MetricSeries? {
@@ -81,7 +82,8 @@ class MetricSeries private constructor(
 
         /**
          * 심박 계열(bpm). 점마다 시각이 가장 가까운 표본을 ±[HeartRateColor.MATCH_MS] 안에서 붙이고, 없으면 null 점이다.
-         * 붙은 점이 2개 미만이면 null. [segments]는 [axis]를 만든 것과 같은 목록이어야 한다.
+         * 붙은 점이 2개 미만이거나 그릴 선분이 없으면(예: 표본이 드문드문해 줄인 뒤 이웃한 값이 없음) null.
+         * [segments]는 [axis]를 만든 것과 같은 목록이어야 한다.
          */
         fun heartRate(
             axis: TrackAxis,
@@ -101,9 +103,13 @@ class MetricSeries private constructor(
             if (raw.count { it != null } < 2) return null
             val smoothed = SeriesSmoother.smooth(axis.timesMs, axis.segmentOf, raw, windowMs)
             val (d, v) = downsample(axis.distancesM, smoothed, MAX_POINTS)
-            if (v.all { it == null }) return null
+            if (!hasDrawableStep(v)) return null
             return MetricSeries(kind, d, v, axis.totalM, axis.boundariesM)
         }
+
+        /** 이웃한 두 값이 모두 null이 아닌 곳이 있으면 true. */
+        private fun hasDrawableStep(v: List<Double?>): Boolean =
+            (1 until v.size).any { v[it - 1] != null && v[it] != null }
 
         private fun pairSpeedMps(segment: List<TrackPoint>, i: Int): Double? {
             if (i == 0) return null
@@ -114,9 +120,10 @@ class MetricSeries private constructor(
 
         /**
          * 점이 [maxPoints]보다 많으면 첫 점과 마지막 점은 두고, 사이 점들을 순서대로 maxPoints − 2개 묶음으로 나눠
-         * 묶음마다 거리·값을 평균한다. null이 하나라도 든 묶음의 값은 null이다(null을 넘어 평균하지 않는다).
+         * 묶음마다 거리를 평균한다. 값은 묶음의 절반을 넘는 점이 null이면 null이고,
+         * 아니면 null이 아닌 값들만의 평균이다(null 자리를 0으로 세지 않는다). 거리는 null 점까지 묶음 전체의 평균이다.
          */
-        private fun downsample(d: DoubleArray, v: List<Double?>, maxPoints: Int): Pair<DoubleArray, List<Double?>> {
+        internal fun downsample(d: DoubleArray, v: List<Double?>, maxPoints: Int): Pair<DoubleArray, List<Double?>> {
             val n = v.size
             if (n <= maxPoints) return d.copyOf() to v
             val buckets = maxPoints - 2
@@ -131,15 +138,15 @@ class MetricSeries private constructor(
                 val to = 1 + ((b + 1).toLong() * middle / buckets).toInt()
                 var sumD = 0.0
                 var sumV = 0.0
-                var anyNull = false
+                var nulls = 0
                 for (k in from until to) {
                     sumD += d[k]
                     val x = v[k]
-                    if (x == null) anyNull = true else sumV += x
+                    if (x == null) nulls++ else sumV += x
                 }
                 val size = to - from
                 outD[b + 1] = sumD / size
-                outV[b + 1] = if (anyNull) null else sumV / size
+                outV[b + 1] = if (nulls * 2 > size) null else sumV / (size - nulls)
             }
             outD[maxPoints - 1] = d[n - 1]
             outV[maxPoints - 1] = v[n - 1]

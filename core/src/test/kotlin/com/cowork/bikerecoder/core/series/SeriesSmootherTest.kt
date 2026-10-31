@@ -32,14 +32,15 @@ class SeriesSmootherTest {
 
     @Test
     fun gapNotCrossed() {
-        // 앞쪽 0 세 점(0~2 s), 10.001 s 끊김, 뒤쪽 20 열 점.
-        val times = LongArray(13) { i -> if (i < 3) i * 1_000L else 2_000L + 10_001L + (i - 3) * 1_000L }
-        val values = List(3) { 0.0 } + List(10) { 20.0 }
-        val out = SeriesSmoother.smooth(times, IntArray(13), values, SeriesSmoother.HEART_WINDOW_MS)
-        assertEquals(0.0, out[0])
-        assertEquals(20.0, out[3])
-        out.subList(0, 3).forEach { assertEquals(0.0, it) }
-        out.subList(3, 13).forEach { assertEquals(20.0, it) }
+        // 앞쪽 0 두 점(0, 1 s), 10.001 s 끊김, 뒤쪽 20 열 점.
+        // 끊지 않으면 1번 점의 중앙값이 [0, 0, 20, 20]의 10이 된다.
+        val times = LongArray(12) { i -> if (i < 2) i * 1_000L else 1_000L + 10_001L + (i - 2) * 1_000L }
+        val values = List(2) { 0.0 } + List(10) { 20.0 }
+        val out = SeriesSmoother.smooth(times, IntArray(12), values, SeriesSmoother.HEART_WINDOW_MS)
+        assertEquals(0.0, out[1])
+        assertEquals(20.0, out[2])
+        out.subList(0, 2).forEach { assertEquals(0.0, it) }
+        out.subList(2, 12).forEach { assertEquals(20.0, it) }
     }
 
     @Test
