@@ -13,7 +13,7 @@ Bicycle navigation, route tracking, and photo video generator app based on trave
 | 통계 | 주간·연간 목표, 연속 주행, 주·월·년·전체 통계, 개인 기록, 누적 지도 입구 |
 | 설정 | 기본 경로 성향, 기록 옵션, 경로 데이터, 내려받은 지도, 사진·심박 연결, 앱 버전 |
 
-- 현재 버전: **V1.4.0 (개발 중)** · V1.0.0~V1.3.1 출시, 모두 실주행 검증 대기 — 버전 규칙: [docs/VERSIONING.md](docs/VERSIONING.md), 변경 이력: [CHANGELOG.md](CHANGELOG.md)
+- 현재 버전: **V1.4.0** · V1.0.0~V1.4.0 출시, 모두 실주행 검증 대기 — 버전 규칙: [docs/VERSIONING.md](docs/VERSIONING.md), 변경 이력: [CHANGELOG.md](CHANGELOG.md)
 - 대상 기기: Samsung Galaxy S26 (Android 17), Galaxy Watch7 (심박, Health Connect 경유)
 
 ## 로드맵
@@ -25,7 +25,7 @@ Bicycle navigation, route tracking, and photo video generator app based on trave
 | V1.2.0 | 여행과 후처리 | 여러 날 기록 묶기, 갤러리 사진 자동 매칭, Watch7 심박, 누적 경로 지도 (V1.2.1: 주행별 색·기록 카드·짧은 기록 정리) | 출시(`v1.2.0`·`v1.2.1`), 실주행 검증 대기 |
 | V1.3.0 | 영상과 이미지 | 요약 이미지, Relive 스타일 3D 영상(속도 비례, 사진 삽입), 기기 내 인코딩 | 출시(`v1.3.0`), 실주행 검증 대기 |
 | V1.3.1 | 영상 다듬기 | 위성 지도(브이월드), 가까운 움직이는 카메라, 빛나는 경로·숫자 띠·제목 카드, 자동 제목(시간대·지역) | 출시(`v1.3.1`), 실주행 검증 대기 |
-| V1.4.0 | 요약·통계 | 아래쪽 탭 [지도] [요약] [통계] [설정], 위성 지도 카드 피드와 이번 주 띠, 제목 바꾸기, 목표·연속 주행·기간 통계·개인 기록, 구간 요약의 목표 달성·신기록 줄 | 개발 중 |
+| V1.4.0 | 요약·통계 | 아래쪽 탭 [지도] [요약] [통계] [설정], 위성 지도 카드 피드와 이번 주 띠, 제목 바꾸기, 목표·연속 주행·기간 통계·개인 기록, 구간 요약의 목표 달성·신기록 줄 | 출시(`v1.4.0`), 실주행 검증 대기 |
 
 ## 기술 스택
 

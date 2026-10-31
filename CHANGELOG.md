@@ -2,7 +2,7 @@
 
 이 파일은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/) 형식을 따르며, 버전 규칙은 [docs/VERSIONING.md](docs/VERSIONING.md)를 따른다.
 
-## [1.4.0] - 개발 중
+## [1.4.0] - 2026-10-31
 
 아래쪽 탭 네 개와 요약·통계 화면을 더함. 기록·안내 화면과 이동 규칙, 영상·요약 이미지의 모양, 누적 지도 화면 자체, 후처리(사진·심박)는 그대로.
 
