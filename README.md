@@ -13,7 +13,7 @@ Bicycle navigation, route tracking, and photo video generator app based on trave
 | 통계 | 주간·연간 목표, 연속 주행, 주·월·년·전체 통계, 개인 기록, 누적 지도 입구 |
 | 설정 | 기본 경로 성향, 기록 옵션, 경로 데이터, 내려받은 지도, 사진·심박 연결, 공유(기본 해시태그), 기록 가져오기(GPX·ZIP), 앱 버전 |
 
-- 현재 버전: **V1.6.0** · V1.0.0~V1.6.0 출시, 모두 실주행 검증 대기 — 버전 규칙: [docs/VERSIONING.md](docs/VERSIONING.md), 변경 이력: [CHANGELOG.md](CHANGELOG.md)
+- 현재 버전: **V1.7.0**(개발 중) · V1.0.0~V1.6.0 출시, 모두 실주행 검증 대기 — 버전 규칙: [docs/VERSIONING.md](docs/VERSIONING.md), 변경 이력: [CHANGELOG.md](CHANGELOG.md)
 - 대상 기기: Samsung Galaxy S26 (Android 17), Galaxy Watch7 (심박, Health Connect 경유)
 
 ## 로드맵
@@ -28,6 +28,9 @@ Bicycle navigation, route tracking, and photo video generator app based on trave
 | V1.4.0 | 요약·통계 | 아래쪽 탭 [지도] [요약] [통계] [설정], 위성 지도 카드 피드와 이번 주 띠, 제목 바꾸기, 목표·연속 주행·기간 통계·개인 기록, 구간 요약의 목표 달성·신기록 줄 | 출시(`v1.4.0`), 실주행 검증 대기 |
 | V1.5.0 | 활동 공유하기 | 요약 카드·여행 기록 화면·구간 요약의 [공유] 단추, 감정 칩과 해시태그가 든 자동 글(여행마다 기억), 페이스북·인스타그램·스토리·이메일·복사·저장·더 보기로 바로 보내기, 파일이 없으면 세로 요약 이미지를 그 자리에서 만들기, 설정의 기본 해시태그 | 출시(`v1.5.0`), 실주행 검증 대기 |
 | V1.6.0 | GPX 가져오기 | 다른 앱(Relive·Strava 등)에서 받은 GPX·ZIP 파일을 설정 또는 파일 앱의 공유로 받아 확인 목록에서 고른 주행을 여행으로 가져오기(앱 기록 엔진으로 다시 계산), 카드·여행 화면의 가져옴 표시, [모두 지우기] | 출시(`v1.6.0`), 실제 Relive 파일 확인 대기 |
+| V1.7.0 | 고도와 내보내기 | 여행·구간·경로 미리보기의 경사 색 고도 그래프와 큰 "고도" 지도 화면(훑으면 점이 따라감), 누적 하강·최고 고도, 평소 속도와 오르막 보정으로 계산한 예상 시간, 길안내의 경사 색 경로 선·"앞길 고도" 띠·오르막 음성, 여행과 계획한 경로의 GPX·KML 내보내기(`Download/bikeRecoder/`, 공유·파일 열기) | 개발 중, 기기 검증 대기 |
+| V1.8.0 | GPX 경로 따라가기 | 남이 올린 GPX 경로를 불러와 그 길을 따라 길안내 | 예정 |
+| V1.9.0 | 경로 주변 장소 | 경로 주변의 장소(쉼터·편의점 등)를 찾아 보여 주기 | 예정 |
 
 ## 기술 스택
 
@@ -134,6 +137,8 @@ $ANDROID_HOME/emulator/emulator -avd bike37 -no-snapshot &
 - [활동 공유하기 검증·실사용 점검표](docs/verification/share-field-test.md)
 - [GPX 가져오기 설계 스펙 (V1.6.0)](docs/superpowers/specs/2026-10-31-gpx-import-design.md)
 - [GPX 가져오기 검증·실사용 점검표](docs/verification/gpx-import-field-test.md)
+- [고도와 내보내기 설계 스펙 (V1.7.0)](docs/superpowers/specs/2026-10-31-elevation-export-design.md)
+- [고도와 내보내기 검증·실사용 점검표](docs/verification/elevation-export-field-test.md)
 - [변경 이력](CHANGELOG.md)
 
 ## 라이선스와 출처 표기
