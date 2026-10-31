@@ -43,6 +43,16 @@ class MediaStoreWriter(private val resolver: ContentResolver) {
     fun exists(uri: Uri): Boolean =
         query(uri, null).use { it.moveToFirst() }
 
+    /** 파일 크기(바이트). 항목이 없거나 크기가 0이면 null. */
+    fun sizeOf(uri: Uri): Long? {
+        val args = Bundle().apply { putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE) }
+        val cursor = resolver.query(uri, arrayOf(MediaStore.MediaColumns.SIZE), args, null)
+            ?: throw IllegalStateException("MediaStore query failed for $uri")
+        return cursor.use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) c.getLong(0).takeIf { it > 0 } else null
+        }
+    }
+
     /** MediaStore가 기록한 파일 이름(만들 때 준 이름과 다를 수 있다), 이미 없으면 null. */
     fun displayName(uri: Uri): String? =
         query(uri, null).use { c ->

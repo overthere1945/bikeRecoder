@@ -36,6 +36,17 @@
         </intent>
         <!-- Android 13 이하에서 Health Connect 앱을 찾으려면 필요. -->
         <package android:name="com.google.android.apps.healthdata" />
+        <!-- 활동 공유하기: 페이스북·인스타그램이 있는지, 보내기를 받는 곳과 메일 앱을 찾는다. -->
+        <package android:name="com.facebook.katana" />
+        <package android:name="com.instagram.android" />
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="*/*" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SENDTO" />
+            <data android:scheme="mailto" />
+        </intent>
     </queries>
 
     <application
