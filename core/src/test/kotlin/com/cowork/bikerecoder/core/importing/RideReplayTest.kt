@@ -3,6 +3,7 @@ package com.cowork.bikerecoder.core.importing
 import com.cowork.bikerecoder.core.gpx.GpxParser
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.LocationFix
+import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
 import com.cowork.bikerecoder.core.recording.RecordingSession
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.core.recording.toTotals
@@ -97,5 +98,17 @@ class RideReplayTest {
         assertNull(RideReplay.replay(listOf(fix(0, 0.0), fix(3, 9.0))))
         assertNull(RideReplay.replay(listOf(fix(0, 0.0))))
         assertNull(RideReplay.replay(emptyList()))
+    }
+
+    @Test
+    fun tenMetresOrMoreIsKept() {
+        // tooShortIsNull의 9 m와 같은 두 점 모양으로 기준(MIN_RIDE_DISTANCE_M = 10 m)을 막 넘긴다.
+        val ride = assertNotNull(RideReplay.replay(listOf(fix(0, 0.0), fix(3, 10.2))))
+
+        assertEquals(2, ride.points.size)
+        assertTrue(
+            ride.totals.distanceM >= MIN_RIDE_DISTANCE_M && ride.totals.distanceM < MIN_RIDE_DISTANCE_M + 1.0,
+            "distanceM=${ride.totals.distanceM}",
+        )
     }
 }
