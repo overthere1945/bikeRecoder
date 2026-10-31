@@ -1,6 +1,9 @@
 package com.cowork.bikerecoder.map
 
 import com.cowork.bikerecoder.core.model.GeoPoint
+import com.cowork.bikerecoder.core.model.Route
+import com.cowork.bikerecoder.core.model.RouteProfile
+import com.cowork.bikerecoder.core.model.RouteSummary
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
@@ -116,6 +119,47 @@ class BikeMapGeoJsonTest {
                     MapPhoto(9, GeoPoint(37.51, 127.01), thumbnail = null),
                 ),
             ),
+        )
+    }
+
+    @Test
+    fun `route geojson is cut into grade colour runs and stays one line without colours`() {
+        val a = GeoPoint(37.5, 127.0)
+        val b = GeoPoint(37.51, 127.0)
+        val c = GeoPoint(37.52, 127.0)
+        val route = Route(
+            points = listOf(a, b, c),
+            cumulativeM = listOf(0.0, 1_000.0, 2_000.0),
+            instructions = emptyList(),
+            stopPointIndices = listOf(2),
+            summary = RouteSummary(
+                2_000.0, 0, 0.0, RouteProfile.BALANCED,
+            ),
+        )
+        val line = """{"type":"Feature","properties":{},"geometry":{"type":"LineString","coordinates":[[127.0,37.5],[127.0,37.51],[127.0,37.52]]}}"""
+        assertEquals(line, routeGeoJson(route))
+        // Colours of another length: one line, as without.
+        assertEquals(line, routeGeoJson(route, listOf("#1E88E5")))
+        assertEquals(
+            """{"type":"FeatureCollection","features":[""" +
+                """{"type":"Feature","properties":{"color":"#1E88E5"},"geometry":{"type":"LineString","coordinates":[[127.0,37.5],[127.0,37.51]]}},""" +
+                """{"type":"Feature","properties":{"color":"#E53935"},"geometry":{"type":"LineString","coordinates":[[127.0,37.51],[127.0,37.52]]}}""" +
+                "]}",
+            routeGeoJson(route, listOf("#1E88E5", "#E53935", "#E53935")),
+        )
+        assertEquals(empty, routeGeoJson(null))
+    }
+
+    @Test
+    fun `marks geojson draws start, end and then the marker`() {
+        assertEquals(empty, marksGeoJson(null, null))
+        assertEquals(
+            """{"type":"FeatureCollection","features":[""" +
+                """{"type":"Feature","properties":{"fill":"#43A047","stroke":"#FFFFFF","radius":7},"geometry":{"type":"Point","coordinates":[127.0,37.5]}},""" +
+                """{"type":"Feature","properties":{"fill":"#212121","stroke":"#FFFFFF","radius":7},"geometry":{"type":"Point","coordinates":[127.1,37.6]}},""" +
+                """{"type":"Feature","properties":{"fill":"#FFFFFF","stroke":"#424242","radius":8},"geometry":{"type":"Point","coordinates":[127.05,37.55]}}""" +
+                "]}",
+            marksGeoJson(GeoPoint(37.5, 127.0) to GeoPoint(37.6, 127.1), GeoPoint(37.55, 127.05)),
         )
     }
 }

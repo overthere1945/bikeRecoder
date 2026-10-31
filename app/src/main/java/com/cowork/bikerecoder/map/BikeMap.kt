@@ -78,6 +78,10 @@ import org.maplibre.android.style.sources.GeoJsonSource
  * [rides]: the cumulative map's rides (spec §6.4–§6.5), newest first, each in its own colour under the track: width 4,
  * opacity 0.8; with [selectedRide] that ride is width 6, opacity 1 and on top, the others opacity 0.25. Unlike the
  * track they are redrawn as soon as they change. A ride of fewer than 2 points is not drawn.
+ * [routeColors]: a colour ("#RRGGBB") per point of [route], same length, e.g. the grade colours ([routeColors], V1.7.0
+ * spec §3.1), cut into runs like [trackColors]; null, or a list of another length, draws the route in its one blue.
+ * [marker]: a white dot with a dark grey ring, e.g. where the elevation chart is scrubbed (spec §2.2).
+ * [endpoints]: a path's start (green dot) and end (black dot), e.g. on the "고도" map screen (spec §2.2).
  */
 data class MapOverlay(
     val route: Route?,
@@ -89,6 +93,9 @@ data class MapOverlay(
     val lines: List<MapLine> = emptyList(),
     val rides: List<RideLine> = emptyList(),
     val selectedRide: Long? = null,
+    val routeColors: List<String>? = null,
+    val marker: GeoPoint? = null,
+    val endpoints: Pair<GeoPoint, GeoPoint>? = null,
 )
 
 /**
@@ -136,9 +143,12 @@ private const val TRACK_SOURCE = "bike-track"
 private const val RIDES_SOURCE = "bike-rides"
 private const val RIDES_LAYER = "$RIDES_SOURCE-line"
 private const val PHOTOS_SOURCE = "bike-photos"
+private const val MARKS_SOURCE = "bike-marks"
 private const val PHOTOS_LAYER = "$PHOTOS_SOURCE-symbol"
 private const val PHOTO_PLACEHOLDER_COLOR = "#9E9E9E"
-private const val ROUTE_COLOR = "#1E88E5"
+
+/** The planned and guided route's one colour (the FLAT colour of the guidance's gradient line, V1.7.0 spec §3.1). */
+internal const val ROUTE_COLOR = "#1E88E5"
 private const val TRACK_COLOR = "#E53935"
 private const val RIDE_WIDTH = 4.0
 private const val RIDE_OPACITY = 0.8
@@ -341,8 +351,12 @@ fun BikeMap(
 
     // Overlay data goes through GeoJsonSource updates only; the style is never reloaded for it. Each source is
     // updated only when its own data changes, so a new fix does not re-upload the whole route.
-    LaunchedEffect(style, overlay.route) {
-        style?.getSourceAs<GeoJsonSource>(ROUTE_SOURCE)?.setGeoJson(routeGeoJson(overlay.route))
+    // A long route in many colour runs: built off the main thread.
+    LaunchedEffect(style, overlay.route, overlay.routeColors) {
+        val source = style?.getSourceAs<GeoJsonSource>(ROUTE_SOURCE) ?: return@LaunchedEffect
+        val route = overlay.route
+        val colors = overlay.routeColors
+        source.setGeoJson(withContext(Dispatchers.Default) { routeGeoJson(route, colors) })
     }
     LaunchedEffect(style, overlay.stops) {
         style?.getSourceAs<GeoJsonSource>(STOPS_SOURCE)?.setGeoJson(stopsGeoJson(overlay.stops))
@@ -367,6 +381,9 @@ fun BikeMap(
     }
     LaunchedEffect(style, overlay.user) {
         style?.getSourceAs<GeoJsonSource>(USER_SOURCE)?.setGeoJson(userGeoJson(overlay.user))
+    }
+    LaunchedEffect(style, overlay.endpoints, overlay.marker) {
+        style?.getSourceAs<GeoJsonSource>(MARKS_SOURCE)?.setGeoJson(marksGeoJson(overlay.endpoints, overlay.marker))
     }
     // One style image per photo ("photo-<id>"), re-made only when its thumbnail changes; images of photos no longer
     // shown are removed. A new style starts without images, so the bookkeeping is per style.
@@ -474,10 +491,14 @@ private fun installOverlayLayers(style: Style) {
     style.addSource(GeoJsonSource(RIDES_SOURCE, EMPTY_COLLECTION))
     style.addSource(GeoJsonSource(TRACK_SOURCE, EMPTY_COLLECTION))
     style.addSource(GeoJsonSource(PHOTOS_SOURCE, EMPTY_COLLECTION))
+    style.addSource(GeoJsonSource(MARKS_SOURCE, EMPTY_COLLECTION))
 
+    // One blue, or each run its own grade colour ([routeGeoJson]).
     style.addLayer(
         LineLayer("$ROUTE_SOURCE-line", ROUTE_SOURCE).withProperties(
-            PropertyFactory.lineColor(Color.parseColor(ROUTE_COLOR)),
+            PropertyFactory.lineColor(
+                Expression.toColor(Expression.coalesce(Expression.get(LINE_COLOR), Expression.literal(ROUTE_COLOR))),
+            ),
             PropertyFactory.lineWidth(6f),
             PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
             PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
@@ -529,6 +550,15 @@ private fun installOverlayLayers(style: Style) {
             PropertyFactory.iconIgnorePlacement(true),
         ),
     )
+    // A path's start and end and the scrubbed spot: above the photos, below the user dot.
+    style.addLayer(
+        CircleLayer("$MARKS_SOURCE-circle", MARKS_SOURCE).withProperties(
+            PropertyFactory.circleRadius(Expression.toNumber(Expression.get(MARK_RADIUS))),
+            PropertyFactory.circleColor(Expression.toColor(Expression.get(MARK_FILL))),
+            PropertyFactory.circleStrokeColor(Expression.toColor(Expression.get(MARK_STROKE))),
+            PropertyFactory.circleStrokeWidth(3f),
+        ),
+    )
     style.addLayer(
         CircleLayer("$USER_SOURCE-circle", USER_SOURCE).withProperties(
             PropertyFactory.circleRadius(8f),
@@ -541,7 +571,17 @@ private fun installOverlayLayers(style: Style) {
 
 private fun coordinate(p: GeoPoint) = "[${p.lon},${p.lat}]"
 
-private fun routeGeoJson(route: Route?): String = lineGeoJson(route?.points.orEmpty())
+/**
+ * The route as one LineString, or with [colors] (one per point) as a collection of LineStrings with a "color" each, cut
+ * where the colour changes like [trackGeoJson].
+ */
+internal fun routeGeoJson(route: Route?, colors: List<String>? = null): String {
+    val points = route?.points.orEmpty()
+    if (colors == null || colors.size != points.size) return lineGeoJson(points)
+    val features = colorRuns(MapLine(points, colors), ROUTE_COLOR)
+    if (features.isEmpty()) return EMPTY_COLLECTION
+    return """{"type":"FeatureCollection","features":[${features.joinToString(",")}]}"""
+}
 
 /** What the track source draws (compared by value, so an unchanged overlay is not drawn again). */
 internal data class TrackDrawing(val track: List<GeoPoint>, val colors: List<String>?, val lines: List<MapLine>)
@@ -566,16 +606,16 @@ internal fun trackGeoJson(
     lines: List<MapLine> = emptyList(),
 ): String {
     if (colors == null && lines.isEmpty()) return lineGeoJson(points)
-    val features = (listOf(MapLine(points, colors)) + lines).flatMap(::colorRuns)
+    val features = (listOf(MapLine(points, colors)) + lines).flatMap { colorRuns(it) }
     if (features.isEmpty()) return EMPTY_COLLECTION
     return """{"type":"FeatureCollection","features":[${features.joinToString(",")}]}"""
 }
 
-/** [line] as one LineString feature per run of one colour; nothing below 2 points. */
-private fun colorRuns(line: MapLine): List<String> {
+/** [line] as one LineString feature per run of one colour ([fallback] without colours); nothing below 2 points. */
+private fun colorRuns(line: MapLine, fallback: String = TRACK_COLOR): List<String> {
     val points = line.points
     if (points.size < 2) return emptyList()
-    val colors = line.colors?.takeIf { it.size == points.size } ?: return listOf(colorFeature(points, TRACK_COLOR))
+    val colors = line.colors?.takeIf { it.size == points.size } ?: return listOf(colorFeature(points, fallback))
     val features = mutableListOf<String>()
     var start = 0
     for (i in 1 until points.size) {
@@ -658,6 +698,33 @@ private fun stopsGeoJson(stops: List<Stop>): String {
 private fun userGeoJson(user: LocationFix?): String {
     if (user == null) return EMPTY_COLLECTION
     return """{"type":"Feature","properties":{},"geometry":{"type":"Point","coordinates":${coordinate(user.point)}}}"""
+}
+
+private const val MARK_FILL = "fill"
+private const val MARK_STROKE = "stroke"
+private const val MARK_RADIUS = "radius"
+private const val START_FILL = "#43A047"
+private const val END_FILL = "#212121"
+private const val MARKER_FILL = "#FFFFFF"
+private const val MARKER_STROKE = "#424242"
+
+/**
+ * [endpoints] as a green start and a black end dot (white rings, radius 7) and then the [marker] on top (white, dark
+ * grey ring, radius 8); empty with neither.
+ */
+internal fun marksGeoJson(endpoints: Pair<GeoPoint, GeoPoint>?, marker: GeoPoint?): String {
+    fun mark(p: GeoPoint, fill: String, stroke: String, radius: Int) =
+        """{"type":"Feature","properties":{"$MARK_FILL":"$fill","$MARK_STROKE":"$stroke","$MARK_RADIUS":$radius},""" +
+            """"geometry":{"type":"Point","coordinates":${coordinate(p)}}}"""
+    val features = buildList {
+        endpoints?.let { (start, end) ->
+            add(mark(start, START_FILL, "#FFFFFF", 7))
+            add(mark(end, END_FILL, "#FFFFFF", 7))
+        }
+        marker?.let { add(mark(it, MARKER_FILL, MARKER_STROKE, 8)) }
+    }
+    if (features.isEmpty()) return EMPTY_COLLECTION
+    return """{"type":"FeatureCollection","features":[${features.joinToString(",")}]}"""
 }
 
 private const val PHOTO_ID = "photoId"

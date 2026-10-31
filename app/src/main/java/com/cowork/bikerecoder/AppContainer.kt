@@ -63,6 +63,7 @@ import com.cowork.bikerecoder.search.RecentPlaceStore
 import com.cowork.bikerecoder.share.ShareCandidates
 import com.cowork.bikerecoder.tts.AndroidTtsVoiceOutput
 import com.cowork.bikerecoder.tts.VoiceOutput
+import com.cowork.bikerecoder.ui.elevation.ElevationHandoff
 import com.cowork.bikerecoder.video.AndroidVideoBackend
 import com.cowork.bikerecoder.video.FeedThumbnailRenderer
 import com.cowork.bikerecoder.video.SatelliteProbe
@@ -253,6 +254,9 @@ class AppContainer(context: Context) {
 
     /** The picked files on their way to the import screen (in memory only). */
     val importHandoff: ImportHandoff = ImportHandoff()
+
+    /** The plan preview's profile and route on their way to the "고도" map screen (V1.7.0 spec §2.2; in memory only). */
+    val elevationHandoff: ElevationHandoff = ElevationHandoff()
 
     /**
      * The one GPX import job (V1.6.0 spec §3.4), outside any screen; it stops with the process. The trip's route profile
