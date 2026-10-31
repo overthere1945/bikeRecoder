@@ -17,16 +17,16 @@
 ./gradlew :core:test :app:testDebugUnitTest :routing-brouter:test --rerun-tasks
 ```
 
-결과: BUILD SUCCESSFUL in 2m 51s (`--rerun-tasks`로 전부 다시 실행)
+결과: BUILD SUCCESSFUL in 2m 39s (`--rerun-tasks`로 전부 다시 실행)
 
 | 모음 | 클래스 수 | 테스트 수 | 실패 | 건너뜀 |
 |---|---|---|---|---|
-| `:core:test` | 58 | 521 | 0 | 0 |
-| `:app:testDebugUnitTest` | 103 | 1189 | 0 | 0 |
+| `:core:test` | 58 | 524 | 0 | 0 |
+| `:app:testDebugUnitTest` | 103 | 1190 | 0 | 0 |
 | `:routing-brouter:test` | 4 | 19 | 0 | 0 |
-| 합계 | 165 | 1729 | 0 | 0 |
+| 합계 | 165 | 1733 | 0 | 0 |
 
-수는 이 실행이 만든 JUnit XML(`*/build/test-results/{test,testDebugUnitTest}/TEST-*.xml`)에서 셌습니다. V1.6.0 기록(core 443, app 1127)에 비해 core가 78개, app이 62개 늘었습니다.
+수는 이 실행이 만든 JUnit XML(`*/build/test-results/{test,testDebugUnitTest}/TEST-*.xml`)에서 셌습니다. V1.6.0 기록(core 443, app 1127)에 비해 core가 81개, app이 63개 늘었습니다.
 
 컴파일 경고는 이번에 손대지 않은 두 파일의 이전부터 있던 것뿐입니다(`GlyphIcon.kt`의 `invisibleToUser`, `PostProcessorTest.kt`의 opt-in).
 

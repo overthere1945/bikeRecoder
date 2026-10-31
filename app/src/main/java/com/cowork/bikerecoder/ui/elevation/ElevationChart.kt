@@ -148,7 +148,7 @@ fun ElevationChart(
         modifier
             .fillMaxWidth()
             .height(height)
-            .then(if (open != null) Modifier.clickable(role = Role.Button, onClick = open) else Modifier)
+            .then(if (open != null) Modifier.clickable(onClickLabel = ElevationText.SHOW_ON_MAP, role = Role.Button, onClick = open) else Modifier)
             .then(
                 if (scrubbable) {
                     Modifier.pointerInput(profile) {

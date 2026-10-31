@@ -69,6 +69,36 @@ class ElevationProfileTest {
     }
 
     @Test
+    fun infiniteAltitudesAreSkippedLikeNull() {
+        val withNull = assertNotNull(profileOf(segment(37.0, 1000.0) { d -> if (d == 500.0) null else 50.0 + d * 0.02 }))
+        val withInf = assertNotNull(profileOf(segment(37.0, 1000.0) { d -> if (d == 500.0) Double.POSITIVE_INFINITY else 50.0 + d * 0.02 }))
+        val withNegInf = assertNotNull(profileOf(segment(37.0, 1000.0) { d -> if (d == 500.0) Double.NEGATIVE_INFINITY else 50.0 + d * 0.02 }))
+        for (p in listOf(withInf, withNegInf)) {
+            assertTrue(p.elevationsM.all { it.isFinite() })
+            assertTrue(p.gradesPct.all { it.isFinite() })
+            assertTrue(p.minElevationM.isFinite() && p.maxElevationM.isFinite())
+            assertEquals(withNull.bands, p.bands)
+            assertEquals(withNull.elevationsM.toList(), p.elevationsM.toList())
+            assertEquals(withNull.gradesPct.toList(), p.gradesPct.toList())
+        }
+    }
+
+    @Test
+    fun gradeWindowIsFiftyMetresEachSide() {
+        // 500 m까지 평지, 이후 7% 오르막. 고도는 앞뒤 25 m 이동 평균으로 다듬고, 경사는 앞뒤 50 m의 차이로 잰다.
+        val p = assertNotNull(profileOf(segment(37.0, 1000.0) { d -> if (d <= 500.0) 0.0 else (d - 500.0) * 0.07 }))
+        // 400 m: 창(350~450 m)이 모두 평지.
+        assertEquals(0.0, p.gradeAt(400.0), 0.05)
+        // 450 m: 창(400~500 m)이 평지. 다듬기가 새는 만큼만 0을 넘는다. (창이 ±100 m였다면 3.5% 근처.)
+        assertEquals(0.4, p.gradeAt(450.0), 0.3)
+        // 500 m: 창(450~550 m)의 절반이 오르막이라 7%의 절반 근처.
+        assertEquals(3.5, p.gradeAt(500.0), 0.4)
+        // 550 m: 창(500~600 m)이 모두 오르막이라 7% 근처. (창이 ±25 m였어도 7%라 450·500 m가 창 폭을 가린다.)
+        assertEquals(7.0, p.gradeAt(550.0), 0.6)
+        assertEquals(7.0, p.gradeAt(700.0), 0.05)
+    }
+
+    @Test
     fun spikeIsSmoothed() {
         val p = assertNotNull(profileOf(segment(37.0, 1000.0) { d -> if (d == 500.0) 30.0 else 0.0 }))
         assertTrue(p.maxElevationM - p.minElevationM < 10.0, "diff=${p.maxElevationM - p.minElevationM}")
@@ -122,8 +152,8 @@ class ElevationProfileTest {
 
     @Test
     fun bandsMergeRuns() {
-        // 0~500 m 평지, 이후 8% 오르막 500 m.
-        val p = assertNotNull(profileOf(segment(37.0, 1000.0) { d -> if (d <= 500.0) 0.0 else (d - 500.0) * 0.08 }))
+        // 0~500 m 평지, 이후 7% 오르막 500 m. (8%는 UP_6/UP_8의 경계라 쓰지 않는다.)
+        val p = assertNotNull(profileOf(segment(37.0, 1000.0) { d -> if (d <= 500.0) 0.0 else (d - 500.0) * 0.07 }))
         assertTrue(p.bands.size >= 2)
         assertEquals(0.0, p.bands.first().startM, 1e-9)
         assertEquals(p.totalM, p.bands.last().endM, 1e-9)
@@ -147,6 +177,13 @@ class ElevationProfileTest {
         assertTrue(GeoMath.distanceM(mid, north(37.0, 500.0)) < 3.0)
         val quarter = p.pointAt(p.totalM / 4 + 12.0) // 점 사이
         assertTrue(GeoMath.distanceM(quarter, north(37.0, 250.0 + 12.0)) < 3.0)
+    }
+
+    @Test
+    fun sliceWithNaNBoundIsNull() {
+        val p = assertNotNull(profileOf(segment(37.0, 1000.0) { 10.0 }))
+        assertNull(p.slice(Double.NaN, 100.0))
+        assertNull(p.slice(0.0, Double.NaN))
     }
 
     @Test

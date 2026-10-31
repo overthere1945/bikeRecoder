@@ -69,13 +69,13 @@ class ElevationProfile private constructor(
 
     /**
      * [fromM]~[toM] 구간만 떼어 거리를 0부터 다시 매긴 단면. 범위를 벗어나면 맞추고,
-     * 길이가 [MIN_LENGTH_M] 미만이면 null. 고도와 경사는 전체 단면의 값을 그대로 쓴다.
+     * 길이가 [MIN_LENGTH_M] 미만이거나 NaN이면 null. 고도와 경사는 전체 단면의 값을 그대로 쓴다.
      */
     fun slice(fromM: Double, toM: Double): ElevationProfile? {
         val from = max(0.0, fromM)
         val to = min(totalM, toM)
         val length = to - from
-        if (length < MIN_LENGTH_M) return null
+        if (!(length >= MIN_LENGTH_M)) return null
 
         val grid = grid(length, stepM)
         val path = ArrayList<GeoPoint>()
@@ -192,7 +192,7 @@ class ElevationProfile private constructor(
             val eleV = ArrayList<Double>()
             for (i in altitudes.indices) {
                 val a = altitudes[i]
-                if (a != null && !a.isNaN()) {
+                if (a != null && a.isFinite()) {
                     eleD.add(pathDist[i])
                     eleV.add(a)
                 }

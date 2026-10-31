@@ -113,6 +113,8 @@ class TripDetailViewModel(
     imported: Flow<Map<Long, String>> = flowOf(emptyMap()),
     /** [com.cowork.bikerecoder.export.TripExporter.exportTrip] (V1.7.0 spec §4); without it the screen offers no export. */
     private val exportTrip: (suspend (tripId: Long, format: ExportFormat, title: String) -> ExportResult)? = null,
+    /** Builds the elevation profile from the segments' points in start order; a seam for tests. */
+    private val profileOf: (List<List<TrackPoint>>) -> ElevationProfile? = ElevationProfile.Companion::fromSegments,
 ) : ViewModel() {
 
     private val _segmentsByDate = MutableStateFlow<Map<LocalDate, List<RideSegment>>>(emptyMap())
@@ -415,7 +417,10 @@ class TripDetailViewModel(
                 tracks.value = read
                 trackOf = segments
                 val byStart = ordered.indices.sortedBy { ordered[it].startedAt }.map { read[it].second }
-                _profile.value = withContext(compute) { ElevationProfile.fromSegments(byStart.filter { it.isNotEmpty() }) }
+                // A failing computation (e.g. out of memory on a huge trip) must still end the loading state: no chart, no retry loop.
+                _profile.value = guarded("Could not compute the elevation profile of trip $tripId") {
+                    withContext(compute) { profileOf(byStart.filter { it.isNotEmpty() }) }
+                }
                 _profileLoaded.value = true
             }
             askRegion(segments)

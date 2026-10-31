@@ -72,7 +72,10 @@ class TripDetailViewModelTest {
     private var exportGate: CompletableDeferred<Unit>? = null
     private var exportResult: ExportResult = ExportResult.Saved("content://downloads/7", "bikeRecoder_20261025_1900 (1).gpx", "application/gpx+xml")
 
-    private fun TestScope.detail(imported: Flow<Map<Long, String>> = flowOf(emptyMap())) = TripDetailViewModel(
+    private fun TestScope.detail(
+        imported: Flow<Map<Long, String>> = flowOf(emptyMap()),
+        profileOf: (List<List<TrackPoint>>) -> ElevationProfile? = ElevationProfile.Companion::fromSegments,
+    ) = TripDetailViewModel(
         rides, TRIP, store,
         PostProcessor(rides, store, FakePhotoSource(), FakeHeartRateSource(), clock = { 0L }, scope = backgroundScope, warnLog = { _, _ -> }),
         compute = dispatcher,
@@ -80,6 +83,7 @@ class TripDetailViewModelTest {
         tripLabels = labels,
         tripRegions = regions,
         imported = imported,
+        profileOf = profileOf,
         exportTrip = { id, format, title ->
             exports += Triple(id, format, title)
             exportGate?.await()
@@ -220,6 +224,20 @@ class TripDetailViewModelTest {
         // 고도가 없는 여행은 단면이 없고, 계산은 끝났다.
         assertNull(vm.profile.value)
         assertEquals(true, vm.profileLoaded.value)
+    }
+
+    @Test
+    fun failingProfileComputationStillEndsLoading() = runTest(dispatcher) {
+        openTrip()
+        val t = SegmentTotals.ZERO.copy(distanceM = 1_000.0, movingTimeMs = 60_000)
+        ride(1_000_000L, LocalDate.of(2026, 10, 24), track(1_000_000L, 37.5, 31) { 50.0 + it }, t)
+        val vm = detail(profileOf = { error("boom") })
+        advanceUntilIdle()
+
+        // 계산이 실패해도 불러오기는 끝나고(그래서 "고도 정보가 없습니다"가 보인다), 나머지 화면은 그대로다.
+        assertEquals(true, vm.profileLoaded.value)
+        assertNull(vm.profile.value)
+        assertEquals(1, vm.segmentsByDate.value.values.sumOf { it.size })
     }
 
     @Test
