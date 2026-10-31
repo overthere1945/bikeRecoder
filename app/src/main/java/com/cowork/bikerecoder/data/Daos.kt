@@ -322,14 +322,21 @@ abstract class TripLabelDao {
     /** 읽고 쓰는 사이에 다른 칸이 바뀌지 않도록 한 트랜잭션으로 한다. */
     @Transaction
     open suspend fun setCustomTitle(tripId: Long, title: String?) {
-        val current = label(tripId)
-        upsert(TripLabelEntity(tripId, title, current?.regionName))
+        val current = label(tripId) ?: TripLabelEntity(tripId, null, null)
+        upsert(current.copy(customTitle = title))
     }
 
     @Transaction
     open suspend fun setRegionName(tripId: Long, name: String) {
-        val current = label(tripId)
-        upsert(TripLabelEntity(tripId, current?.customTitle, name))
+        val current = label(tripId) ?: TripLabelEntity(tripId, null, null)
+        upsert(current.copy(regionName = name))
+    }
+
+    /** A null [text] clears both share columns, whatever [stamp] is. */
+    @Transaction
+    open suspend fun setShareText(tripId: Long, text: String?, stamp: String?) {
+        val current = label(tripId) ?: TripLabelEntity(tripId, null, null)
+        upsert(current.copy(shareText = text, shareStamp = if (text == null) null else stamp))
     }
 }
 

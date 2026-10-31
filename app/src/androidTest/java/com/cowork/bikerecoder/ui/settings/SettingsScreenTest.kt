@@ -18,6 +18,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ApplicationProvider
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.data.AppSettings
@@ -172,6 +173,33 @@ class SettingsScreenTest {
             composeRule.onAllNodesWithText("사용 중인 저장 공간 5.0 MB").fetchSemanticsNodes().isNotEmpty()
         }
         ATTRIBUTIONS.forEach { composeRule.onNodeWithText(it).performScrollTo().assertIsDisplayed() }
+    }
+
+    @Test
+    fun shareHashtagsRowShowsDefault() {
+        show()
+        composeRule.onNodeWithText("공유").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("기본 해시태그").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("#자전거 #라이딩").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun shareHashtagsDialogNormalizes() {
+        show()
+        composeRule.onNodeWithTag(SettingsTags.SHARE_HASHTAGS).performScrollTo().performClick()
+        composeRule.onNodeWithTag(SettingsTags.SHARE_HASHTAGS_INPUT).performTextReplacement("자출 한강")
+        composeRule.onNodeWithTag(SettingsTags.CONFIRM).performClick()
+
+        composeRule.waitUntil(5_000) { settings.value.shareHashtags == "#자출 #한강" }
+        composeRule.onNodeWithText("#자출 #한강").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun emptyShowsNone() {
+        settings.value = settings.value.copy(shareHashtags = "")
+        show()
+        composeRule.onNodeWithTag(SettingsTags.SHARE_HASHTAGS).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("없음").performScrollTo().assertIsDisplayed()
     }
 
     @Test

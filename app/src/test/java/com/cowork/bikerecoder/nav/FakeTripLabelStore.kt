@@ -25,4 +25,10 @@ class FakeTripLabelStore : TripLabelStore {
         regionWrites += tripId to name
         labels.value = labels.value + (tripId to (labels.value[tripId] ?: TripLabel()).copy(regionName = name))
     }
+
+    override suspend fun setShareText(tripId: Long, text: String?, stamp: String?) {
+        val current = labels.value[tripId] ?: TripLabel()
+        labels.value = labels.value +
+            (tripId to current.copy(shareText = text, shareStamp = if (text == null) null else stamp))
+    }
 }

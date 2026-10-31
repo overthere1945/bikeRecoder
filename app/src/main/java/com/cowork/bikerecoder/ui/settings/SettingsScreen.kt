@@ -2,6 +2,7 @@ package com.cowork.bikerecoder.ui.settings
 
 import android.os.Build
 import androidx.activity.compose.LocalActivity
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -35,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cowork.bikerecoder.AppVersion
@@ -44,6 +46,7 @@ import com.cowork.bikerecoder.data.GuidanceRecording
 import com.cowork.bikerecoder.offline.SegmentInfo
 import com.cowork.bikerecoder.post.PhotoAccess
 import com.cowork.bikerecoder.post.PhotoSource
+import com.cowork.bikerecoder.share.DEFAULT_SHARE_HASHTAGS
 import com.cowork.bikerecoder.ui.common.GlyphIcon
 import com.cowork.bikerecoder.ui.health.HEALTH_CONNECT_UNAVAILABLE
 import com.cowork.bikerecoder.ui.health.HeartRateAccess
@@ -73,6 +76,8 @@ object SettingsTags {
     const val PHOTO_OPEN_SETTINGS = "settings_photo_open_settings"
     const val HEART_RATE_STATUS = "settings_heart_rate_status"
     const val HEART_RATE_ALLOW = "settings_heart_rate_allow"
+    const val SHARE_HASHTAGS = "settings_share_hashtags"
+    const val SHARE_HASHTAGS_INPUT = "settings_share_hashtags_input"
     fun profile(profile: RouteProfile) = "settings_profile_${profile.name}"
     fun guidanceRecording(mode: GuidanceRecording) = "settings_guidance_recording_${mode.name}"
     fun segmentCheck(name: String) = "settings_segment_check_$name"
@@ -145,6 +150,7 @@ fun SettingsScreen(
         onDeleteSegment = viewModel::delete,
         onDeleteAllMaps = viewModel::deleteAllMaps,
         onSetRecordingOnNewGuidance = viewModel::setRecordingOnNewGuidance,
+        onSetShareHashtags = viewModel::setShareHashtags,
         connections = {
             ConnectionSection(
                 photo = photoAccess.value,
@@ -179,10 +185,14 @@ internal fun SettingsContent(
     onDeleteSegment: (String) -> Unit,
     onDeleteAllMaps: () -> Unit,
     onSetRecordingOnNewGuidance: (GuidanceRecording) -> Unit = {},
+    onSetShareHashtags: (String) -> Unit = {},
     connections: @Composable () -> Unit = {},
 ) {
     var confirmDeleteSegment by remember { mutableStateOf<SegmentInfo?>(null) }
     var confirmDeleteMaps by remember { mutableStateOf(false) }
+    var editingHashtags by remember { mutableStateOf(false) }
+    // null = never saved (the default applies), "" = none.
+    val hashtags = state.settings.shareHashtags ?: DEFAULT_SHARE_HASHTAGS
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
@@ -288,6 +298,24 @@ internal fun SettingsContent(
                 ) { Text(if (state.deletingMaps) "삭제 중…" else "모두 삭제") }
                 HorizontalDivider()
 
+                SectionTitle("공유")
+                Row(
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag(SettingsTags.SHARE_HASHTAGS)
+                        .clickable(role = Role.Button) { editingHashtags = true },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("기본 해시태그", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        hashtags.ifEmpty { "없음" },
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                    )
+                    Text("›", style = MaterialTheme.typography.titleMedium)
+                }
+                HorizontalDivider()
+
                 SectionTitle("앱 정보")
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("앱 버전", style = MaterialTheme.typography.bodyLarge)
@@ -325,6 +353,16 @@ internal fun SettingsContent(
             dismissButton = {
                 TextButton(onClick = { confirmDeleteSegment = null }, modifier = Modifier.testTag(SettingsTags.CANCEL)) { Text("취소") }
             },
+        )
+    }
+    if (editingHashtags) {
+        ShareHashtagsDialog(
+            current = hashtags,
+            onSave = {
+                editingHashtags = false
+                onSetShareHashtags(it)
+            },
+            onDismiss = { editingHashtags = false },
         )
     }
     if (confirmDeleteMaps) {

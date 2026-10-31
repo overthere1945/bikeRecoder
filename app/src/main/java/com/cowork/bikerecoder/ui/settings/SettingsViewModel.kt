@@ -91,6 +91,9 @@ class SettingsViewModel(
     /** "사진·심박 연결" (spec §5.1): false lets the heart-rate card show again ([허용]), true after a refusal. */
     fun setHeartRatePromptDismissed(dismissed: Boolean) = edit { it.copy(heartRatePromptDismissed = dismissed) }
 
+    /** "공유" (spec §3.5): the default hashtags, already normalized; "" = none. */
+    fun setShareHashtags(value: String) = edit { it.copy(shareHashtags = value) }
+
     private fun edit(transform: (AppSettings) -> AppSettings) {
         viewModelScope.launch { updateSettings(transform) }
     }

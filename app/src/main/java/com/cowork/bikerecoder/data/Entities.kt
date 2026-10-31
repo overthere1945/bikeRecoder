@@ -250,4 +250,7 @@ data class TripLabelEntity(
     @PrimaryKey val tripId: Long,
     val customTitle: String?,
     val regionName: String?,
+    /** The share text the user edited, and the stamp of the auto text it was written against (both null = none). */
+    val shareText: String? = null,
+    val shareStamp: String? = null,
 )
