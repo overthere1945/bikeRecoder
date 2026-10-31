@@ -13,13 +13,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.cowork.bikerecoder.share.PackageShareApps
 import com.cowork.bikerecoder.share.ShareApps
 import com.cowork.bikerecoder.share.ShareIntents
 import com.cowork.bikerecoder.share.ShareTarget
 import com.cowork.bikerecoder.video.VideoNotifications
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 
 /** The label of the text put on the clipboard (spec §3.6). */
 private const val CLIP_LABEL = "활동"
@@ -31,7 +35,8 @@ const val MSG_NO_APP = "열 수 있는 앱이 없습니다"
 /**
  * The share sheet over any screen ([viewModel] is activity-scoped, so the text survives a rotation) and its events: a
  * [ShareEvent.Send] opens the app ([launch]) and closes the sheet, [ShareEvent.Copy] and [ShareEvent.Notice] leave it
- * open (spec §1.2). Messages are short toasts ([tell]): the sheet is its own window, above any screen's snackbar.
+ * open (spec §1.2). Messages are short toasts ([tell]): the sheet is its own window, above any screen's snackbar. Events are
+ * taken only while the screen is started ([handleWhileStarted]).
  */
 @Composable
 fun ShareHost(
@@ -45,7 +50,8 @@ fun ShareHost(
     val context = LocalContext.current
     val currentLaunch by rememberUpdatedState(launch)
     val currentTell by rememberUpdatedState(tell)
-    LaunchedEffect(viewModel, apps) {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(viewModel, apps, lifecycle) {
         val actions = ShareActions(
             apps = apps,
             launch = { currentLaunch(it) },
@@ -54,7 +60,7 @@ fun ShareHost(
             resultSeen = { VideoNotifications.cancelResult(context) },
             close = viewModel::close,
         )
-        viewModel.events.collect(actions::handle)
+        handleWhileStarted(lifecycle, viewModel.events, actions::handle)
     }
     sheet?.let { s ->
         ShareSheet(
@@ -69,6 +75,15 @@ fun ShareHost(
             onDismiss = viewModel::close,
         )
     }
+}
+
+/**
+ * Hands [events] to [handle] only while [lifecycle] is at least started. One that comes while the app is away (an image
+ * made meanwhile) waits in the view model's channel: Android would not let an app in the background open another, and
+ * the sheet would close on a send that never happened.
+ */
+internal suspend fun handleWhileStarted(lifecycle: Lifecycle, events: Flow<ShareEvent>, handle: (ShareEvent) -> Unit) {
+    lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { events.collect(handle) }
 }
 
 /**

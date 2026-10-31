@@ -284,8 +284,9 @@ class SummaryExtras(
  * rate ([HeartRateSection] with [heartRateGate]; [onRefetch] = [다시 가져오기]). [onScreen] is told while this is on a
  * started screen (it drives [SummaryExtras.onScreen]). A short ride ([SummaryExtrasState.askShort]) is asked about
  * over the summary: [onDiscard] = [버리기], [onKeep] = [저장] or the dialog dismissed (spec §6.10). Last, [mediaEntry]
- * for [SummaryExtrasState.mediaTripId] ([영상 만들기] [이미지 만들기] or the progress card, V1.3.0 spec §1.1), and [공유]
- * of [SummaryExtrasState.shareTripId] ([onShare], V1.5.0 spec §1.1).
+ * for [SummaryExtrasState.mediaTripId] ([영상 만들기] [이미지 만들기] or the progress card, V1.3.0 spec §1.1), and with
+ * [onShare] the [SummaryShareButton] (V1.5.0 spec §1.1). A summary that puts lines of its own between them (the guided
+ * ride's) leaves both out and draws them itself, in the same order.
  */
 @Composable
 fun SummaryExtrasContent(
@@ -297,7 +298,7 @@ fun SummaryExtrasContent(
     onDiscard: () -> Unit = {},
     onKeep: () -> Unit = {},
     mediaEntry: @Composable (tripId: Long) -> Unit = {},
-    onShare: (tripId: Long) -> Unit = {},
+    onShare: ((tripId: Long) -> Unit)? = null,
 ) {
     val currentOnScreen by rememberUpdatedState(onScreen)
     LifecycleStartEffect(Unit) {
@@ -309,15 +310,20 @@ fun SummaryExtrasContent(
     photoPrompt()
     HeartRateSection(state.heartRate, onRefetch, heartRateGate)
     state.mediaTripId?.let { mediaEntry(it) }
-    state.shareTripId?.let { tripId -> ShareTripButton { onShare(tripId) } }
+    onShare?.let { SummaryShareButton(state, it) }
     if (state.askShort) ShortRideDialog(onDiscard, onKeep)
 }
 
-/** [공유] in the summary's button rows: the share sheet of the whole trip. */
+/**
+ * [공유] under the media entry of a summary: the share sheet of its whole trip ([SummaryExtrasState.shareTripId]; nothing
+ * without one). Off while the summary's segment is being discarded, like its other actions (ruling R20).
+ */
 @Composable
-private fun ShareTripButton(onClick: () -> Unit) {
+fun SummaryShareButton(state: SummaryExtrasState, onShare: (tripId: Long) -> Unit) {
+    val tripId = state.shareTripId ?: return
     OutlinedButton(
-        onClick = onClick,
+        onClick = { onShare(tripId) },
+        enabled = !state.discarding,
         shape = MaterialTheme.shapes.medium,
         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
     ) {

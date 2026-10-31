@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.view.MotionEvent
 import android.view.View
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -14,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.assertWidthIsAtLeast
@@ -385,10 +387,13 @@ class RecordScreenTest {
         composeRule.onNodeWithText("거의 움직이지 않은 기록입니다. 저장할까요?").assertDoesNotExist()
     }
 
-    /** V1.5.0 spec §1.1: [공유] under the summary shares the segment's whole trip; none when the trip has nothing to share. */
+    /**
+     * V1.5.0 spec §1.1: [공유] under the media entry shares the segment's whole trip; off while the segment is discarded,
+     * none when the trip has nothing to share.
+     */
     @Test
     fun summaryShareButton() {
-        var state by mutableStateOf(SummaryExtrasState(shareTripId = 7))
+        var state by mutableStateOf(SummaryExtrasState(mediaTripId = 7, shareTripId = 7))
         val shared = mutableListOf<Long>()
         composeRule.setContent {
             MaterialTheme {
@@ -403,13 +408,25 @@ class RecordScreenTest {
                     ),
                     map = {},
                     onConfirm = {},
-                    footer = { SummaryExtrasContent(state, photoPrompt = {}, onShare = { shared += it }) },
+                    footer = {
+                        SummaryExtrasContent(
+                            state,
+                            photoPrompt = {},
+                            mediaEntry = { Text("영상 만들기") },
+                            onShare = { shared += it },
+                        )
+                    },
                 )
             }
         }
 
         composeRule.onNodeWithText("공유").assertIsDisplayed().assertHeightIsAtLeast(48.dp).performClick()
         assertEquals(listOf(7L), shared)
+        val media = composeRule.onNodeWithText("영상 만들기").getBoundsInRoot()
+        assertTrue("under the media entry", composeRule.onNodeWithText("공유").getBoundsInRoot().top >= media.bottom)
+
+        state = state.copy(discarding = true)
+        composeRule.onNodeWithText("공유").assertIsNotEnabled()
 
         state = SummaryExtrasState(shareTripId = null)
         composeRule.onNodeWithText("공유").assertDoesNotExist()

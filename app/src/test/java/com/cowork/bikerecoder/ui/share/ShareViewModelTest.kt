@@ -18,6 +18,8 @@ import com.cowork.bikerecoder.share.SharePick
 import com.cowork.bikerecoder.share.ShareTarget
 import com.cowork.bikerecoder.share.shareStamp
 import com.cowork.bikerecoder.ui.feed.FakeFeedMedia
+import com.cowork.bikerecoder.ui.hostOutcome
+import com.cowork.bikerecoder.ui.video.outcomeOf
 import com.cowork.bikerecoder.video.MediaKind
 import com.cowork.bikerecoder.video.PendingJob
 import com.cowork.bikerecoder.video.StartResult
@@ -41,6 +43,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -470,6 +473,27 @@ class ShareViewModelTest {
         assertTrue(events.isEmpty())
     }
 
+    /**
+     * The trip screen's preview gate (BikeNavHost): while the sheet makes, the job's Done is not the host's to show
+     * ([hostOutcome]); the sheet takes it (the outcome is gone, acknowledged once) and sends the image once, as made.
+     */
+    @Test
+    fun doneWhileMakingIsTakenByTheSheetAndSentOnce() = runTest(dispatcher) {
+        val vm = opened()
+        making(vm, ShareTarget.FACEBOOK)
+
+        val image = done()
+        // The host's view of it before the sheet's watcher runs: an outcome, held back while the sheet makes.
+        assertNotNull(outcomeOf(job.state.value))
+        assertNull(hostOutcome(outcomeOf(job.state.value), vm.sheet.value!!.making))
+        advanceUntilIdle()
+
+        assertNull(outcomeOf(job.state.value), "acknowledged: no preview left for the host")
+        assertEquals(1, job.acknowledges)
+        assertEquals(listOf<ShareEvent>(ShareEvent.Send(ShareTarget.FACEBOOK, candidate(image), AUTO, made = true)), events)
+        assertFalse(vm.sheet.value!!.making)
+    }
+
     @Test
     fun cancelAfterDoneBeforeRefreshDoesNotSend() = runTest(dispatcher) {
         val vm = opened()
@@ -484,9 +508,10 @@ class ShareViewModelTest {
         advanceUntilIdle()
 
         assertTrue(events.isEmpty())
-        // The image exists: it is kept, and the picks follow it.
+        // The image exists: it is kept, and the picks follow it. Its outcome was taken: no preview opens after [취소].
         assertEquals(0, job.cancels)
         assertEquals(1, job.acknowledges)
+        assertNull(outcomeOf(job.state.value))
         assertEquals(SharePick.File(candidate(image)), vm.sheet.value!!.general)
         assertFalse(vm.sheet.value!!.making)
     }

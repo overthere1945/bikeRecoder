@@ -34,7 +34,9 @@ import com.cowork.bikerecoder.core.post.PeriodFilter
 import com.cowork.bikerecoder.data.AppSettings
 import com.cowork.bikerecoder.favorite.Favorite
 import com.cowork.bikerecoder.favorite.FavoriteKind
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import com.cowork.bikerecoder.ui.onboarding.OnboardingScreen
 import com.cowork.bikerecoder.ui.onboarding.OnboardingStep
 import com.cowork.bikerecoder.ui.onboarding.OnboardingViewModel
@@ -323,8 +325,10 @@ fun BikeNavHost(
     // that started meanwhile: then the "영상을 만들었습니다" notification stays to open it. Not while the share sheet makes
     // its image either ([hostOutcome]); should the making end with the outcome still there, it is shown here then.
     val videoOutcome by videoViewModel.outcome.collectAsStateWithLifecycle()
-    val shareSheet by shareViewModel.sheet.collectAsStateWithLifecycle()
-    val shareMaking = shareSheet?.making == true
+    // Only whether it makes: the sheet's text changes with every keystroke.
+    val shareMaking by remember(shareViewModel) {
+        shareViewModel.sheet.map { it?.making == true }.distinctUntilChanged()
+    }.collectAsStateWithLifecycle(shareViewModel.sheet.value?.making == true)
     LaunchedEffect(videoOutcome, shareMaking) {
         val outcome = hostOutcome(videoOutcome, shareMaking) ?: return@LaunchedEffect
         val preview = videoViewModel.previewToOpen(outcome)
