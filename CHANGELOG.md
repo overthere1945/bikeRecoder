@@ -19,13 +19,15 @@
 ### 변경
 - 저장소 DB 8판: 새 표 `trip_import`(`tripId` 기본 키·여행 삭제 시 CASCADE, `fileName`, `importedAt`). 7→8은 자동 이전(AutoMigration), 기존 기록 유지
 - `AndroidManifest.xml`: `MainActivity`에 `ACTION_SEND`·`ACTION_SEND_MULTIPLE`·`ACTION_VIEW` 인텐트 필터(`application/gpx+xml`, `application/xml`, `text/xml`, `application/zip`, `application/x-zip-compressed`, `application/gzip`, `application/octet-stream`). 새 권한은 없음
-- `GpxParser`를 넓혀 시간 없는 점·좌표 검사·첫 `trk`의 `type`과 `name`을 돌려줌(기존 시험·재생 호출 동작은 그대로)
+- 가져오기용 GPX 읽기 `GpxReader`를 새로 더함(시간 없는 점·좌표 검사·첫 `trk`의 `type`과 `name`). `GpxParser`와는 보안 설정 `secureDocumentBuilderFactory`만 같이 쓰고, `GpxParser.parse`는 바꾸지 않음(기존 시험·재생 호출 동작 그대로)
 - 버전 1.6.0(versionCode 10600, debug `1.6.0-dev`)
 
 ### 알려진 한계
 - 256개를 넘는 파일을 한 번에 공유하면 그 뒤 파일은 보낸 앱이 준 임시 권한에 기대므로, 가져오기가 거기에 닿기 전에 뒤로 가기로 나가면 건너뛸 수 있음
 - 확인 목록이 떠 있는 동안 앱 프로세스가 죽으면 목록은 복원되지 않음(파일을 다시 고름)
 - 파이프로 주는 파일은 가져오기 때 한 번만 읽을 수 있음
+- 수십 MB짜리 아주 큰 GPX는 휴대폰 메모리에 따라 "너무 큰 파일입니다"로 나올 수 있음
+- [종료]로 닫지 않은 채 끊긴 기록이 있으면 그 기록이 "지금"까지 이어진 것으로 보여 그 뒤의 주행이 모두 "이미 있는 주행과 겹칩니다"로 나옴. 그 기록을 먼저 [종료]하면 됨
 
 ### 문서
 - GPX 가져오기 설계 스펙: `docs/superpowers/specs/2026-10-31-gpx-import-design.md`
