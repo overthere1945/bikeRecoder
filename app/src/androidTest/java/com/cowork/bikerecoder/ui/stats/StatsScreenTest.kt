@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -29,6 +30,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
 import android.os.SystemClock
@@ -471,6 +474,61 @@ class StatsScreenTest {
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals("2026년 10월 · 186.2 km")
     }
 
+    /** The cumulative chart sits under the bars of a week, month or year; [전체] has none. */
+    @Test
+    fun theCumulativeChartIsThereExceptForAll() {
+        show()
+
+        composeRule.onNodeWithTag(StatsTags.CUMULATIVE_CHART).assertExists()
+        for (kind in listOf(PeriodKind.WEEK, PeriodKind.YEAR, PeriodKind.MONTH)) {
+            composeRule.onNodeWithTag(StatsTags.kind(kind)).performClick()
+            composeRule.onNodeWithTag(StatsTags.CUMULATIVE_CHART).assertExists()
+        }
+        composeRule.onNodeWithTag(StatsTags.kind(PeriodKind.ALL)).performClick()
+        composeRule.onNodeWithTag(StatsTags.CUMULATIVE_CHART).assertDoesNotExist()
+    }
+
+    @Test
+    fun theLegendNamesTheLinesAndTheGoalOnlyWhenThereIsOne() {
+        show()
+
+        // October has no goal line.
+        composeRule.onNodeWithTag(StatsTags.CUMULATIVE_LEGEND).assertTextEquals("━ 이번 달  ━ 지난달")
+        composeRule.onNodeWithTag(StatsTags.kind(PeriodKind.WEEK)).performClick()
+        composeRule.onNodeWithTag(StatsTags.CUMULATIVE_LEGEND).assertTextEquals("━ 이번 주  ━ 지난주  ┅ 목표")
+        composeRule.onNodeWithTag(StatsTags.kind(PeriodKind.YEAR)).performClick()
+        composeRule.onNodeWithTag(StatsTags.CUMULATIVE_LEGEND).assertTextEquals("━ 올해  ━ 작년  ┅ 목표")
+        // Paging back names the months.
+        composeRule.onNodeWithTag(StatsTags.kind(PeriodKind.MONTH)).performClick()
+        composeRule.onNodeWithTag(StatsTags.PREVIOUS).performClick()
+        composeRule.onNodeWithTag(StatsTags.CUMULATIVE_LEGEND).assertTextEquals("━ 9월  ━ 8월")
+    }
+
+    /** October up to the 28th against September up to the 28th, in the value of the chip. */
+    @Test
+    fun theChipChangesTheEndValueOfTheCumulativeLine() {
+        show()
+
+        composeRule.onNodeWithTag(StatsTags.CUMULATIVE_PLOT).assertContentDescriptionEquals("누적 이번 달 186km, 지난달 85.6km")
+        composeRule.onNodeWithTag(StatsTags.metric(StatMetric.TIME)).performClick()
+        composeRule.onNodeWithTag(StatsTags.CUMULATIVE_PLOT).assertContentDescriptionEquals("누적 이번 달 10:07시간, 지난달 4:57시간")
+        composeRule.onNodeWithTag(StatsTags.metric(StatMetric.ASCENT)).performClick()
+        composeRule.onNodeWithTag(StatsTags.CUMULATIVE_PLOT).assertContentDescriptionEquals("누적 이번 달 945m, 지난달 450m")
+    }
+
+    @Test
+    fun theCumulativeChartIsDrawnAtDoubleFontSize() {
+        show(fontScale = 2f)
+        composeRule.onNodeWithTag(StatsTags.CUMULATIVE_PLOT).assertExists()
+        composeRule.onNodeWithTag(StatsTags.CUMULATIVE_LEGEND).assertExists()
+    }
+
+    @Test
+    fun theCumulativeChartOfAnEmptyPeriodIsDrawn() {
+        show(rides = emptyList(), goals = FakeGoals(null, null))
+        composeRule.onNodeWithTag(StatsTags.CUMULATIVE_PLOT).assertContentDescriptionEquals("누적 이번 달 0km, 지난달 0km")
+    }
+
     @Test
     fun aHelpBubbleOpensAndTapsOutsideOrBackCloseIt() {
         show()
@@ -582,6 +640,17 @@ class StatsScreenTest {
         show(goals = FakeGoals(null, null))
         Thread.sleep(300)
         screenshot("v140-stats-nogoals")
+    }
+
+    @Test
+    fun screenshotCumulative() {
+        show()
+        scrollTo(StatsTags.CUMULATIVE_PLOT)
+        // The period block is taller than the screen: a short swipe brings the legend under the plot up.
+        composeRule.onNodeWithTag(StatsTags.LIST).performTouchInput { swipeUp(startY = height * 0.8f, endY = height * 0.55f) }
+        composeRule.waitForIdle()
+        Thread.sleep(300)
+        screenshot("v140-stats-cumulative")
     }
 
     /** The whole screen into Download/bikeRecoderTest/[name].png (an older file of the name is deleted first). */

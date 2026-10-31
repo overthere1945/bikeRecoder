@@ -117,6 +117,33 @@ object StatsCalculator {
         )
     }
 
+    /**
+     * 날마다 쌓이는 누적(누적 꺾은선 그래프). [PeriodKind.ALL]이면 null. [CumulativeSeries.current]는 기간 첫날부터 오늘까지
+     * (끝난 기간이면 기간 끝까지)이고, 오늘이 첫날이면 한 점이다. [CumulativeSeries.previous]는 바로 앞 기간 전체다.
+     */
+    fun cumulative(rides: List<RideStat>, period: StatsPeriod, today: LocalDate): CumulativeSeries? {
+        if (period.kind == PeriodKind.ALL) return null
+        val prev = previous(period)
+        val shownEnd = minOf(period.endInclusive, today)
+        val current = runningTotals(rides, period.start, shownEnd)
+        val previousSeries = runningTotals(rides, prev.start, prev.endInclusive)
+        val currentDays = ChronoUnit.DAYS.between(period.start, period.endInclusive).toInt() + 1
+        return CumulativeSeries(current, previousSeries, maxOf(currentDays, previousSeries.size))
+    }
+
+    /** [from]~[to]의 날마다, [from]부터 그날까지의 합. [to]가 [from]보다 앞이면 빈 목록. */
+    private fun runningTotals(rides: List<RideStat>, from: LocalDate, to: LocalDate): List<StatTotals> {
+        if (to < from) return emptyList()
+        val byDay = rides.filter { it.localDate in from..to }.groupBy { it.localDate }
+        var sum = StatTotals(0.0, 0, 0L, 0.0)
+        return generateSequence(from) { it.plusDays(1) }.takeWhile { it <= to }.map { day ->
+            byDay[day]?.forEach {
+                sum = StatTotals(sum.distanceM + it.distanceM, sum.rides + 1, sum.movingTimeMs + it.movingTimeMs, sum.ascentM + it.ascentM)
+            }
+            sum
+        }.toList()
+    }
+
     private fun shift(period: StatsPeriod, n: Long): StatsPeriod = when (period.kind) {
         PeriodKind.WEEK -> weekOf(period.start.plusWeeks(n))
         PeriodKind.MONTH -> monthOf(period.start.plusMonths(n))

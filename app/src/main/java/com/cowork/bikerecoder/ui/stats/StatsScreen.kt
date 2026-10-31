@@ -73,6 +73,9 @@ object StatsTags {
     const val BAR_UNIT = "stats-bar-unit"
     const val RECORDS = "stats-records"
     const val CUMULATIVE = "stats-cumulative"
+    const val CUMULATIVE_CHART = "stats-cumulative-chart"
+    const val CUMULATIVE_PLOT = "stats-cumulative-plot"
+    const val CUMULATIVE_LEGEND = "stats-cumulative-legend"
     const val HELP_TEXT = "stats-help-text"
 
     fun kind(kind: PeriodKind) = "stats-kind-${kind.name}"
@@ -320,6 +323,7 @@ private fun PeriodBlock(
             HelpTip(StatsHelp.CHART_TOPIC, StatsHelp.CHART, openTip == StatsHelp.CHART_TOPIC, onToggle = { onToggleTip(StatsHelp.CHART_TOPIC) })
         }
         BarChart(state.bars, state.selectedBar, state.unitText, onSelectBar)
+        state.cumulative?.let { CumulativeChart(it, state.period.kind, state.unitText) }
     }
 }
 

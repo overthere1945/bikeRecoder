@@ -27,3 +27,9 @@ data class Bucket(val start: LocalDate, val endInclusive: LocalDate, val totals:
 
 /** [sameDay]가 true면 [current]는 이번 기간 오늘까지, [previous]는 앞 기간의 같은 날까지. */
 data class Comparison(val current: StatTotals, val previous: StatTotals, val sameDay: Boolean)
+
+/**
+ * 날마다 쌓이는 누적. [current]`[i]`는 이번 기간 첫날부터 i번째 날까지의 합(이번 기간이면 오늘까지, 끝난 기간이면 기간 끝까지),
+ * [previous]는 앞 기간 전체의 같은 누적, [length]는 두 기간의 날 수 중 큰 값(가로축 길이).
+ */
+data class CumulativeSeries(val current: List<StatTotals>, val previous: List<StatTotals>, val length: Int)

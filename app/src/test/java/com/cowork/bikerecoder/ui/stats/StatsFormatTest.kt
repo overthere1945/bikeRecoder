@@ -199,6 +199,32 @@ class StatsFormatTest {
     }
 
     @Test
+    fun cumulativeValuesAreInTheUnitOfTheChart() {
+        val totals = StatTotals(24_100.0, 1, 5_400_000, 120.0)
+        assertEquals(24.1, cumulativeValue(StatMetric.DISTANCE, totals), 1e-9)
+        assertEquals(1.5, cumulativeValue(StatMetric.TIME, totals), 1e-9)
+        assertEquals(120.0, cumulativeValue(StatMetric.ASCENT, totals), 1e-9)
+    }
+
+    @Test
+    fun cumulativeTextsWriteZeroWhereTheBarWritesNothing() {
+        assertEquals("24.1", cumulativeText(StatMetric.DISTANCE, StatTotals(24_100.0, 1, 0, 0.0)))
+        assertEquals("1:45", cumulativeText(StatMetric.TIME, StatTotals(0.0, 1, 6_300_000, 0.0)))
+        val none = StatTotals(0.0, 0, 0, 0.0)
+        assertEquals("0", cumulativeText(StatMetric.DISTANCE, none))
+        assertEquals("0:00", cumulativeText(StatMetric.TIME, none))
+        assertEquals("0", cumulativeText(StatMetric.ASCENT, none))
+    }
+
+    @Test
+    fun cumulativeAxisNamesAreFirstMiddleAndLast() {
+        assertEquals(listOf("월", "목", "일"), cumulativeAxisNames(PeriodKind.WEEK, 7))
+        assertEquals(listOf("1일", "15일", "31일"), cumulativeAxisNames(PeriodKind.MONTH, 31))
+        assertEquals(listOf("1일", "15일", "30일"), cumulativeAxisNames(PeriodKind.MONTH, 30))
+        assertEquals(listOf("1월", "7월", "12월"), cumulativeAxisNames(PeriodKind.YEAR, 365))
+    }
+
+    @Test
     fun metricLabelsNameTheAscent() {
         assertEquals("거리", metricLabel(StatMetric.DISTANCE))
         assertEquals("시간", metricLabel(StatMetric.TIME))

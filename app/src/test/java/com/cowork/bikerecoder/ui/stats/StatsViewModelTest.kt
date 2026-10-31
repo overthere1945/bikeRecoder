@@ -535,4 +535,115 @@ class StatsViewModelTest {
         assertEquals(LocalDate.of(2026, 11, 1), vm.state.value!!.period.start)
         assertEquals("2026년 11월", vm.state.value!!.title)
     }
+
+    @Test
+    fun cumulativeOfTheMonthRunsToTodayAgainstTheMonthBefore() = runTest(dispatcher) {
+        val state = viewModel().state.value!!
+        val cumulative = state.cumulative!!
+
+        assertEquals(31, cumulative.current.size) // October 1~31
+        assertEquals(0.0, cumulative.current[1], 1e-9)
+        assertEquals(10.0, cumulative.current[2], 1e-9) // 10/3
+        assertEquals(30.0, cumulative.current.last(), 1e-9) // 10/25 on top
+        assertEquals(30, cumulative.previous.size) // September
+        assertEquals(30.0, cumulative.previous.last(), 1e-9)
+        assertEquals(31, cumulative.length)
+        assertNull(cumulative.goal) // the month has no goal line
+        assertEquals("30.0", cumulative.endText)
+        assertEquals("30.0", cumulative.previousText)
+        assertEquals("이번 달", cumulative.currentName)
+        assertEquals("지난달", cumulative.previousName)
+    }
+
+    @Test
+    fun cumulativeOfAPastMonthIsNamedByMonth() = runTest(dispatcher) {
+        val vm = viewModel()
+
+        vm.previous()
+        advanceUntilIdle()
+        val cumulative = vm.state.value!!.cumulative!!
+
+        assertEquals(30, cumulative.current.size) // all of September
+        assertEquals(30.0, cumulative.current.last(), 1e-9)
+        assertEquals(31, cumulative.previous.size) // August
+        assertEquals("9월", cumulative.currentName)
+        assertEquals("8월", cumulative.previousName)
+        assertEquals("0", cumulative.previousText)
+    }
+
+    @Test
+    fun cumulativeOfTheWeekHasTheWeeklyGoalPace() = runTest(dispatcher) {
+        val rides = FakeRides(sample + ride(4, LocalDate.of(2026, 10, 26), 5.0) + ride(5, LocalDate.of(2026, 10, 29), 7.5))
+        val vm = viewModel(rides, FakeGoals(weekly = 100, yearly = 3000))
+
+        vm.selectKind(PeriodKind.WEEK)
+        advanceUntilIdle()
+        val cumulative = vm.state.value!!.cumulative!!
+
+        assertEquals(listOf(5.0, 5.0, 5.0, 12.5, 12.5, 12.5), cumulative.current) // Monday to Saturday
+        assertEquals(7, cumulative.previous.size)
+        assertEquals(20.0, cumulative.previous.last(), 1e-9) // 10/25
+        assertEquals(0.0, cumulative.previous[5], 1e-9)
+        assertEquals(100.0, cumulative.goal!!, 1e-9)
+        assertEquals("12.5", cumulative.endText)
+        assertEquals("이번 주", cumulative.currentName)
+        assertEquals("지난주", cumulative.previousName)
+
+        vm.previous()
+        advanceUntilIdle()
+        assertEquals("이 주", vm.state.value!!.cumulative!!.currentName)
+        assertEquals("전 주", vm.state.value!!.cumulative!!.previousName)
+    }
+
+    @Test
+    fun cumulativeOfTheYearHasTheYearlyGoalPace() = runTest(dispatcher) {
+        val vm = viewModel(goals = FakeGoals(weekly = 100, yearly = 3000))
+
+        vm.selectKind(PeriodKind.YEAR)
+        advanceUntilIdle()
+        val cumulative = vm.state.value!!.cumulative!!
+
+        assertEquals(304, cumulative.current.size) // January 1 to October 31
+        assertEquals(60.0, cumulative.current.last(), 1e-9)
+        assertEquals(365, cumulative.previous.size)
+        assertEquals(365, cumulative.length)
+        assertEquals(3000.0, cumulative.goal!!, 1e-9)
+        assertEquals("올해", cumulative.currentName)
+        assertEquals("작년", cumulative.previousName)
+
+        vm.selectMetric(StatMetric.TIME) // a goal is a distance
+        advanceUntilIdle()
+        assertNull(vm.state.value!!.cumulative!!.goal)
+    }
+
+    @Test
+    fun cumulativeFollowsTheMetricAndAllHasNone() = runTest(dispatcher) {
+        val vm = viewModel(FakeRides(sample), FakeGoals(weekly = 100))
+
+        vm.selectMetric(StatMetric.TIME)
+        advanceUntilIdle()
+        var cumulative = vm.state.value!!.cumulative!!
+        assertEquals(1.5, cumulative.current.last(), 1e-9) // 30 + 60 minutes, in hours
+        assertEquals("1:30", cumulative.endText)
+        assertEquals(2.0, cumulative.previous.last(), 1e-9)
+        assertEquals("2:00", cumulative.previousText)
+
+        vm.selectMetric(StatMetric.ASCENT)
+        advanceUntilIdle()
+        cumulative = vm.state.value!!.cumulative!!
+        assertEquals(50.0, cumulative.current.last(), 1e-9)
+        assertEquals("50", cumulative.endText)
+
+        vm.selectKind(PeriodKind.ALL)
+        advanceUntilIdle()
+        assertNull(vm.state.value!!.cumulative)
+    }
+
+    @Test
+    fun cumulativeWithoutRidesIsFlatAtZero() = runTest(dispatcher) {
+        val cumulative = viewModel(FakeRides()).state.value!!.cumulative!!
+
+        assertTrue(cumulative.current.all { it == 0.0 } && cumulative.previous.all { it == 0.0 })
+        assertEquals("0", cumulative.endText)
+    }
 }

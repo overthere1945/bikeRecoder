@@ -73,6 +73,22 @@ data class GoalProgress(val goalKm: Int, val distanceM: Double) {
 data class BarState(val label: String, val value: Double, val valueText: String, val upcoming: Boolean, val shortText: String)
 
 /**
+ * The cumulative line chart: [current] and [previous] are the running totals per day in the unit of the metric (km, hours, m),
+ * [goal] the end value of the goal pace line (a distance goal of a week or year; null otherwise), [length] the days of the
+ * axis, [endText] the last value of [current] and [previousText] the value of [previous] on the same day, as [cumulativeText].
+ */
+data class CumulativeChartState(
+    val current: List<Double>,
+    val previous: List<Double>,
+    val goal: Double?,
+    val length: Int,
+    val endText: String,
+    val previousText: String,
+    val currentName: String,
+    val previousName: String,
+)
+
+/**
  * What the stats tab shows (V1.4.0 spec §3). [records] is empty under two rides; [cumulativeRides] and [cumulativeFilter]
  * are what the entry to the cumulative map shows and opens.
  */
@@ -92,6 +108,8 @@ data class StatsState(
     val projectionText: String?,
     val streakText: String,
     val records: List<RecordRow>,
+    /** Null for [PeriodKind.ALL]. */
+    val cumulative: CumulativeChartState?,
     val cumulativeRides: Int,
     val cumulativeFilter: PeriodFilter,
 )
@@ -237,6 +255,7 @@ class StatsViewModel(
             projectionText = if (yearlyGoal == null) null else Goals.yearProjectionKm(yearDistance, today)?.let(::projectionText),
             streakText = streakText(RideRecords.streak(rides, today)),
             records = recordRows(rides, today),
+            cumulative = cumulativeOf(rides, period, sel.metric, goalKm, today),
             cumulativeRides = totals.rides,
             cumulativeFilter = filterOf(period),
         )
@@ -249,6 +268,41 @@ class StatsViewModel(
         upcoming = bucket.upcoming,
         shortText = if (bucket.upcoming) "" else barShortText(metric, bucket.totals),
     )
+
+    private fun cumulativeOf(rides: List<RideStat>, period: StatsPeriod, metric: StatMetric, goalKm: GoalKm, today: LocalDate): CumulativeChartState? {
+        val series = StatsCalculator.cumulative(rides, period, today) ?: return null
+        // The last day shown (today, or the end of a finished period); the earlier period on that same day, or its end if shorter.
+        val last = series.current.lastIndex
+        val previousAt = series.previous.getOrElse(last) { series.previous.last() }
+        val goal = when {
+            metric != StatMetric.DISTANCE -> null
+            period.kind == PeriodKind.WEEK -> goalKm.weekly
+            period.kind == PeriodKind.YEAR -> goalKm.yearly
+            else -> null
+        }
+        val (currentName, previousName) = cumulativeNames(period, today)
+        return CumulativeChartState(
+            current = series.current.map { cumulativeValue(metric, it) },
+            previous = series.previous.map { cumulativeValue(metric, it) },
+            goal = goal?.toDouble(),
+            length = series.length,
+            endText = cumulativeText(metric, series.current.last()),
+            previousText = cumulativeText(metric, previousAt),
+            currentName = currentName,
+            previousName = previousName,
+        )
+    }
+
+    /** The legend names of the shown period and the one before it: "이번 달" / "지난달", or "9월" / "8월" for a period gone by. */
+    private fun cumulativeNames(period: StatsPeriod, today: LocalDate): Pair<String, String> {
+        val thisOne = period.start <= today && today <= period.endInclusive
+        val before = StatsCalculator.previous(period).start
+        return when (period.kind) {
+            PeriodKind.WEEK -> if (thisOne) "이번 주" to "지난주" else "이 주" to "전 주"
+            PeriodKind.MONTH -> if (thisOne) "이번 달" to "지난달" else "${period.start.monthValue}월" to "${before.monthValue}월"
+            else -> if (thisOne) "올해" to "작년" else "${period.start.year}년" to "${before.year}년"
+        }
+    }
 
     private fun filterOf(period: StatsPeriod): PeriodFilter = when (period.kind) {
         PeriodKind.WEEK -> PeriodFilter(weekStart = period.start)

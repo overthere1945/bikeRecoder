@@ -58,6 +58,24 @@ fun metricUnitText(metric: StatMetric): String = when (metric) {
     StatMetric.ASCENT -> "m"
 }
 
+/** What the cumulative chart plots: kilometres, hours or metres of ascent of [totals]. */
+fun cumulativeValue(metric: StatMetric, totals: StatTotals): Double = when (metric) {
+    StatMetric.DISTANCE -> totals.distanceM / 1000.0
+    StatMetric.TIME -> totals.movingTimeMs / 3_600_000.0
+    StatMetric.ASCENT -> totals.ascentM
+}
+
+/** [barShortText], but "0" ("0:00" for time) where that is empty: the chart's end bubble and reading always have a value. */
+fun cumulativeText(metric: StatMetric, totals: StatTotals): String =
+    barShortText(metric, totals).ifEmpty { if (metric == StatMetric.TIME) "0:00" else "0" }
+
+/** The names under the cumulative chart's axis, at its start, middle and end: "월" "목" "일", "1일" "15일" "31일" ([length] days), "1월" "7월" "12월". */
+fun cumulativeAxisNames(kind: PeriodKind, length: Int): List<String> = when (kind) {
+    PeriodKind.WEEK -> listOf("월", "목", "일")
+    PeriodKind.MONTH -> listOf("1일", "15일", "${length}일")
+    else -> listOf("1월", "7월", "12월")
+}
+
 /** The number a bar is as tall as: metres, milliseconds or metres of ascent. */
 fun metricValue(metric: StatMetric, totals: StatTotals): Double = when (metric) {
     StatMetric.DISTANCE -> totals.distanceM

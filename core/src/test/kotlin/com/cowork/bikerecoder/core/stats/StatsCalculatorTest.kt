@@ -273,4 +273,98 @@ class StatsCalculatorTest {
         assertEquals(d(2026, 10, 26)..d(2026, 10, 26), StatsCalculator.bounds(PeriodKind.WEEK, emptyList(), today))
         assertEquals(d(2026, 10, 1)..d(2026, 10, 1), StatsCalculator.bounds(PeriodKind.MONTH, emptyList(), today))
     }
+
+    @Test
+    fun cumulativeOfAWeekRunsToToday() {
+        val today = d(2026, 10, 28) // 수요일
+        val rides = StatsCalculator.rides(listOf(
+            ride(d(2026, 10, 19), distanceM = 1_000.0, movingMs = 100, ascentM = 10.0), // 앞 주 월
+            ride(d(2026, 10, 21), distanceM = 2_000.0), // 앞 주 수
+            ride(d(2026, 10, 26), distanceM = 4_000.0), // 이번 주 월
+            ride(d(2026, 10, 26), distanceM = 1_000.0),
+            ride(d(2026, 10, 28), distanceM = 8_000.0),
+        ))
+        val c = assertNotNull(StatsCalculator.cumulative(rides, StatsCalculator.periodOf(PeriodKind.WEEK, today, rides, today), today))
+        assertEquals(listOf(5_000.0, 5_000.0, 13_000.0), c.current.map { it.distanceM })
+        assertEquals(listOf(2, 2, 3), c.current.map { it.rides })
+        assertEquals(listOf(1_000.0, 1_000.0, 3_000.0, 3_000.0, 3_000.0, 3_000.0, 3_000.0), c.previous.map { it.distanceM })
+        assertEquals(100L, c.previous[0].movingTimeMs)
+        assertEquals(10.0, c.previous[6].ascentM)
+        assertEquals(7, c.length)
+    }
+
+    @Test
+    fun cumulativeOnTheFirstDayIsOnePointAndKeepsTheLongerPeriod() {
+        val today = d(2026, 3, 1)
+        val rides = StatsCalculator.rides(listOf(ride(d(2026, 2, 28), distanceM = 6_000.0), ride(d(2026, 3, 1), distanceM = 3_000.0)))
+        val c = assertNotNull(StatsCalculator.cumulative(rides, StatsCalculator.periodOf(PeriodKind.MONTH, today, rides, today), today))
+        assertEquals(listOf(3_000.0), c.current.map { it.distanceM })
+        assertEquals(28, c.previous.size)
+        assertEquals(6_000.0, c.previous.last().distanceM)
+        assertEquals(31, c.length)
+    }
+
+    @Test
+    fun cumulativeOfAShorterPreviousPeriodKeepsTheCurrentLength() {
+        val today = d(2026, 3, 31)
+        val rides = StatsCalculator.rides(listOf(ride(d(2026, 3, 31), distanceM = 3_000.0)))
+        val c = assertNotNull(StatsCalculator.cumulative(rides, StatsCalculator.periodOf(PeriodKind.MONTH, today, rides, today), today))
+        assertEquals(31, c.current.size)
+        assertEquals(28, c.previous.size)
+        assertEquals(31, c.length)
+    }
+
+    @Test
+    fun cumulativeOfAFinishedMonthHasItsDays() {
+        val today = d(2026, 10, 31)
+        val rides = StatsCalculator.rides(listOf(
+            ride(d(2026, 9, 1), distanceM = 1_000.0),
+            ride(d(2026, 9, 30), distanceM = 2_000.0),
+            ride(d(2026, 10, 1), distanceM = 50_000.0),
+        ))
+        val c = assertNotNull(StatsCalculator.cumulative(rides, period(PeriodKind.MONTH, d(2026, 9, 1), d(2026, 9, 30)), today))
+        assertEquals(30, c.current.size)
+        assertEquals(3_000.0, c.current.last().distanceM)
+        assertEquals(31, c.previous.size) // 8월
+        assertEquals(0.0, c.previous.last().distanceM)
+        assertEquals(31, c.length)
+    }
+
+    @Test
+    fun cumulativeOfAYearIsPerDay() {
+        val today = d(2026, 10, 31)
+        val rides = StatsCalculator.rides(listOf(ride(d(2025, 12, 31), distanceM = 1_000.0), ride(d(2026, 1, 2), distanceM = 2_000.0)))
+        val c = assertNotNull(StatsCalculator.cumulative(rides, StatsCalculator.periodOf(PeriodKind.YEAR, today, rides, today), today))
+        assertEquals(304, c.current.size) // 1월 1일~10월 31일
+        assertEquals(0.0, c.current[0].distanceM)
+        assertEquals(2_000.0, c.current[1].distanceM)
+        assertEquals(365, c.previous.size)
+        assertEquals(1_000.0, c.previous.last().distanceM)
+        assertEquals(365, c.length)
+    }
+
+    @Test
+    fun cumulativeWithoutRidesIsAllZero() {
+        val today = d(2026, 10, 31)
+        val c = assertNotNull(StatsCalculator.cumulative(emptyList(), StatsCalculator.periodOf(PeriodKind.MONTH, today, emptyList(), today), today))
+        assertEquals(31, c.current.size)
+        assertEquals(30, c.previous.size)
+        assertTrue((c.current + c.previous).all { it.distanceM == 0.0 && it.rides == 0 && it.movingTimeMs == 0L && it.ascentM == 0.0 })
+    }
+
+    @Test
+    fun cumulativeLeavesOutShortRides() {
+        val today = d(2026, 10, 31)
+        val rides = StatsCalculator.rides(listOf(ride(d(2026, 10, 30), distanceM = 9.9), ride(d(2026, 10, 30), distanceM = 10.0)))
+        val c = assertNotNull(StatsCalculator.cumulative(rides, StatsCalculator.periodOf(PeriodKind.MONTH, today, rides, today), today))
+        assertEquals(10.0, c.current.last().distanceM)
+        assertEquals(1, c.current.last().rides)
+    }
+
+    @Test
+    fun cumulativeAllIsNull() {
+        val today = d(2026, 10, 31)
+        val rides = listOf(ride(d(2026, 1, 1)))
+        assertNull(StatsCalculator.cumulative(rides, StatsCalculator.periodOf(PeriodKind.ALL, today, rides, today), today))
+    }
 }
