@@ -12,11 +12,15 @@ import com.cowork.bikerecoder.core.routing.RouteRequest
 import com.cowork.bikerecoder.core.routing.RouteResult
 import com.cowork.bikerecoder.core.routing.Router
 import com.cowork.bikerecoder.favorite.Favorite
+import com.cowork.bikerecoder.core.recording.RideSegment
+import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.favorite.FavoriteKind
+import com.cowork.bikerecoder.nav.RecordingLog
 import com.cowork.bikerecoder.ui.elevation.ElevationHandoff
 import com.cowork.bikerecoder.ui.elevation.ElevationText
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
@@ -37,6 +41,7 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import java.time.LocalDate
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlanViewModelTest {
@@ -78,6 +83,7 @@ class PlanViewModelTest {
     private var addresses: suspend (GeoPoint) -> String? = { null }
     private var usualSpeed: suspend () -> Double = { UsualSpeed.DEFAULT_MPS }
     private val handoff = ElevationHandoff()
+    private val log = RecordingLog()
 
     private fun viewModel() = PlanViewModel(
         router = router,
@@ -89,6 +95,7 @@ class PlanViewModelTest {
         usualSpeed = { usualSpeed() },
         handoff = handoff,
         compute = Dispatchers.Main,
+        log = log,
     )
 
     private fun TestScope.settle() {
@@ -469,7 +476,8 @@ class PlanViewModelTest {
     fun usualSpeedLine() = runTest {
         usualSpeed = { 18.4 / 3.6 }
         val vm = viewModel()
-        runCurrent()
+        vm.setDestination("A", a)
+        settle()
 
         assertEquals(18.4 / 3.6, vm.state.value.usualSpeedMps, 1e-9)
         assertEquals("평소 속도 18 km/h 기준", ElevationText.usualSpeedLine(vm.state.value.usualSpeedMps))
@@ -484,7 +492,58 @@ class PlanViewModelTest {
 
         assertEquals(UsualSpeed.DEFAULT_MPS, vm.state.value.usualSpeedMps, 1e-9)
         assertEquals(14_000.0 / UsualSpeed.DEFAULT_MPS, vm.state.value.durationSeconds!!, 1e-6)
+        assertEquals(1, log.messages.size, log.messages.toString())
     }
+
+    /** A hung store does not leave the plan computing: after 2 s the default speed is used. */
+    @Test
+    fun aHungUsualSpeedReadTimesOutToTheDefault() = runTest {
+        usualSpeed = { awaitCancellation() }
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+        assertEquals(RouteUiState.Loading, vm.state.value.route)
+
+        advanceTimeBy(PlanViewModel.USUAL_SPEED_TIMEOUT_MS)
+        runCurrent()
+        assertInstanceOf(RouteUiState.Ready::class.java, vm.state.value.route)
+        assertEquals(UsualSpeed.DEFAULT_MPS, vm.state.value.usualSpeedMps, 1e-9)
+        assertEquals(14_000.0 / UsualSpeed.DEFAULT_MPS, vm.state.value.durationSeconds!!, 1e-6)
+        assertEquals(1, log.messages.size, log.messages.toString())
+    }
+
+    /** New rides recorded meanwhile (the view model lives with the Activity): the next route uses the new usual speed. */
+    @Test
+    fun everyRouteReadsTheUsualSpeedAgain() = runTest {
+        var segments = listOf(ride(1, 18_000.0, 3_600)) // 5 m/s
+        var reads = 0
+        usualSpeed = {
+            reads++
+            UsualSpeed.of(segments)
+        }
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+        assertEquals(5.0, vm.state.value.usualSpeedMps, 1e-9)
+        assertEquals(2_800.0, vm.state.value.durationSeconds!!, 1e-6)
+
+        segments = segments + ride(2, 22_000.0, 3_600) // 40 km in 7,200 s
+        vm.setProfile(RouteProfile.SHORTEST)
+        settle()
+
+        assertEquals(2, reads)
+        assertEquals(40_000.0 / 7_200.0, vm.state.value.usualSpeedMps, 1e-9)
+        assertEquals(14_000.0 / (40_000.0 / 7_200.0), vm.state.value.durationSeconds!!, 1e-6)
+    }
+
+    private fun ride(id: Long, distanceM: Double, movingSec: Long) = RideSegment(
+        id = id,
+        tripId = 1,
+        startedAt = id * 10_000_000,
+        endedAt = id * 10_000_000 + movingSec * 1_000,
+        localDate = LocalDate.of(2026, 10, 1),
+        totals = SegmentTotals.ZERO.copy(distanceM = distanceM, movingTimeMs = movingSec * 1_000),
+    )
 
     @Test
     fun elevationAndDurationAreClearedWhileRecomputing() = runTest {

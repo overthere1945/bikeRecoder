@@ -13,6 +13,7 @@ import com.cowork.bikerecoder.androidWarnLog
 import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.navigation.AheadOfRider
 import com.cowork.bikerecoder.core.navigation.NavState
+import com.cowork.bikerecoder.core.navigation.OffRouteDetector
 import com.cowork.bikerecoder.core.stats.RideStat
 import com.cowork.bikerecoder.core.voice.KoreanPhrases
 import com.cowork.bikerecoder.nav.FinishReason
@@ -338,7 +339,7 @@ data class AheadPanel(
 /**
  * The "앞길 고도" of [nav] at its distance along the route; null for a route without elevation (no profile or no
  * [NavState.ahead]), where the panel stays as it was before V1.7.0 (spec §3.4). Off the route means the rider is at least
- * [OFF_ROUTE_M] beside it (the session's own off-route distance), as well as while a reroute runs.
+ * [OffRouteDetector.DEFAULT_THRESHOLD_M] beside it (the session's own off-route distance), as well as while a reroute runs.
  */
 fun aheadPanel(nav: NavState): AheadPanel? {
     val profile = nav.profile ?: return null
@@ -348,12 +349,9 @@ fun aheadPanel(nav: NavState): AheadPanel? {
         line = ElevationText.aheadLine(ahead),
         strip = AheadOfRider.strip(profile, d),
         reachesDestination = d + AheadOfRider.WINDOW_M >= nav.route.cumulativeM.last(),
-        dimmed = nav.rerouting || nav.progress.lateralOffsetM >= OFF_ROUTE_M,
+        dimmed = nav.rerouting || nav.progress.lateralOffsetM >= OffRouteDetector.DEFAULT_THRESHOLD_M,
     )
 }
-
-/** How far beside the route the rider is off it (the same 40 m as [com.cowork.bikerecoder.core.navigation.OffRouteDetector]). */
-const val OFF_ROUTE_M = 40.0
 
 /** What the guidance screen shows once guidance finished (spec §3.3, §3.4). */
 sealed interface FinishedView {

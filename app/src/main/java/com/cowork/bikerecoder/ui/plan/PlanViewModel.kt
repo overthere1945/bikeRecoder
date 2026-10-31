@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
+import com.cowork.bikerecoder.WarnLog
+import com.cowork.bikerecoder.androidWarnLog
 import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.elevation.RideTimeEstimator
 import com.cowork.bikerecoder.core.elevation.UsualSpeed
@@ -25,9 +27,7 @@ import com.cowork.bikerecoder.ui.common.routeFailureText
 import com.cowork.bikerecoder.ui.elevation.ElevationHandoff
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,6 +39,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The route being planned. Scoped to the Activity so the main screen's long-press sheet, the search
@@ -51,9 +52,10 @@ import kotlinx.coroutines.withContext
  * @param defaultProfile the profile preselected from settings (used unless the user already picked one).
  * @param locations the shared current-location state; fixes older than [MAX_FIX_AGE_MS] (by `timeMillis`
  *   against [clock]) are ignored and the computation waits for a fresh one.
- * @param usualSpeed reads the usual speed (V1.7.0 spec §1.6) once, when the view model is created; a failed read is
- *   [UsualSpeed.DEFAULT_MPS]. A route is published once it is known, with its time at that speed corrected for the
- *   climbs ([RideTimeEstimator], spec §2.5) and its elevation profile computed on [compute].
+ * @param usualSpeed reads the usual speed (V1.7.0 spec §1.6). It is read again for every route found (this view model
+ *   lives with the Activity, rides recorded meanwhile count); a read that fails or takes longer than
+ *   [USUAL_SPEED_TIMEOUT_MS] is logged and [UsualSpeed.DEFAULT_MPS]. The route is published with that speed, its time at
+ *   that speed corrected for the climbs ([RideTimeEstimator], spec §2.5) and its elevation profile computed on [compute].
  * @param handoff where [openElevation] hands the profile and route line to the "고도" map screen.
  */
 class PlanViewModel(
@@ -64,9 +66,10 @@ class PlanViewModel(
     private val clock: () -> Long = System::currentTimeMillis,
     /** Address of a long-pressed point, null when unknown. */
     addressOf: suspend (GeoPoint) -> String? = { null },
-    usualSpeed: suspend () -> Double = { UsualSpeed.DEFAULT_MPS },
+    private val usualSpeed: suspend () -> Double = { UsualSpeed.DEFAULT_MPS },
     private val handoff: ElevationHandoff = ElevationHandoff(),
     private val compute: CoroutineDispatcher = Dispatchers.Default,
+    private val log: WarnLog = androidWarnLog(TAG),
 ) : ViewModel() {
 
     private val lookup = PlaceLookup(addressOf, viewModelScope)
@@ -85,19 +88,6 @@ class PlanViewModel(
     private var nextKey = 1L
     private var profileChosen = false
     private var latestDefault = RouteProfile.CYCLEWAY_FIRST
-
-    /** The usual speed, read once; routes wait for it so their time is shown only once. */
-    private val usualSpeedRead: Deferred<Double> = viewModelScope.async {
-        val mps = try {
-            usualSpeed()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            UsualSpeed.DEFAULT_MPS
-        }
-        _state.update { it.copy(usualSpeedMps = mps) }
-        mps
-    }
 
     init {
         viewModelScope.launch {
@@ -247,16 +237,31 @@ class PlanViewModel(
             is RouteResult.Success -> {
                 val route = result.route
                 val elevation = withContext(compute) { ElevationProfile.fromRoute(route) }
-                val seconds = RideTimeEstimator.seconds(elevation, 0.0, route.summary.totalDistanceM, usualSpeedRead.await())
-                publish(stops, profile, RouteUiState.Ready(route), startable = dataReady, elevation, seconds)
+                val usual = readUsualSpeed()
+                val seconds = RideTimeEstimator.seconds(elevation, 0.0, route.summary.totalDistanceM, usual)
+                publish(stops, profile, RouteUiState.Ready(route), startable = dataReady, elevation, seconds, usual)
             }
             is RouteResult.Failure -> publish(stops, profile, RouteUiState.Error(routeFailureText(result.reason)), startable = false)
         }
     }
 
+    /** The usual speed now; [UsualSpeed.DEFAULT_MPS] (logged) if the read fails or hangs. */
+    private suspend fun readUsualSpeed(): Double {
+        val mps = try {
+            withTimeoutOrNull(USUAL_SPEED_TIMEOUT_MS) { usualSpeed() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn("Could not read the recent rides; the usual speed is the default", e)
+            return UsualSpeed.DEFAULT_MPS
+        }
+        if (mps == null) log.warn("Reading the recent rides took over $USUAL_SPEED_TIMEOUT_MS ms; the usual speed is the default", null)
+        return mps ?: UsualSpeed.DEFAULT_MPS
+    }
+
     /**
-     * Publishes only if the inputs are still the ones this computation started from. [elevation] and [durationSeconds]
-     * belong to a Ready [route] (null otherwise).
+     * Publishes only if the inputs are still the ones this computation started from. [elevation], [durationSeconds] and
+     * [usualSpeedMps] (what [durationSeconds] was computed with) belong to a Ready [route] (null / unchanged otherwise).
      */
     private fun publish(
         stops: List<PlannedStop>,
@@ -265,6 +270,7 @@ class PlanViewModel(
         startable: Boolean,
         elevation: ElevationProfile? = null,
         durationSeconds: Double? = null,
+        usualSpeedMps: Double? = null,
     ) {
         _state.update { s ->
             if (s.stops != stops || s.profile != profile) {
@@ -275,6 +281,7 @@ class PlanViewModel(
                     canStart = startable && route is RouteUiState.Ready,
                     elevation = elevation,
                     durationSeconds = durationSeconds,
+                    usualSpeedMps = usualSpeedMps ?: s.usualSpeedMps,
                 )
             }
         }
@@ -283,6 +290,10 @@ class PlanViewModel(
     companion object {
         const val RECOMPUTE_DEBOUNCE_MS = 300L
         const val MAX_FIX_AGE_MS = 30_000L
+
+        /** A usual speed read taking longer than this falls back to the default (a hung store must not block the route). */
+        const val USUAL_SPEED_TIMEOUT_MS = 2_000L
+        private const val TAG = "PlanViewModel"
         private const val MIN_DESTINATION_DISTANCE_M = 50.0
         private val MSG_NO_SEGMENTS = routeFailureText(RouteFailure.NO_SEGMENT_DATA)
         private const val MSG_NO_LOCATION = "현재 위치를 확인하는 중입니다"

@@ -17,7 +17,7 @@ sealed interface RouteUiState {
 }
 
 /**
- * [usualSpeedMps]: 평소 속도(V1.7.0 스펙 §1.6), 읽기 전에는 기본 15 km/h.
+ * [usualSpeedMps]: 평소 속도(V1.7.0 스펙 §1.6). 경로를 찾을 때마다 다시 읽은 값이며, 처음에는 기본 15 km/h.
  * [elevation]: Ready 경로의 고도 단면(고도가 없으면 null). [durationSeconds]: Ready 경로를 평소 속도로 오르막 보정해 간
  * 시간(§1.7, §2.5). 둘 다 경로가 Ready가 아니면 null.
  */

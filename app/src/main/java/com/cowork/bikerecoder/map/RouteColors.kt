@@ -34,4 +34,8 @@ fun pathColors(paths: List<List<GeoPoint>>, profile: ElevationProfile, flatHex: 
 
 /** "#RRGGBB" of [band], or [flatHex] for FLAT when given. */
 fun bandHex(band: GradeBand, flatHex: String? = null): String =
-    if (band == GradeBand.FLAT && flatHex != null) flatHex else String.format(Locale.ROOT, "#%06X", band.argb and 0xFFFFFF)
+    if (band == GradeBand.FLAT && flatHex != null) flatHex else BAND_HEX.getValue(band)
+
+/** The bands' "#RRGGBB", formatted once (a long route asks for one per point). */
+private val BAND_HEX: Map<GradeBand, String> =
+    GradeBand.entries.associateWith { String.format(Locale.ROOT, "#%06X", it.argb and 0xFFFFFF) }

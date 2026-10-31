@@ -105,7 +105,7 @@ class NavigationSession(
 
     private companion object {
         const val MAX_ACCURACY_M = 30f
-        const val OFF_ROUTE_THRESHOLD_M = 40.0
+        const val OFF_ROUTE_THRESHOLD_M = OffRouteDetector.DEFAULT_THRESHOLD_M
     }
 
     private val _updates = MutableSharedFlow<NavUpdate>(extraBufferCapacity = 64)

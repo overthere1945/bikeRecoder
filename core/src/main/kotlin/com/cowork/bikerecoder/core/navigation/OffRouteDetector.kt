@@ -12,11 +12,16 @@ import com.cowork.bikerecoder.core.model.LocationFix
  * `onRerouteFinished`가 호출되기 전까지는 다시 true를 반환하지 않는다.
  */
 class OffRouteDetector(
-    private val thresholdM: Double = 40.0,
+    private val thresholdM: Double = DEFAULT_THRESHOLD_M,
     private val durationMs: Long = 8_000,
     private val maxAccuracyM: Float = 30f,
     private val minRerouteIntervalMs: Long = 15_000,
 ) {
+
+    companion object {
+        /** 이탈로 보는 경로와의 거리(m) 기본값. 앱의 "앞길 고도" 띠도 이 거리에서 흐려진다. */
+        const val DEFAULT_THRESHOLD_M = 40.0
+    }
 
     private var streakStartMillis: Long? = null
     private var awaitingRerouteFinish: Boolean = false
