@@ -838,6 +838,7 @@ fun BikeNavHost(
                 tileSource = container.tileSource,
                 thumbnails = container.photoThumbnails,
                 onOpenSegment = { segmentId -> navController.navigate(Routes.segmentDetail(segmentId)) },
+                onOpenElevation = { navController.openElevation(ElevationSource.Trip(tripId)) },
                 onBack = { navController.popBackStack() },
                 photoPrompt = { PhotoPrompt(container) },
                 heartRateGate = heartRateGate,
@@ -906,13 +907,15 @@ fun BikeNavHost(
         composable(
             Routes.SEGMENT_DETAIL,
             arguments = listOf(navArgument(SegmentDetailViewModel.ARG_SEGMENT) { type = NavType.LongType }),
-        ) {
+        ) { entry ->
             val viewModel: SegmentDetailViewModel = viewModel(factory = SegmentDetailViewModel.factory(container))
+            val segmentId = entry.arguments?.getLong(SegmentDetailViewModel.ARG_SEGMENT) ?: -1L
             SegmentDetailScreen(
                 viewModel = viewModel,
                 tileSource = container.tileSource,
                 thumbnails = container.photoThumbnails,
                 onBack = { navController.popBackStack() },
+                onOpenElevation = { navController.openElevation(ElevationSource.Segment(segmentId)) },
                 photoPrompt = { PhotoPrompt(container) },
                 heartRateGate = heartRateGate,
             )

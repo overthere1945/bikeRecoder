@@ -11,6 +11,7 @@ import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
 import com.cowork.bikerecoder.feed.TripRegions
+import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.post.HeartRateColor
 import com.cowork.bikerecoder.core.post.HeartRateStats
 import com.cowork.bikerecoder.core.post.HeartRateSummary
@@ -78,6 +79,10 @@ import java.time.ZoneId
  * [이미지 만들기]; [media] — the videos and images made from it ("만든 영상·이미지"), newest first. Each load (opening the
  * screen, coming back to it) drops the made files the gallery no longer has: only when [mediaExists] says false, never
  * when the check fails (ruling V6).
+ *
+ * V1.7.0 (spec §1.5, §2.3): [total] carries the trip's descent (the segments' sum) and highest altitude (their maximum, null
+ * when none knows it); [profile] is the elevation profile of the segments' points in start order (null without usable
+ * elevation), computed on [compute] and read again with the tracks.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class TripDetailViewModel(
@@ -105,6 +110,16 @@ class TripDetailViewModel(
 
     private val _total = MutableStateFlow(SegmentTotals.ZERO)
     val total: StateFlow<SegmentTotals> = _total.asStateFlow()
+
+    private val _profile = MutableStateFlow<ElevationProfile?>(null)
+
+    /** The trip's elevation profile (spec §2.3); null while it is computed and when the trip has no usable elevation. */
+    val profile: StateFlow<ElevationProfile?> = _profile.asStateFlow()
+
+    private val _profileLoaded = MutableStateFlow(false)
+
+    /** True once [profile] is computed (null then means "no elevation"), so the screen does not flash "고도 정보가 없습니다". */
+    val profileLoaded: StateFlow<Boolean> = _profileLoaded.asStateFlow()
 
     private val _canMakeMedia = MutableStateFlow(false)
 
@@ -349,8 +364,12 @@ class TripDetailViewModel(
             if (segments != trackOf) {
                 // In the order listed (by date, then start); the segments' points are read one after another.
                 val ordered = _segmentsByDate.value.values.flatten()
-                tracks.value = ordered.map { it.id to rideStore.points(it.id) }
+                val read = ordered.map { it.id to rideStore.points(it.id) }
+                tracks.value = read
                 trackOf = segments
+                val byStart = ordered.indices.sortedBy { ordered[it].startedAt }.map { read[it].second }
+                _profile.value = withContext(compute) { ElevationProfile.fromSegments(byStart.filter { it.isNotEmpty() }) }
+                _profileLoaded.value = true
             }
             askRegion(segments)
         }

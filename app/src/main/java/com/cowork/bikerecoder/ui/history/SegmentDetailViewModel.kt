@@ -9,6 +9,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.HeartRateCharts
 import com.cowork.bikerecoder.core.post.HeartRateColor
@@ -54,14 +55,15 @@ sealed interface SegmentDetailState {
     data class Loaded(
         val segment: RideSegment,
         val track: List<GeoPoint>,
-        val altitude: List<ChartPoint>,
+        /** The segment's elevation profile (V1.7.0 spec §2.4); null without usable elevation. */
+        val profile: ElevationProfile?,
         val speed: List<ChartPoint>,
     ) : SegmentDetailState
 }
 
 /**
- * One segment (spec §3.5): its track for the map and the altitude/speed charts over distance, its photos (spec §2.3)
- * and its heart rate (spec §3.3: the row, the chart over the same distance axis, the [기본]/[심박] track colours).
+ * One segment (spec §3.5): its track for the map, the elevation profile (V1.7.0) and the speed chart over distance, its
+ * photos (spec §2.3) and its heart rate (spec §3.3: the row, the chart over the same distance axis, the [기본]/[심박] track colours).
  * Opening it drops the photos deleted from the gallery and asks for a post-processing pass, once.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -159,7 +161,7 @@ class SegmentDetailViewModel(
                 SegmentDetailState.Loaded(
                     segment = segment,
                     track = points.map { it.point },
-                    altitude = RideCharts.altitude(points),
+                    profile = ElevationProfile.fromSegments(listOf(points).filter { it.isNotEmpty() }),
                     speed = RideCharts.speedKmh(points),
                 )
             }

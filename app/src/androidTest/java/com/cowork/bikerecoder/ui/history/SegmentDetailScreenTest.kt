@@ -27,6 +27,7 @@ import com.cowork.bikerecoder.post.FakePostStore
 import com.cowork.bikerecoder.post.HealthAvailability
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.SegmentExtras
+import com.cowork.bikerecoder.ui.elevation.ElevationTags
 import com.cowork.bikerecoder.ui.health.HeartRateGate
 import com.cowork.bikerecoder.ui.health.TrackColorTags
 import com.cowork.bikerecoder.ui.photo.fakeThumbnails
@@ -58,7 +59,7 @@ class SegmentDetailScreenTest {
         id = 1, tripId = 1, startedAt = 1_000L, endedAt = 4_000L, localDate = LocalDate.of(2026, 10, 18),
         totals = SegmentTotals.ZERO.copy(distanceM = 1_000.0, movingTimeMs = 60_000),
     )
-    private val rides = ReadOnlyRides(listOf(segment), pointsPerSegment = 4)
+    private val rides = ReadOnlyRides(listOf(segment), pointsPerSegment = 4, elevationAt = { 20.0 + it * 5.0 })
     private val postStore = FakePostStore { listOf(segment) }
     private val heartRate = FakeHeartRateSource()
     private val processor = PostProcessor(
@@ -85,17 +86,39 @@ class SegmentDetailScreenTest {
         )
     }
 
-    private fun show(gate: HeartRateGate? = null) {
+    private fun show(gate: HeartRateGate? = null, onOpenElevation: () -> Unit = {}) {
         val vm = SegmentDetailViewModel(rides, 1, postStore, processor)
         composeRule.setContent {
             MaterialTheme {
-                SegmentDetailScreen(vm, NoTiles, fakeThumbnails(), onBack = {}, heartRateGate = gate) { c, modifier ->
+                SegmentDetailScreen(
+                    vm, NoTiles, fakeThumbnails(), onBack = {}, onOpenElevation = onOpenElevation, heartRateGate = gate,
+                ) { c, modifier ->
                     content = c
                     Box(modifier.testTag(MAP))
                 }
             }
         }
         composeRule.waitUntil(5_000) { content?.track?.isNotEmpty() == true }
+    }
+
+    /** V1.7.0 spec §2.4: the single-colour altitude line chart is the small elevation chart; speed stays a line chart. */
+    @Test
+    fun elevationChartReplacesLineChart() {
+        var opened = 0
+        show(onOpenElevation = { opened++ })
+
+        composeRule.onNodeWithText("고도").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag(ElevationTags.CHART).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("고도 정보가 없습니다").assertDoesNotExist()
+        // The old chart wrote its lowest and highest value (20m, 35m) as text; the elevation chart draws them.
+        composeRule.onNodeWithText("35m").assertDoesNotExist()
+        composeRule.onNodeWithText("속도").performScrollTo().assertIsDisplayed()
+        // The speed chart still writes its range: "평균/최고" plus the chart's highest and lowest value.
+        assertTrue(composeRule.onAllNodesWithText("km/h", substring = true).fetchSemanticsNodes().size >= 3)
+
+        composeRule.onNodeWithTag(ElevationTags.SHOW_ON_MAP).performScrollTo().performClick()
+        composeRule.onNodeWithTag(ElevationTags.CHART).performClick()
+        assertEquals(2, opened)
     }
 
     @Test

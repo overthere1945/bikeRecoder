@@ -12,14 +12,21 @@ import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.map.TileSource
 import java.time.LocalDate
 
-/** [pointsPerSegment] points per segment, 1 s and 0.001° apart; writes are not expected. */
-internal class ReadOnlyRides(private val segments: List<RideSegment>, private val pointsPerSegment: Int = 2) : RideStore {
+/**
+ * [pointsPerSegment] points per segment, 1 s and 0.001° apart, the i-th at the altitude [elevationAt] gives (none by
+ * default); writes are not expected.
+ */
+internal class ReadOnlyRides(
+    private val segments: List<RideSegment>,
+    private val pointsPerSegment: Int = 2,
+    private val elevationAt: (Int) -> Double? = { null },
+) : RideStore {
     override suspend fun segment(id: Long) = segments.firstOrNull { it.id == id }
     override suspend fun segments(tripId: Long) = segments.filter { it.tripId == tripId }
     override suspend fun points(segmentId: Long): List<TrackPoint> {
         val s = segment(segmentId) ?: return emptyList()
         return (0 until pointsPerSegment).map { i ->
-            TrackPoint(s.startedAt + i * 1_000L, GeoPoint(37.5 + i * 0.001, 127.0), null, 5f, 5f)
+            TrackPoint(s.startedAt + i * 1_000L, GeoPoint(37.5 + i * 0.001, 127.0), elevationAt(i), 5f, 5f)
         }
     }
     override suspend fun openSegments() = segments.filter { it.endedAt == null }

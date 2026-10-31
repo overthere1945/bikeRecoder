@@ -340,10 +340,27 @@ class FeedViewModelTest {
         val loaded = vm.state.value as SegmentDetailState.Loaded
         assertEquals(id, loaded.segment.id)
         assertEquals(points.map { it.point }, loaded.track)
-        assertEquals(listOf(100.0, 101.0, 102.0), loaded.altitude.map { it.value })
+        // 10 m is too short for an elevation profile (spec §1.1: 50 m).
+        assertNull(loaded.profile)
         // No recorded speed: the first point has no predecessor, the others are 5 m/s = 18 km/h.
         assertEquals(2, loaded.speed.size)
         loaded.speed.forEach { assertEquals(18.0, it.value, 1e-6) }
+    }
+
+    @Test
+    fun segmentDetailHasElevationProfile() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        val id = segment(1, startedAt = 100)
+        val points = (0..60).map { i ->
+            TrackPoint(i * 1_000L, GeoPoint(37.5 + Math.toDegrees(i * 10.0 / 6_371_008.8), 127.0), 100.0 + i * 0.5, null, 5f)
+        }
+        rides.appendPoints(id, points, SegmentTotals.ZERO)
+        val vm = segmentDetail(id)
+        advanceUntilIdle()
+
+        val profile = requireNotNull((vm.state.value as SegmentDetailState.Loaded).profile)
+        assertEquals(600.0, profile.totalM, 1.0)
+        assertEquals(emptyList<Double>(), profile.boundariesM)
     }
 
     @Test
