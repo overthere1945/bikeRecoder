@@ -2,7 +2,7 @@
 
 이 파일은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/) 형식을 따르며, 버전 규칙은 [docs/VERSIONING.md](docs/VERSIONING.md)를 따른다.
 
-## [1.7.0] - 개발 중
+## [1.7.0] - 2026-11-01
 
 여행과 계획한 경로의 고도를 그래프와 지도로 보여 주고, 길안내 중에는 앞길 오르막을 미리 알려 주며, 기록과 경로를 GPX·KML 파일로 내보내는 "고도와 내보내기"를 더함. 서버·인터넷 없이 휴대폰 안에서 계산함. 기록 엔진(`RecordingSession`·`AscentCounter`), 회전 안내·1 km 안내 규칙, 영상·공유·가져오기, DB(8판)는 그대로.
 
@@ -12,7 +12,7 @@
 - 고도 (구간 상세): 고도 그래프가 이전의 고도 선을 대신함
 - 경로 미리보기: 평소 속도(1 km 이상인 최근 10구간의 평균, 없으면 기본 15 km/h)에 오르막 보정(오르막 0.12 / 내리막 0.03, 하한 6 km/h·상한 1.3배)을 더한 예상 시간, `평소 속도 n km/h 기준` 줄, 높이 100dp 고도 그래프
 - 길안내: 경사 색 경로 선(평지는 안내 파란색 그대로), 아래 판 "앞길 고도" 띠와 안내 한 줄(앞 2 km), 큰 오르막마다 한 번 음성 `300미터 앞 오르막, 800미터, 평균 6퍼센트입니다`, 도착 예정 시각도 평소 속도와 오르막 보정으로 계산
-- 내보내기: 여행(여행 화면 [⋮])과 계획한 경로(경로 미리보기 [⋮])를 GPX 1.1(심박은 `gpxtpx:hr`, 앞뒤 ±5초 안의 값)과 KML 2.2로 `Download/bikeRecoder/`에 저장, 저장 뒤 [공유] [파일 열기] [닫기] 창
+- 내보내기: 여행(여행 화면 [⋮])과 계획한 경로(경로 미리보기 [⋮])를 GPX 1.1(심박은 `gpxtpx:hr`, 앞뒤 ±5초 안의 값)과 KML 2.2로 `Download/bikeRecoder/`에 저장, 저장 뒤 [공유] [파일 열기] [닫기] 창. 같은 이름이 있으면 앱이 `… (1).gpx`처럼 번호를 확장자 앞에 붙임(S25는 그냥 두면 `….gpx (1)`로 만들어 다른 앱이 열지 못했음)
 - core: `elevation/`(`ElevationProfile`, `GradeBand`, `ClimbFinder`, `UsualSpeed`, `RideTimeEstimator`)와 `export/`(`GpxWriter`, `KmlWriter`). `Route`에 점별 고도(`elevationsM`), `BRouterGeoJsonParser`가 좌표의 세 번째 값을 읽음
 
 ### 변경
