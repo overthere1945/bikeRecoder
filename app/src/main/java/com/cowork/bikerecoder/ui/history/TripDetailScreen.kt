@@ -12,15 +12,23 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -77,6 +85,10 @@ fun TripDetailScreen(
     val refetching by viewModel.refetching.collectAsStateWithLifecycle()
     val canMakeMedia by viewModel.canMakeMedia.collectAsStateWithLifecycle()
     val media by viewModel.media.collectAsStateWithLifecycle()
+    val title by viewModel.title.collectAsStateWithLifecycle()
+    val customTitle by viewModel.customTitle.collectAsStateWithLifecycle()
+    val autoTitle by viewModel.autoTitle.collectAsStateWithLifecycle()
+    var renaming by rememberSaveable { mutableStateOf(false) }
     val access = rememberHeartRateAccess(heartRateGate)
     val viewer = rememberPhotoViewerState()
     val mapPhotos = rememberMapPhotos(photos, thumbnails)
@@ -85,6 +97,8 @@ fun TripDetailScreen(
     TripDetailContent(
         segmentsByDate = segmentsByDate,
         total = total,
+        title = title,
+        onRename = { renaming = true },
         dialog = dialog,
         onOpenSegment = onOpenSegment,
         onRequestDelete = viewModel::requestDeleteSegment,
@@ -127,6 +141,17 @@ fun TripDetailScreen(
         },
     )
     PhotoViewerHost(viewer, photos, thumbnails, onToggleHidden = { viewModel.setHidden(it, hidden = !it.hidden) })
+    if (renaming) {
+        RenameTripDialog(
+            current = customTitle,
+            placeholder = autoTitle.orEmpty(),
+            onSave = {
+                viewModel.rename(it)
+                renaming = false
+            },
+            onDismiss = { renaming = false },
+        )
+    }
 }
 
 /**
@@ -137,7 +162,7 @@ internal fun tripRefetchAction(access: HeartRateAccess, refetch: () -> Unit): ((
     refetch.takeIf { access == HeartRateAccess.GRANTED }
 
 /**
- * The trip's map ([map], every day's track and photos; outside the scrolling part, so it keeps its drags), then
+ * The trip's title row ([title] with [✎] that calls [onRename], V1.4.0 spec §2.5) above everything else, then the map ([map], every day's track and photos; outside the scrolling part, so it keeps its drags), then
  * [videos] ([영상 만들기] [이미지 만들기] and "만든 영상·이미지", V1.3.0 spec §1.1, §5.1),
  * [photos] (the photo strip and card, spec §2.3), the totals (with the trip's [heartRate], spec §3.3) and its segments
  * under a header per date (with that day's average heart rate); a long press asks to delete.
@@ -158,12 +183,15 @@ fun TripDetailContent(
     onRefetchHeartRate: (() -> Unit)? = null,
     refetching: Boolean = false,
     videos: (@Composable () -> Unit)? = null,
+    title: String? = null,
+    onRename: (() -> Unit)? = null,
 ) {
     HistoryScaffold(title = "여행 기록", onBack = onBack) {
         if (segmentsByDate.isEmpty()) {
             EmptyText()
         } else {
             Column(modifier = Modifier.fillMaxSize()) {
+                if (title != null && onRename != null) TripTitleRow(title, onRename)
                 map?.invoke(Modifier.fillMaxWidth().height(240.dp))
                 TripDetailList(
                     segmentsByDate, total, heartRate, onOpenSegment, onRequestDelete, videos, photos, onRefetchHeartRate,
@@ -173,6 +201,24 @@ fun TripDetailContent(
         }
     }
     HistoryDialogs(dialog, CONFIRM_DELETE_SEGMENT, onConfirmDelete, onDismiss)
+}
+
+/** The shown title in `titleLarge`, and [✎] on the right: "제목 바꾸기". */
+@Composable
+private fun TripTitleRow(title: String, onRename: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            title,
+            style = MaterialTheme.typography.titleLarge,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).padding(vertical = 8.dp),
+        )
+        IconButton(onClick = onRename) { Icon(Icons.Filled.Edit, contentDescription = RENAME_TITLE) }
+    }
 }
 
 @Composable

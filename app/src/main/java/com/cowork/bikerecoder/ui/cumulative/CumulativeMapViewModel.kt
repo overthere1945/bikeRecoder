@@ -1,7 +1,9 @@
 package com.cowork.bikerecoder.ui.cumulative
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
@@ -101,7 +103,8 @@ data class CumulativeMapState(
  *
  * [fit] frames every route; it is renewed whenever more routes are shown, until the user moves the map
  * ([onMapMoved]) or highlights a ride ([select], which frames that ride) — after that the camera is theirs.
- * [today] dates [이번 주] and [이번 달].
+ * [today] dates [이번 주] and [이번 달]. [initial] is the period it opens on (the stats tab's period, V1.4.0 spec §3.5;
+ * [전체] without one); a week given by its Monday alone is shown as a week of a month ([shownAsWeekOfMonth]).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class CumulativeMapViewModel(
@@ -110,11 +113,12 @@ class CumulativeMapViewModel(
     private val log: WarnLog = WarnLog { _, _ -> },
     private val compute: CoroutineDispatcher = Dispatchers.Default,
     private val today: () -> LocalDate = LocalDate::now,
+    initial: PeriodFilter = PeriodFilter(),
 ) : ViewModel() {
 
     /** Every ride ([CumulativeSummary.rides], newest first) and whether no pass ran or waited when read; null until read. */
     private val read = MutableStateFlow<Read?>(null)
-    private val choice = MutableStateFlow(Choice(PeriodFilter(), null))
+    private val choice = MutableStateFlow(Choice(shownAsWeekOfMonth(initial, today()), null))
     private val selection = MutableStateFlow<Long?>(null)
 
     val state: StateFlow<CumulativeMapState> = combine(read, choice, selection) { read, choice, selected ->
@@ -244,12 +248,42 @@ class CumulativeMapViewModel(
         /** Wait before reading again after a first read failed (sooner if a pass ends or a route comes). */
         const val RETRY_MS = 5_000L
 
+        const val ARG_YEAR = "year"
+        const val ARG_MONTH = "month"
+        const val ARG_WEEK_START = "weekStart"
+
+        /**
+         * The period the route asked for ([com.cowork.bikerecoder.ui.Routes.cumulative]): [ARG_YEAR] and [ARG_MONTH] −1
+         * and [ARG_WEEK_START] (an epoch day) [Long.MIN_VALUE] mean none; no arguments at all is [전체].
+         */
+        fun initialFilter(handle: SavedStateHandle): PeriodFilter = PeriodFilter(
+            year = handle.get<Int>(ARG_YEAR)?.takeIf { it >= 0 },
+            month = handle.get<Int>(ARG_MONTH)?.takeIf { it >= 0 },
+            weekStart = handle.get<Long>(ARG_WEEK_START)?.takeIf { it != Long.MIN_VALUE }?.let(LocalDate::ofEpochDay),
+        )
+
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer {
-                CumulativeMapViewModel(container.postStore, container.postProcessor, androidWarnLog("CumulativeMap"))
+                CumulativeMapViewModel(
+                    container.postStore,
+                    container.postProcessor,
+                    androidWarnLog("CumulativeMap"),
+                    initial = initialFilter(createSavedStateHandle()),
+                )
             }
         }
     }
+}
+
+/**
+ * [period] as the period chips show it: a week given by its Monday alone gets the year and month it is shown in, today's
+ * month for this week (as [이번 주] has it) and its Monday's month for any other. Every other period is kept as it is.
+ */
+internal fun shownAsWeekOfMonth(period: PeriodFilter, today: LocalDate): PeriodFilter {
+    val start = period.weekStart ?: return period
+    if (period.year != null) return period
+    val month = if (today >= start && today <= start.plusDays(6)) today else start
+    return period.copy(year = month.year, month = month.monthValue)
 }
 
 private class Read(val rides: List<CumulativeEntry>, val idle: Boolean)

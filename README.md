@@ -4,7 +4,16 @@ Bicycle navigation, route tracking, and photo video generator app based on trave
 
 자전거 주행을 기록하고, 자전거도로를 우선하는 길안내를 하며, 주행 경로를 사진과 MP4 영상으로 만들어 주는 개인용 안드로이드 앱입니다. 서버 없이 모든 처리를 휴대폰 안에서 합니다.
 
-- 현재 버전: **V1.3.1** · V1.0.0~V1.3.1 출시, 모두 실주행 검증 대기 — 버전 규칙: [docs/VERSIONING.md](docs/VERSIONING.md), 변경 이력: [CHANGELOG.md](CHANGELOG.md)
+앱 아래쪽 탭(V1.4.0부터):
+
+| 탭 | 내용 |
+|---|---|
+| 지도 | 장소 검색, 길안내, 기록 시작 (앱을 열면 늘 이 탭부터) |
+| 요약 | 이번 주 띠와 위성 지도 큰 카드로 지난 여행을 훑는 피드, 제목 바꾸기 |
+| 통계 | 주간·연간 목표, 연속 주행, 주·월·년·전체 통계, 개인 기록, 누적 지도 입구 |
+| 설정 | 기본 경로 성향, 기록 옵션, 경로 데이터, 내려받은 지도, 사진·심박 연결, 앱 버전 |
+
+- 현재 버전: **V1.4.0** · V1.0.0~V1.4.0 출시, 모두 실주행 검증 대기 — 버전 규칙: [docs/VERSIONING.md](docs/VERSIONING.md), 변경 이력: [CHANGELOG.md](CHANGELOG.md)
 - 대상 기기: Samsung Galaxy S26 (Android 17), Galaxy Watch7 (심박, Health Connect 경유)
 
 ## 로드맵
@@ -16,6 +25,7 @@ Bicycle navigation, route tracking, and photo video generator app based on trave
 | V1.2.0 | 여행과 후처리 | 여러 날 기록 묶기, 갤러리 사진 자동 매칭, Watch7 심박, 누적 경로 지도 (V1.2.1: 주행별 색·기록 카드·짧은 기록 정리) | 출시(`v1.2.0`·`v1.2.1`), 실주행 검증 대기 |
 | V1.3.0 | 영상과 이미지 | 요약 이미지, Relive 스타일 3D 영상(속도 비례, 사진 삽입), 기기 내 인코딩 | 출시(`v1.3.0`), 실주행 검증 대기 |
 | V1.3.1 | 영상 다듬기 | 위성 지도(브이월드), 가까운 움직이는 카메라, 빛나는 경로·숫자 띠·제목 카드, 자동 제목(시간대·지역) | 출시(`v1.3.1`), 실주행 검증 대기 |
+| V1.4.0 | 요약·통계 | 아래쪽 탭 [지도] [요약] [통계] [설정], 위성 지도 카드 피드와 이번 주 띠, 제목 바꾸기, 목표·연속 주행·기간 통계·개인 기록, 구간 요약의 목표 달성·신기록 줄 | 출시(`v1.4.0`), 실주행 검증 대기 |
 
 ## 기술 스택
 
@@ -116,6 +126,8 @@ $ANDROID_HOME/emulator/emulator -avd bike37 -no-snapshot &
 - [영상과 요약 이미지 설계 스펙](docs/superpowers/specs/2026-10-28-video-image-design.md)
 - [영상과 이미지 검증·실주행 체크리스트](docs/verification/video-field-test.md) (V1.3.1 절 포함)
 - [영상 다듬기 설계 스펙 (V1.3.1)](docs/superpowers/specs/2026-10-28-video-polish-design.md)
+- [요약·통계 탭 설계 스펙 (V1.4.0)](docs/superpowers/specs/2026-10-31-summary-stats-design.md)
+- [요약·통계 검증·실사용 점검표](docs/verification/summary-stats-field-test.md)
 - [변경 이력](CHANGELOG.md)
 
 ## 라이선스와 출처 표기

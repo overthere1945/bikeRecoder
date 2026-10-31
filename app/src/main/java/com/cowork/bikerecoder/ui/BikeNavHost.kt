@@ -10,6 +10,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableStateOf
@@ -29,6 +30,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.core.model.GeoPoint
+import com.cowork.bikerecoder.core.post.PeriodFilter
+import com.cowork.bikerecoder.data.AppSettings
 import com.cowork.bikerecoder.favorite.Favorite
 import com.cowork.bikerecoder.favorite.FavoriteKind
 import kotlinx.coroutines.flow.first
@@ -39,19 +42,22 @@ import com.cowork.bikerecoder.ui.onboarding.effectiveOnboardingStep
 import com.cowork.bikerecoder.ui.onboarding.readPermissionState
 import com.cowork.bikerecoder.ui.cumulative.CumulativeMapScreen
 import com.cowork.bikerecoder.ui.cumulative.CumulativeMapViewModel
+import com.cowork.bikerecoder.ui.feed.FeedScreen
+import com.cowork.bikerecoder.ui.feed.FeedViewModel
 import com.cowork.bikerecoder.ui.favorite.FavoriteChips
 import com.cowork.bikerecoder.ui.favorite.FavoriteDialogs
 import com.cowork.bikerecoder.ui.favorite.FavoriteEvent
 import com.cowork.bikerecoder.ui.favorite.FavoritesScreen
 import com.cowork.bikerecoder.ui.favorite.FavoritesViewModel
 import com.cowork.bikerecoder.ui.health.HeartRateGate
-import com.cowork.bikerecoder.ui.history.HistoryScreen
-import com.cowork.bikerecoder.ui.history.HistoryViewModel
 import com.cowork.bikerecoder.ui.history.SegmentDetailScreen
 import com.cowork.bikerecoder.ui.history.SegmentDetailViewModel
 import com.cowork.bikerecoder.ui.history.TripDetailScreen
 import com.cowork.bikerecoder.ui.history.TripDetailViewModel
 import com.cowork.bikerecoder.ui.main.MainScreen
+import com.cowork.bikerecoder.ui.main.MainTab
+import com.cowork.bikerecoder.ui.main.MainTabs
+import com.cowork.bikerecoder.ui.main.rideBandText
 import com.cowork.bikerecoder.ui.main.MainViewModel
 import com.cowork.bikerecoder.ui.plan.PlanMap
 import com.cowork.bikerecoder.ui.plan.PlanScreen
@@ -63,6 +69,9 @@ import com.cowork.bikerecoder.ui.pick.MapPickScreen
 import com.cowork.bikerecoder.ui.pick.MapPickViewModel
 import com.cowork.bikerecoder.ui.search.SearchScreen
 import com.cowork.bikerecoder.ui.settings.SettingsScreen
+import com.cowork.bikerecoder.ui.stats.GoalDialog
+import com.cowork.bikerecoder.ui.stats.StatsScreen
+import com.cowork.bikerecoder.ui.stats.StatsViewModel
 import com.cowork.bikerecoder.ui.settings.SettingsViewModel
 import com.cowork.bikerecoder.ui.search.SearchViewModel
 import com.cowork.bikerecoder.nav.NavUiState
@@ -105,11 +114,14 @@ object Routes {
     const val ARG_FROM_PLAN = "fromPlan"
     const val NAVIGATE_PATTERN = "$NAVIGATE?${NavigateViewModel.ARG_TRIP}={${NavigateViewModel.ARG_TRIP}}" +
         "&$ARG_FROM_PLAN={$ARG_FROM_PLAN}&${NavigateViewModel.ARG_RECORD_NOTICE}={${NavigateViewModel.ARG_RECORD_NOTICE}}"
-    const val SETTINGS = "settings"
     const val RECORD = "record"
     const val RECORD_PATTERN = "$RECORD?${RecordViewModel.ARG_TRIP}={${RecordViewModel.ARG_TRIP}}"
-    const val HISTORY = "history"
     const val CUMULATIVE = "cumulative"
+
+    /** The cumulative map opened on a period (V1.4.0 spec §3.5); see [cumulative]. */
+    const val CUMULATIVE_PATTERN = "$CUMULATIVE?${CumulativeMapViewModel.ARG_YEAR}={${CumulativeMapViewModel.ARG_YEAR}}" +
+        "&${CumulativeMapViewModel.ARG_MONTH}={${CumulativeMapViewModel.ARG_MONTH}}" +
+        "&${CumulativeMapViewModel.ARG_WEEK_START}={${CumulativeMapViewModel.ARG_WEEK_START}}"
     const val TRIP_DETAIL = "history/trip/{${TripDetailViewModel.ARG_TRIP}}"
     const val SEGMENT_DETAIL = "history/segment/{${SegmentDetailViewModel.ARG_SEGMENT}}"
 
@@ -127,6 +139,15 @@ object Routes {
             "&$ARG_SATELLITE_FALLBACK=$satelliteFallback"
 
     fun tripDetail(tripId: Long) = "history/trip/$tripId"
+
+    /**
+     * The cumulative map on [filter] (the stats tab's period, V1.4.0 spec §3.5): a missing year or month is −1, a missing
+     * week [Long.MIN_VALUE] (else its Monday's epoch day); an empty [PeriodFilter] is [전체].
+     */
+    fun cumulative(filter: PeriodFilter): String =
+        "$CUMULATIVE?${CumulativeMapViewModel.ARG_YEAR}=${filter.year ?: -1}" +
+            "&${CumulativeMapViewModel.ARG_MONTH}=${filter.month ?: -1}" +
+            "&${CumulativeMapViewModel.ARG_WEEK_START}=${filter.weekStart?.toEpochDay() ?: Long.MIN_VALUE}"
 
     /**
      * The search in register mode (spec §7.4, §8.2): a tapped place becomes this home or work, or (CUSTOM) is named as a
@@ -330,50 +351,118 @@ fun BikeNavHost(
             // The record-only start asks which trip, like [안내 시작] on the plan screen.
             val tripStart: TripStartViewModel = viewModel(factory = TripStartViewModel.factory(container))
             val startState by tripStart.state.collectAsStateWithLifecycle()
-            MainScreen(
-                viewModel = viewModel,
-                tileSource = container.tileSource,
-                currentLocation = container.currentLocation,
-                onOpenSearch = { if (isCurrent()) navController.navigate(Routes.SEARCH) },
-                onOpenHistory = { navController.navigate(Routes.HISTORY) },
-                onOpenCumulative = { navController.navigate(Routes.CUMULATIVE) },
-                onOpenSettings = { navController.navigate(Routes.SETTINGS) },
-                onResumeTrip = { tripId -> navController.openOnMain(Routes.navigate(tripId)) },
-                onShowRide = { target ->
-                    val route = when (target) {
-                        RideTarget.NAVIGATE -> Routes.navigate()
-                        RideTarget.RECORD -> Routes.record()
-                    }
-                    navController.openOnMain(route)
+            // The summary and stats tabs live as long as this main screen (V1.4.0 spec §1.1); made when first needed.
+            val feedViewModel: @Composable () -> FeedViewModel = { viewModel(factory = FeedViewModel.factory(container)) }
+            val statsViewModel: @Composable () -> StatsViewModel = { viewModel(factory = StatsViewModel.factory(container)) }
+            // The band over the tab bar (spec §1.4): only its text is followed here, not every location of the ride.
+            val ride by container.rideUi.collectAsStateWithLifecycle(container.rideState)
+            val guidance by container.navigationUi.collectAsStateWithLifecycle(container.navigationState)
+            val band by remember { derivedStateOf { rideBandText(ride, guidance) } }
+            // [목표 정하기] on the summary's week strip: the stats tab's goal dialog.
+            var goalDialog by rememberSaveable { mutableStateOf(false) }
+            MainTabs(
+                band = band,
+                onBand = {
+                    val route = rideRoute(container.navigationState, container.rideState)
+                    if (route != null && isCurrent()) navController.openOnMain(route)
                 },
-                onStartRecording = {
-                    val nav = container.navigationState
-                    when {
-                        // A summary not seen yet is shown first, never replaced by a new start.
-                        container.rideState is RideUiState.Finished -> navController.openOnMain(Routes.record())
-                        // While guiding, the recording belongs to the guided trip: no questions.
-                        nav is NavUiState.Starting -> navController.openOnMain(Routes.record(nav.tripId))
-                        nav is NavUiState.Active -> navController.openOnMain(Routes.record(nav.tripId))
-                        else -> tripStart.onRecordPressed()
-                    }
-                },
-                onContinueRecording = { tripId -> navController.openOnMain(Routes.record(tripId)) },
-                onSetDestination = setDestinationAndOpenPlan,
-                onAddWaypoint = addWaypointAndOpenPlan,
-                favoriteChips = {
-                    // No register chips before the list has loaded: an empty placeholder is not "no home, no work".
-                    favoriteChips(
-                        Modifier,
-                        isCurrent,
-                        if (favoritesLoaded) {
-                            { kind -> if (isCurrent()) navController.navigate(Routes.searchRegister(kind)) }
-                        } else {
-                            null
+            ) { tab, scrollToTop, select ->
+                when (tab) {
+                    MainTab.MAP -> MainScreen(
+                        viewModel = viewModel,
+                        tileSource = container.tileSource,
+                        currentLocation = container.currentLocation,
+                        onOpenSearch = { if (isCurrent()) navController.navigate(Routes.SEARCH) },
+                        onResumeTrip = { tripId -> navController.openOnMain(Routes.navigate(tripId)) },
+                        onShowRide = { target ->
+                            val route = when (target) {
+                                RideTarget.NAVIGATE -> Routes.navigate()
+                                RideTarget.RECORD -> Routes.record()
+                            }
+                            navController.openOnMain(route)
                         },
+                        onStartRecording = {
+                            val nav = container.navigationState
+                            when {
+                                // A summary not seen yet is shown first, never replaced by a new start.
+                                container.rideState is RideUiState.Finished -> navController.openOnMain(Routes.record())
+                                // While guiding, the recording belongs to the guided trip: no questions.
+                                nav is NavUiState.Starting -> navController.openOnMain(Routes.record(nav.tripId))
+                                nav is NavUiState.Active -> navController.openOnMain(Routes.record(nav.tripId))
+                                else -> tripStart.onRecordPressed()
+                            }
+                        },
+                        onContinueRecording = { tripId -> navController.openOnMain(Routes.record(tripId)) },
+                        onSetDestination = setDestinationAndOpenPlan,
+                        onAddWaypoint = addWaypointAndOpenPlan,
+                        favoriteChips = {
+                            // No register chips before the list has loaded: an empty placeholder is not "no home, no work".
+                            favoriteChips(
+                                Modifier,
+                                isCurrent,
+                                if (favoritesLoaded) {
+                                    { kind -> if (isCurrent()) navController.navigate(Routes.searchRegister(kind)) }
+                                } else {
+                                    null
+                                },
+                            )
+                        },
+                        onSaveFavorite = favoritesViewModel::startSave,
                     )
-                },
-                onSaveFavorite = favoritesViewModel::startSave,
-            )
+                    MainTab.FEED -> {
+                        val stats = statsViewModel()
+                        FeedScreen(
+                            viewModel = feedViewModel(),
+                            thumbnails = container.photoThumbnails,
+                            onOpenTrip = { tripId -> if (isCurrent()) navController.navigate(Routes.tripDetail(tripId)) },
+                            onOpenVideo = { media -> context.viewMedia(media.uri, media.kind) },
+                            // The strip opens this week (Monday to Sunday, Asia/Seoul) on the stats tab.
+                            onOpenStatsWeek = {
+                                stats.showThisWeek()
+                                select(MainTab.STATS)
+                            },
+                            // [기록 시작] of the empty summary: the map, where recording starts.
+                            onStartRecording = { select(MainTab.MAP) },
+                            onSetGoals = { goalDialog = true },
+                            scrollToTop = scrollToTop,
+                        )
+                    }
+                    MainTab.STATS -> StatsScreen(
+                        viewModel = statsViewModel(),
+                        onOpenSegment = { segmentId -> if (isCurrent()) navController.navigate(Routes.segmentDetail(segmentId)) },
+                        onOpenCumulative = { filter -> if (isCurrent()) navController.navigate(Routes.cumulative(filter)) },
+                        scrollToTop = scrollToTop,
+                    )
+                    MainTab.SETTINGS -> {
+                        val settingsViewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(container))
+                        // Kept with the main screen: segments and trip maps may have changed since it last showed.
+                        LaunchedEffect(settingsViewModel) { settingsViewModel.refresh() }
+                        SettingsScreen(
+                            viewModel = settingsViewModel,
+                            onBack = null,
+                            photoSource = container.photoSource,
+                            heartRateGate = heartRateGate,
+                            onPhotoAccessGained = container.postProcessor::request,
+                        )
+                    }
+                }
+            }
+            if (goalDialog) {
+                val stats = statsViewModel()
+                // The goals as stored (the stats state may not have read them yet): an empty field would remove one.
+                val goals by produceState<AppSettings?>(null) { value = container.settings.settings.first() }
+                goals?.let { stored ->
+                    GoalDialog(
+                        weeklyKm = stored.weeklyGoalKm,
+                        yearlyKm = stored.yearlyGoalKm,
+                        onSave = { weekly, yearly ->
+                            stats.saveGoals(weekly, yearly)
+                            goalDialog = false
+                        },
+                        onDismiss = { goalDialog = false },
+                    )
+                }
+            }
             TripStartDialogs(
                 state = startState,
                 onChooseType = tripStart::chooseType,
@@ -595,16 +684,24 @@ fun BikeNavHost(
                 mediaEntry = mediaEntry,
             )
         }
-        composable(Routes.HISTORY) {
-            val viewModel: HistoryViewModel = viewModel(factory = HistoryViewModel.factory(container))
-            HistoryScreen(
-                viewModel = viewModel,
-                onOpenTrip = { tripId -> navController.navigate(Routes.tripDetail(tripId)) },
-                onOpenCumulative = { navController.navigate(Routes.CUMULATIVE) },
-                onBack = { navController.popBackStack() },
-            )
-        }
-        composable(Routes.CUMULATIVE) {
+        composable(
+            Routes.CUMULATIVE_PATTERN,
+            arguments = listOf(
+                navArgument(CumulativeMapViewModel.ARG_YEAR) {
+                    type = NavType.IntType
+                    defaultValue = -1
+                },
+                navArgument(CumulativeMapViewModel.ARG_MONTH) {
+                    type = NavType.IntType
+                    defaultValue = -1
+                },
+                navArgument(CumulativeMapViewModel.ARG_WEEK_START) {
+                    type = NavType.LongType
+                    defaultValue = Long.MIN_VALUE
+                },
+            ),
+        ) {
+            // The period of the stats tab's entry (V1.4.0 spec §3.5) reaches the view model through its SavedStateHandle.
             val viewModel: CumulativeMapViewModel = viewModel(factory = CumulativeMapViewModel.factory(container))
             CumulativeMapScreen(
                 viewModel = viewModel,
@@ -685,16 +782,6 @@ fun BikeNavHost(
                 onBack = { navController.popBackStack() },
                 photoPrompt = { PhotoPrompt(container) },
                 heartRateGate = heartRateGate,
-            )
-        }
-        composable(Routes.SETTINGS) {
-            val viewModel: SettingsViewModel = viewModel(factory = SettingsViewModel.factory(container))
-            SettingsScreen(
-                viewModel = viewModel,
-                onBack = { navController.popBackStack() },
-                photoSource = container.photoSource,
-                heartRateGate = heartRateGate,
-                onPhotoAccessGained = container.postProcessor::request,
             )
         }
     }

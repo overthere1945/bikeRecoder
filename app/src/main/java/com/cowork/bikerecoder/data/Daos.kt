@@ -298,9 +298,58 @@ interface TripMediaDao {
     @Query("SELECT * FROM trip_media WHERE tripId = :tripId ORDER BY createdAt DESC, id DESC")
     fun observe(tripId: Long): Flow<List<TripMediaEntity>>
 
+    @Query("SELECT * FROM trip_media WHERE kind = 'VIDEO' ORDER BY createdAt DESC, id DESC")
+    fun observeVideos(): Flow<List<TripMediaEntity>>
+
     @Insert
     suspend fun insert(media: TripMediaEntity): Long
 
     @Query("DELETE FROM trip_media WHERE id IN (:ids)")
     suspend fun delete(ids: List<Long>)
 }
+
+@Dao
+abstract class TripLabelDao {
+    @Query("SELECT * FROM trip_label WHERE tripId = :tripId")
+    abstract suspend fun label(tripId: Long): TripLabelEntity?
+
+    @Query("SELECT * FROM trip_label")
+    abstract fun observeAll(): Flow<List<TripLabelEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    protected abstract suspend fun upsert(entity: TripLabelEntity)
+
+    /** 읽고 쓰는 사이에 다른 칸이 바뀌지 않도록 한 트랜잭션으로 한다. */
+    @Transaction
+    open suspend fun setCustomTitle(tripId: Long, title: String?) {
+        val current = label(tripId)
+        upsert(TripLabelEntity(tripId, title, current?.regionName))
+    }
+
+    @Transaction
+    open suspend fun setRegionName(tripId: Long, name: String) {
+        val current = label(tripId)
+        upsert(TripLabelEntity(tripId, current?.customTitle, name))
+    }
+}
+
+/** 끝난 구간 전부(거르지 않음). 통계 화면이 구간이 바뀔 때마다 다시 받는다. */
+@Dao
+interface RideStatsDao {
+    @Query(
+        "SELECT id AS segmentId, tripId, startedAt, localDate, distanceM, movingTimeMs, ascentM, endedAt " +
+            "FROM ride_segment WHERE endedAt IS NOT NULL ORDER BY startedAt, id",
+    )
+    fun observeEnded(): Flow<List<RideStatRow>>
+}
+
+data class RideStatRow(
+    val segmentId: Long,
+    val tripId: Long,
+    val startedAt: Long,
+    val localDate: String,
+    val distanceM: Double,
+    val movingTimeMs: Long,
+    val ascentM: Double,
+    val endedAt: Long,
+)

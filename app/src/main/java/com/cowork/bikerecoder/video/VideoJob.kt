@@ -1,6 +1,7 @@
 package com.cowork.bikerecoder.video
 
 import com.cowork.bikerecoder.WarnLog
+import com.cowork.bikerecoder.feed.TripRegions
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.video.Aspect
 import com.cowork.bikerecoder.core.video.CameraPath
@@ -27,7 +28,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import java.time.ZoneId
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.ceil
@@ -104,7 +104,7 @@ interface VideoJobControl {
  * or the trip's own, then the satellite tile under the start ([VideoBackend.probeSatellite], V1.3.1 spec §1.3), the
  * music opened and encoded up front) refuse with a [StartResult] before anything is written. A failed probe makes the
  * job on the plain map ([VideoJobState.Done.satelliteFallback]). Then, in [scope]: pending job
- * ([VideoJobStore.setPending]) → the region for the title ([regionOf], at most 5 s, §3.8) → map around the track
+ * ([VideoJobStore.setPending]) → the region for the title ([regions], at most 5 s, §3.8; none for a custom title, V1.4.0 §2.5) → map around the track
  * ([VideoMaps.downloadForTrack]) → gallery item (`IS_PENDING`) → frames ([VideoBackend.openVideo], cameras at the
  * encoder's final size) → finish → publish → [TripMediaStore.add] → this phone's seconds per frame and, for a satellite
  * video, the bytes it received per frame (§1.4) → pending cleared.
@@ -119,8 +119,8 @@ class VideoJob(
     private val backend: VideoBackend,
     private val recording: Flow<Boolean>,
     private val online: () -> Boolean,
-    /** "서울 강서구" for the ride's first point, or null (no key, failure, nothing found). */
-    private val regionOf: suspend (GeoPoint) -> String?,
+    /** The region for the title: the stored one, else looked up once and stored (at most 5 s, spec §2.5, §3.8). */
+    private val regions: TripRegions,
     private val startService: () -> Unit,
     private val scope: CoroutineScope,
     private val log: WarnLog,
@@ -302,7 +302,7 @@ class VideoJob(
         var result: VideoJobState = VideoJobState.Cancelled
         try {
             store.setPending(PendingJob(tripId, kind, optionsJson, clock()))
-            val titled = inputs.copy(rideTitle = RideTitle.withRegion(inputs.rideTitle, region(inputs)))
+            val titled = titled(inputs)
             if (!maps.downloadForTrack(tripId, inputs.points())) throw Stop(MSG_NO_INTERNET)
             val base = MediaNaming.baseName(inputs.firstStartedAt, zone)
             val name = MediaNaming.unique(base, kind.extension, backend.existingNames(kind))
@@ -355,19 +355,16 @@ class VideoJob(
     }
 
     /**
-     * The region of the ride's first point for the title, or null: a lookup that fails or takes over [REGION_TIMEOUT_MS]
-     * is given up, and the job goes on (spec §3.8).
+     * The title of the video and image: a custom title as it is (spec §2.5), else the automatic one with the region of
+     * the ride's first point ([TripRegions.ensure]: stored first; a lookup that fails or takes over
+     * [TripRegions.REGION_TIMEOUT_MS] is given up, and the job goes on, spec §3.8).
      */
-    private suspend fun region(inputs: VideoInputs): String? = withTimeoutOrNull(REGION_TIMEOUT_MS) {
-        try {
-            regionOf(inputs.start())
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            log.warn("Could not look up the region of trip ${inputs.tripId}", e)
-            null
+    private suspend fun titled(inputs: VideoInputs): VideoInputs =
+        if (inputs.titleIsCustom) {
+            inputs
+        } else {
+            inputs.copy(rideTitle = RideTitle.withRegion(inputs.rideTitle, regions.ensure(inputs.tripId, inputs.start())))
         }
-    }
 
     /**
      * The encoder and renderer are closed when this returns or throws — only here, never while a frame is drawn (carry).
@@ -461,9 +458,6 @@ class VideoJob(
         const val MSG_VIDEO_FAILED = "영상을 만들지 못했습니다"
         const val MSG_IMAGE_FAILED = "이미지를 만들지 못했습니다"
         const val MSG_SATELLITE_FALLBACK = "위성 지도를 받지 못해 일반 지도로 만들었습니다"
-
-        /** The region lookup for the title is given up after this (spec §3.8). */
-        const val REGION_TIMEOUT_MS = 5_000L
 
         /** A summary PNG is a few MB; the space it asks for before starting. */
         const val IMAGE_BYTES = 20_000_000L

@@ -19,13 +19,15 @@ import androidx.room.RoomDatabase
         HeartRateSampleEntity::class,
         SegmentRouteSimplifiedEntity::class,
         TripMediaEntity::class,
+        TripLabelEntity::class,
     ],
-    version = 5,
+    version = 6,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
         AutoMigration(from = 2, to = 3),
         AutoMigration(from = 3, to = 4),
         AutoMigration(from = 4, to = 5),
+        AutoMigration(from = 5, to = 6),
     ],
     exportSchema = true,
 )
@@ -36,6 +38,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun favoriteDao(): FavoriteDao
     abstract fun postDao(): PostDao
     abstract fun tripMediaDao(): TripMediaDao
+    abstract fun tripLabelDao(): TripLabelDao
+    abstract fun rideStatsDao(): RideStatsDao
 
     companion object {
         const val NAME = "bikerecoder.db"

@@ -3,6 +3,7 @@ package com.cowork.bikerecoder.video
 import com.cowork.bikerecoder.core.post.HeartRateSample
 import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
 import com.cowork.bikerecoder.core.recording.RideStore
+import com.cowork.bikerecoder.core.trip.TripLabelStore
 import com.cowork.bikerecoder.core.trip.TripStore
 import com.cowork.bikerecoder.core.video.PhotoCue
 import com.cowork.bikerecoder.core.video.RideTimeline
@@ -36,7 +37,8 @@ data class TripTotals(
  * ≥ [MIN_RIDE_DISTANCE_M], spec §1.1) on one moving-time axis; [photos] are the shown photos (hidden ones left out)
  * at their moving time; [heartRate] the target segments' samples in time order; [dayStarts] the "N일째 · M월 d일"
  * captions; [title] "10월 25일 (일)" or "10월 17일 ~ 18일"; [rideTitle] the automatic name
- * (spec §3.8: "저녁 라이딩" from the first start, "N일 여행" over several days; the job may add the region); [canColorByHeart] some target
+ * (spec §3.8: "저녁 라이딩" from the first start, "N일 여행" over several days; the job may add the region — unless it is the trip's
+ * custom title, [titleIsCustom], which is used as it is, V1.4.0 spec §2.5); [canColorByHeart] some target
  * segment has detailed heart rate (the [심박] option); [firstStartedAt] when the first target segment was started (the file
  * name, spec §3.5 — not its first GPS fix).
  */
@@ -51,12 +53,14 @@ data class VideoInputs(
     val totals: TripTotals,
     val canColorByHeart: Boolean,
     val firstStartedAt: Long,
+    val titleIsCustom: Boolean = false,
 )
 
 class VideoInputsLoader(
     private val rideStore: RideStore,
     private val postStore: PostStore,
     private val tripStore: TripStore,
+    private val labels: TripLabelStore,
     private val zone: ZoneId = SEOUL,
 ) {
 
@@ -83,6 +87,7 @@ class VideoInputsLoader(
         val hr = tripHeartRate(targets.groupBy { it.localDate }, extras)
         val totals = tripTotals(targets)
         val days = targets.map { it.localDate }.distinct().sorted()
+        val custom = labels.label(tripId).customTitle?.takeIf { it.isNotBlank() }
 
         return VideoInputs(
             tripId = tripId,
@@ -91,7 +96,7 @@ class VideoInputsLoader(
             heartRate = heartRate,
             dayStarts = timeline.dayStarts,
             title = titleOf(days.first(), days.last()),
-            rideTitle = RideTitle.base(targets.first().startedAt, days.size, zone),
+            rideTitle = custom ?: RideTitle.base(targets.first().startedAt, days.size, zone),
             totals = TripTotals(
                 distanceM = totals.distanceM,
                 movingTimeMs = totals.movingTimeMs,
@@ -103,6 +108,7 @@ class VideoInputsLoader(
             ),
             canColorByHeart = hr.canColor,
             firstStartedAt = targets.first().startedAt,
+            titleIsCustom = custom != null,
         )
     }
 

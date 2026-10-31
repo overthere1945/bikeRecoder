@@ -118,6 +118,9 @@ class CameraFit(val points: List<GeoPoint>, val maxZoom: Double = 16.0, val padd
 /** Per-side room for [CameraFit.padding] (start = left, end = right). */
 data class FitPadding(val start: Dp, val top: Dp, val end: Dp, val bottom: Dp)
 
+/** Where the camera is: the point at the map's center, the zoom and the bearing (degrees clockwise from north). */
+data class MapCamera(val center: GeoPoint, val zoom: Double, val bearing: Double = 0.0)
+
 enum class CameraMode {
     /** The user controls the camera; BikeMap never moves it on its own. */
     FREE,
@@ -163,9 +166,12 @@ fun BikeMap(
     modifier: Modifier = Modifier,
     initialCenter: GeoPoint? = null,
     initialZoom: Double = 13.0,
+    initialBearing: Double = 0.0,
     fit: CameraFit? = null,
     /** The camera stopped (after a gesture or an animation), with the point at the map's center. */
     onCameraIdle: ((GeoPoint) -> Unit)? = null,
+    /** The camera stopped, with where it is (e.g. to start there again when the map is shown again). */
+    onCameraStopped: ((MapCamera) -> Unit)? = null,
     /** The camera started moving, for any reason (gesture, animation, or a programmatic move). */
     onCameraMoveStarted: (() -> Unit)? = null,
     /** A tap on a photo preview of [MapOverlay.photos], with its [MapPhoto.photoId]. */
@@ -185,6 +191,7 @@ fun BikeMap(
     val currentOnLongPress by rememberUpdatedState(onLongPress)
     val currentOnUserGesture by rememberUpdatedState(onUserGesture)
     val currentOnCameraIdle by rememberUpdatedState(onCameraIdle)
+    val currentOnCameraStopped by rememberUpdatedState(onCameraStopped)
     val currentOnCameraMoveStarted by rememberUpdatedState(onCameraMoveStarted)
     val currentOnPhotoClick by rememberUpdatedState(onPhotoClick)
     val currentOnRideClick by rememberUpdatedState(onRideClick)
@@ -299,14 +306,21 @@ fun BikeMap(
             // MapLibre calls these on the main thread; registered before the first camera move so its stop is seen too.
             m.addOnCameraMoveStartedListener { currentOnCameraMoveStarted?.invoke() }
             m.addOnCameraIdleListener {
-                currentOnCameraIdle?.let { idle ->
-                    val target = m.cameraPosition.target ?: return@let
-                    idle(GeoPoint(target.latitude, target.longitude))
-                }
+                val position = m.cameraPosition
+                val target = position.target ?: return@addOnCameraIdleListener
+                val center = GeoPoint(target.latitude, target.longitude)
+                currentOnCameraIdle?.invoke(center)
+                currentOnCameraStopped?.invoke(MapCamera(center, position.zoom, position.bearing))
             }
             if (initialCenter != null) {
                 m.moveCamera(
-                    CameraUpdateFactory.newLatLngZoom(LatLng(initialCenter.lat, initialCenter.lon), initialZoom),
+                    CameraUpdateFactory.newCameraPosition(
+                        CameraPosition.Builder()
+                            .target(LatLng(initialCenter.lat, initialCenter.lon))
+                            .zoom(initialZoom)
+                            .bearing(initialBearing)
+                            .build(),
+                    ),
                 )
             }
             map = m

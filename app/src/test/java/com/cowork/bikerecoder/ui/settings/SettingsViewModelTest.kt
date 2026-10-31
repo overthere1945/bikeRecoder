@@ -256,6 +256,21 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `refresh lists the segments and measures the maps again`() {
+        // The settings tab keeps this view model while other screens download segments and trip maps.
+        assertFalse(viewModel.state.value.segments.first { it.name == "E125_N35" }.installed)
+        File(dir, "E125_N35.rd5").writeBytes(ByteArray(10))
+        storage.bytes = 5_000_000L
+
+        viewModel.refresh()
+
+        val segment = viewModel.state.value.segments.first { it.name == "E125_N35" }
+        assertTrue(segment.installed)
+        assertEquals(10L, segment.sizeBytes)
+        assertEquals(MapStorageState.Size(5_000_000L), viewModel.state.value.mapStorage)
+    }
+
+    @Test
     fun `delete all failure is reported and a second tap during deletion is ignored`() {
         storage.gate = CompletableDeferred()
         storage.failDelete = true

@@ -12,6 +12,9 @@ class RoomTripMediaStore(db: AppDatabase) : TripMediaStore {
     override fun observe(tripId: Long): Flow<List<TripMedia>> =
         dao.observe(tripId).map { list -> list.map { it.toModel() } }
 
+    override fun observeVideos(): Flow<List<TripMedia>> =
+        dao.observeVideos().map { list -> list.map { it.toModel() } }
+
     override suspend fun add(m: TripMedia): Long = dao.insert(m.toEntity().copy(id = 0))
 
     override suspend fun remove(ids: Collection<Long>) {

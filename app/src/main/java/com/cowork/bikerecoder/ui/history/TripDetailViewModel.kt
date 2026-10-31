@@ -10,15 +10,20 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.feed.TripRegions
 import com.cowork.bikerecoder.core.post.HeartRateColor
 import com.cowork.bikerecoder.core.post.HeartRateStats
 import com.cowork.bikerecoder.core.post.HeartRateSummary
 import com.cowork.bikerecoder.core.post.HrStatus
+import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
+import com.cowork.bikerecoder.core.trip.TripLabel
+import com.cowork.bikerecoder.core.trip.TripLabelStore
 import com.cowork.bikerecoder.core.trip.TripStore
+import com.cowork.bikerecoder.core.video.RideTitle
 import com.cowork.bikerecoder.map.MapLine
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.PostStore
@@ -55,6 +60,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import java.time.ZoneId
 
 /**
  * One trip's segments by date (oldest first) and the trip's totals (spec §3.5), without empty segments
@@ -82,6 +88,11 @@ class TripDetailViewModel(
     private val tripMedia: TripMediaStore? = null,
     /** Whether a made file is still in the gallery; throws when that cannot be told. */
     private val mediaExists: suspend (uri: String) -> Boolean = { true },
+    /** The trip's custom title and stored region (V1.4.0 spec §2.5); without it the screen has no title to change. */
+    private val tripLabels: TripLabelStore? = null,
+    /** Looks up the region once the first point is known; without it none is looked up. */
+    private val tripRegions: TripRegions? = null,
+    private val zone: ZoneId = SEOUL,
 ) : ViewModel() {
 
     private val _segmentsByDate = MutableStateFlow<Map<LocalDate, List<RideSegment>>>(emptyMap())
@@ -102,6 +113,41 @@ class TripDetailViewModel(
             emit(emptyList())
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private val label: StateFlow<TripLabel> = (tripLabels?.observeLabels() ?: emptyFlow())
+        .map { it[tripId] ?: TripLabel() }
+        .catch { e ->
+            log.warn("Could not read the title of trip $tripId", e)
+            emit(TripLabel())
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, TripLabel())
+
+    /** The trip's own title, null while it has none. */
+    val customTitle: StateFlow<String?> = label.map { it.customTitle?.takeIf { t -> t.isNotBlank() } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
+     * The title shown (spec §2.5): the custom title, else "저녁 라이딩 · 서울 강서구" (the region once it is known); null
+     * while there is neither a custom title nor a finished ride to name it after.
+     */
+    val title: StateFlow<String?> = combine(label, _segmentsByDate) { label, byDate ->
+        val rides = targetRides(byDate)
+        if (rides.isEmpty()) label.customTitle?.takeIf { it.isNotBlank() } else shownTitle(label, rides)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
+     * The automatic title ("저녁 라이딩 · 서울 강서구") whether or not there is a custom title: what the title becomes when
+     * the custom one is cleared, and the hint in "제목 바꾸기". Null while there is no finished ride to name it after.
+     */
+    val autoTitle: StateFlow<String?> = combine(label, _segmentsByDate) { label, byDate ->
+        targetRides(byDate).takeIf { it.isNotEmpty() }?.let { shownTitle(label.copy(customTitle = null), it) }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    private fun targetRides(byDate: Map<LocalDate, List<RideSegment>>) =
+        byDate.values.flatten().filter { it.endedAt != null && it.totals.distanceM >= MIN_RIDE_DISTANCE_M }
+
+    private fun shownTitle(label: TripLabel, rides: List<RideSegment>) =
+        RideTitle.shown(label, rides.minOf { it.startedAt }, rides.map { it.localDate }.distinct().size, zone)
 
     private val _dialog = MutableStateFlow<HistoryDialog?>(null)
     val dialog: StateFlow<HistoryDialog?> = _dialog.asStateFlow()
@@ -175,6 +221,7 @@ class TripDetailViewModel(
     /** The segments [lines] were read for (read again only when they change, e.g. a recording went on). */
     private var trackOf: List<RideSegment>? = null
     private var opened = false
+    private var regionAsked = false
 
     init {
         refresh()
@@ -243,6 +290,16 @@ class TripDetailViewModel(
         }
     }
 
+    /**
+     * [저장] in "제목 바꾸기": [RideTitle.cleanCustom] of [input] is the new custom title; empty clears it, back to the
+     * automatic title.
+     */
+    fun rename(input: String) {
+        val store = tripLabels ?: return
+        val cleaned = RideTitle.cleanCustom(input)
+        viewModelScope.launch { guarded("Could not save the title of trip $tripId") { store.setCustomTitle(tripId, cleaned) } }
+    }
+
     /** [숨기기] ([hidden] = true) / [다시 보이기] in the full-screen view. */
     fun setHidden(photo: RidePhoto, hidden: Boolean) {
         viewModelScope.launch { setPhotoHidden(postStore, photo, hidden, log) }
@@ -275,7 +332,22 @@ class TripDetailViewModel(
                 tracks.value = ordered.map { it.id to rideStore.points(it.id) }
                 trackOf = segments
             }
+            askRegion(segments)
         }
+    }
+
+    /**
+     * Once per screen, the region of the first finished ride's first point ([TripRegions.ensure]: the stored name first;
+     * the lookup is not waited for here, the title follows the label table).
+     */
+    private fun askRegion(segments: List<RideSegment>) {
+        val regions = tripRegions ?: return
+        if (regionAsked) return
+        val first = segments.filter { it.endedAt != null && it.totals.distanceM >= MIN_RIDE_DISTANCE_M }
+            .minByOrNull { it.startedAt } ?: return
+        val point = tracks.value.firstOrNull { it.first == first.id }?.second?.firstOrNull()?.point ?: return
+        regionAsked = true
+        viewModelScope.launch { guarded("Could not look up the region of trip $tripId") { regions.ensure(tripId, point) } }
     }
 
     /** The made files gone from the gallery leave "만든 영상·이미지". */
@@ -298,6 +370,7 @@ class TripDetailViewModel(
 
     companion object {
         const val ARG_TRIP = "tripId"
+        private val SEOUL: ZoneId = ZoneId.of("Asia/Seoul")
 
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer {
@@ -306,6 +379,8 @@ class TripDetailViewModel(
                     container.rideStore, tripId, container.postStore, container.postProcessor, androidWarnLog("TripDetail"),
                     tripStore = container.tripStore,
                     tripMedia = container.tripMedia,
+                    tripLabels = container.tripLabels,
+                    tripRegions = container.tripRegions,
                     mediaExists = { uri -> withContext(Dispatchers.IO) { container.mediaStoreWriter.exists(uri.toUri()) } },
                 )
             }

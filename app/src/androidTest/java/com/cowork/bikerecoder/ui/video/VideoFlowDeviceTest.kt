@@ -285,7 +285,7 @@ class VideoFlowDeviceTest {
     /** Where the seeded photo's scene falls in the short video (for pulling its frame). */
     private fun logPhotoScene() {
         val inputs = runBlocking {
-            VideoInputsLoader(container.rideStore, container.postStore, container.tripStore).load(tripId)
+            VideoInputsLoader(container.rideStore, container.postStore, container.tripStore, container.tripLabels).load(tripId)
         }
         assertNotNull(inputs)
         assertEquals(1, inputs!!.photos.size)

@@ -5,6 +5,10 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
@@ -37,6 +41,28 @@ open class NetworkWaiter(context: Context) {
         return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
             caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
+
+    /**
+     * Whether some network with validated internet is up, now and from now on (the feed's pictures try again when it comes
+     * back); distinct values only, the first is [isOnline] at the time of collecting.
+     */
+    open fun online(): Flow<Boolean> = callbackFlow {
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                trySend(
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED),
+                )
+            }
+
+            override fun onLost(network: Network) {
+                trySend(false)
+            }
+        }
+        trySend(isOnline())
+        connectivity.registerDefaultNetworkCallback(callback)
+        awaitClose { unregister(callback) }
+    }.distinctUntilChanged()
 
     /** Whether the active network is cellular and not Wi-Fi (the video sheet's data notice, V1.3.1 spec §1.4). */
     open fun isCellular(): Boolean {

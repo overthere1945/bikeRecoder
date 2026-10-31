@@ -7,8 +7,8 @@ plugins {
 }
 
 val verMajor = 1
-val verMinor = 3
-val verPatch = 1
+val verMinor = 4
+val verPatch = 0
 
 val secretsFile = rootProject.file("secrets.json")
 val secrets: Map<String, Any?> = if (secretsFile.exists()) {

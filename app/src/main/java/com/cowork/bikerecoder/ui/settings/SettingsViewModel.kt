@@ -149,6 +149,15 @@ class SettingsViewModel(
         _state.update { it.copy(segmentStatus = it.segmentStatus + (name to status)) }
     }
 
+    /**
+     * Lists the segments and measures the stored maps again: the settings tab keeps this view model while other screens
+     * download or delete them (V1.4.0 spec §1.1), so it refreshes whenever the tab is shown.
+     */
+    fun refresh() {
+        refreshSegments()
+        refreshMapSize()
+    }
+
     private fun refreshSegments() {
         _state.update { it.copy(segments = segments.list()) }
     }

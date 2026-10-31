@@ -2,10 +2,11 @@ package com.cowork.bikerecoder
 
 import android.content.Context
 import android.util.Log
-import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.routing.Router
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.trip.OfflineMapController
+import com.cowork.bikerecoder.core.stats.RideStatsSource
+import com.cowork.bikerecoder.core.trip.TripLabelStore
 import com.cowork.bikerecoder.core.trip.TripManager
 import com.cowork.bikerecoder.core.trip.TripStore
 import com.cowork.bikerecoder.core.video.RideTitle
@@ -15,11 +16,15 @@ import com.cowork.bikerecoder.data.DataStoreRecentPlaces
 import com.cowork.bikerecoder.data.DayDistances
 import com.cowork.bikerecoder.data.RoomFavoriteStore
 import com.cowork.bikerecoder.data.RoomPostStore
+import com.cowork.bikerecoder.data.RoomRideStatsSource
 import com.cowork.bikerecoder.data.RoomRideStore
+import com.cowork.bikerecoder.data.RoomTripLabelStore
 import com.cowork.bikerecoder.data.RoomTripMediaStore
 import com.cowork.bikerecoder.data.RoomTripStore
 import com.cowork.bikerecoder.data.SettingsRepository
 import com.cowork.bikerecoder.favorite.FavoriteRepository
+import com.cowork.bikerecoder.feed.FeedThumbnails
+import com.cowork.bikerecoder.feed.TripRegions
 import com.cowork.bikerecoder.location.BarometerSource
 import com.cowork.bikerecoder.location.FusedLocationSource
 import com.cowork.bikerecoder.location.LocationSource
@@ -52,6 +57,7 @@ import com.cowork.bikerecoder.search.RecentPlaceStore
 import com.cowork.bikerecoder.tts.AndroidTtsVoiceOutput
 import com.cowork.bikerecoder.tts.VoiceOutput
 import com.cowork.bikerecoder.video.AndroidVideoBackend
+import com.cowork.bikerecoder.video.FeedThumbnailRenderer
 import com.cowork.bikerecoder.video.SatelliteProbe
 import com.cowork.bikerecoder.video.VideoBackend
 import com.cowork.bikerecoder.video.VideoMapStyle
@@ -73,6 +79,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
@@ -122,6 +129,8 @@ class AppContainer(context: Context) {
     val offline: OfflineMapController = offlineMaps
     val tripManager: TripManager = TripManager(tripStore, offline, clock = System::currentTimeMillis)
     val rideStore: RideStore = RoomRideStore(db)
+    val tripLabels: TripLabelStore = RoomTripLabelStore(db)
+    val rideStats: RideStatsSource = RoomRideStatsSource(db)
     val favorites: FavoriteRepository = FavoriteRepository(RoomFavoriteStore(db), clock = System::currentTimeMillis)
 
     /** The device barometer; null without one (altitude then comes from GPS only). */
@@ -266,23 +275,66 @@ class AppContainer(context: Context) {
 
     /** A job wired like [videoJob] on [backend]; only [videoJob] itself runs in the app. */
     internal fun videoJob(backend: VideoBackend): VideoJob = VideoJob(
-        loadInputs = VideoInputsLoader(rideStore, postStore, tripStore)::load,
+        loadInputs = VideoInputsLoader(rideStore, postStore, tripStore, tripLabels)::load,
         store = videoJobStore,
         tripMedia = tripMedia,
         maps = offlineMaps,
         backend = backend,
         recording = rideUi.map { it is RideUiState.Starting || it is RideUiState.Active },
         online = network::isOnline,
-        regionOf = ::videoRegion,
+        regions = tripRegions,
         startService = { VideoService.start(appContext) },
         scope = videoScope,
         // Map errors may quote a tile URL, and so the key (ruling K1).
         log = VideoMapStyle.redacting(androidWarnLog("VideoJob"), BuildConfig.VWORLD_API_KEY),
     )
 
-    /** "서울 강서구" for the video title (V1.3.1 spec §3.8); null on any failure or when nothing is found. */
-    private suspend fun videoRegion(point: GeoPoint): String? =
-        (kakao.regionOf(point) as? SearchResult.Ok)?.value?.let { (d1, d2) -> RideTitle.shortRegion(d1, d2) }
+    /** "서울 강서구" for a trip's title (V1.4.0 spec §2.5): the stored one first, else looked up once and stored. */
+    val tripRegions: TripRegions by lazy {
+        TripRegions(
+            labels = tripLabels,
+            lookup = { point -> (kakao.regionOf(point) as? SearchResult.Ok)?.value?.let { (d1, d2) -> RideTitle.shortRegion(d1, d2) } },
+            log = VideoMapStyle.redacting(androidWarnLog("TripRegions"), BuildConfig.KAKAO_REST_API_KEY),
+        )
+    }
+
+    /**
+     * The feed's satellite pictures (V1.4.0 spec §2.4, §4), made in the background one at a time and kept in
+     * `filesDir/feed_thumbs`. Nothing is started while a recording, guidance or a video is running ([FeedThumbnails.busy]).
+     * Created on first use; pictures of trips deleted since the last run are swept away then.
+     */
+    val feedThumbnails: FeedThumbnails by lazy {
+        val key = BuildConfig.VWORLD_API_KEY
+        val renderer = FeedThumbnailRenderer(appContext, videoBackend(), tileSource, key)
+        val inputs = VideoInputsLoader(rideStore, postStore, tripStore, tripLabels)
+        val log = VideoMapStyle.redacting(androidWarnLog("FeedThumbnails"), key)
+        FeedThumbnails(
+            dir = File(appContext.filesDir, "feed_thumbs"),
+            render = { tripId -> inputs.load(tripId)?.let { renderer.render(it) } },
+            busy = combine(
+                rideUi,
+                navigationUi,
+                flow { emitAll(videoJob.runningTripId) },
+            ) { ride, guidance, videoTrip ->
+                ride is RideUiState.Starting || ride is RideUiState.Active ||
+                    guidance is NavUiState.Starting || guidance is NavUiState.Active || videoTrip != null
+            },
+            online = network.online(),
+            scope = appScope,
+            log = log,
+        ).also { thumbs ->
+            appScope.launch {
+                try {
+                    val keep = rideStore.tripSummaries().mapTo(HashSet()) { it.trip.id } + rideStore.emptyTrips().map { it.id }
+                    thumbs.prune(keep)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    log.warn("Feed pictures of deleted trips could not be swept", e)
+                }
+            }
+        }
+    }
 
     private companion object {
         const val TAG = "AppContainer"

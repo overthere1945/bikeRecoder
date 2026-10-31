@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.core.video
 
+import com.cowork.bikerecoder.core.trip.TripLabel
 import org.junit.jupiter.api.Test
 import java.time.LocalDateTime
 import kotlin.test.assertEquals
@@ -66,5 +67,29 @@ class RideTitleTest {
     fun withRegion() {
         assertEquals("저녁 라이딩", RideTitle.withRegion("저녁 라이딩", null))
         assertEquals("저녁 라이딩 · 서울 강서구", RideTitle.withRegion("저녁 라이딩", "서울 강서구"))
+    }
+
+    @Test
+    fun shownPrefersCustomThenRegion() {
+        val evening = LocalDateTime.of(2026, 10, 17, 19, 0).atZone(SEOUL).toInstant().toEpochMilli()
+        assertEquals("한강 한 바퀴", RideTitle.shown(TripLabel("한강 한 바퀴", "서울 강서구"), evening, 1, SEOUL))
+        assertEquals("한강 한 바퀴", RideTitle.shown(TripLabel("한강 한 바퀴", null), evening, 1, SEOUL))
+        assertEquals("저녁 라이딩 · 서울 강서구", RideTitle.shown(TripLabel(null, "서울 강서구"), evening, 1, SEOUL))
+        assertEquals("저녁 라이딩", RideTitle.shown(TripLabel(), evening, 1, SEOUL))
+        assertEquals("3일 여행 · 강원 춘천시", RideTitle.shown(TripLabel(null, "강원 춘천시"), evening, 3, SEOUL))
+    }
+
+    /** D6: 30 code points, an emoji counts one. */
+    @Test
+    fun thirtyCodePointsIncludingEmoji() {
+        assertEquals("한강", RideTitle.cleanCustom("  한강 "))
+        assertNull(RideTitle.cleanCustom("   "))
+        assertNull(RideTitle.cleanCustom(""))
+        val bike = "\uD83D\uDEB4"
+        assertEquals(bike.repeat(30), RideTitle.cleanCustom(bike.repeat(30)))
+        assertEquals(bike.repeat(30), RideTitle.cleanCustom(bike.repeat(31)))
+        assertEquals(30, RideTitle.cleanCustom(bike.repeat(31))!!.let { it.codePointCount(0, it.length) })
+        assertEquals("가".repeat(30), RideTitle.cleanCustom("가".repeat(40)))
+        assertEquals(30, RideTitle.MAX_CUSTOM_CODE_POINTS)
     }
 }
