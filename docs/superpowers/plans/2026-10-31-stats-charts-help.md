@@ -94,7 +94,7 @@
   - **말풍선:** `open`이면 아이콘 아래에 `Popup`을 띄운다.
     - 모양: Surface, 테두리 1dp outlineVariant, 둥근 모서리 12dp, 안쪽 여백 16dp, 최대 폭 320dp, bodyMedium, 가운데 정렬
     - 닫기: `onDismissRequest`가 `onToggle`을 부른다. 바깥을 누르거나 뒤로를 누르면 닫힌다.
-  - **열림 상태:** 화면(`StatsScreen`)이 `rememberSaveable { mutableStateOf<String?>(null) }`로 "열린 주제" 하나만 갖는다. 탭을 떠나면 닫힌다(탭 전환 때 null).
+  - **열림 상태:** 화면(`StatsScreen`)이 plain `remember { mutableStateOf<String?>(null) }`로 "열린 주제" 하나만 갖는다(실행 중 판정: 회전·탭 이동 때 닫힘).
 - [ ] **Step 6: 설명 6곳과 문구** (`StatsHelp`, 그대로 쓴다)
   - **목표 카드 제목 옆** — 주제 "목표":
     "주간 목표는 월요일부터 일요일까지, 연간 목표는 1월 1일부터 탄 거리입니다. '연말 예상'은 올해 하루 평균 거리에 올해 날 수를 곱한 값으로, 1월 7일부터 보입니다."
