@@ -323,7 +323,7 @@ private fun PeriodBlock(
             HelpTip(StatsHelp.CHART_TOPIC, StatsHelp.CHART, openTip == StatsHelp.CHART_TOPIC, onToggle = { onToggleTip(StatsHelp.CHART_TOPIC) })
         }
         BarChart(state.bars, state.selectedBar, state.unitText, onSelectBar)
-        state.cumulative?.let { CumulativeChart(it, state.period.kind, state.unitText) }
+        state.cumulative?.let { CumulativeChart(it, state.period.kind, state.metric, state.unitText) }
     }
 }
 

@@ -2,41 +2,63 @@ package com.cowork.bikerecoder.ui.stats
 
 import androidx.compose.ui.geometry.Offset
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /** The scale and the end bubble of the cumulative chart. */
 class CumulativeChartTest {
 
     @Test
-    fun theTopTickIsTheMaxPlusTenPercentRoundedUpTo125() {
+    fun theTopTickIsTheMaxPlusFivePercentRoundedUpToTheNextStep() {
         assertEquals(1.0, niceTop(0.0), 0.0)
-        assertEquals(1.0, niceTop(0.9), 0.0) // 0.99
-        assertEquals(2.0, niceTop(1.0), 0.0) // 1.1
-        assertEquals(5.0, niceTop(2.5), 0.0) // 2.75
-        assertEquals(20.0, niceTop(10.0), 0.0) // 11
-        assertEquals(50.0, niceTop(30.0), 0.0) // 33
-        assertEquals(200.0, niceTop(124.0), 0.0) // 136.4
-        assertEquals(2_000.0, niceTop(1_818.0), 0.0) // 1999.8
-        assertEquals(0.5, niceTop(0.3), 1e-12) // 0.33
-        assertEquals(0.002, niceTop(0.0015), 1e-12)
+        assertEquals(200.0, niceTop(186.0), 0.0) // 195.3
+        assertEquals(250.0, niceTop(205.0), 0.0) // 215.25
+        assertEquals(12.0, niceTop(9.6), 0.0) // 10.08
+        assertEquals(1.0, niceTop(0.9), 0.0) // 0.945
+        assertEquals(1.2, niceTop(1.0), 0.0) // 1.05 (exactly the first step above it)
+        assertEquals(60.0, niceTop(50.0), 0.0) // 52.5
+        assertEquals(0.0025, niceTop(0.002), 0.0) // 0.0021
+        assertEquals(1_000.0, niceTop(950.0), 0.0) // 997.5 -> 1000 (10 x 100)
+        assertEquals(3_000.0, niceTop(2_800.0), 0.0) // 2940
     }
 
     @Test
     fun theTopTickNeverFallsBelowTheMax() {
-        for (max in listOf(0.01, 0.5, 1.0, 1.7, 2.0, 4.5, 9.09, 9.1, 45.4, 90.9, 99.0, 454.5, 909.0)) {
+        for (max in listOf(0.01, 0.5, 1.0, 1.7, 2.0, 4.5, 9.09, 9.1, 45.4, 90.9, 99.0, 454.5, 909.0, 7.6, 8.4)) {
             val top = niceTop(max)
-            assertEquals(true, top >= max * 1.1 - 1e-9, "$max -> $top")
+            assertTrue(top >= max * 1.05 - 1e-9, "$max -> $top")
         }
     }
 
     @Test
-    fun tickTextsDropTrailingZeros() {
-        assertEquals("0", tickText(0.0))
-        assertEquals("25", tickText(25.0))
-        assertEquals("2.5", tickText(2.5))
-        assertEquals("0.25", tickText(0.25))
-        assertEquals("1,000", tickText(1_000.0))
-        assertEquals("0.01", tickText(0.005)) // two decimals, half up
+    fun theLabelsOfThreeTicksAreNeverTheSame() {
+        for (max in listOf(0.0, 0.0004, 0.002, 0.7, 1.0, 5.0, 9.6, 12.0, 186.0, 205.0, 2_800.0)) {
+            for (metric in StatMetric.entries) {
+                val top = niceTop(max).let { if (metric == StatMetric.TIME) timeTop(it) else it }
+                val labels = tickTexts(metric, top)
+                assertEquals(3, labels.toSet().size, "$metric $max -> $labels")
+            }
+        }
+    }
+
+    @Test
+    fun distanceAndAscentTicksAreExactDecimals() {
+        assertEquals(listOf("0", "100", "200"), tickTexts(StatMetric.DISTANCE, 200.0))
+        assertEquals(listOf("0", "1.25", "2.5"), tickTexts(StatMetric.DISTANCE, 2.5))
+        assertEquals(listOf("0", "0.6", "1.2"), tickTexts(StatMetric.ASCENT, 1.2))
+        assertEquals(listOf("0", "0.00125", "0.0025"), tickTexts(StatMetric.DISTANCE, 0.0025))
+        assertEquals(listOf("0", "500", "1,000"), tickTexts(StatMetric.DISTANCE, 1_000.0))
+    }
+
+    @Test
+    fun timeTicksAreHoursAndMinutes() {
+        assertEquals(listOf("0:00", "1:15", "2:30"), tickTexts(StatMetric.TIME, 2.5))
+        assertEquals(listOf("0:00", "0:15", "0:30"), tickTexts(StatMetric.TIME, 0.5))
+        assertEquals(listOf("0:00", "5:00", "10:00"), tickTexts(StatMetric.TIME, 10.0))
+        // Under two minutes there would be no minute between the ticks: the scale is never smaller than that.
+        assertEquals(2.0 / 60, timeTop(niceTop(0.0004)), 1e-12)
+        assertEquals(listOf("0:00", "0:01", "0:02"), tickTexts(StatMetric.TIME, timeTop(niceTop(0.0004))))
+        assertEquals(2.0, timeTop(niceTop(1.6)), 0.0)
     }
 
     @Test

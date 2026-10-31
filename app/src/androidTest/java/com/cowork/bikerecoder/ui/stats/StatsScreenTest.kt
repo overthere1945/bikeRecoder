@@ -509,11 +509,11 @@ class StatsScreenTest {
     fun theChipChangesTheEndValueOfTheCumulativeLine() {
         show()
 
-        composeRule.onNodeWithTag(StatsTags.CUMULATIVE_PLOT).assertContentDescriptionEquals("누적 이번 달 186km, 지난달 85.6km")
+        composeRule.onNodeWithTag(StatsTags.CUMULATIVE_PLOT).assertContentDescriptionEquals("누적 이번 달 186.2 km, 지난달 85.6 km")
         composeRule.onNodeWithTag(StatsTags.metric(StatMetric.TIME)).performClick()
-        composeRule.onNodeWithTag(StatsTags.CUMULATIVE_PLOT).assertContentDescriptionEquals("누적 이번 달 10:07시간, 지난달 4:57시간")
+        composeRule.onNodeWithTag(StatsTags.CUMULATIVE_PLOT).assertContentDescriptionEquals("누적 이번 달 10시간 7분, 지난달 4시간 57분")
         composeRule.onNodeWithTag(StatsTags.metric(StatMetric.ASCENT)).performClick()
-        composeRule.onNodeWithTag(StatsTags.CUMULATIVE_PLOT).assertContentDescriptionEquals("누적 이번 달 945m, 지난달 450m")
+        composeRule.onNodeWithTag(StatsTags.CUMULATIVE_PLOT).assertContentDescriptionEquals("누적 이번 달 945 m, 지난달 450 m")
     }
 
     @Test
@@ -526,7 +526,7 @@ class StatsScreenTest {
     @Test
     fun theCumulativeChartOfAnEmptyPeriodIsDrawn() {
         show(rides = emptyList(), goals = FakeGoals(null, null))
-        composeRule.onNodeWithTag(StatsTags.CUMULATIVE_PLOT).assertContentDescriptionEquals("누적 이번 달 0km, 지난달 0km")
+        composeRule.onNodeWithTag(StatsTags.CUMULATIVE_PLOT).assertContentDescriptionEquals("누적 이번 달 0.0 km, 지난달 0.0 km")
     }
 
     @Test

@@ -39,6 +39,7 @@ import kotlinx.coroutines.launch
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 import java.time.temporal.TemporalAdjusters
 
 /** The weekly and yearly distance goals in km; null = no such goal. */
@@ -75,15 +76,17 @@ data class BarState(val label: String, val value: Double, val valueText: String,
 /**
  * The cumulative line chart: [current] and [previous] are the running totals per day in the unit of the metric (km, hours, m),
  * [goal] the end value of the goal pace line (a distance goal of a week or year; null otherwise), [length] the days of the
- * axis, [endText] the last value of [current] and [previousText] the value of [previous] on the same day, as [cumulativeText].
+ * axis, [currentDays] the days of the shown period (where the goal pace reaches the goal), [endText] the last value of
+ * [current] as [cumulativeText] (the bubble), [description] what a screen reader says (the values in the words of [metricText]).
  */
 data class CumulativeChartState(
     val current: List<Double>,
     val previous: List<Double>,
     val goal: Double?,
     val length: Int,
+    val currentDays: Int,
     val endText: String,
-    val previousText: String,
+    val description: String,
     val currentName: String,
     val previousName: String,
 )
@@ -286,8 +289,9 @@ class StatsViewModel(
             previous = series.previous.map { cumulativeValue(metric, it) },
             goal = goal?.toDouble(),
             length = series.length,
+            currentDays = (ChronoUnit.DAYS.between(period.start, period.endInclusive) + 1).toInt(),
             endText = cumulativeText(metric, series.current.last()),
-            previousText = cumulativeText(metric, previousAt),
+            description = "누적 $currentName ${metricText(metric, series.current.last())}, $previousName ${metricText(metric, previousAt)}",
             currentName = currentName,
             previousName = previousName,
         )

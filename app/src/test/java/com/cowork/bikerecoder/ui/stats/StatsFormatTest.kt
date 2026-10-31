@@ -225,6 +225,15 @@ class StatsFormatTest {
     }
 
     @Test
+    fun theMiddleAxisNameStandsOnItsOwnDay() {
+        assertEquals(3, cumulativeMiddleIndex(PeriodKind.WEEK, 7)) // 목
+        assertEquals(14, cumulativeMiddleIndex(PeriodKind.MONTH, 28)) // the 15th
+        assertEquals(14, cumulativeMiddleIndex(PeriodKind.MONTH, 31))
+        assertEquals(181, cumulativeMiddleIndex(PeriodKind.YEAR, 365)) // July 1
+        assertEquals(182, cumulativeMiddleIndex(PeriodKind.YEAR, 366))
+    }
+
+    @Test
     fun metricLabelsNameTheAscent() {
         assertEquals("거리", metricLabel(StatMetric.DISTANCE))
         assertEquals("시간", metricLabel(StatMetric.TIME))

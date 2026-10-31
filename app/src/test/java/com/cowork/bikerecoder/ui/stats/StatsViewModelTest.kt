@@ -550,7 +550,8 @@ class StatsViewModelTest {
         assertEquals(31, cumulative.length)
         assertNull(cumulative.goal) // the month has no goal line
         assertEquals("30.0", cumulative.endText)
-        assertEquals("30.0", cumulative.previousText)
+        assertEquals("누적 이번 달 30.0 km, 지난달 30.0 km", cumulative.description)
+        assertEquals(31, cumulative.currentDays)
         assertEquals("이번 달", cumulative.currentName)
         assertEquals("지난달", cumulative.previousName)
     }
@@ -568,7 +569,7 @@ class StatsViewModelTest {
         assertEquals(31, cumulative.previous.size) // August
         assertEquals("9월", cumulative.currentName)
         assertEquals("8월", cumulative.previousName)
-        assertEquals("0", cumulative.previousText)
+        assertEquals("누적 9월 30.0 km, 8월 0.0 km", cumulative.description)
     }
 
     @Test
@@ -626,13 +627,14 @@ class StatsViewModelTest {
         assertEquals(1.5, cumulative.current.last(), 1e-9) // 30 + 60 minutes, in hours
         assertEquals("1:30", cumulative.endText)
         assertEquals(2.0, cumulative.previous.last(), 1e-9)
-        assertEquals("2:00", cumulative.previousText)
+        assertEquals("누적 이번 달 1시간 30분, 지난달 2시간 0분", cumulative.description)
 
         vm.selectMetric(StatMetric.ASCENT)
         advanceUntilIdle()
         cumulative = vm.state.value!!.cumulative!!
         assertEquals(50.0, cumulative.current.last(), 1e-9)
         assertEquals("50", cumulative.endText)
+        assertEquals("누적 이번 달 50 m, 지난달 100 m", cumulative.description)
 
         vm.selectKind(PeriodKind.ALL)
         advanceUntilIdle()
@@ -645,5 +647,30 @@ class StatsViewModelTest {
 
         assertTrue(cumulative.current.all { it == 0.0 } && cumulative.previous.all { it == 0.0 })
         assertEquals("0", cumulative.endText)
+        assertEquals("누적 이번 달 0.0 km, 지난달 0.0 km", cumulative.description)
+    }
+
+    /** The goal pace ends on the last day of the shown period, not of the longer axis. */
+    @Test
+    fun cumulativeKnowsTheDaysOfTheShownPeriod() = runTest(dispatcher) {
+        today = LocalDate.of(2026, 2, 10)
+        val vm = viewModel(FakeRides(listOf(ride(1, LocalDate.of(2026, 1, 20), 5.0))), FakeGoals(weekly = 100, yearly = 3000))
+
+        val february = vm.state.value!!.cumulative!!
+        assertEquals(10, february.current.size)
+        assertEquals(31, february.length) // January is the longer
+        assertEquals(28, february.currentDays)
+
+        vm.selectKind(PeriodKind.WEEK)
+        advanceUntilIdle()
+        assertEquals(7, vm.state.value!!.cumulative!!.currentDays)
+
+        vm.selectKind(PeriodKind.YEAR)
+        advanceUntilIdle()
+        assertEquals(365, vm.state.value!!.cumulative!!.currentDays)
+        today = LocalDate.of(2028, 3, 1)
+        vm.refresh()
+        advanceUntilIdle()
+        assertEquals(366, vm.state.value!!.cumulative!!.currentDays)
     }
 }

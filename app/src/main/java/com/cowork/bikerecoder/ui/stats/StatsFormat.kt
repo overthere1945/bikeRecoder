@@ -76,6 +76,16 @@ fun cumulativeAxisNames(kind: PeriodKind, length: Int): List<String> = when (kin
     else -> listOf("1월", "7월", "12월")
 }
 
+/**
+ * The day (0-based) the middle name of [cumulativeAxisNames] stands on: 목 of a week, the 15th of a month, July 1 of a year
+ * ([currentDays] says whether the shown year is a leap year).
+ */
+fun cumulativeMiddleIndex(kind: PeriodKind, currentDays: Int): Int = when (kind) {
+    PeriodKind.WEEK -> 3
+    PeriodKind.MONTH -> 14
+    else -> if (currentDays > 365) 182 else 181
+}
+
 /** The number a bar is as tall as: metres, milliseconds or metres of ascent. */
 fun metricValue(metric: StatMetric, totals: StatTotals): Double = when (metric) {
     StatMetric.DISTANCE -> totals.distanceM
