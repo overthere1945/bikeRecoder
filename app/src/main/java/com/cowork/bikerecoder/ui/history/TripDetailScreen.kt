@@ -39,6 +39,11 @@ import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.SegmentTotals
+import com.cowork.bikerecoder.export.ExportFormat
+import com.cowork.bikerecoder.export.ExportMenu
+import com.cowork.bikerecoder.export.ExportOutcome
+import com.cowork.bikerecoder.export.ExportProgress
+import com.cowork.bikerecoder.export.ExportState
 import com.cowork.bikerecoder.importing.importedFromText
 import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.post.PhotoThumbnails
@@ -67,6 +72,7 @@ import java.time.LocalDate
  * make it from (V1.3.0 spec §1.1); [mediaThumbnail] and [onOpenMedia]: "만든 영상·이미지" (§5.1).
  * [onShare]: the paper plane on the title row, shown while the trip has a finished ride to share (V1.5.0 spec §1.1).
  * [onOpenElevation]: the small elevation chart's [지도에 표시] / tap opens the "고도" map screen (V1.7.0 spec §2.3).
+ * The title row's [⋮] exports the trip as GPX or KML (V1.7.0 spec §4.1, §4.2), through the view model.
  */
 @Composable
 fun TripDetailScreen(
@@ -101,6 +107,8 @@ fun TripDetailScreen(
     val importedFrom by viewModel.importedFrom.collectAsStateWithLifecycle()
     val profile by viewModel.profile.collectAsStateWithLifecycle()
     val profileLoaded by viewModel.profileLoaded.collectAsStateWithLifecycle()
+    val exportState by viewModel.exportState.collectAsStateWithLifecycle()
+    val recording by viewModel.recording.collectAsStateWithLifecycle()
     var renaming by rememberSaveable { mutableStateOf(false) }
     val access = rememberHeartRateAccess(heartRateGate)
     val viewer = rememberPhotoViewerState()
@@ -117,6 +125,9 @@ fun TripDetailScreen(
         profile = profile,
         profileLoaded = profileLoaded,
         onOpenElevation = onOpenElevation,
+        onExport = if (viewModel.canExport) viewModel::export else null,
+        exportEnabled = !recording,
+        exporting = exportState == ExportState.Running,
         dialog = dialog,
         onOpenSegment = onOpenSegment,
         onRequestDelete = viewModel::requestDeleteSegment,
@@ -159,6 +170,7 @@ fun TripDetailScreen(
         },
     )
     PhotoViewerHost(viewer, photos, thumbnails, onToggleHidden = { viewModel.setHidden(it, hidden = !it.hidden) })
+    ExportOutcome(exportState, onClear = viewModel::clearExport)
     if (renaming) {
         RenameTripDialog(
             current = customTitle,
@@ -188,6 +200,9 @@ internal fun tripRefetchAction(access: HeartRateAccess, refetch: () -> Unit): ((
  * the ascent, descent and highest altitude, V1.7.0 spec §2.3), under them the small elevation chart of [profile] (with
  * [지도에 표시], opening the "고도" map screen through [onOpenElevation]; nothing while [profileLoaded] is false) and its
  * segments under a header per date (with that day's average heart rate); a long press asks to delete.
+ * [onExport]: the title row's [⋮] at its right end with "GPX로 내보내기" and "KML로 내보내기" (V1.7.0 spec §4.1), dimmed
+ * with "기록을 마친 뒤 내보낼 수 있습니다" while [exportEnabled] is false; [exporting] shows a small progress indicator
+ * over the screen's content (§4.2).
  */
 @Composable
 fun TripDetailContent(
@@ -212,13 +227,20 @@ fun TripDetailContent(
     profile: ElevationProfile? = null,
     profileLoaded: Boolean = true,
     onOpenElevation: (() -> Unit)? = null,
+    onExport: ((ExportFormat) -> Unit)? = null,
+    exportEnabled: Boolean = true,
+    exporting: Boolean = false,
 ) {
     HistoryScaffold(title = "여행 기록", onBack = onBack) {
         if (segmentsByDate.isEmpty()) {
             EmptyText()
         } else {
             Column(modifier = Modifier.fillMaxSize()) {
-                if (title != null && onRename != null) TripTitleRow(title, onRename, onShare)
+                if (title != null && onRename != null) {
+                    TripTitleRow(title, onRename, onShare) {
+                        if (onExport != null) ExportMenu(onExport, enabled = exportEnabled, running = exporting)
+                    }
+                }
                 if (importedFrom != null) {
                     Text(
                         importedFromText(importedFrom),
@@ -235,14 +257,19 @@ fun TripDetailContent(
                     refetching, profile, profileLoaded, onOpenElevation, Modifier.weight(1f),
                 )
             }
+            // Over the content, in the scaffold's box.
+            if (exporting) ExportProgress()
         }
     }
     HistoryDialogs(dialog, CONFIRM_DELETE_SEGMENT, onConfirmDelete, onDismiss)
 }
 
-/** The shown title in `titleLarge`, and on the right the paper plane "공유" (when [onShare]) and [✎]: "제목 바꾸기". */
+/**
+ * The shown title in `titleLarge`, and on the right the paper plane "공유" (when [onShare]), [✎]: "제목 바꾸기", and at
+ * the end [more] (the export [⋮]).
+ */
 @Composable
-private fun TripTitleRow(title: String, onRename: () -> Unit, onShare: (() -> Unit)?) {
+private fun TripTitleRow(title: String, onRename: () -> Unit, onShare: (() -> Unit)?, more: @Composable () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -260,6 +287,7 @@ private fun TripTitleRow(title: String, onRename: () -> Unit, onShare: (() -> Un
             }
         }
         IconButton(onClick = onRename) { Icon(Icons.Filled.Edit, contentDescription = RENAME_TITLE) }
+        more()
     }
 }
 

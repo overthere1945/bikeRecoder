@@ -8,13 +8,19 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.export.ExportFormat
+import com.cowork.bikerecoder.export.ExportResult
+import com.cowork.bikerecoder.export.ExportRunner
+import com.cowork.bikerecoder.export.ExportState
 import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.elevation.RideTimeEstimator
 import com.cowork.bikerecoder.core.elevation.UsualSpeed
 import com.cowork.bikerecoder.core.model.GeoMath
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.LocationFix
+import com.cowork.bikerecoder.core.model.Route
 import com.cowork.bikerecoder.core.model.RouteProfile
+import com.cowork.bikerecoder.core.model.Stop
 import com.cowork.bikerecoder.core.routing.RouteFailure
 import com.cowork.bikerecoder.core.routing.RouteRequest
 import com.cowork.bikerecoder.core.routing.RouteResult
@@ -57,6 +63,8 @@ import kotlinx.coroutines.withTimeoutOrNull
  *   [USUAL_SPEED_TIMEOUT_MS] is logged and [UsualSpeed.DEFAULT_MPS]. The route is published with that speed, its time at
  *   that speed corrected for the climbs ([RideTimeEstimator], spec §2.5) and its elevation profile computed on [compute].
  * @param handoff where [openElevation] hands the profile and route line to the "고도" map screen.
+ * @param exportRoute [com.cowork.bikerecoder.export.TripExporter.exportRoute] (V1.7.0 spec §4.1): the ready route as
+ *   GPX or KML ([export]); without it the plan offers no export.
  */
 class PlanViewModel(
     private val router: Router,
@@ -70,7 +78,16 @@ class PlanViewModel(
     private val handoff: ElevationHandoff = ElevationHandoff(),
     private val compute: CoroutineDispatcher = Dispatchers.Default,
     private val log: WarnLog = androidWarnLog(TAG),
+    private val exportRoute: (suspend (Route, List<Stop>, String, ExportFormat) -> ExportResult)? = null,
 ) : ViewModel() {
+
+    private val exporter = ExportRunner(viewModelScope, log)
+
+    /** The export started from the summary's [⋮]. */
+    val exportState: StateFlow<ExportState> = exporter.state
+
+    /** The [⋮] is offered (while the route is ready). */
+    val canExport: Boolean get() = exportRoute != null
 
     private val lookup = PlaceLookup(addressOf, viewModelScope)
 
@@ -168,6 +185,22 @@ class PlanViewModel(
         handoff.put(profile, route.points)
         return true
     }
+
+    /**
+     * "GPX로 내보내기" / "KML로 내보내기": the ready route with its waypoints and destination, named after the destination.
+     * Nothing without a ready route.
+     */
+    fun export(format: ExportFormat) {
+        val run = exportRoute ?: return
+        val s = _state.value
+        val route = (s.route as? RouteUiState.Ready)?.route ?: return
+        val stops = s.stops.mapIndexed { i, stop -> Stop(stop.key, stop.name, stop.point, isDestination = i == s.stops.lastIndex) }
+        val destination = s.stops.lastOrNull()?.name ?: return
+        exporter.run { run(route, stops, destination, format) }
+    }
+
+    /** The export's outcome has been shown (dialog closed, Toast posted). */
+    fun clearExport() = exporter.clear()
 
     /** Empties the plan and goes back to the settings' default profile (call when navigation starts). */
     fun clear() {
@@ -311,6 +344,7 @@ class PlanViewModel(
                         withContext(Dispatchers.IO) { UsualSpeed.of(container.rideStore.recentSegments(UsualSpeed.RECENT)) }
                     },
                     handoff = container.elevationHandoff,
+                    exportRoute = container.tripExporter::exportRoute,
                 )
             }
         }

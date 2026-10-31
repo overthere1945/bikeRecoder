@@ -50,6 +50,11 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cowork.bikerecoder.core.format.SummaryFormatter
 import com.cowork.bikerecoder.core.model.RouteProfile
+import com.cowork.bikerecoder.export.ExportFormat
+import com.cowork.bikerecoder.export.ExportMenu
+import com.cowork.bikerecoder.export.ExportOutcome
+import com.cowork.bikerecoder.export.ExportProgress
+import com.cowork.bikerecoder.export.ExportState
 import com.cowork.bikerecoder.favorite.FavoritePlace
 import com.cowork.bikerecoder.ui.common.GlyphIcon
 import com.cowork.bikerecoder.ui.common.PressedPlaceSheet
@@ -77,6 +82,7 @@ internal fun RouteProfile.labelKo() = when (this) {
  * @param map renders the plan map (BikeMap in the app, an empty box in tests).
  * @param onOpenElevation opens the "고도" map screen of the plan's route, after a tap on the elevation chart has handed
  *   the route over ([PlanViewModel.openElevation]).
+ * While the route is ready, a [⋮] right of the summary exports it as GPX or KML (V1.7.0 spec §4.1, §4.2).
  */
 @Composable
 fun PlanScreen(
@@ -90,6 +96,7 @@ fun PlanScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val pressed by viewModel.pressed.collectAsStateWithLifecycle()
+    val exportState by viewModel.exportState.collectAsStateWithLifecycle()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.onResume() }
     PlanContent(
         state = state,
@@ -101,7 +108,10 @@ fun PlanScreen(
         onMove = viewModel::move,
         onSetProfile = viewModel::setProfile,
         onOpenElevation = { if (viewModel.openElevation()) onOpenElevation() },
+        onExport = if (viewModel.canExport) viewModel::export else null,
+        exporting = exportState == ExportState.Running,
     )
+    ExportOutcome(exportState, onClear = viewModel::clearExport)
     pressed?.let { place ->
         PressedPlaceSheet(
             pressed = place,
@@ -135,6 +145,8 @@ private fun PlanContent(
     onMove: (Int, Int) -> Unit,
     onSetProfile: (RouteProfile) -> Unit,
     onOpenElevation: () -> Unit,
+    onExport: ((ExportFormat) -> Unit)?,
+    exporting: Boolean,
 ) {
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
@@ -143,29 +155,36 @@ private fun PlanContent(
                 Text("경로 계획", style = MaterialTheme.typography.titleLarge)
             }
             map(state, Modifier.weight(1f).fillMaxWidth())
-            // Scrolls when many stops or a large font make it taller than the screen, so [안내 시작] stays reachable.
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    "출발: 현재 위치",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                StopList(state.stops, onRemove, onMove)
-                TextButton(onClick = onAddStop, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("+ 경유지 추가") }
-                ProfileChips(state.profile, onSetProfile)
-                Summary(state)
-                ChartSlot(state, onOpenElevation)
-                Button(
-                    onClick = onStartNavigation,
-                    enabled = state.canStart,
-                    modifier = Modifier.fillMaxWidth().testTag(PlanTags.START),
-                ) { Text("안내 시작") }
+            Box(modifier = Modifier.fillMaxWidth()) {
+                // Scrolls when many stops or a large font make it taller than the screen, so [안내 시작] stays reachable.
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        "출발: 현재 위치",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    StopList(state.stops, onRemove, onMove)
+                    TextButton(onClick = onAddStop, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("+ 경유지 추가") }
+                    ProfileChips(state.profile, onSetProfile)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.weight(1f)) { Summary(state) }
+                        if (onExport != null && state.route is RouteUiState.Ready) ExportMenu(onExport, running = exporting)
+                    }
+                    ChartSlot(state, onOpenElevation)
+                    Button(
+                        onClick = onStartNavigation,
+                        enabled = state.canStart,
+                        modifier = Modifier.fillMaxWidth().testTag(PlanTags.START),
+                    ) { Text("안내 시작") }
+                }
+                // Over the panel while the route is exported.
+                if (exporting) ExportProgress(Modifier.matchParentSize())
             }
         }
     }

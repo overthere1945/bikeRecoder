@@ -9,6 +9,9 @@ import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripLabel
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripType
+import com.cowork.bikerecoder.export.ExportFormat
+import com.cowork.bikerecoder.export.ExportResult
+import com.cowork.bikerecoder.export.ExportState
 import com.cowork.bikerecoder.feed.TripRegions
 import com.cowork.bikerecoder.nav.FakeTripLabelStore
 import com.cowork.bikerecoder.nav.FakeTripStore
@@ -64,6 +67,9 @@ class TripDetailViewModelTest {
         rides.closeSegment(id, startedAt + 60_000, totals)
     }
 
+    private val exports = mutableListOf<Triple<Long, ExportFormat, String>>()
+    private var exportResult: ExportResult = ExportResult.Saved("content://downloads/7", "bikeRecoder_20261025_1900 (1).gpx", "application/gpx+xml")
+
     private fun TestScope.detail(imported: Flow<Map<Long, String>> = flowOf(emptyMap())) = TripDetailViewModel(
         rides, TRIP, store,
         PostProcessor(rides, store, FakePhotoSource(), FakeHeartRateSource(), clock = { 0L }, scope = backgroundScope, warnLog = { _, _ -> }),
@@ -72,6 +78,10 @@ class TripDetailViewModelTest {
         tripLabels = labels,
         tripRegions = regions,
         imported = imported,
+        exportTrip = { id, format, title ->
+            exports += Triple(id, format, title)
+            exportResult
+        },
     )
 
     @Test
@@ -240,6 +250,39 @@ class TripDetailViewModelTest {
 
         assertEquals("Relive_0514.gpx", vm.importedFrom.value)
         assertEquals(600.0, requireNotNull(vm.profile.value).totalM, 1.0)
+    }
+
+    /** V1.7.0 spec §4.1, §4.2: the trip is exported under the title the screen shows; the dialog shows what was saved. */
+    @Test
+    fun exportUsesTheShownTitle() = runTest(dispatcher) {
+        evening()
+        val vm = detail()
+        advanceUntilIdle()
+        assertEquals(false, vm.recording.value)
+
+        vm.export(ExportFormat.GPX)
+        assertEquals(ExportState.Running, vm.exportState.value)
+        advanceUntilIdle()
+
+        assertEquals(listOf(Triple(TRIP, ExportFormat.GPX, "저녁 라이딩 · 서울 강서구")), exports)
+        assertEquals(ExportState.Done(exportResult as ExportResult.Saved), vm.exportState.value)
+        vm.clearExport()
+        assertEquals(ExportState.Idle, vm.exportState.value)
+    }
+
+    /** A trip with an open segment dims the menu; if the exporter finds one anyway, the outcome says so. */
+    @Test
+    fun openSegmentIsRecording() = runTest(dispatcher) {
+        evening()
+        rides.openSegment(TRIP, 99_000_000L, LocalDate.of(2026, 10, 26))
+        exportResult = ExportResult.Recording
+        val vm = detail()
+        advanceUntilIdle()
+
+        assertEquals(true, vm.recording.value)
+        vm.export(ExportFormat.KML)
+        advanceUntilIdle()
+        assertEquals(ExportState.Recording, vm.exportState.value)
     }
 
     private companion object {

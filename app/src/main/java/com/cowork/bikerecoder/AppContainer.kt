@@ -28,6 +28,8 @@ import com.cowork.bikerecoder.data.RoomTripLabelStore
 import com.cowork.bikerecoder.data.RoomTripMediaStore
 import com.cowork.bikerecoder.data.RoomTripStore
 import com.cowork.bikerecoder.data.SettingsRepository
+import com.cowork.bikerecoder.export.DownloadsWriter
+import com.cowork.bikerecoder.export.TripExporter
 import com.cowork.bikerecoder.favorite.FavoriteRepository
 import com.cowork.bikerecoder.feed.FeedThumbnails
 import com.cowork.bikerecoder.feed.TripRegions
@@ -285,6 +287,19 @@ class AppContainer(context: Context) {
 
     /** Gallery files of made videos and images (spec §3.5). */
     val mediaStoreWriter: MediaStoreWriter = MediaStoreWriter(appContext.contentResolver)
+
+    /** GPX/KML export of trips and planned routes into Download/bikeRecoder (V1.7.0 spec §4); it only reads the records. */
+    val tripExporter: TripExporter by lazy {
+        TripExporter(
+            rideStore = rideStore,
+            postStore = postStore,
+            writer = DownloadsWriter(appContext.contentResolver),
+            io = Dispatchers.IO,
+            clock = System::currentTimeMillis,
+            creator = TripExporter.creator(BuildConfig.VERSION_NAME),
+            log = androidWarnLog("TripExporter"),
+        )
+    }
 
     /** The made files of a trip that may still be shared (V1.5.0 spec §2.1). */
     val shareCandidates: ShareCandidates by lazy { ShareCandidates(mediaStoreWriter) }

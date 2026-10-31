@@ -30,6 +30,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.SegmentTotals
+import com.cowork.bikerecoder.export.ExportFormat
+import com.cowork.bikerecoder.export.ExportTags
 import com.cowork.bikerecoder.ui.elevation.ElevationTags
 import com.cowork.bikerecoder.ui.elevation.hillProfile
 import org.junit.Assert.assertEquals
@@ -214,6 +216,80 @@ class TripDetailScreenTest {
         importedFrom = null
         composeRule.onNodeWithText("Relive_0514.gpx에서 가져옴").assertDoesNotExist()
         composeRule.onNodeWithText("저녁 라이딩 · 서울 강서구").assertIsDisplayed()
+    }
+
+    private fun showExportable(onExport: (ExportFormat) -> Unit, enabled: () -> Boolean = { true }, exporting: () -> Boolean = { false }) {
+        composeRule.setContent {
+            MaterialTheme {
+                TripDetailContent(
+                    segmentsByDate = mapOf(date to listOf(segment)),
+                    total = segment.totals,
+                    dialog = null,
+                    onOpenSegment = {},
+                    onRequestDelete = {},
+                    onConfirmDelete = {},
+                    onDismiss = {},
+                    onBack = {},
+                    title = "저녁 라이딩 · 서울 강서구",
+                    onRename = {},
+                    onShare = {},
+                    onExport = onExport,
+                    exportEnabled = enabled(),
+                    exporting = exporting(),
+                )
+            }
+        }
+    }
+
+    /** V1.7.0 spec §4.1, §4.2: [⋮] "더 보기" at the right end of the title row; each item exports and closes the menu. */
+    @Test
+    fun overflowMenuExports() {
+        val asked = mutableListOf<ExportFormat>()
+        var exporting by mutableStateOf(false)
+        showExportable(onExport = { asked += it }, exporting = { exporting })
+
+        val more = composeRule.onNodeWithContentDescription("더 보기").assertIsDisplayed().assertIsEnabled()
+        val rename = composeRule.onNodeWithContentDescription(RENAME_TITLE).getBoundsInRoot()
+        assertTrue("after ✎", more.getBoundsInRoot().left >= rename.right)
+        composeRule.onNodeWithText("GPX로 내보내기").assertDoesNotExist()
+
+        more.performClick()
+        composeRule.onNodeWithText("KML로 내보내기").assertIsDisplayed().assertIsEnabled()
+        composeRule.onNodeWithText("기록을 마친 뒤 내보낼 수 있습니다").assertDoesNotExist()
+        composeRule.onNodeWithText("GPX로 내보내기").assertIsEnabled().performClick()
+        assertEquals(listOf(ExportFormat.GPX), asked)
+        composeRule.onNodeWithText("GPX로 내보내기").assertDoesNotExist()
+
+        composeRule.onNodeWithContentDescription("더 보기").performClick()
+        composeRule.onNodeWithText("KML로 내보내기").performClick()
+        assertEquals(listOf(ExportFormat.GPX, ExportFormat.KML), asked)
+
+        // While it is saved: a small progress indicator, and the [⋮] waits.
+        composeRule.onNodeWithTag(ExportTags.PROGRESS).assertDoesNotExist()
+        exporting = true
+        composeRule.onNodeWithTag(ExportTags.PROGRESS).assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("더 보기").assertIsNotEnabled()
+        exporting = false
+        composeRule.onNodeWithTag(ExportTags.PROGRESS).assertDoesNotExist()
+    }
+
+    /** V1.7.0 spec §4.1: while a segment is open, both items are dimmed and the note says why. */
+    @Test
+    fun recordingTripMenuDisabled() {
+        val asked = mutableListOf<ExportFormat>()
+        showExportable(onExport = { asked += it }, enabled = { false })
+
+        composeRule.onNodeWithContentDescription("더 보기").assertIsEnabled().performClick()
+        composeRule.onNodeWithText("GPX로 내보내기").assertIsDisplayed().assertIsNotEnabled().performClick()
+        composeRule.onNodeWithText("KML로 내보내기").assertIsDisplayed().assertIsNotEnabled().performClick()
+        composeRule.onNodeWithText("기록을 마친 뒤 내보낼 수 있습니다").assertIsDisplayed()
+        assertTrue(asked.isEmpty())
+    }
+
+    @Test
+    fun noExporterNoMenu() {
+        showTotals(climbTotals)
+        composeRule.onNodeWithContentDescription("더 보기").assertDoesNotExist()
     }
 
     private val climbTotals = segment.totals.copy(ascentM = 123.0, descentM = 45.0, maxAltitudeM = 210.0)

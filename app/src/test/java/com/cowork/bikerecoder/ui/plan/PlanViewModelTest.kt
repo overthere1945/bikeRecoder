@@ -7,6 +7,10 @@ import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.model.Route
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.model.RouteSummary
+import com.cowork.bikerecoder.core.model.Stop
+import com.cowork.bikerecoder.export.ExportFormat
+import com.cowork.bikerecoder.export.ExportResult
+import com.cowork.bikerecoder.export.ExportState
 import com.cowork.bikerecoder.core.routing.RouteFailure
 import com.cowork.bikerecoder.core.routing.RouteRequest
 import com.cowork.bikerecoder.core.routing.RouteResult
@@ -84,6 +88,11 @@ class PlanViewModelTest {
     private var usualSpeed: suspend () -> Double = { UsualSpeed.DEFAULT_MPS }
     private val handoff = ElevationHandoff()
     private val log = RecordingLog()
+    private val exports = mutableListOf<List<Any>>()
+    private var exportRoute: (suspend (Route, List<Stop>, String, ExportFormat) -> ExportResult)? = { route, stops, name, format ->
+        exports += listOf(route, stops, name, format)
+        ExportResult.Saved("content://downloads/1", "bikeRecoder_route_20261101_0900.kml", format.mime)
+    }
 
     private fun viewModel() = PlanViewModel(
         router = router,
@@ -96,6 +105,7 @@ class PlanViewModelTest {
         handoff = handoff,
         compute = Dispatchers.Main,
         log = log,
+        exportRoute = exportRoute,
     )
 
     private fun TestScope.settle() {
@@ -660,5 +670,46 @@ class PlanViewModelTest {
         vm.setDestination(Favorite(1, FavoriteKind.HOME, "집", b, null, 0))
         assertEquals(listOf("남산", "집"), vm.state.value.stops.map { it.name })
         assertEquals(b, vm.state.value.stops.last().point)
+    }
+
+    /** V1.7.0 spec §4.1: the ready route with its waypoints and destination, named after the destination. */
+    @Test
+    fun `export hands the ready route and its stops over`() = runTest {
+        val vm = viewModel()
+        vm.setDestination("해운대", c)
+        vm.addWaypoint("서면", a)
+        vm.export(ExportFormat.KML) // not ready yet: nothing
+        settle()
+        assertEquals(0, exports.size)
+        val route = (vm.state.value.route as RouteUiState.Ready).route
+
+        vm.export(ExportFormat.KML)
+        assertEquals(ExportState.Running, vm.exportState.value)
+        runCurrent()
+
+        val keys = vm.state.value.stops.map { it.key }
+        assertEquals(
+            listOf(route, listOf(Stop(keys[0], "서면", a, false), Stop(keys[1], "해운대", c, true)), "해운대", ExportFormat.KML),
+            exports.single(),
+        )
+        val done = assertInstanceOf(ExportState.Done::class.java, vm.exportState.value)
+        assertEquals("bikeRecoder_route_20261101_0900.kml", done.saved.displayName)
+        vm.clearExport()
+        assertEquals(ExportState.Idle, vm.exportState.value)
+    }
+
+    @Test
+    fun `export failure is failed and without an exporter there is none`() = runTest {
+        exportRoute = { _, _, _, _ -> ExportResult.Failed }
+        val vm = viewModel()
+        assertTrue(vm.canExport)
+        vm.setDestination("해운대", c)
+        settle()
+        vm.export(ExportFormat.GPX)
+        runCurrent()
+        assertEquals(ExportState.Failed, vm.exportState.value)
+
+        exportRoute = null
+        assertFalse(viewModel().canExport)
     }
 }

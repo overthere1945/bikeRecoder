@@ -34,6 +34,9 @@ import com.cowork.bikerecoder.core.model.RouteSummary
 import com.cowork.bikerecoder.core.routing.RouteRequest
 import com.cowork.bikerecoder.core.routing.RouteResult
 import com.cowork.bikerecoder.core.routing.Router
+import com.cowork.bikerecoder.core.model.Stop
+import com.cowork.bikerecoder.export.ExportFormat
+import com.cowork.bikerecoder.export.ExportResult
 import com.cowork.bikerecoder.ui.elevation.ElevationHandoff
 import com.cowork.bikerecoder.ui.elevation.ElevationTags
 import kotlinx.coroutines.CompletableDeferred
@@ -80,6 +83,9 @@ class PlanScreenTest {
     private val handoff = ElevationHandoff()
     private val viewModel = planViewModel()
 
+    /** What the fake exporter was asked: destination name and format. Nothing is written anywhere. */
+    private val exported = mutableListOf<Pair<String, ExportFormat>>()
+
     private fun planViewModel(usualSpeedMps: Double = UsualSpeed.DEFAULT_MPS) = PlanViewModel(
         router = router,
         defaultProfile = flowOf(RouteProfile.CYCLEWAY_FIRST),
@@ -88,6 +94,10 @@ class PlanScreenTest {
         addressOf = { addressGate.await() },
         usualSpeed = { usualSpeedMps },
         handoff = handoff,
+        exportRoute = { _: Route, _: List<Stop>, destination: String, format: ExportFormat ->
+            exported += destination to format
+            ExportResult.Saved("content://media/external_primary/downloads/1", "bikeRecoder_route_20261101_0900.gpx", format.mime)
+        },
     )
 
     private fun stopNames(): List<String> {
@@ -241,6 +251,41 @@ class PlanScreenTest {
         composeRule.onNodeWithTag(ElevationTags.CHART).assertDoesNotExist()
         composeRule.onNodeWithText("고도 정보가 없습니다").assertDoesNotExist()
         composeRule.onNodeWithTag(PlanTags.USUAL_SPEED).assertDoesNotExist()
+    }
+
+    /** V1.7.0 spec §4.1: the [⋮] right of the summary only while the route is ready; it exports and shows the dialog. */
+    @Test
+    fun overflowOnlyWhenReady() {
+        val vm = planViewModel()
+        composeRule.setContent {
+            MaterialTheme {
+                PlanScreen(viewModel = vm, map = { _, _ -> }, onBack = {}, onAddStop = {}, onStartNavigation = {})
+            }
+        }
+        composeRule.onNodeWithText("목적지를 정해 주세요").assertExists()
+        composeRule.onNodeWithContentDescription("더 보기").assertDoesNotExist()
+
+        composeRule.runOnIdle { vm.setDestination("해운대", GeoPoint(35.163, 129.16)) }
+        waitForSummary("87.4km")
+        val more = composeRule.onNodeWithContentDescription("더 보기").assertIsDisplayed()
+        val summary = composeRule.onNodeWithTag(PlanTags.SUMMARY).getBoundsInRoot()
+        assertTrue("right of the summary", more.getBoundsInRoot().left >= summary.right)
+
+        more.performClick()
+        composeRule.onNodeWithText("KML로 내보내기").assertIsDisplayed()
+        composeRule.onNodeWithText("GPX로 내보내기").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText("내보냈습니다").fetchSemanticsNodes().isNotEmpty()
+        }
+        assertEquals(listOf("해운대" to ExportFormat.GPX), exported)
+        composeRule.onNodeWithText("Download/bikeRecoder/bikeRecoder_route_20261101_0900.gpx").assertIsDisplayed()
+        composeRule.onNodeWithText("닫기").performClick()
+        composeRule.onNodeWithText("내보냈습니다").assertDoesNotExist()
+
+        // A changed plan is computed again: no [⋮] until it is ready.
+        composeRule.runOnIdle { vm.remove(vm.state.value.stops.single().key) }
+        composeRule.onNodeWithText("목적지를 정해 주세요").assertExists()
+        composeRule.onNodeWithContentDescription("더 보기").assertDoesNotExist()
     }
 
     /** Download/bikeRecoderTest/v170-plan.png: the plan preview with its time, usual speed line and chart. */
