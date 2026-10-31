@@ -360,3 +360,31 @@ data class RideStatRow(
     val ascentM: Double,
     val endedAt: Long,
 )
+
+data class ImportedNameRow(val tripId: Long, val fileName: String)
+
+data class SegmentSpanRow(val spanStart: Long, val spanEnd: Long)
+
+@Dao
+interface ImportDao {
+    @Insert
+    suspend fun insertImport(row: TripImportEntity)
+
+    @Query("SELECT tripId, fileName FROM trip_import")
+    fun observeImported(): Flow<List<ImportedNameRow>>
+
+    /**
+     * Deletes the imported trips (those with a `trip_import` row) that are COMPLETED and have no open segment; CASCADE
+     * takes their segments, points, photos, labels, media and import rows. A trip without a `trip_import` row is never
+     * touched. Rows deleted.
+     */
+    @Query(
+        "DELETE FROM trip WHERE id IN (SELECT tripId FROM trip_import) AND status = 'COMPLETED' " +
+            "AND NOT EXISTS (SELECT 1 FROM ride_segment WHERE ride_segment.tripId = trip.id AND ride_segment.endedAt IS NULL)",
+    )
+    suspend fun deleteCompletedImportedTrips(): Int
+
+    /** 모든 구간의 시간 구간. 열린 구간은 끝을 [now]로 본다. */
+    @Query("SELECT startedAt AS spanStart, COALESCE(endedAt, :now) AS spanEnd FROM ride_segment")
+    suspend fun segmentSpans(now: Long): List<SegmentSpanRow>
+}

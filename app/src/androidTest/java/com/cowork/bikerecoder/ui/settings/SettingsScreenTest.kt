@@ -7,11 +7,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -24,6 +28,7 @@ import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.data.AppSettings
 import com.cowork.bikerecoder.data.GuidanceRecording
 import com.cowork.bikerecoder.data.SettingsRepository
+import com.cowork.bikerecoder.importing.ImportJobState
 import com.cowork.bikerecoder.offline.OfflineMapStorage
 import com.cowork.bikerecoder.offline.SegmentRepository
 import com.cowork.bikerecoder.post.FakeHeartRateSource
@@ -32,11 +37,13 @@ import com.cowork.bikerecoder.post.HealthAvailability
 import com.cowork.bikerecoder.post.PhotoAccess
 import com.cowork.bikerecoder.ui.health.HeartRateAccess
 import com.cowork.bikerecoder.ui.health.HeartRateGate
+import com.cowork.bikerecoder.ui.importing.ImportTags
 import kotlinx.coroutines.flow.MutableStateFlow
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -64,6 +71,11 @@ class SettingsScreenTest {
     private val heartRate = FakeHeartRateSource(permitted = false)
     private val opened = mutableListOf<String>()
 
+    // The GPX import (V1.6.0 spec §1.1, §4.3): the imported trips' count, the job, [모두 지우기].
+    private val importedCount = MutableStateFlow(0)
+    private val importState = MutableStateFlow<ImportJobState>(ImportJobState.Idle)
+    private var importedDeletes = 0
+
     @Before
     fun setUp() {
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -78,6 +90,12 @@ class SettingsScreenTest {
             // A dead address, so nothing a test taps can reach the real server.
             segments = SegmentRepository(segmentDir, OkHttpClient(), "http://127.0.0.1:1/".toHttpUrl()),
             mapStorage = storage,
+            importedCount = importedCount,
+            importState = importState,
+            deleteImportedTrips = {
+                importedDeletes++
+                importedCount.value.also { importedCount.value = 0 }
+            },
         )
     }
 
@@ -95,6 +113,7 @@ class SettingsScreenTest {
                     // Never the real system screens.
                     onOpenAppSettings = { opened += "app" },
                     onOpenHealthConnectSettings = { opened += "healthConnect" },
+                    onOpenImport = { opened += "import" },
                 )
             }
         }
@@ -108,7 +127,7 @@ class SettingsScreenTest {
     @Test
     fun showsVersionAndTogglesVoice() {
         show()
-        composeRule.onNodeWithText("V1.5.0").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("V1.6.0").performScrollTo().assertIsDisplayed()
 
         composeRule.onNodeWithTag(SettingsTags.VOICE).performScrollTo().assertIsOn()
         composeRule.onNodeWithTag(SettingsTags.VOICE).performClick()
@@ -300,6 +319,63 @@ class SettingsScreenTest {
         composeRule.onNodeWithText("설정").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("뒤로").assertDoesNotExist()
         composeRule.onNodeWithTag(SettingsTags.VOICE).performScrollTo().assertIsOn()
+    }
+
+    /** "기록 가져오기" sits under "공유" and above "앱 정보"; no imported row while there is none. */
+    @Test
+    fun importSectionBetweenShareAndAppInfo() {
+        show()
+        composeRule.onNodeWithText("기록 가져오기").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("지난 기록 가져오기 (GPX)").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Relive·Strava 등에서 받은 GPX·ZIP 파일").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag(ImportTags.SETTINGS_ROW).performScrollTo().assertIsEnabled()
+        composeRule.onNodeWithTag(ImportTags.SETTINGS_IMPORTED).assertDoesNotExist()
+
+        val share = composeRule.onNodeWithText("공유").getUnclippedBoundsInRoot().top
+        val import = composeRule.onNodeWithText("기록 가져오기").getUnclippedBoundsInRoot().top
+        val hashtags = composeRule.onNodeWithTag(SettingsTags.SHARE_HASHTAGS).getUnclippedBoundsInRoot().top
+        val appInfo = composeRule.onNodeWithText("앱 정보").getUnclippedBoundsInRoot().top
+        assertTrue("share $share < hashtags $hashtags < import $import < app info $appInfo", share < hashtags && hashtags < import && import < appInfo)
+    }
+
+    @Test
+    fun importedCountAndDeleteAllConfirm() {
+        importedCount.value = 3
+        show()
+        composeRule.onNodeWithTag(ImportTags.SETTINGS_IMPORTED).performScrollTo().assertTextEquals("가져온 기록 3개")
+        composeRule.onNodeWithTag(ImportTags.SETTINGS_DELETE_ALL).performScrollTo().assertTextEquals("모두 지우기").performClick()
+        composeRule.onNodeWithText("가져온 기록 3개를 지울까요? 이 휴대폰에서 기록한 주행은 남습니다.").assertIsDisplayed()
+        composeRule.onNodeWithTag(SettingsTags.CANCEL).assertTextEquals("취소").performClick()
+        composeRule.waitForIdle()
+        assertEquals(0, importedDeletes)
+
+        composeRule.onNodeWithTag(ImportTags.SETTINGS_DELETE_ALL).performClick()
+        composeRule.onNodeWithTag(SettingsTags.CONFIRM).assertTextEquals("지우기").performClick()
+        composeRule.waitUntil(5_000) { importedDeletes == 1 }
+        composeRule.waitUntil(5_000) {
+            composeRule.onAllNodesWithTag(ImportTags.SETTINGS_IMPORTED).fetchSemanticsNodes().isEmpty()
+        }
+        assertEquals(1, importedDeletes)
+    }
+
+    @Test
+    fun importingShowsProgressAndDisablesDelete() {
+        importedCount.value = 2
+        importState.value = ImportJobState.Importing(12, 35)
+        show()
+        composeRule.onNodeWithText("가져오는 중 12/35").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Relive·Strava 등에서 받은 GPX·ZIP 파일").assertDoesNotExist()
+        composeRule.onNodeWithTag(ImportTags.SETTINGS_DELETE_ALL).performScrollTo().assertIsNotEnabled()
+
+        // The row opens the progress screen, not the file picker.
+        composeRule.onNodeWithTag(ImportTags.SETTINGS_ROW).performScrollTo().performClick()
+        assertEquals(listOf("import"), opened)
+
+        importState.value = ImportJobState.Finished(imported = 35, skipped = 0, stopped = false)
+        composeRule.waitUntil(5_000) {
+            composeRule.onAllNodesWithText("Relive·Strava 등에서 받은 GPX·ZIP 파일").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag(ImportTags.SETTINGS_DELETE_ALL).performScrollTo().assertIsEnabled()
     }
 
     @Test

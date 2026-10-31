@@ -254,3 +254,24 @@ data class TripLabelEntity(
     val shareText: String? = null,
     val shareStamp: String? = null,
 )
+
+/**
+ * 가져온 여행의 표시. 이 행이 있는 여행이 GPX 가져오기로 만든 여행이다.
+ * fileName은 목록 줄에 보일 파일 이름(200자까지), importedAt은 가져온 시각(epoch ms). 여행을 지우면 같이 지워진다.
+ */
+@Entity(
+    tableName = "trip_import",
+    foreignKeys = [
+        ForeignKey(
+            entity = TripEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["tripId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+)
+data class TripImportEntity(
+    @PrimaryKey val tripId: Long,
+    val fileName: String,
+    val importedAt: Long,
+)

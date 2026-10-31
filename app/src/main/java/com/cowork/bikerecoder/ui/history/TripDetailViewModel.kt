@@ -42,6 +42,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -53,6 +54,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
@@ -94,6 +96,8 @@ class TripDetailViewModel(
     /** Looks up the region once the first point is known; without it none is looked up. */
     private val tripRegions: TripRegions? = null,
     private val zone: ZoneId = SEOUL,
+    /** The imported trips, id to file name (V1.6.0 spec §4.2). */
+    imported: Flow<Map<Long, String>> = flowOf(emptyMap()),
 ) : ViewModel() {
 
     private val _segmentsByDate = MutableStateFlow<Map<LocalDate, List<RideSegment>>>(emptyMap())
@@ -127,6 +131,15 @@ class TripDetailViewModel(
             emit(TripLabel())
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, TripLabel())
+
+    /** The file the trip was imported from ("Relive_0514.gpx에서 가져옴", V1.6.0 spec §4.2); null for a trip recorded here. */
+    val importedFrom: StateFlow<String?> = imported
+        .map { it[tripId] }
+        .catch { e ->
+            log.warn("Could not read whether trip $tripId was imported", e)
+            emit(null)
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /** The trip's own title, null while it has none. */
     val customTitle: StateFlow<String?> = label.map { it.customTitle?.takeIf { t -> t.isNotBlank() } }
@@ -388,6 +401,7 @@ class TripDetailViewModel(
                     tripMedia = container.tripMedia,
                     tripLabels = container.tripLabels,
                     tripRegions = container.tripRegions,
+                    imported = container.importStore.observeImported(),
                     mediaExists = { uri -> withContext(Dispatchers.IO) { container.mediaStoreWriter.exists(uri.toUri()) } },
                 )
             }

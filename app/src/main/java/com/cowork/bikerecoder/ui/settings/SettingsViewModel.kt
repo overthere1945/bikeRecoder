@@ -9,6 +9,7 @@ import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.data.AppSettings
 import com.cowork.bikerecoder.data.GuidanceRecording
+import com.cowork.bikerecoder.importing.ImportJobState
 import com.cowork.bikerecoder.offline.OfflineMapStorage
 import com.cowork.bikerecoder.offline.SegmentInfo
 import com.cowork.bikerecoder.offline.SegmentRepository
@@ -19,6 +20,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -51,7 +54,17 @@ data class SettingsUiState(
     val mapStorage: MapStorageState = MapStorageState.Loading,
     val deletingMaps: Boolean = false,
     val deleteMapsFailed: Boolean = false,
+    /** "가져온 기록 N개" (V1.6.0 spec §4.3); the row shows when above 0. */
+    val importedCount: Int = 0,
+    /** The GPX import job: "가져오는 중 12/35" on the row, [모두 지우기] dimmed while importing. */
+    val importJob: ImportJobState = ImportJobState.Idle,
+    val deletingImported: Boolean = false,
+    /** "가져온 기록을 지웠습니다" is due (once, [SettingsViewModel.importedDeletedShown]). */
+    val importedDeleted: Boolean = false,
 ) {
+    /** The import job runs. */
+    val importing: Boolean get() = importJob is ImportJobState.Importing
+
     fun statusOf(name: String): SegmentStatus = segmentStatus[name] ?: SegmentStatus.Idle
 }
 
@@ -60,6 +73,12 @@ class SettingsViewModel(
     private val updateSettings: suspend ((AppSettings) -> AppSettings) -> Unit,
     private val segments: SegmentRepository,
     private val mapStorage: OfflineMapStorage,
+    /** How many trips were imported (V1.6.0 spec §4.3). */
+    importedCount: Flow<Int> = flowOf(0),
+    /** The one GPX import job's state. */
+    importState: Flow<ImportJobState> = flowOf(ImportJobState.Idle),
+    /** Deletes every imported trip; returns how many. */
+    private val deleteImportedTrips: suspend () -> Int = { 0 },
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SettingsUiState(segments = segments.list()))
@@ -72,6 +91,8 @@ class SettingsViewModel(
 
     init {
         viewModelScope.launch { settings.collect { s -> _state.update { it.copy(settings = s) } } }
+        viewModelScope.launch { importedCount.collect { n -> _state.update { it.copy(importedCount = n) } } }
+        viewModelScope.launch { importState.collect { s -> _state.update { it.copy(importJob = s) } } }
         refreshMapSize()
     }
 
@@ -199,6 +220,35 @@ class SettingsViewModel(
         }
     }
 
+    // ---- imported trips ----
+
+    private var deleteImportedRun: Job? = null
+
+    /**
+     * [모두 지우기] (V1.6.0 spec §4.3) after its confirmation: every imported trip. Ignored while importing or deleting;
+     * "가져온 기록을 지웠습니다" follows ([SettingsUiState.importedDeleted]).
+     */
+    fun deleteAllImported() {
+        if (deleteImportedRun?.isActive == true || _state.value.importing) return
+        _state.update { it.copy(deletingImported = true) }
+        deleteImportedRun = viewModelScope.launch {
+            val deleted = try {
+                deleteImportedTrips()
+                true
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                false
+            }
+            _state.update { it.copy(deletingImported = false, importedDeleted = deleted) }
+        }
+    }
+
+    /** "가져온 기록을 지웠습니다" was shown. */
+    fun importedDeletedShown() {
+        _state.update { it.copy(importedDeleted = false) }
+    }
+
     companion object {
         private const val BYTES_PER_MB = 1024L * 1024L
 
@@ -209,6 +259,9 @@ class SettingsViewModel(
                     updateSettings = { transform -> container.settings.update(transform) },
                     segments = container.segments,
                     mapStorage = container.offlineMaps,
+                    importedCount = container.importStore.observeImported().map { it.size },
+                    importState = container.gpxImportJob.state,
+                    deleteImportedTrips = container.importStore::deleteAllImported,
                 )
             }
         }

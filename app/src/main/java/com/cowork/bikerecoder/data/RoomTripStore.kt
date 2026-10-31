@@ -27,7 +27,7 @@ class RoomTripStore(db: AppDatabase) : TripStore {
     override suspend fun markVisited(stopId: Long, at: Long) = dao.markVisited(stopId, at)
 }
 
-private fun Trip.toEntity() = TripEntity(
+internal fun Trip.toEntity() = TripEntity(
     id = id,
     type = type.name,
     status = status.name,

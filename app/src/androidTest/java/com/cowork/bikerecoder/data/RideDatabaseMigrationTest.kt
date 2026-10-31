@@ -31,7 +31,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.time.LocalDate
 
-/** 스펙 ⑥: 이전 버전 데이터가 마이그레이션 뒤에도 그대로이고, 새 테이블이 동작한다(1→2, 2→3, 3→4, 4→5, 5→6). */
+/** 스펙 ⑥: 이전 버전 데이터가 마이그레이션 뒤에도 그대로이고, 새 테이블이 동작한다(1→2 … 7→8). */
 @RunWith(AndroidJUnit4::class)
 class RideDatabaseMigrationTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
@@ -311,6 +311,49 @@ class RideDatabaseMigrationTest {
             labels.setShareText(6, "글", "S")
             labels.setCustomTitle(6, "새 제목")
             assertEquals(TripLabel("새 제목", null, "글", "S"), labels.label(6))
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun migrate7To8KeepsDataAndAddsEmptyImportTable() = runBlocking {
+        helper.createDatabase(DB, 7).apply {
+            execSQL(
+                "INSERT INTO trip (id, type, status, profile, createdAt, lastActiveAt, completedAt) " +
+                    "VALUES (5, 'SINGLE_DAY', 'COMPLETED', 'BALANCED', 1000, 2000, 6000)",
+            )
+            execSQL(
+                "INSERT INTO ride_segment (id, tripId, startedAt, endedAt, localDate, distanceM, movingTimeMs, " +
+                    "elapsedMs, maxSpeedMps, ascentM, descentM, minAltitudeM, maxAltitudeM) " +
+                    "VALUES (21, 5, 3000, 4000, '2026-10-12', 1500.0, 60000, 90000, 8.5, 10.0, 4.0, NULL, NULL)",
+            )
+            execSQL(
+                "INSERT INTO trip_label (tripId, customTitle, regionName, shareText, shareStamp) " +
+                    "VALUES (5, '남한강 일주', '양평', '공유 글', 'S')",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(DB, 8, true)
+        migrated.query("PRAGMA foreign_key_check").use { assertEquals(0, it.count) }
+        migrated.query("SELECT COUNT(*) FROM trip_import").use {
+            it.moveToFirst()
+            assertEquals(0, it.getInt(0))
+        }
+        migrated.close()
+
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, DB).build()
+        try {
+            assertEquals(TripStatus.COMPLETED, RoomTripStore(db).trip(5)!!.status)
+            val segment = RoomRideStore(db).segments(5).single()
+            assertEquals(21L, segment.id)
+            assertEquals(1500.0, segment.totals.distanceM, 0.0)
+            assertEquals(
+                mapOf(5L to TripLabel("남한강 일주", "양평", "공유 글", "S")),
+                RoomTripLabelStore(db).observeLabels().first(),
+            )
+            assertEquals(emptyMap<Long, String>(), RoomImportStore(db).observeImported().first())
         } finally {
             db.close()
         }

@@ -3,6 +3,7 @@ package com.cowork.bikerecoder
 import android.content.Context
 import android.util.Log
 import com.cowork.bikerecoder.core.routing.Router
+import com.cowork.bikerecoder.core.importing.ImportStore
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.trip.OfflineMapController
 import com.cowork.bikerecoder.core.stats.RideStatsSource
@@ -15,6 +16,11 @@ import com.cowork.bikerecoder.data.DataStoreDayDistances
 import com.cowork.bikerecoder.data.DataStoreRecentPlaces
 import com.cowork.bikerecoder.data.DayDistances
 import com.cowork.bikerecoder.data.RoomFavoriteStore
+import com.cowork.bikerecoder.data.RoomImportStore
+import com.cowork.bikerecoder.importing.ContentImportReader
+import com.cowork.bikerecoder.importing.GpxImportJob
+import com.cowork.bikerecoder.importing.ImportHandoff
+import com.cowork.bikerecoder.importing.ImportReader
 import com.cowork.bikerecoder.data.RoomPostStore
 import com.cowork.bikerecoder.data.RoomRideStatsSource
 import com.cowork.bikerecoder.data.RoomRideStore
@@ -82,6 +88,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
@@ -130,6 +137,7 @@ class AppContainer(context: Context) {
     val offline: OfflineMapController = offlineMaps
     val tripManager: TripManager = TripManager(tripStore, offline, clock = System::currentTimeMillis)
     val rideStore: RideStore = RoomRideStore(db)
+    val importStore: ImportStore = RoomImportStore(db)
     val tripLabels: TripLabelStore = RoomTripLabelStore(db)
     val rideStats: RideStatsSource = RoomRideStatsSource(db)
     val favorites: FavoriteRepository = FavoriteRepository(RoomFavoriteStore(db), clock = System::currentTimeMillis)
@@ -239,6 +247,28 @@ class AppContainer(context: Context) {
     val postProcessor: PostProcessor = PostProcessor(
         rideStore, postStore, photoSource, heartRateSource, clock = System::currentTimeMillis, scope = postScope,
     )
+
+    /** The picked GPX/ZIP files of the import (V1.6.0 spec §3.3). */
+    val importReader: ImportReader = ContentImportReader(appContext)
+
+    /** The picked files on their way to the import screen (in memory only). */
+    val importHandoff: ImportHandoff = ImportHandoff()
+
+    /**
+     * The one GPX import job (V1.6.0 spec §3.4), outside any screen; it stops with the process. The trip's route profile
+     * is the settings' default.
+     */
+    val gpxImportJob: GpxImportJob by lazy {
+        GpxImportJob(
+            reader = importReader,
+            store = importStore,
+            postProcessor = postProcessor::request,
+            profile = { settings.settings.first().defaultProfile },
+            clock = System::currentTimeMillis,
+            scope = appScope,
+            log = androidWarnLog("GpxImportJob"),
+        )
+    }
 
     /** Short rides asked about at the summaries (spec §6.10), shared so a segment is asked about once. */
     val shortRides: ShortRides = ShortRides(rideStore, offline, androidWarnLog("ShortRides"))

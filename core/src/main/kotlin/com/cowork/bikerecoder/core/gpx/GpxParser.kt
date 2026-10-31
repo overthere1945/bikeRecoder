@@ -18,15 +18,7 @@ object GpxParser {
     private const val ACCURACY_M = 5f
 
     fun parse(gpx: String): List<LocationFix> {
-        val factory = DocumentBuilderFactory.newInstance().apply {
-            isNamespaceAware = true
-            isExpandEntityReferences = false
-            // 외부 엔티티(XXE) 차단. 지원하지 않는 파서(예: Android)에서는 건너뛴다.
-            try {
-                setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-            } catch (_: ParserConfigurationException) {
-            }
-        }
+        val factory = secureDocumentBuilderFactory()
         val document = factory.newDocumentBuilder().parse(InputSource(StringReader(gpx)))
         val trackPoints = document.getElementsByTagNameNS("*", "trkpt")
 
@@ -46,3 +38,17 @@ object GpxParser {
         }
     }
 }
+
+/**
+ * 외부 엔티티(XXE)를 막은 DOM 파서 팩토리. [GpxParser]와 가져오기용 GpxReader가 함께 쓴다.
+ * DOCTYPE 선언이 있으면 파싱이 실패한다. 이 기능을 지원하지 않는 파서(예: Android)에서는 그 설정만 건너뛴다.
+ */
+internal fun secureDocumentBuilderFactory(): DocumentBuilderFactory =
+    DocumentBuilderFactory.newInstance().apply {
+        isNamespaceAware = true
+        isExpandEntityReferences = false
+        try {
+            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+        } catch (_: ParserConfigurationException) {
+        }
+    }

@@ -11,9 +11,9 @@ Bicycle navigation, route tracking, and photo video generator app based on trave
 | 지도 | 장소 검색, 길안내, 기록 시작 (앱을 열면 늘 이 탭부터) |
 | 요약 | 이번 주 띠와 위성 지도 큰 카드로 지난 여행을 훑는 피드, 제목 바꾸기 |
 | 통계 | 주간·연간 목표, 연속 주행, 주·월·년·전체 통계, 개인 기록, 누적 지도 입구 |
-| 설정 | 기본 경로 성향, 기록 옵션, 경로 데이터, 내려받은 지도, 사진·심박 연결, 공유(기본 해시태그), 앱 버전 |
+| 설정 | 기본 경로 성향, 기록 옵션, 경로 데이터, 내려받은 지도, 사진·심박 연결, 공유(기본 해시태그), 기록 가져오기(GPX·ZIP), 앱 버전 |
 
-- 현재 버전: **V1.5.0** · V1.0.0~V1.5.0 출시, 모두 실주행 검증 대기 — 버전 규칙: [docs/VERSIONING.md](docs/VERSIONING.md), 변경 이력: [CHANGELOG.md](CHANGELOG.md)
+- 현재 버전: **V1.6.0** · V1.0.0~V1.6.0 출시, 모두 실주행 검증 대기 — 버전 규칙: [docs/VERSIONING.md](docs/VERSIONING.md), 변경 이력: [CHANGELOG.md](CHANGELOG.md)
 - 대상 기기: Samsung Galaxy S26 (Android 17), Galaxy Watch7 (심박, Health Connect 경유)
 
 ## 로드맵
@@ -27,7 +27,7 @@ Bicycle navigation, route tracking, and photo video generator app based on trave
 | V1.3.1 | 영상 다듬기 | 위성 지도(브이월드), 가까운 움직이는 카메라, 빛나는 경로·숫자 띠·제목 카드, 자동 제목(시간대·지역) | 출시(`v1.3.1`), 실주행 검증 대기 |
 | V1.4.0 | 요약·통계 | 아래쪽 탭 [지도] [요약] [통계] [설정], 위성 지도 카드 피드와 이번 주 띠, 제목 바꾸기, 목표·연속 주행·기간 통계·개인 기록, 구간 요약의 목표 달성·신기록 줄 | 출시(`v1.4.0`), 실주행 검증 대기 |
 | V1.5.0 | 활동 공유하기 | 요약 카드·여행 기록 화면·구간 요약의 [공유] 단추, 감정 칩과 해시태그가 든 자동 글(여행마다 기억), 페이스북·인스타그램·스토리·이메일·복사·저장·더 보기로 바로 보내기, 파일이 없으면 세로 요약 이미지를 그 자리에서 만들기, 설정의 기본 해시태그 | 출시(`v1.5.0`), 실주행 검증 대기 |
-| V1.6.0 | GPX 가져오기 | 다른 앱에서 기록한 주행(GPX 파일)을 여행으로 가져오기 | 예정 |
+| V1.6.0 | GPX 가져오기 | 다른 앱(Relive·Strava 등)에서 받은 GPX·ZIP 파일을 설정 또는 파일 앱의 공유로 받아 확인 목록에서 고른 주행을 여행으로 가져오기(앱 기록 엔진으로 다시 계산), 카드·여행 화면의 가져옴 표시, [모두 지우기] | 출시(`v1.6.0`), 실제 Relive 파일 확인 대기 |
 
 ## 기술 스택
 
@@ -132,6 +132,8 @@ $ANDROID_HOME/emulator/emulator -avd bike37 -no-snapshot &
 - [요약·통계 검증·실사용 점검표](docs/verification/summary-stats-field-test.md)
 - [활동 공유하기 설계 스펙 (V1.5.0)](docs/superpowers/specs/2026-10-31-share-activity-design.md)
 - [활동 공유하기 검증·실사용 점검표](docs/verification/share-field-test.md)
+- [GPX 가져오기 설계 스펙 (V1.6.0)](docs/superpowers/specs/2026-10-31-gpx-import-design.md)
+- [GPX 가져오기 검증·실사용 점검표](docs/verification/gpx-import-field-test.md)
 - [변경 이력](CHANGELOG.md)
 
 ## 라이선스와 출처 표기

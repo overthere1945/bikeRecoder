@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Surface
@@ -52,6 +54,10 @@ import com.cowork.bikerecoder.ui.favorite.FavoriteEvent
 import com.cowork.bikerecoder.ui.favorite.FavoritesScreen
 import com.cowork.bikerecoder.ui.favorite.FavoritesViewModel
 import com.cowork.bikerecoder.ui.health.HeartRateGate
+import com.cowork.bikerecoder.importing.IMPORT_BUSY_SHARE
+import com.cowork.bikerecoder.importing.ImportJobState
+import com.cowork.bikerecoder.ui.importing.ImportScreen
+import com.cowork.bikerecoder.ui.importing.ImportViewModel
 import com.cowork.bikerecoder.ui.history.SegmentDetailScreen
 import com.cowork.bikerecoder.ui.history.SegmentDetailViewModel
 import com.cowork.bikerecoder.ui.history.TripDetailScreen
@@ -172,6 +178,15 @@ object Routes {
 
     /** The record screen; with [tripId] it starts recording that trip once visible. */
     fun record(tripId: Long? = null) = "$RECORD?${RecordViewModel.ARG_TRIP}=${tripId ?: -1}"
+
+    /**
+     * "기록 가져오기" (V1.6.0 spec §1.2): the review of the files in [AppContainer.importHandoff] (they are not in the route:
+     * there can be thousands), or with none the running import.
+     */
+    const val IMPORT = "import"
+
+    /** A [MainTab] name the main screen switches to once (its back stack entry's saved state). */
+    const val ARG_OPEN_TAB = "openTab"
 }
 
 /** What the activity was launched for, from a notification. */
@@ -184,6 +199,9 @@ sealed interface LaunchRequest {
 
     /** "영상을 만들었습니다": the preview of the made file ([satelliteFallback]: made on the plain map, V1.3.1 §4). */
     data class Preview(val uri: String, val kind: MediaKind, val downscaled: Boolean, val satelliteFallback: Boolean) : LaunchRequest
+
+    /** GPX/ZIP files shared or opened with the app (V1.6.0 spec §1.1): the review of [uris]. */
+    data class Import(val uris: List<String>) : LaunchRequest
 }
 
 /**
@@ -306,6 +324,25 @@ fun BikeNavHost(
         factory = ShareViewModel.factory(container),
     )
 
+    // Files to import (V1.6.0 spec §1.1): the review on top of main, unless an import runs ("가져오기가 끝난 뒤 다시 보내
+    // 주세요"). They go through the in-memory handoff. Arriving during onboarding they wait there for its end
+    // ([pendingImport]); a restart meanwhile loses them (the import screen then closes itself).
+    var pendingImport by rememberSaveable { mutableStateOf(false) }
+    val openHandedOver: () -> Unit = {
+        if (container.gpxImportJob.state.value is ImportJobState.Importing) {
+            container.importHandoff.take()
+            Toast.makeText(context, IMPORT_BUSY_SHARE, Toast.LENGTH_SHORT).show()
+        } else {
+            navController.openOnMain(Routes.IMPORT)
+        }
+    }
+    val openImport: (List<String>) -> Unit = { uris ->
+        if (uris.isNotEmpty()) {
+            container.importHandoff.put(uris)
+            openHandedOver()
+        }
+    }
+
     LaunchedEffect(launchRequest) {
         val request = launchRequest ?: return@LaunchedEffect
         // Ignored while onboarding is still showing (there is no main screen to return to yet).
@@ -315,6 +352,15 @@ fun BikeNavHost(
             LaunchRequest.ShowNavigation -> rideRoute(container.navigationState, container.rideState)
             is LaunchRequest.Preview -> {
                 if (!onboarding) navController.openPreview(request.uri, request.kind, request.downscaled, request.satelliteFallback)
+                null
+            }
+            is LaunchRequest.Import -> {
+                if (onboarding) {
+                    container.importHandoff.put(request.uris)
+                    pendingImport = true
+                } else {
+                    openImport(request.uris)
+                }
                 null
             }
         }?.let { route -> if (!onboarding) navController.openOnMain(route) }
@@ -356,6 +402,10 @@ fun BikeNavHost(
                     navController.navigate(Routes.MAIN) {
                         popUpTo(Routes.ONBOARDING) { inclusive = true }
                     }
+                    if (pendingImport) {
+                        pendingImport = false
+                        openHandedOver()
+                    }
                 },
             )
         }
@@ -375,12 +425,16 @@ fun BikeNavHost(
             val band by remember { derivedStateOf { rideBandText(ride, guidance) } }
             // [목표 정하기] on the summary's week strip: the stats tab's goal dialog.
             var goalDialog by rememberSaveable { mutableStateOf(false) }
+            // [요약 보기] of the import screen asks for the summary tab.
+            val openTab by entry.savedStateHandle.getStateFlow<String?>(Routes.ARG_OPEN_TAB, null).collectAsStateWithLifecycle()
             MainTabs(
                 band = band,
                 onBand = {
                     val route = rideRoute(container.navigationState, container.rideState)
                     if (route != null && isCurrent()) navController.openOnMain(route)
                 },
+                openTab = MainTab.entries.firstOrNull { it.name == openTab },
+                onOpenTabHandled = { entry.savedStateHandle[Routes.ARG_OPEN_TAB] = null },
             ) { tab, scrollToTop, select ->
                 when (tab) {
                     MainTab.MAP -> MainScreen(
@@ -459,6 +513,8 @@ fun BikeNavHost(
                             photoSource = container.photoSource,
                             heartRateGate = heartRateGate,
                             onPhotoAccessGained = container.postProcessor::request,
+                            onImportFiles = { uris -> if (isCurrent()) openImport(uris) },
+                            onOpenImport = { if (isCurrent()) navController.openOnMain(Routes.IMPORT) },
                         )
                     }
                 }
@@ -726,6 +782,30 @@ fun BikeNavHost(
                 tileSource = container.tileSource,
                 onBack = { navController.popBackStack() },
                 onOpenRide = { segmentId -> navController.navigate(Routes.segmentDetail(segmentId)) },
+            )
+        }
+        composable(Routes.IMPORT) { entry ->
+            val viewModel: ImportViewModel = viewModel(factory = ImportViewModel.factory(container))
+            // Back, [닫기] and a closed screen may all ask: only this screen on top goes back, once.
+            val isCurrent = { navController.currentBackStackEntry?.id == entry.id }
+            val pickAgain = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+                if (uris.isNotEmpty()) viewModel.scan(uris.map { it.toString() })
+            }
+            ImportScreen(
+                viewModel = viewModel,
+                onBack = { if (isCurrent()) navController.popBackStack() },
+                onOpenSummary = {
+                    val main = runCatching { navController.getBackStackEntry(Routes.MAIN) }.getOrNull()
+                    when {
+                        !isCurrent() -> Unit
+                        main != null -> {
+                            main.savedStateHandle[Routes.ARG_OPEN_TAB] = MainTab.FEED.name
+                            navController.popBackStack(Routes.MAIN, inclusive = false)
+                        }
+                        else -> navController.popBackStack()
+                    }
+                },
+                onPickAgain = { pickAgain.launch(arrayOf("*/*")) },
             )
         }
         composable(

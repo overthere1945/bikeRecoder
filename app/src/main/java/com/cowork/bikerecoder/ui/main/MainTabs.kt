@@ -22,6 +22,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -80,15 +81,23 @@ fun tapTab(selected: MainTab, tapped: MainTab, scroll: ScrollToTop): Pair<MainTa
 /**
  * The main screen's tabs: the tab chosen survives rotation and other screens on top (a new main screen starts on
  * [지도]); back on another tab goes to [지도]; each tab keeps its own saved state (e.g. how far its list was scrolled)
- * while another one shows. [content] draws [MainTab] with its scroll-to-top count and can switch tabs itself.
+ * while another one shows. [content] draws [MainTab] with its scroll-to-top count and can switch tabs itself. [openTab]
+ * from another screen (e.g. [요약 보기] after a GPX import) is chosen once, then [onOpenTabHandled].
  */
 @Composable
 fun MainTabs(
     band: String?,
     onBand: () -> Unit,
+    openTab: MainTab? = null,
+    onOpenTabHandled: () -> Unit = {},
     content: @Composable (tab: MainTab, scrollToTop: Int, select: (MainTab) -> Unit) -> Unit,
 ) {
     var selected by rememberSaveable { mutableStateOf(MainTab.MAP) }
+    LaunchedEffect(openTab) {
+        if (openTab == null) return@LaunchedEffect
+        selected = openTab
+        onOpenTabHandled()
+    }
     var scroll by remember { mutableStateOf(ScrollToTop()) }
     BackHandler(enabled = backTab(selected) != null) { backTab(selected)?.let { selected = it } }
     val tabStates = rememberSaveableStateHolder()

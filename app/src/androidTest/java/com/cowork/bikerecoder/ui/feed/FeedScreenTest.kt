@@ -187,6 +187,14 @@ class FeedScreenTest {
         composeRule.onNodeWithTag(FeedTags.photo(3, 0), useUnmergedTree = true).assertDoesNotExist()
     }
 
+    /** V1.6.0 spec §4.2: an imported trip's date line ends in " · 가져옴"; a trip recorded here has none. */
+    @Test
+    fun importedMarkOnCard() {
+        show(months = listOf(FeedMonth("2026년 10월 · 32.1 km · 1회", listOf(cardA().copy(imported = true)))))
+
+        composeRule.onNodeWithText("10월 25일 (일) 오후 6:12 · 가져옴").assertIsDisplayed()
+    }
+
     /** V1.5.0 spec §1.1: the paper plane at the end of the numbers opens the share sheet of the trip, not the trip. */
     @Test
     fun shareIconOnCardWithRide() {
