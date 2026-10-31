@@ -50,6 +50,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.time.ZoneId
 
@@ -93,8 +95,14 @@ class ShareViewModel(
     /** The record the sheet was opened on: its stamp and the end of its last ride (older files are not sent). */
     private var record: Record? = null
 
-    /** The image being made for a pressed button, until it is done, failed, cancelled or dropped by [close]. */
+    /**
+     * The image being made for a pressed button, until its action is done (after [VideoJobState.Done], the files are
+     * read again first), it failed, or it was cancelled or dropped by [close].
+     */
     private var making: Making? = null
+
+    /** Saves run one at a time, in the order of the presses. */
+    private val saveLock = Mutex()
 
     /** The button that last asked for an image: what [retry] presses again. */
     private var lastMade: ShareTarget? = null
@@ -175,17 +183,22 @@ class ShareViewModel(
         }
     }
 
-    /** [취소] while the image is made: the job stops (its file is deleted) and the action is dropped. */
+    /**
+     * [취소] while the image is made: the job stops (its file is deleted) and the action is dropped. Once the image is
+     * [VideoJobState.Done] it is kept: only the action is dropped (the picks still follow the new file).
+     */
     fun cancelMaking() {
         val m = making ?: return
         making = null
         m.dropped = true
-        // Before the start answered, the job is cancelled as soon as it has started.
-        if (m.started) {
-            m.watch?.cancel()
-            job.cancel()
-        } else {
-            m.cancelWhenStarted = true
+        when {
+            m.done -> Unit
+            // The job is cancelled as soon as the start answers.
+            !m.started -> m.cancelWhenStarted = true
+            else -> {
+                m.watch?.cancel()
+                job.cancel()
+            }
         }
         _sheet.update { it?.copy(making = false) }
     }
@@ -219,38 +232,48 @@ class ShareViewModel(
             }
             if (m.dropped) return@launch
             if (result != StartResult.STARTED) {
-                making = null
-                _sheet.update { it?.copy(making = false, blocked = refusal(result), canRetry = true) }
+                end(m) { it.copy(making = false, blocked = refusal(result), canRetry = true) }
                 return@launch
             }
             m.started = true
             val end = job.state.first { it.endsImageOf(m.tripId) }
             if (m.dropped) return@launch
-            making = null
             when (end) {
                 is VideoJobState.Done -> finish(m, end.media)
                 is VideoJobState.Failed -> {
                     job.acknowledge()
-                    _sheet.update { it?.copy(making = false, blocked = end.message, canRetry = true) }
+                    end(m) { it.copy(making = false, blocked = end.message, canRetry = true) }
                 }
                 // Cancelled elsewhere (its acknowledgement is the video screen's), or taken by the trip screen first.
                 else -> {
-                    _sheet.update { it?.copy(making = false) }
+                    end(m) { it.copy(making = false) }
                     refreshPicks(m.tripId)
                 }
             }
         }
     }
 
-    /** The image is made: the job goes back to idle, the picks follow the new file, and the pressed action is done. */
+    /**
+     * The image is made: the job goes back to idle, the picks follow the new file, and the pressed action is done —
+     * unless [cancelMaking], [close] or another [open] dropped it while the files were read again.
+     */
     private suspend fun finish(m: Making, made: TripMedia) {
+        m.done = true
         job.acknowledge()
         val picks = refreshPicks(m.tripId)
-        _sheet.update { if (it?.tripId == m.tripId) it.copy(making = false) else it }
+        if (m.dropped) return
+        end(m) { it.copy(making = false) }
         if (m.target == ShareTarget.SAVE) return emit(ShareEvent.Notice(MSG_SAVED))
         val file = (picks?.of(m.target) as? SharePick.File)?.file
             ?: ShareCandidate(made.uri, made.kind, Aspect.PORTRAIT, made.createdAt, sizeBytes = null)
         emit(ShareEvent.Send(m.target, file, m.text))
+    }
+
+    /** [m] is over: it is no longer waited for, and its sheet is updated by [change]. */
+    private fun end(m: Making, change: (ShareSheetState) -> ShareSheetState) {
+        if (making !== m) return
+        making = null
+        _sheet.update { if (it?.tripId == m.tripId) change(it) else it }
     }
 
     /** The files read again (after a made image) and the sheet's picks updated; null when they could not be read. */
@@ -281,7 +304,12 @@ class ShareViewModel(
                 .sortedBy { it.startedAt }
             if (rides.isEmpty()) return@withContext null
             val distanceM = rides.sumOf { it.totals.distanceM }
-            val record = Record(shareStamp(rides.size, distanceM), rides.maxOf { it.endedAt!! })
+            val record = Record(
+                stamp = shareStamp(rides.size, distanceM),
+                lastEndedAt = rides.maxOf { it.endedAt!! },
+                savedText = label.shareText,
+                savedStamp = label.shareText?.let { label.shareStamp },
+            )
             val autoText = autoShareText(facts(label, rides, distanceM), tags)
             val finished = canMakeMedia(trip, segments)
             val picks = Picks.of(files, record.lastEndedAt)
@@ -292,7 +320,7 @@ class ShareViewModel(
                 tripId = tripId,
                 text = text,
                 autoText = autoText,
-                stale = label.shareStamp != null && label.shareStamp != record.stamp,
+                stale = record.staleFor(text),
                 moods = moodsIn(text),
                 general = picks.general,
                 story = picks.story,
@@ -321,18 +349,27 @@ class ShareViewModel(
         candidates(withContext(io) { tripMedia.observe(tripId).first() })
     }
 
-    /** Spec §3.4: the auto text is saved as null (it follows the title and region); an edit with the record's stamp. */
+    /**
+     * Spec §3.4: the auto text is saved as null (it follows the title and region); an edit with the record's stamp.
+     * Saves run in the order of the presses; the sheet's stale line goes away (the text now matches the record).
+     */
     private fun save(s: ShareSheetState) {
-        val stamp = record?.stamp ?: return
+        val current = record ?: return
         val text = s.text.takeIf { it != s.autoText }
+        val stamp = text?.let { current.stamp }
+        val saved = current.copy(savedText = text, savedStamp = stamp)
+        record = saved
+        _sheet.update { if (it?.tripId == s.tripId) it.copy(stale = saved.staleFor(it.text)) else it }
         viewModelScope.launch {
-            guarded("Could not save the share text of trip ${s.tripId}") {
-                withContext(io) { tripLabels.setShareText(s.tripId, text, text?.let { stamp }) }
+            saveLock.withLock {
+                guarded("Could not save the share text of trip ${s.tripId}") {
+                    withContext(io) { tripLabels.setShareText(s.tripId, text, stamp) }
+                }
             }
         }
     }
 
-    /** Drops the action waiting for its image; a job already started runs on. */
+    /** Drops the action waiting for its image; a job already started runs on (and a made image is kept). */
     private fun drop() {
         val m = making ?: return
         making = null
@@ -353,14 +390,25 @@ class ShareViewModel(
         null
     }
 
-    private fun ShareSheetState.withText(next: String) = copy(text = next, moods = moodsIn(next))
+    private fun ShareSheetState.withText(next: String) =
+        copy(text = next, moods = moodsIn(next), stale = record?.staleFor(next) ?: false)
 
-    private data class Record(val stamp: String, val lastEndedAt: Long)
+    /**
+     * The record the sheet was opened on ([stamp], the end of its last ride) and the text saved for the trip with the
+     * stamp it was written against (both null while the auto text is used).
+     */
+    private data class Record(val stamp: String, val lastEndedAt: Long, val savedText: String?, val savedStamp: String?) {
+        /** Spec §3.4: "기록이 바뀌어…" while [text] is the saved text and that was written against another record. */
+        fun staleFor(text: String): Boolean = savedText != null && text == savedText && savedStamp != stamp
+    }
 
     /** An image made for [target]; [text] is the text saved at the press, sent once the image is done. */
     private class Making(val tripId: Long, val target: ShareTarget, val text: String) {
         var watch: Job? = null
         var started = false
+
+        /** [VideoJobState.Done] came: the image exists and is kept whatever happens to the action. */
+        var done = false
         var dropped = false
         var cancelWhenStarted = false
     }

@@ -4,6 +4,7 @@ import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripLabel
+import com.cowork.bikerecoder.core.trip.TripLabelStore
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.core.video.Aspect
@@ -62,6 +63,13 @@ class ShareViewModelTest {
     private val media = FakeFeedMedia()
     private val job = FakeJob()
     private var hashtags: String? = null
+
+    /** How long reading the gallery files takes (the window between Done and the action). */
+    private var candidatesDelayMs = 0L
+
+    /** While set, the first share-text write waits this long (a slow earlier save). */
+    private var firstSaveDelayMs = 0L
+    private var saves = 0
     private val events = mutableListOf<ShareEvent>()
 
     @BeforeEach
@@ -76,10 +84,18 @@ class ShareViewModelTest {
     private fun vm() = ShareViewModel(
         tripStore = trips,
         rideStore = rides,
-        tripLabels = labels,
+        tripLabels = object : TripLabelStore by labels {
+            override suspend fun setShareText(tripId: Long, text: String?, stamp: String?) {
+                if (saves++ == 0) delay(firstSaveDelayMs)
+                labels.setShareText(tripId, text, stamp)
+            }
+        },
         tripMedia = media,
         defaultHashtags = { hashtags },
-        candidates = { list -> list.map(::candidate) },
+        candidates = { list ->
+            delay(candidatesDelayMs)
+            list.map(::candidate)
+        },
         job = job,
         compute = dispatcher,
         io = dispatcher,
@@ -87,14 +103,39 @@ class ShareViewModelTest {
 
     /** The standard trip: one ride of 32.14 km on Sunday evening, 1 h 45 min moving, 123 m up; region "서울 강서구". */
     private suspend fun TestScope.opened(region: String? = "서울 강서구"): ShareViewModel {
-        val id = rides.openSegment(TRIP, START, DAY)
-        rides.closeSegment(id, END, SegmentTotals(32_140.0, 6_300_000, 7_200_000, 9.0, 123.0, 120.0, 10.0, 60.0))
+        ride(TRIP)
         if (region != null) labels.setRegionName(TRIP, region)
         val vm = vm()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.events.collect { events += it } }
         vm.open(TRIP)
         advanceUntilIdle()
         return vm
+    }
+
+    private suspend fun ride(tripId: Long) {
+        val id = rides.openSegment(tripId, START, DAY)
+        rides.closeSegment(id, END, SegmentTotals(32_140.0, 6_300_000, 7_200_000, 9.0, 123.0, 120.0, 10.0, 60.0))
+    }
+
+    /** A second finished trip, [OTHER], to open while [TRIP] is being made. */
+    private suspend fun otherTrip() {
+        trips.trips[OTHER] = trip(TripStatus.COMPLETED).copy(id = OTHER)
+        ride(OTHER)
+    }
+
+    /** [TRIP]'s image is made for [target]: pressed, started and waiting for the job. */
+    private fun TestScope.making(vm: ShareViewModel, target: ShareTarget) {
+        vm.press(target)
+        advanceUntilIdle()
+        assertTrue(vm.sheet.value!!.making)
+    }
+
+    /** The made portrait image of [TRIP] is in the gallery and the job is Done. */
+    private fun done(): TripMedia {
+        val image = made(3, MediaKind.IMAGE, Aspect.PORTRAIT, END + 120_000)
+        media.items.value = media.items.value + image
+        job.state.value = VideoJobState.Done(image, downscaled = false)
+        return image
     }
 
     // --- opening and the text ----------------------------------------------------------------------------------------
@@ -202,6 +243,61 @@ class ShareViewModelTest {
         val text = vm.sheet.value!!.text
         assertEquals(2_000, text.codePointCount(0, text.length))
         assertEquals("😀".repeat(2_000), text)
+    }
+
+    @Test
+    fun staleHiddenAfterPressSaves() = runTest(dispatcher) {
+        labels.setShareText(TRIP, "어제 쓴 글", "1:20000")
+        val vm = opened()
+        assertTrue(vm.sheet.value!!.stale)
+
+        vm.press(ShareTarget.COPY)
+        advanceUntilIdle()
+
+        assertFalse(vm.sheet.value!!.stale)
+        assertEquals("1:32140", labels.label(TRIP).shareStamp)
+    }
+
+    @Test
+    fun staleHiddenAfterReset() = runTest(dispatcher) {
+        labels.setShareText(TRIP, "어제 쓴 글", "1:20000")
+        val vm = opened()
+
+        vm.reset()
+        assertFalse(vm.sheet.value!!.stale)
+
+        // Only while the box holds the saved text.
+        vm.edit("어제 쓴 글")
+        assertTrue(vm.sheet.value!!.stale)
+        vm.edit("어제 쓴 글!")
+        assertFalse(vm.sheet.value!!.stale)
+    }
+
+    @Test
+    fun savesInPressOrder() = runTest(dispatcher) {
+        firstSaveDelayMs = 5_000
+        val vm = opened()
+
+        vm.edit("먼저 쓴 글")
+        vm.press(ShareTarget.COPY)
+        vm.edit("나중에 쓴 글")
+        vm.press(ShareTarget.COPY)
+        advanceUntilIdle()
+
+        assertEquals("나중에 쓴 글", labels.label(TRIP).shareText)
+    }
+
+    @Test
+    fun facebookWithFileSavesText() = runTest(dispatcher) {
+        media.items.value = listOf(made(1, MediaKind.VIDEO, Aspect.LANDSCAPE, END + 60_000))
+        val vm = opened()
+
+        vm.edit("내 글")
+        vm.press(ShareTarget.FACEBOOK)
+        advanceUntilIdle()
+
+        assertEquals("내 글", labels.label(TRIP).shareText)
+        assertEquals("1:32140", labels.label(TRIP).shareStamp)
     }
 
     // --- the buttons -------------------------------------------------------------------------------------------------
@@ -373,6 +469,142 @@ class ShareViewModelTest {
         assertTrue(events.isEmpty())
     }
 
+    @Test
+    fun cancelAfterDoneBeforeRefreshDoesNotSend() = runTest(dispatcher) {
+        val vm = opened()
+        making(vm, ShareTarget.FACEBOOK)
+        candidatesDelayMs = 5_000
+
+        val image = done()
+        advanceTimeBy(1_000)
+        assertTrue(vm.sheet.value!!.making)
+        vm.cancelMaking()
+        assertFalse(vm.sheet.value!!.making)
+        advanceUntilIdle()
+
+        assertTrue(events.isEmpty())
+        // The image exists: it is kept, and the picks follow it.
+        assertEquals(0, job.cancels)
+        assertEquals(1, job.acknowledges)
+        assertEquals(SharePick.File(candidate(image)), vm.sheet.value!!.general)
+        assertFalse(vm.sheet.value!!.making)
+    }
+
+    @Test
+    fun closeAfterDoneBeforeRefreshDoesNotSend() = runTest(dispatcher) {
+        val vm = opened()
+        making(vm, ShareTarget.SAVE)
+        candidatesDelayMs = 5_000
+
+        done()
+        advanceTimeBy(1_000)
+        vm.close()
+        advanceUntilIdle()
+
+        assertTrue(events.isEmpty())
+        assertNull(vm.sheet.value)
+        assertEquals(0, job.cancels)
+    }
+
+    @Test
+    fun openOtherTripAfterDoneBeforeRefreshDoesNotSend() = runTest(dispatcher) {
+        otherTrip()
+        val vm = opened()
+        making(vm, ShareTarget.STORY)
+        candidatesDelayMs = 5_000
+
+        done()
+        advanceTimeBy(1_000)
+        vm.open(OTHER)
+        advanceUntilIdle()
+
+        assertTrue(events.isEmpty())
+        assertEquals(OTHER, vm.sheet.value!!.tripId)
+        assertFalse(vm.sheet.value!!.making)
+    }
+
+    @Test
+    fun doneOfAnotherTripOrVideoDoesNotSend() = runTest(dispatcher) {
+        val vm = opened()
+        making(vm, ShareTarget.FACEBOOK)
+
+        job.state.value = VideoJobState.Done(made(4, MediaKind.IMAGE, Aspect.PORTRAIT, END + 1).copy(tripId = 99), false)
+        advanceUntilIdle()
+        job.state.value = VideoJobState.Done(made(5, MediaKind.VIDEO, Aspect.PORTRAIT, END + 2), false)
+        advanceUntilIdle()
+
+        assertTrue(events.isEmpty())
+        assertEquals(0, job.acknowledges)
+        assertTrue(vm.sheet.value!!.making)
+    }
+
+    @Test
+    fun openSecondTripWhileMakingThenFirstDoneDoesNotSend() = runTest(dispatcher) {
+        otherTrip()
+        val vm = opened()
+        making(vm, ShareTarget.FACEBOOK)
+
+        vm.open(OTHER)
+        advanceUntilIdle()
+        done()
+        advanceUntilIdle()
+
+        assertTrue(events.isEmpty())
+        assertEquals(0, job.acknowledges)
+        assertEquals(OTHER, vm.sheet.value!!.tripId)
+        assertFalse(vm.sheet.value!!.making)
+    }
+
+    @Test
+    fun closeDuringStartChecksDoesNotSendOrCancel() = runTest(dispatcher) {
+        job.startDelayMs = 5_000
+        val vm = opened()
+        vm.press(ShareTarget.FACEBOOK)
+        advanceTimeBy(1_000)
+
+        vm.close()
+        advanceUntilIdle()
+        assertEquals(1, job.images.size)
+        done()
+        advanceUntilIdle()
+
+        assertTrue(events.isEmpty())
+        assertEquals(0, job.cancels)
+        assertEquals(0, job.acknowledges)
+    }
+
+    @Test
+    fun idleElsewhereEndsMakingWithoutSend() = runTest(dispatcher) {
+        val vm = opened()
+        making(vm, ShareTarget.FACEBOOK)
+
+        // The trip screen took the Done back to idle before the sheet saw it.
+        job.state.value = VideoJobState.Idle
+        advanceUntilIdle()
+
+        assertTrue(events.isEmpty())
+        assertFalse(vm.sheet.value!!.making)
+        assertNull(vm.sheet.value!!.blocked)
+    }
+
+    @Test
+    fun retryAfterFailedMakesAndSends() = runTest(dispatcher) {
+        val vm = opened()
+        making(vm, ShareTarget.INSTAGRAM)
+        job.state.value = VideoJobState.Failed("이미지를 만들지 못했습니다")
+        advanceUntilIdle()
+
+        vm.retry()
+        advanceUntilIdle()
+        assertNull(vm.sheet.value!!.blocked)
+        assertTrue(vm.sheet.value!!.making)
+        assertEquals(2, job.images.size)
+
+        val image = done()
+        advanceUntilIdle()
+        assertEquals(listOf<ShareEvent>(ShareEvent.Send(ShareTarget.INSTAGRAM, candidate(image), AUTO)), events)
+    }
+
     // --- an unfinished trip ------------------------------------------------------------------------------------------
 
     @Test
@@ -390,6 +622,23 @@ class ShareViewModelTest {
         advanceUntilIdle()
 
         assertEquals(listOf<ShareEvent>(ShareEvent.Send(ShareTarget.EMAIL, null, AUTO)), events)
+        assertTrue(job.images.isEmpty())
+    }
+
+    @Test
+    fun unfinishedTripMoreTextOnlyOthersDimmed() = runTest(dispatcher) {
+        trips.trips[TRIP] = trip(TripStatus.ACTIVE)
+        val vm = opened()
+        val s = vm.sheet.value!!
+        for (t in listOf(ShareTarget.INSTAGRAM, ShareTarget.STORY, ShareTarget.SAVE)) assertFalse(s.enabled(t))
+
+        vm.press(ShareTarget.INSTAGRAM)
+        vm.press(ShareTarget.STORY)
+        vm.press(ShareTarget.SAVE)
+        vm.press(ShareTarget.MORE)
+        advanceUntilIdle()
+
+        assertEquals(listOf<ShareEvent>(ShareEvent.Send(ShareTarget.MORE, null, AUTO)), events)
         assertTrue(job.images.isEmpty())
     }
 
@@ -460,6 +709,7 @@ class ShareViewModelTest {
 
     private companion object {
         const val TRIP = 7L
+        const val OTHER = 8L
         val SEOUL: ZoneId = ZoneId.of("Asia/Seoul")
         val DAY: LocalDate = LocalDate.of(2026, 10, 25)
         val START: Long = DAY.atTime(18, 30).atZone(SEOUL).toInstant().toEpochMilli()
