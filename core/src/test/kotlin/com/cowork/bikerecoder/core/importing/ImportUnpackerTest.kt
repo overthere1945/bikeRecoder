@@ -8,6 +8,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -189,5 +190,26 @@ class ImportUnpackerTest {
         assertEquals(2, problems.size)
         assertTrue(problems.all { it.problem == ImportProblem.NOT_GPX })
         assertEquals(listOf(0, 1, 2, 3), items.map { it.index })
+    }
+
+    @Test
+    fun visitorExceptionPropagates() {
+        var calls = 0
+
+        assertFailsWith<java.io.IOException> {
+            ImportUnpacker.visit("a.gpx", ByteArrayInputStream(gpx)) {
+                calls++
+                throw java.io.IOException("visitor failed")
+            }
+        }
+        assertEquals(1, calls)
+        calls = 0
+        assertFailsWith<java.io.IOException> {
+            ImportUnpacker.visit("a.zip", ByteArrayInputStream(zip("1.gpx" to gpx))) {
+                calls++
+                throw java.io.IOException("visitor failed")
+            }
+        }
+        assertEquals(1, calls)
     }
 }

@@ -250,4 +250,28 @@ class GpxReaderTest {
 
         assertEquals(ImportProblem.UNREADABLE, e.problem)
     }
+
+    @Test
+    fun leadingWhitespaceBeforeXmlDeclReads() {
+        val body = gpx(pt("37.5", "127.0", "2026-10-06T00:00:00Z"))
+        val bom = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())
+
+        assertEquals(1, GpxReader.read("\n  \r\n\t$body".toByteArray()).fixes.size)
+        assertEquals(1, GpxReader.read(bom + " \n$body".toByteArray()).fixes.size)
+        assertEquals(1, GpxReader.read(bom + body.toByteArray()).fixes.size)
+    }
+
+    @Test
+    fun absurdTimeIsDropped() {
+        val track = read(
+            gpx(
+                pt("37.5", "127.0", "2026-10-06T00:00:00Z") +
+                    pt("37.5", "127.1", "2026-10-06T00:00:01Z") +
+                    pt("37.5", "127.2", "+999999999-12-31T00:00:00Z"),
+            ),
+        )
+
+        assertEquals(2, track.fixes.size)
+        assertEquals(1, track.droppedPoints)
+    }
 }

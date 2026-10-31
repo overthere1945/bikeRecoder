@@ -63,25 +63,35 @@ object ImportUnpacker {
         visitor: (ImportItem) -> Unit,
     ) {
         val stream = if (input.markSupported()) input else BufferedInputStream(input)
-        try {
-            val head = peek(stream, 4)
-            when {
-                isZip(head) -> visitZip(displayName, stream, limits, visitor)
-                else -> {
-                    val bytes = readBounded(stream, limits.maxItemBytes)
-                    visitor(classify(displayName, 0, bytes, limits))
-                }
-            }
+        // 읽기만 try로 감싼다. 호출한 쪽 visitor의 예외는 그대로 올라가야 한다.
+        val head = try {
+            peek(stream, 4)
         } catch (_: IOException) {
             visitor(ImportItem.Unreadable(displayName, 0, ImportProblem.UNREADABLE))
+            return
         }
+        if (isZip(head)) {
+            visitZip(displayName, stream, limits, visitor)
+            return
+        }
+        val item = try {
+            classify(displayName, 0, readBounded(stream, limits.maxItemBytes), limits)
+        } catch (_: IOException) {
+            ImportItem.Unreadable(displayName, 0, ImportProblem.UNREADABLE)
+        }
+        visitor(item)
     }
 
     private fun visitZip(displayName: String, input: InputStream, limits: ImportLimits, visitor: (ImportItem) -> Unit) {
         val zip = ZipInputStream(input)
         var index = 0
         while (true) {
-            val entry = zip.nextEntry ?: break
+            val entry = try {
+                zip.nextEntry
+            } catch (_: IOException) {
+                visitor(ImportItem.Unreadable(displayName, index, ImportProblem.UNREADABLE))
+                break
+            } ?: break
             if (entry.isDirectory) continue
             if (index >= limits.maxZipEntries) {
                 visitor(ImportItem.TooManyEntries(displayName))
