@@ -3,6 +3,7 @@ package com.cowork.bikerecoder.ui.settings
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.data.AppSettings
 import com.cowork.bikerecoder.data.GuidanceRecording
+import com.cowork.bikerecoder.importing.ImportJobState
 import com.cowork.bikerecoder.offline.OfflineMapStorage
 import com.cowork.bikerecoder.offline.SegmentRepository
 import kotlinx.coroutines.CompletableDeferred
@@ -284,5 +285,43 @@ class SettingsViewModelTest {
         val state = awaitState { !it.deletingMaps }
         assertTrue(state.deleteMapsFailed)
         assertEquals(MapStorageState.Size(3_000_000L), state.mapStorage)
+    }
+
+    @Test
+    fun `imported count and job state reach the state, delete all tells once`() {
+        val count = MutableStateFlow(4)
+        val job = MutableStateFlow<ImportJobState>(ImportJobState.Importing(1, 4))
+        val gate = CompletableDeferred<Unit>()
+        var deletes = 0
+        val vm = SettingsViewModel(
+            settings, { transform -> settings.value = transform(settings.value) }, repo, storage,
+            importedCount = count,
+            importState = job,
+            deleteAllImported = {
+                deletes++
+                gate.await()
+                count.value = 0
+                4
+            },
+        )
+        assertEquals(4, vm.state.value.importedCount)
+        assertEquals(ImportJobState.Importing(1, 4), vm.state.value.importJob)
+
+        // Not while importing.
+        vm.deleteAllImported()
+        assertEquals(0, deletes)
+
+        job.value = ImportJobState.Idle
+        vm.deleteAllImported()
+        vm.deleteAllImported()
+        assertTrue(vm.state.value.deletingImported)
+        assertEquals(1, deletes)
+
+        gate.complete(Unit)
+        val done = runBlocking { withTimeout(10_000) { vm.state.first { !it.deletingImported } } }
+        assertEquals(0, done.importedCount)
+        assertTrue(done.importedDeleted)
+        vm.importedDeletedShown()
+        assertFalse(vm.state.value.importedDeleted)
     }
 }

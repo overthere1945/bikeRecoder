@@ -1,7 +1,10 @@
 package com.cowork.bikerecoder.ui.settings
 
 import android.os.Build
+import android.widget.Toast
 import androidx.activity.compose.LocalActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -27,6 +30,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,6 +48,17 @@ import com.cowork.bikerecoder.AppVersion
 import com.cowork.bikerecoder.BuildConfig
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.data.GuidanceRecording
+import com.cowork.bikerecoder.importing.IMPORT_CANCEL
+import com.cowork.bikerecoder.importing.IMPORT_DELETE
+import com.cowork.bikerecoder.importing.IMPORT_DELETED
+import com.cowork.bikerecoder.importing.IMPORT_DELETE_ALL
+import com.cowork.bikerecoder.importing.IMPORT_GROUP_TITLE
+import com.cowork.bikerecoder.importing.IMPORT_SETTINGS_ROW
+import com.cowork.bikerecoder.importing.IMPORT_SETTINGS_ROW_SUB
+import com.cowork.bikerecoder.importing.ImportJobState
+import com.cowork.bikerecoder.importing.deleteConfirmText
+import com.cowork.bikerecoder.importing.importedCountText
+import com.cowork.bikerecoder.importing.importingText
 import com.cowork.bikerecoder.offline.SegmentInfo
 import com.cowork.bikerecoder.post.PhotoAccess
 import com.cowork.bikerecoder.post.PhotoSource
@@ -53,6 +68,7 @@ import com.cowork.bikerecoder.ui.health.HEALTH_CONNECT_UNAVAILABLE
 import com.cowork.bikerecoder.ui.health.HeartRateAccess
 import com.cowork.bikerecoder.ui.health.HeartRateGate
 import com.cowork.bikerecoder.ui.health.rememberHeartRateAccess
+import com.cowork.bikerecoder.ui.importing.ImportTags
 import com.cowork.bikerecoder.ui.plan.labelKo
 import com.cowork.bikerecoder.ui.post.openAppDetailsSettings
 import com.cowork.bikerecoder.ui.post.openHealthConnectSettings
@@ -100,6 +116,8 @@ internal val ATTRIBUTIONS = listOf(
  * longer shows its permission screen, [허용] opens the settings instead ([opensAppSettingsAfterPhotoRequest],
  * [opensHealthConnectSettingsAfterRequest]); [onOpenAppSettings] / [onOpenHealthConnectSettings] replace those screens
  * (tests), null = the real ones. [onBack] null (the [설정] tab, V1.4.0 spec §1.1) leaves out the back arrow.
+ * "기록 가져오기" (V1.6.0 spec §1.1): the row opens the system file picker (any type, several files) whose files go to
+ * [onImportFiles]; while importing it opens the progress instead ([onOpenImport]).
  */
 @Composable
 fun SettingsScreen(
@@ -110,9 +128,19 @@ fun SettingsScreen(
     onPhotoAccessGained: () -> Unit,
     onOpenAppSettings: (() -> Unit)? = null,
     onOpenHealthConnectSettings: (() -> Unit)? = null,
+    onImportFiles: (List<String>) -> Unit = {},
+    onOpenImport: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) onImportFiles(uris.map { it.toString() })
+    }
+    LaunchedEffect(state.importedDeleted) {
+        if (!state.importedDeleted) return@LaunchedEffect
+        viewModel.importedDeletedShown()
+        Toast.makeText(context, IMPORT_DELETED, Toast.LENGTH_SHORT).show()
+    }
     val activity = LocalActivity.current
     val openApp = onOpenAppSettings ?: { openAppDetailsSettings(context) }
     val openHealthConnect = onOpenHealthConnectSettings ?: { openHealthConnectSettings(context) }
@@ -152,6 +180,9 @@ fun SettingsScreen(
         onDeleteAllMaps = viewModel::deleteAllMaps,
         onSetRecordingOnNewGuidance = viewModel::setRecordingOnNewGuidance,
         onSetShareHashtags = viewModel::setShareHashtags,
+        onPickImport = { pickFiles.launch(arrayOf("*/*")) },
+        onOpenImport = onOpenImport,
+        onDeleteAllImported = viewModel::deleteAllImported,
         connections = {
             ConnectionSection(
                 photo = photoAccess.value,
@@ -187,9 +218,13 @@ internal fun SettingsContent(
     onDeleteAllMaps: () -> Unit,
     onSetRecordingOnNewGuidance: (GuidanceRecording) -> Unit = {},
     onSetShareHashtags: (String) -> Unit = {},
+    onPickImport: () -> Unit = {},
+    onOpenImport: () -> Unit = {},
+    onDeleteAllImported: () -> Unit = {},
     connections: @Composable () -> Unit = {},
 ) {
     var confirmDeleteSegment by remember { mutableStateOf<SegmentInfo?>(null) }
+    var confirmDeleteImported by remember { mutableStateOf(false) }
     var confirmDeleteMaps by remember { mutableStateOf(false) }
     var editingHashtags by remember { mutableStateOf(false) }
     // null = never saved (the default applies), "" = none.
@@ -319,6 +354,15 @@ internal fun SettingsContent(
                 }
                 HorizontalDivider()
 
+                ImportSection(
+                    importedCount = state.importedCount,
+                    importJob = state.importJob,
+                    deleting = state.deletingImported,
+                    onRow = if (state.importing) onOpenImport else onPickImport,
+                    onDeleteAll = { confirmDeleteImported = true },
+                )
+                HorizontalDivider()
+
                 SectionTitle("앱 정보")
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("앱 버전", style = MaterialTheme.typography.bodyLarge)
@@ -358,6 +402,26 @@ internal fun SettingsContent(
             },
         )
     }
+    if (confirmDeleteImported) {
+        AlertDialog(
+            onDismissRequest = { confirmDeleteImported = false },
+            text = { Text(deleteConfirmText(state.importedCount)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmDeleteImported = false
+                        onDeleteAllImported()
+                    },
+                    modifier = Modifier.testTag(SettingsTags.CONFIRM),
+                ) { Text(IMPORT_DELETE) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDeleteImported = false }, modifier = Modifier.testTag(SettingsTags.CANCEL)) {
+                    Text(IMPORT_CANCEL)
+                }
+            },
+        )
+    }
     if (editingHashtags) {
         ShareHashtagsDialog(
             current = hashtags,
@@ -386,6 +450,54 @@ internal fun SettingsContent(
                 TextButton(onClick = { confirmDeleteMaps = false }, modifier = Modifier.testTag(SettingsTags.CANCEL)) { Text("취소") }
             },
         )
+    }
+}
+
+/**
+ * "기록 가져오기" (V1.6.0 spec §1.1, §4.3): "지난 기록 가져오기 (GPX)" ([onRow]) with its description, or "가져오는 중
+ * 12/35" while importing; then, when trips were imported, "가져온 기록 N개" with [모두 지우기] (dimmed while importing or
+ * deleting).
+ */
+@Composable
+private fun ImportSection(
+    importedCount: Int,
+    importJob: ImportJobState,
+    deleting: Boolean,
+    onRow: () -> Unit,
+    onDeleteAll: () -> Unit,
+) {
+    SectionTitle(IMPORT_GROUP_TITLE)
+    Row(
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag(ImportTags.SETTINGS_ROW)
+            .clickable(role = Role.Button, onClick = onRow),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(IMPORT_SETTINGS_ROW, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                if (importJob is ImportJobState.Importing) importingText(importJob.done, importJob.total) else IMPORT_SETTINGS_ROW_SUB,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Text("›", style = MaterialTheme.typography.titleMedium)
+    }
+    if (importedCount > 0) {
+        Row(
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                importedCountText(importedCount),
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.weight(1f).testTag(ImportTags.SETTINGS_IMPORTED),
+            )
+            OutlinedButton(
+                onClick = onDeleteAll,
+                enabled = importJob !is ImportJobState.Importing && !deleting,
+                modifier = Modifier.testTag(ImportTags.SETTINGS_DELETE_ALL),
+            ) { Text(IMPORT_DELETE_ALL) }
+        }
     }
 }
 

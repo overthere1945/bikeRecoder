@@ -98,6 +98,9 @@ class MainTabsTest {
     private var ride by mutableStateOf<RideUiState>(RideUiState.Idle)
     private lateinit var nav: NavHostController
 
+    /** A tab asked for from another screen (BikeNavHost: [요약 보기] after a GPX import). */
+    private var openTab by mutableStateOf<MainTab?>(null)
+
     private val blank = object : TileSource {
         override val styleUrl = "blank"
         override val attribution = ""
@@ -169,6 +172,8 @@ class MainTabsTest {
                 MainTabs(
                     band = rideBandText(ride, NavUiState.Idle),
                     onBand = { rideRoute(NavUiState.Idle, ride)?.let { if (isCurrent()) controller.navigate(it) } },
+                    openTab = openTab,
+                    onOpenTabHandled = { openTab = null },
                 ) { tab, scrollToTop, select ->
                     when (tab) {
                         MainTab.MAP -> MainScreen(
@@ -277,6 +282,22 @@ class MainTabsTest {
 
         tab(MainTab.MAP).performClick()
         composeRule.onNodeWithText("장소, 주소 검색").assertIsDisplayed()
+    }
+
+    /** [요약 보기] of the import screen (V1.6.0 spec §1.3): the summary tab, once; the tabs then work as before. */
+    @Test
+    fun openTabRequestSelectsItOnce() {
+        show()
+        tab(MainTab.MAP).assertIsSelected()
+
+        composeRule.runOnUiThread { openTab = MainTab.FEED }
+        composeRule.waitForIdle()
+        tab(MainTab.FEED).assertIsSelected()
+        assertEquals(null, openTab)
+
+        tab(MainTab.MAP).performClick()
+        tab(MainTab.MAP).assertIsSelected()
+        tab(MainTab.FEED).assertIsNotSelected()
     }
 
     /** The map screen's MapView (there is one while [지도] shows). */
