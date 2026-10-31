@@ -5,6 +5,7 @@ import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.format.SummaryFormatter
 import com.cowork.bikerecoder.core.navigation.AheadState
 import java.math.BigDecimal
+import java.math.RoundingMode
 import kotlin.math.roundToInt
 
 /**
@@ -42,8 +43,12 @@ object ElevationText {
     /** The legend text of [band] (spec §1.3). */
     fun legend(band: GradeBand): String = band.legend
 
-    /** A km axis label: "0km", "2km", "0.5km". */
-    fun kmTick(km: Double): String = "${BigDecimal.valueOf(km).stripTrailingZeros().toPlainString()}km"
+    /**
+     * A km axis label: "0km", "2km", "0.5km", "0.15km". Rounded to 2 decimals (10 m, the finest axis step) so a tick
+     * computed as k × step (e.g. 3 × 0.2 = 0.6000000000000001) prints as meant.
+     */
+    fun kmTick(km: Double): String =
+        "${BigDecimal.valueOf(km).setScale(2, RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()}km"
 }
 
 /**

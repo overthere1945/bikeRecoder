@@ -34,6 +34,16 @@ class ElevationTextTest {
     }
 
     @Test
+    fun kmTickHasNoFloatError() {
+        assertEquals("0.6km", ElevationText.kmTick(3 * 0.2))
+        assertEquals("0.3km", ElevationText.kmTick(3 * 0.1))
+        assertEquals("0.15km", ElevationText.kmTick(3 * 0.05))
+        assertEquals("0km", ElevationText.kmTick(0.0))
+        assertEquals("10km", ElevationText.kmTick(10.0))
+        assertEquals("150km", ElevationText.kmTick(3 * 50.0))
+    }
+
+    @Test
     fun kmTickStepGivesThreeToSixTicks() {
         // The spec's 1·2·5·10 km first.
         assertEquals(1.0, kmTickStepKm(4_000.0))

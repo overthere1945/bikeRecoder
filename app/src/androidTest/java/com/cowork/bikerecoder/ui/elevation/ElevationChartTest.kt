@@ -10,12 +10,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -32,6 +37,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import kotlin.math.abs
 
 /** A 3 km ride north-east from Yeouido: flat, 600 m at 8% up, flat, then a gentle 5% down. */
 internal fun hillTrack(): List<TrackPoint> {
@@ -97,7 +103,11 @@ class ElevationChartTest {
     @Test
     fun scrubReportsDistanceAndShowsLine() {
         val scrubbed = mutableListOf<Double>()
-        show { ElevationChart(profile, height = 160.dp, scrubbable = true, onScrub = { scrubbed += it }) }
+        // The caller keeps the position (as the "고도" screen's view model does).
+        var at by mutableStateOf<Double?>(null)
+        show {
+            ElevationChart(profile, height = 160.dp, scrubbable = true, onScrub = { scrubbed += it; at = it }, scrubM = at)
+        }
 
         composeRule.onNodeWithTag(ElevationTags.SCRUB_LINE, useUnmergedTree = true).assertDoesNotExist()
         composeRule.onNodeWithTag(ElevationTags.SHOW_ON_MAP).assertDoesNotExist()
@@ -112,8 +122,16 @@ class ElevationChartTest {
         assertTrue(scrubbed.size >= 2)
         assertEquals(profile.totalM * 0.25, scrubbed.first(), profile.totalM * 0.02)
         assertEquals(profile.totalM * 0.75, scrubbed.last(), profile.totalM * 0.02)
-        // Kept after the finger lifts.
+        // Kept after the finger lifts, where the caller says.
         composeRule.onNodeWithTag(ElevationTags.SCRUB_LINE, useUnmergedTree = true).assertIsDisplayed()
+        val chart = composeRule.onNodeWithTag(ElevationTags.CHART).getBoundsInRoot()
+        val line = composeRule.onNodeWithTag(ElevationTags.SCRUB_LINE, useUnmergedTree = true).getBoundsInRoot()
+        val lineCenter = (line.left + line.right) / 2 - chart.left
+        assertEquals((chart.right - chart.left).value * 0.75f, lineCenter.value, (chart.right - chart.left).value * 0.03f)
+
+        // Nothing kept by the chart itself: the caller clears it, the line goes.
+        at = null
+        composeRule.onNodeWithTag(ElevationTags.SCRUB_LINE, useUnmergedTree = true).assertDoesNotExist()
     }
 
     @Test
@@ -129,16 +147,44 @@ class ElevationChartTest {
     @Test
     fun stripDimmed() {
         var dimmed by mutableStateOf(true)
+        var surface = Color.Unspecified
         val ahead = profile.slice(500.0, 2_500.0)
-        show { ElevationStrip(ahead, reachesDestination = true, dimmed = dimmed) }
+        show {
+            surface = MaterialTheme.colorScheme.surface
+            ElevationStrip(ahead, reachesDestination = true, dimmed = dimmed)
+        }
 
         composeRule.onNodeWithTag(ElevationTags.STRIP)
             .assertIsDisplayed()
-            .assert(SemanticsMatcher.expectValue(ElevationTags.Dimmed, true))
+            .assert(SemanticsMatcher.expectValue(ElevationTags.StripAlpha, 0.4f))
         composeRule.onNodeWithTag(ElevationTags.STRIP_FLAG).assertIsDisplayed()
+        val faded = fillPixel()
 
         dimmed = false
-        composeRule.onNodeWithTag(ElevationTags.STRIP).assert(SemanticsMatcher.expectValue(ElevationTags.Dimmed, false))
+        composeRule.onNodeWithTag(ElevationTags.STRIP).assert(SemanticsMatcher.expectValue(ElevationTags.StripAlpha, 1f))
+        val full = fillPixel()
+
+        // What is drawn: the dimmed fill is 0.4 of the full one over the background.
+        val expected = lerp(surface, full, 0.4f)
+        assertEquals(expected.red, faded.red, 0.04f)
+        assertEquals(expected.green, faded.green, 0.04f)
+        assertEquals(expected.blue, faded.blue, 0.04f)
+        assertTrue(abs(full.red - faded.red) + abs(full.green - faded.green) + abs(full.blue - faded.blue) > 0.1f)
+    }
+
+    @Test
+    fun stripWithoutDestinationHasNoFlag() {
+        show { ElevationStrip(profile.slice(0.0, 2_000.0), reachesDestination = false, dimmed = false) }
+
+        composeRule.onNodeWithTag(ElevationTags.STRIP).assertIsDisplayed()
+        composeRule.onNodeWithTag(ElevationTags.STRIP_FLAG).assertDoesNotExist()
+    }
+
+    /** A pixel of the strip's fill: the middle of its bottom row (under the line wherever the profile is). */
+    private fun fillPixel(): Color {
+        composeRule.waitForIdle()
+        val image = composeRule.onNodeWithTag(ElevationTags.STRIP).captureToImage().toPixelMap()
+        return image[image.width / 2, image.height - 2]
     }
 
     private fun altitude(m: Double) = RideFormat.altitude(m)

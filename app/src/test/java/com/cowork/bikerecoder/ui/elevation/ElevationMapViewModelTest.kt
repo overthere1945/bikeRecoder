@@ -2,6 +2,7 @@ package com.cowork.bikerecoder.ui.elevation
 
 import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.model.GeoPoint
+import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.nav.FakeTripStore
@@ -19,6 +20,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import java.io.IOException
 import java.time.LocalDate
 
 /** The "고도" map screen's state (V1.7.0 spec §2.2): a trip's, a segment's or the plan's profile, paths and colours. */
@@ -127,6 +129,39 @@ class ElevationMapViewModelTest {
         vm.scrub(5_000.0)
         val ready = vm.uiState.value as ElevationMapUiState.Ready
         assertEquals(ready.profile.totalM, ready.scrubM)
+    }
+
+    @Test
+    fun tripWithoutAltitudesCloses() = runTest(dispatcher) {
+        // Points without altitude: no profile.
+        val day = LocalDate.of(2026, 10, 25)
+        val points = List(30) { i -> TrackPoint(i * 1_000L, GeoPoint(37.5 + i * 20.0 / 111_320.0, 127.0), null, 5f, 5f) }
+        val totals = SegmentTotals.ZERO.copy(distanceM = 580.0, movingTimeMs = 30_000L)
+        val id = rides.openSegment(TRIP, 0L, day)
+        rides.appendPoints(id, points, totals)
+        rides.closeSegment(id, 30_000L, totals)
+
+        val vm = viewModel(ElevationSource.Trip(TRIP))
+        advanceUntilIdle()
+
+        assertEquals(ElevationMapUiState.Closed, vm.uiState.value)
+    }
+
+    @Test
+    fun storeFailureCloses() = runTest(dispatcher) {
+        val id = segment(startedAt = 1_000_000L, startLat = 37.50)
+        val failing = object : RideStore by rides {
+            override suspend fun points(segmentId: Long): List<TrackPoint> = throw IOException("disk")
+        }
+        val warned = mutableListOf<String>()
+
+        val trip = ElevationMapViewModel(ElevationSource.Trip(TRIP), failing, handoff, { m, _ -> warned += m }, dispatcher)
+        val segment = ElevationMapViewModel(ElevationSource.Segment(id), failing, handoff, { m, _ -> warned += m }, dispatcher)
+        advanceUntilIdle()
+
+        assertEquals(ElevationMapUiState.Closed, trip.uiState.value)
+        assertEquals(ElevationMapUiState.Closed, segment.uiState.value)
+        assertEquals(2, warned.size)
     }
 
     private companion object {

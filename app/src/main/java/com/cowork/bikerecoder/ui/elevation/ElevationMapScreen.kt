@@ -125,7 +125,7 @@ private fun ElevationMapLayout(
                     }
                 }
                 Column(Modifier.padding(end = 12.dp)) {
-                    ElevationChart(profile, height = 160.dp, scrubbable = true, onScrub = onScrub)
+                    ElevationChart(profile, height = 160.dp, scrubbable = true, onScrub = onScrub, scrubM = state.scrubM)
                     Spacer(Modifier.height(8.dp))
                     val d = state.scrubM
                     if (d == null) {
