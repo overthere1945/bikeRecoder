@@ -11,8 +11,11 @@ object SummaryFormatter {
         if (m < 1_000.0) "${m.roundToInt()}m" else String.format(Locale.ROOT, "%.1fkm", m / 1_000.0)
 
     /** [speedKmh] 기준 예상 시간. "약 5시간 50분", 1시간 미만 "약 25분". 분 단위로 반올림하며 최소 1분. */
-    fun duration(m: Double, speedKmh: Double = 15.0): String {
-        val minutes = (m / 1_000.0 / speedKmh * 60.0).roundToInt().coerceAtLeast(1)
+    fun duration(m: Double, speedKmh: Double = 15.0): String = durationOf(m / 1_000.0 / speedKmh * 3_600.0)
+
+    /** [seconds]초를 [duration]과 같은 꼴로. 분 단위로 반올림하며 최소 1분. */
+    fun durationOf(seconds: Double): String {
+        val minutes = (seconds / 60.0).roundToInt().coerceAtLeast(1)
         val hours = minutes / 60
         val rest = minutes % 60
         return when {

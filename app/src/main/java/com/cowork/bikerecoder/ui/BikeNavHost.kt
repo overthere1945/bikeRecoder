@@ -60,6 +60,9 @@ import com.cowork.bikerecoder.ui.importing.ImportScreen
 import com.cowork.bikerecoder.ui.importing.ImportViewModel
 import com.cowork.bikerecoder.ui.history.SegmentDetailScreen
 import com.cowork.bikerecoder.ui.history.SegmentDetailViewModel
+import com.cowork.bikerecoder.ui.elevation.ElevationMapScreen
+import com.cowork.bikerecoder.ui.elevation.ElevationMapViewModel
+import com.cowork.bikerecoder.ui.elevation.ElevationSource
 import com.cowork.bikerecoder.ui.history.TripDetailScreen
 import com.cowork.bikerecoder.ui.history.TripDetailViewModel
 import com.cowork.bikerecoder.ui.main.MainScreen
@@ -187,6 +190,22 @@ object Routes {
 
     /** A [MainTab] name the main screen switches to once (its back stack entry's saved state). */
     const val ARG_OPEN_TAB = "openTab"
+
+    /**
+     * The "고도" map screen (V1.7.0 spec §2.2): kind `trip` | `segment` | `plan` and the trip or segment id (plan: 0, its
+     * route is in [AppContainer.elevationHandoff]); see [elevation].
+     */
+    const val ELEVATION = "elevation/{${ElevationMapViewModel.ARG_KIND}}/{${ElevationMapViewModel.ARG_ID}}"
+
+    fun elevation(source: ElevationSource): String {
+        val (kind, id) = ElevationMapViewModel.kindAndId(source)
+        return "elevation/$kind/$id"
+    }
+}
+
+/** The "고도" map screen of [source] on top (for the plan, put its route in [AppContainer.elevationHandoff] first). */
+fun NavController.openElevation(source: ElevationSource) {
+    navigate(Routes.elevation(source)) { launchSingleTop = true }
 }
 
 /** What the activity was launched for, from a notification. */
@@ -662,6 +681,8 @@ fun BikeNavHost(
                     tripStart.onStartPressed(StartPlan(plan.profile, plan.stops))
                 },
                 onSaveFavorite = favoritesViewModel::startSave,
+                // The route was handed over to [AppContainer.elevationHandoff] by the plan view model.
+                onOpenElevation = { if (isCurrent()) navController.openElevation(ElevationSource.Plan) },
             )
             TripStartDialogs(
                 state = startState,
@@ -819,6 +840,7 @@ fun BikeNavHost(
                 tileSource = container.tileSource,
                 thumbnails = container.photoThumbnails,
                 onOpenSegment = { segmentId -> navController.navigate(Routes.segmentDetail(segmentId)) },
+                onOpenElevation = { navController.openElevation(ElevationSource.Trip(tripId)) },
                 onBack = { navController.popBackStack() },
                 photoPrompt = { PhotoPrompt(container) },
                 heartRateGate = heartRateGate,
@@ -870,15 +892,32 @@ fun BikeNavHost(
             )
         }
         composable(
+            Routes.ELEVATION,
+            arguments = listOf(
+                navArgument(ElevationMapViewModel.ARG_KIND) { type = NavType.StringType },
+                navArgument(ElevationMapViewModel.ARG_ID) { type = NavType.LongType },
+            ),
+        ) { entry ->
+            val viewModel: ElevationMapViewModel = viewModel(factory = ElevationMapViewModel.factory(container))
+            val isCurrent = { navController.currentBackStackEntry?.id == entry.id }
+            ElevationMapScreen(
+                viewModel = viewModel,
+                tileSource = container.tileSource,
+                onClose = { if (isCurrent()) navController.popBackStack() },
+            )
+        }
+        composable(
             Routes.SEGMENT_DETAIL,
             arguments = listOf(navArgument(SegmentDetailViewModel.ARG_SEGMENT) { type = NavType.LongType }),
-        ) {
+        ) { entry ->
             val viewModel: SegmentDetailViewModel = viewModel(factory = SegmentDetailViewModel.factory(container))
+            val segmentId = entry.arguments?.getLong(SegmentDetailViewModel.ARG_SEGMENT) ?: -1L
             SegmentDetailScreen(
                 viewModel = viewModel,
                 tileSource = container.tileSource,
                 thumbnails = container.photoThumbnails,
                 onBack = { navController.popBackStack() },
+                onOpenElevation = { navController.openElevation(ElevationSource.Segment(segmentId)) },
                 photoPrompt = { PhotoPrompt(container) },
                 heartRateGate = heartRateGate,
             )

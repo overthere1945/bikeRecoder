@@ -1,18 +1,30 @@
 package com.cowork.bikerecoder.ui.plan
 
+import com.cowork.bikerecoder.core.elevation.RideTimeEstimator
+import com.cowork.bikerecoder.core.elevation.UsualSpeed
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.model.Route
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.model.RouteSummary
+import com.cowork.bikerecoder.core.model.Stop
+import com.cowork.bikerecoder.export.ExportFormat
+import com.cowork.bikerecoder.export.ExportResult
+import com.cowork.bikerecoder.export.ExportState
 import com.cowork.bikerecoder.core.routing.RouteFailure
 import com.cowork.bikerecoder.core.routing.RouteRequest
 import com.cowork.bikerecoder.core.routing.RouteResult
 import com.cowork.bikerecoder.core.routing.Router
 import com.cowork.bikerecoder.favorite.Favorite
+import com.cowork.bikerecoder.core.recording.RideSegment
+import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.favorite.FavoriteKind
+import com.cowork.bikerecoder.nav.RecordingLog
+import com.cowork.bikerecoder.ui.elevation.ElevationHandoff
+import com.cowork.bikerecoder.ui.elevation.ElevationText
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
@@ -27,9 +39,13 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import java.time.LocalDate
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlanViewModelTest {
@@ -69,6 +85,14 @@ class PlanViewModelTest {
     }
 
     private var addresses: suspend (GeoPoint) -> String? = { null }
+    private var usualSpeed: suspend () -> Double = { UsualSpeed.DEFAULT_MPS }
+    private val handoff = ElevationHandoff()
+    private val log = RecordingLog()
+    private val exports = mutableListOf<List<Any>>()
+    private var exportRoute: (suspend (Route, List<Stop>, String, ExportFormat) -> ExportResult)? = { route, stops, name, format ->
+        exports += listOf(route, stops, name, format)
+        ExportResult.Saved("content://downloads/1", "bikeRecoder_route_20261101_0900.kml", format.mime)
+    }
 
     private fun viewModel() = PlanViewModel(
         router = router,
@@ -77,6 +101,11 @@ class PlanViewModelTest {
         segmentsReady = { segmentsReady },
         clock = { now },
         addressOf = { addresses(it) },
+        usualSpeed = { usualSpeed() },
+        handoff = handoff,
+        compute = Dispatchers.Main,
+        log = log,
+        exportRoute = exportRoute,
     )
 
     private fun TestScope.settle() {
@@ -359,7 +388,7 @@ class PlanViewModelTest {
     @Test
     fun `clear empties the plan and re-applies the current default profile`() = runTest {
         val default = MutableStateFlow(RouteProfile.BALANCED)
-        val vm = PlanViewModel(router, default, locations, { true }, { now })
+        val vm = PlanViewModel(router, default, locations, { true }, { now }, compute = Dispatchers.Main)
         runCurrent()
         vm.setDestination("A", a)
         vm.setProfile(RouteProfile.SHORTEST)
@@ -422,7 +451,165 @@ class PlanViewModelTest {
         assertEquals(RouteProfile.SHORTEST, vm2.state.value.profile)
     }
 
+    @Test
+    fun durationUsesUsualSpeedAndClimbs() = runTest {
+        usualSpeed = { 18.0 / 3.6 }
+        val hilly = hillyRoute()
+        router.result = { RouteResult.Success(hilly) }
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+
+        val s = vm.state.value
+        val profile = s.elevation
+        assertNotNull(profile)
+        assertEquals(18.0 / 3.6, s.usualSpeedMps, 1e-9)
+        assertEquals(RideTimeEstimator.seconds(profile, 0.0, 14_000.0, 18.0 / 3.6), s.durationSeconds!!, 1e-6)
+        // The 4 km climb at 5% is slower than the flat 2,800 s at 18 km/h.
+        assertTrue(s.durationSeconds!! > 14_000.0 / (18.0 / 3.6) + 300.0, "${s.durationSeconds}")
+    }
+
+    @Test
+    fun noElevationUsesUsualSpeedOnly() = runTest {
+        usualSpeed = { 18.0 / 3.6 }
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+
+        val s = vm.state.value
+        assertInstanceOf(RouteUiState.Ready::class.java, s.route)
+        assertNull(s.elevation)
+        assertEquals(2_800.0, s.durationSeconds!!, 1e-6) // 14 km at 5 m/s
+    }
+
+    @Test
+    fun usualSpeedLine() = runTest {
+        usualSpeed = { 18.4 / 3.6 }
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+
+        assertEquals(18.4 / 3.6, vm.state.value.usualSpeedMps, 1e-9)
+        assertEquals("평소 속도 18 km/h 기준", ElevationText.usualSpeedLine(vm.state.value.usualSpeedMps))
+    }
+
+    @Test
+    fun aFailedUsualSpeedReadUsesTheDefault() = runTest {
+        usualSpeed = { throw IllegalStateException("db") }
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+
+        assertEquals(UsualSpeed.DEFAULT_MPS, vm.state.value.usualSpeedMps, 1e-9)
+        assertEquals(14_000.0 / UsualSpeed.DEFAULT_MPS, vm.state.value.durationSeconds!!, 1e-6)
+        assertEquals(1, log.messages.size, log.messages.toString())
+    }
+
+    /** A hung store does not leave the plan computing: after 2 s the default speed is used. */
+    @Test
+    fun aHungUsualSpeedReadTimesOutToTheDefault() = runTest {
+        usualSpeed = { awaitCancellation() }
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+        assertEquals(RouteUiState.Loading, vm.state.value.route)
+
+        advanceTimeBy(PlanViewModel.USUAL_SPEED_TIMEOUT_MS)
+        runCurrent()
+        assertInstanceOf(RouteUiState.Ready::class.java, vm.state.value.route)
+        assertEquals(UsualSpeed.DEFAULT_MPS, vm.state.value.usualSpeedMps, 1e-9)
+        assertEquals(14_000.0 / UsualSpeed.DEFAULT_MPS, vm.state.value.durationSeconds!!, 1e-6)
+        assertEquals(1, log.messages.size, log.messages.toString())
+    }
+
+    /** New rides recorded meanwhile (the view model lives with the Activity): the next route uses the new usual speed. */
+    @Test
+    fun everyRouteReadsTheUsualSpeedAgain() = runTest {
+        var segments = listOf(ride(1, 18_000.0, 3_600)) // 5 m/s
+        var reads = 0
+        usualSpeed = {
+            reads++
+            UsualSpeed.of(segments)
+        }
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+        assertEquals(5.0, vm.state.value.usualSpeedMps, 1e-9)
+        assertEquals(2_800.0, vm.state.value.durationSeconds!!, 1e-6)
+
+        segments = segments + ride(2, 22_000.0, 3_600) // 40 km in 7,200 s
+        vm.setProfile(RouteProfile.SHORTEST)
+        settle()
+
+        assertEquals(2, reads)
+        assertEquals(40_000.0 / 7_200.0, vm.state.value.usualSpeedMps, 1e-9)
+        assertEquals(14_000.0 / (40_000.0 / 7_200.0), vm.state.value.durationSeconds!!, 1e-6)
+    }
+
+    private fun ride(id: Long, distanceM: Double, movingSec: Long) = RideSegment(
+        id = id,
+        tripId = 1,
+        startedAt = id * 10_000_000,
+        endedAt = id * 10_000_000 + movingSec * 1_000,
+        localDate = LocalDate.of(2026, 10, 1),
+        totals = SegmentTotals.ZERO.copy(distanceM = distanceM, movingTimeMs = movingSec * 1_000),
+    )
+
+    @Test
+    fun elevationAndDurationAreClearedWhileRecomputing() = runTest {
+        router.result = { RouteResult.Success(hillyRoute()) }
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+        assertNotNull(vm.state.value.elevation)
+
+        vm.addWaypoint("B", b)
+        assertEquals(RouteUiState.Loading, vm.state.value.route)
+        assertNull(vm.state.value.elevation)
+        assertNull(vm.state.value.durationSeconds)
+    }
+
+    @Test
+    fun openElevationPutsHandoff() = runTest {
+        val hilly = hillyRoute()
+        router.result = { RouteResult.Success(hilly) }
+        val vm = viewModel()
+        vm.setDestination("A", a)
+        settle()
+
+        assertTrue(vm.openElevation())
+        val (profile, path) = handoff.take()!!
+        assertSame(vm.state.value.elevation, profile)
+        assertEquals(hilly.points, path)
+    }
+
+    @Test
+    fun openElevationWithoutElevationPutsNothing() = runTest {
+        val vm = viewModel()
+        assertFalse(vm.openElevation()) // no route yet
+        vm.setDestination("A", a)
+        settle()
+
+        assertFalse(vm.openElevation())
+        assertNull(handoff.take())
+    }
+
     companion object {
+        /** 14 km: flat for 5 km, 5% up for 4 km (200 m), flat to the end; a point every km. */
+        fun hillyRoute(profile: RouteProfile = RouteProfile.CYCLEWAY_FIRST): Route {
+            val n = 15
+            val pts = (0 until n).map { GeoPoint(35.1 + it * 0.009, 129.0) }
+            val elevations = (0 until n).map { km -> 10.0 + 50.0 * (km - 5).coerceIn(0, 4) }
+            return Route(
+                points = pts,
+                cumulativeM = (0 until n).map { it * 1_000.0 },
+                instructions = emptyList(),
+                stopPointIndices = listOf(n - 1),
+                summary = RouteSummary(14_000.0, 200, 0.5, profile),
+                elevationsM = elevations,
+            )
+        }
+
         fun route(profile: RouteProfile): Route {
             val pts = listOf(GeoPoint(35.1, 129.0), GeoPoint(35.2, 129.1))
             return Route(
@@ -483,5 +670,67 @@ class PlanViewModelTest {
         vm.setDestination(Favorite(1, FavoriteKind.HOME, "집", b, null, 0))
         assertEquals(listOf("남산", "집"), vm.state.value.stops.map { it.name })
         assertEquals(b, vm.state.value.stops.last().point)
+    }
+
+    /** V1.7.0 spec §4.1: the ready route with its waypoints and destination, named after the destination. */
+    @Test
+    fun `export hands the ready route and its stops over`() = runTest {
+        val vm = viewModel()
+        vm.setDestination("해운대", c)
+        vm.addWaypoint("서면", a)
+        vm.export(ExportFormat.KML) // not ready yet: nothing
+        settle()
+        assertEquals(0, exports.size)
+        val route = (vm.state.value.route as RouteUiState.Ready).route
+
+        vm.export(ExportFormat.KML)
+        assertEquals(ExportState.Running, vm.exportState.value)
+        runCurrent()
+
+        val keys = vm.state.value.stops.map { it.key }
+        assertEquals(
+            listOf(route, listOf(Stop(keys[0], "서면", a, false), Stop(keys[1], "해운대", c, true)), "해운대", ExportFormat.KML),
+            exports.single(),
+        )
+        val done = assertInstanceOf(ExportState.Done::class.java, vm.exportState.value)
+        assertEquals("bikeRecoder_route_20261101_0900.kml", done.saved.displayName)
+        vm.clearExport()
+        assertEquals(ExportState.Idle, vm.exportState.value)
+    }
+
+    @Test
+    fun `export failure is failed and without an exporter there is none`() = runTest {
+        exportRoute = { _, _, _, _ -> ExportResult.Failed }
+        val vm = viewModel()
+        assertTrue(vm.canExport)
+        vm.setDestination("해운대", c)
+        settle()
+        vm.export(ExportFormat.GPX)
+        runCurrent()
+        assertEquals(ExportState.Failed, vm.exportState.value)
+
+        exportRoute = null
+        assertFalse(viewModel().canExport)
+    }
+
+    /** Guidance starting ([PlanViewModel.clear]) forgets a route export still running: no dialog on a later plan. */
+    @Test
+    fun `clear discards a running export`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        exportRoute = { _, _, _, format ->
+            gate.await()
+            ExportResult.Saved("content://downloads/1", "bikeRecoder_route_20261101_0900.gpx", format.mime)
+        }
+        val vm = viewModel()
+        vm.setDestination("해운대", c)
+        settle()
+        vm.export(ExportFormat.GPX)
+        runCurrent()
+        assertEquals(ExportState.Running, vm.exportState.value)
+
+        vm.clear()
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(ExportState.Idle, vm.exportState.value)
     }
 }

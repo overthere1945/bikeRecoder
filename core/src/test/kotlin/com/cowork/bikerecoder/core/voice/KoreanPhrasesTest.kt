@@ -19,6 +19,12 @@ class KoreanPhrasesTest {
         ZonedDateTime.of(2026, 10, 6, h, m, 0, 0, zone).toInstant().toEpochMilli()
 
     @Test
+    fun climbPhrase() {
+        assertEquals("300미터 앞 오르막, 800미터, 평균 6퍼센트입니다", p.climb(300.0, 800.0, 5.6))
+        assertEquals("280미터 앞 오르막, 1.2킬로미터, 평균 4퍼센트입니다", p.climb(283.0, 1_210.0, 4.4))
+    }
+
+    @Test
     fun distances() {
         assertEquals("800미터", p.distance(796.0))
         assertEquals("200미터", p.distance(204.0))

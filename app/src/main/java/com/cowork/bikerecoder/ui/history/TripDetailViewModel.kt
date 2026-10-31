@@ -10,7 +10,13 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.export.ExportFormat
+import com.cowork.bikerecoder.export.ExportResult
+import com.cowork.bikerecoder.export.ExportRunner
+import com.cowork.bikerecoder.export.ExportState
+import com.cowork.bikerecoder.export.TripExporter
 import com.cowork.bikerecoder.feed.TripRegions
+import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.post.HeartRateColor
 import com.cowork.bikerecoder.core.post.HeartRateStats
 import com.cowork.bikerecoder.core.post.HeartRateSummary
@@ -78,6 +84,13 @@ import java.time.ZoneId
  * [이미지 만들기]; [media] — the videos and images made from it ("만든 영상·이미지"), newest first. Each load (opening the
  * screen, coming back to it) drops the made files the gallery no longer has: only when [mediaExists] says false, never
  * when the check fails (ruling V6).
+ *
+ * V1.7.0 (spec §1.5, §2.3): [total] carries the trip's descent (the segments' sum) and highest altitude (their maximum, null
+ * when none knows it); [profile] is the elevation profile of the segments' points in start order (null without usable
+ * elevation), computed on [compute] and read again with the tracks.
+ *
+ * V1.7.0 (spec §4.1, §4.2): [export] saves the trip as GPX or KML under the shown [title] through [exportTrip];
+ * [exportState] is where that stands, and [recording] (some segment is still open) dims the export menu.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class TripDetailViewModel(
@@ -98,6 +111,10 @@ class TripDetailViewModel(
     private val zone: ZoneId = SEOUL,
     /** The imported trips, id to file name (V1.6.0 spec §4.2). */
     imported: Flow<Map<Long, String>> = flowOf(emptyMap()),
+    /** [com.cowork.bikerecoder.export.TripExporter.exportTrip] (V1.7.0 spec §4); without it the screen offers no export. */
+    private val exportTrip: (suspend (tripId: Long, format: ExportFormat, title: String) -> ExportResult)? = null,
+    /** Builds the elevation profile from the segments' points in start order; a seam for tests. */
+    private val profileOf: (List<List<TrackPoint>>) -> ElevationProfile? = ElevationProfile.Companion::fromSegments,
 ) : ViewModel() {
 
     private val _segmentsByDate = MutableStateFlow<Map<LocalDate, List<RideSegment>>>(emptyMap())
@@ -106,10 +123,33 @@ class TripDetailViewModel(
     private val _total = MutableStateFlow(SegmentTotals.ZERO)
     val total: StateFlow<SegmentTotals> = _total.asStateFlow()
 
+    private val _profile = MutableStateFlow<ElevationProfile?>(null)
+
+    /** The trip's elevation profile (spec §2.3); null while it is computed and when the trip has no usable elevation. */
+    val profile: StateFlow<ElevationProfile?> = _profile.asStateFlow()
+
+    private val _profileLoaded = MutableStateFlow(false)
+
+    /** True once [profile] is computed (null then means "no elevation"), so the screen does not flash "고도 정보가 없습니다". */
+    val profileLoaded: StateFlow<Boolean> = _profileLoaded.asStateFlow()
+
     private val _canMakeMedia = MutableStateFlow(false)
 
     /** [영상 만들기] [이미지 만들기] are offered. */
     val canMakeMedia: StateFlow<Boolean> = _canMakeMedia.asStateFlow()
+
+    private val _recording = MutableStateFlow(false)
+
+    /** Some segment of the trip, listed or not, is still being recorded: it cannot be exported yet. */
+    val recording: StateFlow<Boolean> = _recording.asStateFlow()
+
+    private val exporter = ExportRunner(viewModelScope, log)
+
+    /** The export started from the [⋮] menu. */
+    val exportState: StateFlow<ExportState> = exporter.state
+
+    /** The [⋮] menu is offered. */
+    val canExport: Boolean get() = exportTrip != null
 
     private val _canShare = MutableStateFlow(false)
 
@@ -319,6 +359,29 @@ class TripDetailViewModel(
         viewModelScope.launch { guarded("Could not save the title of trip $tripId") { store.setCustomTitle(tripId, cleaned) } }
     }
 
+    /**
+     * "GPX로 내보내기" / "KML로 내보내기": the trip under its shown title; a trip without one yet (no finished ride of 10 m)
+     * under [fallbackTitle].
+     */
+    fun export(format: ExportFormat) {
+        val run = exportTrip ?: return
+        val shown = title.value ?: fallbackTitle()
+        exporter.run { run(tripId, format, shown) }
+    }
+
+    /**
+     * The title rule (spec §2.5) over every listed segment, open or short ones too ("저녁 라이딩"); "bikeRecoder" when
+     * none is listed.
+     */
+    private fun fallbackTitle(): String {
+        val listed = _segmentsByDate.value.values.flatten()
+        if (listed.isEmpty()) return label.value.customTitle?.takeIf { it.isNotBlank() } ?: TripExporter.TRIP_PREFIX
+        return RideTitle.shown(label.value, listed.minOf { it.startedAt }, listed.map { it.localDate }.distinct().size, zone)
+    }
+
+    /** The export's outcome has been shown (dialog closed, Toast posted). */
+    fun clearExport() = exporter.clear()
+
     /** [숨기기] ([hidden] = true) / [다시 보이기] in the full-screen view. */
     fun setHidden(photo: RidePhoto, hidden: Boolean) {
         viewModelScope.launch { setPhotoHidden(postStore, photo, hidden, log) }
@@ -333,6 +396,7 @@ class TripDetailViewModel(
             val all = rideStore.segments(tripId)
             val segments = all.filterNot { it.isEmpty }
             _canShare.value = canShare(all)
+            _recording.value = all.any { it.endedAt == null }
             tripStore?.let { trips ->
                 _canMakeMedia.value = guarded("Could not read trip $tripId") { canMakeMedia(trips.trip(tripId), all) } ?: false
             }
@@ -349,8 +413,15 @@ class TripDetailViewModel(
             if (segments != trackOf) {
                 // In the order listed (by date, then start); the segments' points are read one after another.
                 val ordered = _segmentsByDate.value.values.flatten()
-                tracks.value = ordered.map { it.id to rideStore.points(it.id) }
+                val read = ordered.map { it.id to rideStore.points(it.id) }
+                tracks.value = read
                 trackOf = segments
+                val byStart = ordered.indices.sortedBy { ordered[it].startedAt }.map { read[it].second }
+                // A failing computation (e.g. out of memory on a huge trip) must still end the loading state: no chart, no retry loop.
+                _profile.value = guarded("Could not compute the elevation profile of trip $tripId") {
+                    withContext(compute) { profileOf(byStart.filter { it.isNotEmpty() }) }
+                }
+                _profileLoaded.value = true
             }
             askRegion(segments)
         }
@@ -403,6 +474,7 @@ class TripDetailViewModel(
                     tripRegions = container.tripRegions,
                     imported = container.importStore.observeImported(),
                     mediaExists = { uri -> withContext(Dispatchers.IO) { container.mediaStoreWriter.exists(uri.toUri()) } },
+                    exportTrip = container.tripExporter::exportTrip,
                 )
             }
         }

@@ -35,12 +35,19 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.SegmentTotals
+import com.cowork.bikerecoder.export.ExportFormat
+import com.cowork.bikerecoder.export.ExportMenu
+import com.cowork.bikerecoder.export.ExportOutcome
+import com.cowork.bikerecoder.export.ExportProgress
+import com.cowork.bikerecoder.export.ExportState
 import com.cowork.bikerecoder.importing.importedFromText
 import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.post.PhotoThumbnails
+import com.cowork.bikerecoder.ui.elevation.ElevationChart
 import com.cowork.bikerecoder.ui.health.HR_REFETCH
 import com.cowork.bikerecoder.ui.health.HeartRateAccess
 import com.cowork.bikerecoder.ui.health.HeartRateGate
@@ -64,6 +71,8 @@ import java.time.LocalDate
  * [mediaEntry]: [영상 만들기] [이미지 만들기] (or the progress card) of this trip, shown when it is completed with a ride to
  * make it from (V1.3.0 spec §1.1); [mediaThumbnail] and [onOpenMedia]: "만든 영상·이미지" (§5.1).
  * [onShare]: the paper plane on the title row, shown while the trip has a finished ride to share (V1.5.0 spec §1.1).
+ * [onOpenElevation]: the small elevation chart's [지도에 표시] / tap opens the "고도" map screen (V1.7.0 spec §2.3).
+ * The title row's [⋮] exports the trip as GPX or KML (V1.7.0 spec §4.1, §4.2), through the view model.
  */
 @Composable
 fun TripDetailScreen(
@@ -72,6 +81,7 @@ fun TripDetailScreen(
     thumbnails: PhotoThumbnails,
     onOpenSegment: (Long) -> Unit,
     onBack: () -> Unit,
+    onOpenElevation: () -> Unit = {},
     photoPrompt: @Composable () -> Unit = {},
     heartRateGate: HeartRateGate? = null,
     mediaEntry: @Composable () -> Unit = {},
@@ -95,6 +105,10 @@ fun TripDetailScreen(
     val customTitle by viewModel.customTitle.collectAsStateWithLifecycle()
     val autoTitle by viewModel.autoTitle.collectAsStateWithLifecycle()
     val importedFrom by viewModel.importedFrom.collectAsStateWithLifecycle()
+    val profile by viewModel.profile.collectAsStateWithLifecycle()
+    val profileLoaded by viewModel.profileLoaded.collectAsStateWithLifecycle()
+    val exportState by viewModel.exportState.collectAsStateWithLifecycle()
+    val recording by viewModel.recording.collectAsStateWithLifecycle()
     var renaming by rememberSaveable { mutableStateOf(false) }
     val access = rememberHeartRateAccess(heartRateGate)
     val viewer = rememberPhotoViewerState()
@@ -108,6 +122,12 @@ fun TripDetailScreen(
         onRename = { renaming = true },
         onShare = onShare.takeIf { canShare },
         importedFrom = importedFrom,
+        profile = profile,
+        profileLoaded = profileLoaded,
+        onOpenElevation = onOpenElevation,
+        onExport = if (viewModel.canExport) viewModel::export else null,
+        exportEnabled = !recording,
+        exporting = exportState == ExportState.Running,
         dialog = dialog,
         onOpenSegment = onOpenSegment,
         onRequestDelete = viewModel::requestDeleteSegment,
@@ -150,6 +170,7 @@ fun TripDetailScreen(
         },
     )
     PhotoViewerHost(viewer, photos, thumbnails, onToggleHidden = { viewModel.setHidden(it, hidden = !it.hidden) })
+    ExportOutcome(exportState, onClear = viewModel::clearExport)
     if (renaming) {
         RenameTripDialog(
             current = customTitle,
@@ -175,8 +196,13 @@ internal fun tripRefetchAction(access: HeartRateAccess, refetch: () -> Unit): ((
  * V1.5.0 spec §1.1) above everything else, under it "{파일 이름}에서 가져옴" of an imported trip ([importedFrom], V1.6.0
  * spec §4.2), then the map ([map], every day's track and photos; outside the scrolling part, so it keeps its drags), then
  * [videos] ([영상 만들기] [이미지 만들기] and "만든 영상·이미지", V1.3.0 spec §1.1, §5.1),
- * [photos] (the photo strip and card, spec §2.3), the totals (with the trip's [heartRate], spec §3.3) and its segments
- * under a header per date (with that day's average heart rate); a long press asks to delete.
+ * [photos] (the photo strip and card, spec §2.3), the totals (with the trip's [heartRate], spec §3.3; the third row is
+ * the ascent, descent and highest altitude, V1.7.0 spec §2.3), under them the small elevation chart of [profile] (with
+ * [지도에 표시], opening the "고도" map screen through [onOpenElevation]; nothing while [profileLoaded] is false) and its
+ * segments under a header per date (with that day's average heart rate); a long press asks to delete.
+ * [onExport]: the title row's [⋮] at its right end (the row is drawn for it even while there is no [title]) with "GPX로 내보내기" and "KML로 내보내기" (V1.7.0 spec §4.1), dimmed
+ * with "기록을 마친 뒤 내보낼 수 있습니다" while [exportEnabled] is false; [exporting] shows a small progress indicator
+ * over the screen's content (§4.2).
  */
 @Composable
 fun TripDetailContent(
@@ -198,13 +224,29 @@ fun TripDetailContent(
     onRename: (() -> Unit)? = null,
     onShare: (() -> Unit)? = null,
     importedFrom: String? = null,
+    profile: ElevationProfile? = null,
+    profileLoaded: Boolean = true,
+    onOpenElevation: (() -> Unit)? = null,
+    onExport: ((ExportFormat) -> Unit)? = null,
+    exportEnabled: Boolean = true,
+    exporting: Boolean = false,
 ) {
     HistoryScaffold(title = "여행 기록", onBack = onBack) {
         if (segmentsByDate.isEmpty()) {
             EmptyText()
         } else {
             Column(modifier = Modifier.fillMaxSize()) {
-                if (title != null && onRename != null) TripTitleRow(title, onRename, onShare)
+                // A trip without a title yet (no ride of 10 m finished) still gets the row for its [⋮].
+                val titled = title != null && onRename != null
+                if (titled || onExport != null) {
+                    TripTitleRow(
+                        title = if (titled) title else null,
+                        onRename = if (titled) onRename else null,
+                        onShare = if (titled) onShare else null,
+                    ) {
+                        if (onExport != null) ExportMenu(onExport, enabled = exportEnabled, running = exporting)
+                    }
+                }
                 if (importedFrom != null) {
                     Text(
                         importedFromText(importedFrom),
@@ -218,34 +260,46 @@ fun TripDetailContent(
                 map?.invoke(Modifier.fillMaxWidth().height(240.dp))
                 TripDetailList(
                     segmentsByDate, total, heartRate, onOpenSegment, onRequestDelete, videos, photos, onRefetchHeartRate,
-                    refetching, Modifier.weight(1f),
+                    refetching, profile, profileLoaded, onOpenElevation, Modifier.weight(1f),
                 )
             }
+            // Over the content, in the scaffold's box.
+            if (exporting) ExportProgress()
         }
     }
     HistoryDialogs(dialog, CONFIRM_DELETE_SEGMENT, onConfirmDelete, onDismiss)
 }
 
-/** The shown title in `titleLarge`, and on the right the paper plane "공유" (when [onShare]) and [✎]: "제목 바꾸기". */
+/**
+ * The shown title in `titleLarge` (an empty area when [title] is null), and on the right the paper plane "공유" (when
+ * [onShare]), [✎]: "제목 바꾸기" (when [onRename]), and at the end [more] (the export [⋮]).
+ */
 @Composable
-private fun TripTitleRow(title: String, onRename: () -> Unit, onShare: (() -> Unit)?) {
+private fun TripTitleRow(title: String?, onRename: (() -> Unit)?, onShare: (() -> Unit)?, more: @Composable () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            title,
-            style = MaterialTheme.typography.titleLarge,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).padding(vertical = 8.dp),
-        )
+        if (title != null) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleLarge,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(vertical = 8.dp),
+            )
+        } else {
+            Spacer(Modifier.weight(1f))
+        }
         if (onShare != null) {
             IconButton(onClick = onShare, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.Filled.Share, contentDescription = "공유")
             }
         }
-        IconButton(onClick = onRename) { Icon(Icons.Filled.Edit, contentDescription = RENAME_TITLE) }
+        if (onRename != null) {
+            IconButton(onClick = onRename) { Icon(Icons.Filled.Edit, contentDescription = RENAME_TITLE) }
+        }
+        more()
     }
 }
 
@@ -260,6 +314,9 @@ private fun TripDetailList(
     photos: @Composable () -> Unit,
     onRefetchHeartRate: (() -> Unit)?,
     refetching: Boolean,
+    profile: ElevationProfile?,
+    showElevation: Boolean,
+    onOpenElevation: (() -> Unit)?,
     modifier: Modifier,
 ) {
     LazyColumn(
@@ -276,6 +333,9 @@ private fun TripDetailList(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { photos() }
         }
         item(key = "total") { TripTotal(total, heartRate, onRefetchHeartRate, refetching) }
+        if (showElevation) {
+            item(key = "elevation") { ElevationChart(profile, onOpen = onOpenElevation) }
+        }
         segmentsByDate.forEach { (date, segments) ->
             item(key = "date-$date") {
                 Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
@@ -317,7 +377,11 @@ private fun TripTotal(total: SegmentTotals, heartRate: TripHeartRate, onRefetchH
             )
             NumberRow(
                 "평균/최고" to "${RideFormat.speedKmh(total.avgSpeedMps)} / ${RideFormat.speedKmh(total.maxSpeedMps)}km/h",
+            )
+            NumberRow(
                 "누적 상승" to RideFormat.altitude(total.ascentM),
+                "누적 하강" to RideFormat.altitude(total.descentM),
+                "최고 고도" to RideFormat.altitude(total.maxAltitudeM),
             )
             if (heartRate.avgBpm != null || onRefetchHeartRate != null) {
                 Row(

@@ -65,6 +65,22 @@ internal fun NumberRow(left: Pair<String, String>, right: Pair<String, String>) 
     }
 }
 
+/** One label/value cell across the width (the trip totals' second row, V1.7.0 spec §2.3). */
+@Composable
+internal fun NumberRow(only: Pair<String, String>) {
+    Row(modifier = Modifier.fillMaxWidth()) { NumberCell(only.first, only.second, Modifier.weight(1f)) }
+}
+
+/** Three label/value cells side by side (the trip totals' third row, V1.7.0 spec §2.3). */
+@Composable
+internal fun NumberRow(left: Pair<String, String>, middle: Pair<String, String>, right: Pair<String, String>) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+        NumberCell(left.first, left.second, Modifier.weight(1f))
+        NumberCell(middle.first, middle.second, Modifier.weight(1f))
+        NumberCell(right.first, right.second, Modifier.weight(1f))
+    }
+}
+
 /** The value on one line: shrunk (down to [MIN_VALUE_SIZE]) only when it would not fit, e.g. "14.5 / 23.4km/h" in a card. */
 @Composable
 private fun NumberCell(label: String, value: String, modifier: Modifier) {

@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.Stop
@@ -35,6 +36,7 @@ import com.cowork.bikerecoder.map.MapOverlay
 import com.cowork.bikerecoder.map.MapPhoto
 import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.post.PhotoThumbnails
+import com.cowork.bikerecoder.ui.elevation.ElevationChart
 import com.cowork.bikerecoder.ui.health.HeartRateGate
 import com.cowork.bikerecoder.ui.health.HeartRateLegend
 import com.cowork.bikerecoder.ui.health.HeartRateSection
@@ -109,6 +111,7 @@ internal fun ColoredDetailMap(
  * [photoPrompt]: the photo permission card where it applies (spec §2.4), shown under the photo strip.
  * [heartRateGate]: the heart-rate permission flow (spec §3.4; null = none).
  * [map]: the map for its content (replaceable in tests).
+ * [onOpenElevation]: the small elevation chart's [지도에 표시] / tap opens the "고도" map screen (V1.7.0 spec §2.4).
  */
 @Composable
 fun SegmentDetailScreen(
@@ -116,6 +119,7 @@ fun SegmentDetailScreen(
     tileSource: TileSource,
     thumbnails: PhotoThumbnails,
     onBack: () -> Unit,
+    onOpenElevation: () -> Unit = {},
     photoPrompt: @Composable () -> Unit = {},
     heartRateGate: HeartRateGate? = null,
     map: @Composable (DetailMapContent, Modifier) -> Unit = { content, modifier -> DetailMap(content, tileSource, modifier) },
@@ -137,7 +141,8 @@ fun SegmentDetailScreen(
             val mapPhotos = rememberMapPhotos(photos, thumbnails)
             SegmentDetailContent(
                 segment = s.segment,
-                altitude = s.altitude,
+                profile = s.profile,
+                onOpenElevation = onOpenElevation,
                 speed = s.speed,
                 map = { modifier ->
                     ColoredDetailMap(canColor, colorMode, viewModel::setColorMode, modifier) { inner, fitPadding ->
@@ -172,16 +177,18 @@ fun SegmentDetailScreen(
 /**
  * One segment (spec §3.5): the map on top (outside the scrolling part, so it keeps its drags), then [photos] (the photo
  * strip and card, spec §2.3), distance, moving and elapsed time, average/maximum, ascent/descent, highest/lowest
- * altitude, [heartRate] (the heart-rate row and card, spec §3.3) and the altitude and speed charts, and the heart-rate
+ * altitude, [heartRate] (the heart-rate row and card, spec §3.3), the elevation chart (the segment's [profile], small,
+ * opening the "고도" map screen through [onOpenElevation], V1.7.0 spec §2.4) and the speed chart, and the heart-rate
  * chart over the same distance axis when there is heart rate ([heartRateChart] not null).
  */
 @Composable
 fun SegmentDetailContent(
     segment: RideSegment,
-    altitude: List<ChartPoint>,
+    profile: ElevationProfile?,
     speed: List<ChartPoint>,
     map: @Composable (Modifier) -> Unit,
     onBack: () -> Unit,
+    onOpenElevation: (() -> Unit)? = null,
     photos: @Composable () -> Unit = {},
     heartRate: @Composable () -> Unit = {},
     heartRateChart: List<ChartPoint>? = null,
@@ -218,7 +225,7 @@ fun SegmentDetailContent(
                 )
                 heartRate()
                 Text("고도", style = MaterialTheme.typography.titleMedium)
-                LineChart(altitude, unit = "m", modifier = Modifier.fillMaxWidth().height(160.dp))
+                ElevationChart(profile, onOpen = onOpenElevation)
                 Text("속도", style = MaterialTheme.typography.titleMedium)
                 LineChart(speed, unit = "km/h", modifier = Modifier.fillMaxWidth().height(160.dp))
                 if (heartRateChart != null) {

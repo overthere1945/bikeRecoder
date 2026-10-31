@@ -1,5 +1,9 @@
 package com.cowork.bikerecoder.core.navigation
 
+import com.cowork.bikerecoder.core.elevation.ClimbFinder
+import com.cowork.bikerecoder.core.elevation.ElevationProfile
+import com.cowork.bikerecoder.core.elevation.RideTimeEstimator
+import com.cowork.bikerecoder.core.elevation.UsualSpeed
 import com.cowork.bikerecoder.core.gpx.GpxParser
 import com.cowork.bikerecoder.core.model.GeoMath
 import com.cowork.bikerecoder.core.model.GeoPoint
@@ -29,6 +33,9 @@ import org.junit.jupiter.api.Test
 import java.time.Instant
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** 미리 정한 응답을 돌려주고 호출을 기록하는 [Router] 테스트 더블. */
@@ -71,7 +78,13 @@ class NavigationSessionTest {
     private val straight = straightRoute(2_000.0)
     private val destination = Stop(1, "목적지", pointAt(2_000.0, 0.0), isDestination = true)
 
-    private fun TestScope.session(route: Route, stops: List<Stop>, router: Router, initialDistanceM: Double = 0.0) =
+    private fun TestScope.session(
+        route: Route,
+        stops: List<Stop>,
+        router: Router,
+        initialDistanceM: Double = 0.0,
+        usualSpeedMps: Double = UsualSpeed.DEFAULT_MPS,
+    ) =
         NavigationSession(
             initialRoute = route,
             stops = stops,
@@ -80,6 +93,7 @@ class NavigationSessionTest {
             phrases = phrases,
             scope = backgroundScope,
             initialDistanceM = initialDistanceM,
+            usualSpeedMps = usualSpeedMps,
         )
 
     /** 세션의 모든 업데이트를 즉시 수집한다. */
@@ -619,5 +633,190 @@ class NavigationSessionTest {
         assertTrue(update.state.gpsWeak)
         assertEquals(0.0, update.state.progress.distanceAlongM)
         assertEquals(straight.cumulativeM.last(), update.state.progress.remainingM)
+    }
+
+    // --- V1.7.0 고도: 도착 예정·앞길·오르막 음성 ---
+
+    /** 3 km 동쪽 경로: 1,100~1,700 m가 6% 오르막. [turns]는 꼭짓점 인덱스(10 m 간격). */
+    private fun climbRoute(turns: Map<Int, TurnType> = emptyMap()) =
+        eastRouteWithElevation(3_000.0, turns = turns) { d ->
+            when {
+                d < 1_100.0 -> 0.0
+                d < 1_700.0 -> (d - 1_100.0) * 0.06
+                else -> 36.0
+            }
+        }
+
+    private fun destinationOf(route: Route) = Stop(1, "목적지", route.points.last(), isDestination = true)
+
+    @Test
+    fun etaUsesUsualSpeedFirstFiveMinutes() = runTest {
+        val total = straight.cumulativeM.last()
+        val session = session(straight, listOf(destination), FakeRouter { error("no reroute") }, usualSpeedMps = 5.0)
+        val updates = collect(session)
+
+        // 2 m/s로 10초마다 20 m씩 6분.
+        (0..36).forEach { i -> feed(session, fixAt(i * 20.0, 0.0, i * 10, speedMps = 2f)) }
+
+        // 200초: 이동 데이터 5분 미만 -> 평소 속도 5 m/s.
+        val early = updates[20].state
+        val earlyFix = T0 + 200_000L
+        assertEquals(earlyFix + ((total - early.progress.distanceAlongM) / 5.0 * 1_000).toLong(), early.etaMillis)
+
+        // 360초: 최근 이동 속도 2 m/s.
+        val late = updates[36].state
+        val lateFix = T0 + 360_000L
+        val expected = lateFix + ((total - late.progress.distanceAlongM) / 2.0 * 1_000).toLong()
+        assertTrue(kotlin.math.abs(late.etaMillis - expected) < 2_000, "eta=${late.etaMillis} expected=$expected")
+    }
+
+    @Test
+    fun etaAddsClimbTime() = runTest {
+        val route = eastRouteWithElevation(3_000.0) { it * 0.05 }
+        val total = route.cumulativeM.last()
+        val session = session(route, listOf(destinationOf(route)), FakeRouter { error("no reroute") }, usualSpeedMps = 5.0)
+        val updates = collect(session)
+
+        feed(session, fixAt(0.0, 0.0, 0))
+
+        val state = updates.single().state
+        val profile = assertNotNull(ElevationProfile.fromRoute(route))
+        val seconds = RideTimeEstimator.seconds(profile, state.progress.distanceAlongM, total, 5.0)
+        assertEquals(T0 + (seconds * 1_000).toLong(), state.etaMillis)
+        // 5% 오르막: 평지(600초)보다 확실히 길다.
+        assertTrue(state.etaMillis - T0 > 600_000 * 1.4, "eta=${state.etaMillis - T0}")
+    }
+
+    @Test
+    fun noProfileKeepsPlainEta() = runTest {
+        val total = straight.cumulativeM.last()
+        val session = session(straight, listOf(destination), FakeRouter { error("no reroute") })
+        val updates = collect(session)
+
+        feed(session, fixAt(0.0, 0.0, 0))
+
+        val state = updates.single().state
+        val remaining = total - state.progress.distanceAlongM
+        assertEquals(T0 + (remaining / (15.0 / 3.6) * 1_000).toLong(), state.etaMillis)
+        assertNull(state.profile)
+        assertNull(state.ahead)
+    }
+
+    @Test
+    fun climbVoiceAfterTurnWaits() = runTest {
+        // 약 980 m(꼭짓점 98)에 좌회전: 오르막(약 1,095 m) 300 m 앞(약 795 m)에서 "…미터 앞에서" 회전 안내와 겹친다.
+        val route = climbRoute(turns = mapOf(98 to TurnType.LEFT))
+        val climb = ClimbFinder.find(assertNotNull(ElevationProfile.fromRoute(route))).first()
+        val session = session(route, listOf(destinationOf(route)), FakeRouter { error("no reroute") })
+        val updates = collect(session)
+
+        (0..5).forEach { i -> feed(session, fixAt(i * 100.0, 0.0, i * 20)) }
+        feed(session, fixAt(climb.startM - 300.0, 0.0, 200))
+        feed(session, fixAt(climb.startM - 280.0, 0.0, 204))
+
+        val isClimb = { u: Utterance -> "앞 오르막" in u.text }
+        val turnUpdate = updates[6]
+        assertTrue(turnUpdate.utterances.any { it.priority == Priority.TURN }, "${turnUpdate.utterances}")
+        assertTrue(turnUpdate.utterances.none(isClimb), "${turnUpdate.utterances}")
+
+        val next = updates[7]
+        val gap = climb.startM - next.state.progress.distanceAlongM
+        assertEquals(
+            listOf(Utterance(phrases.climb(gap, climb.lengthM, climb.avgGradePct), Priority.PERIODIC)),
+            next.utterances.filter(isClimb),
+        )
+        assertEquals(1, updates.flatMap { it.utterances }.count(isClimb))
+    }
+
+    @Test
+    fun climbVoiceSpokenOnceAtThreeHundred() = runTest {
+        val route = climbRoute()
+        val climb = ClimbFinder.find(assertNotNull(ElevationProfile.fromRoute(route))).first()
+        val session = session(route, listOf(destinationOf(route)), FakeRouter { error("no reroute") })
+        val updates = collect(session)
+
+        (0..5).forEach { i -> feed(session, fixAt(i * 100.0, 0.0, i * 20)) }
+        feed(session, fixAt(climb.startM - 300.0, 0.0, 200))
+        feed(session, fixAt(climb.startM - 280.0, 0.0, 204))
+
+        val climbTexts = updates.flatMap { it.utterances }.filter { "앞 오르막" in it.text }
+        assertEquals(1, climbTexts.size)
+        assertEquals(climbTexts, updates[6].utterances.filter { "앞 오르막" in it.text })
+    }
+
+    @Test
+    fun deferredClimbDroppedOncePassed() = runTest {
+        val route = climbRoute(turns = mapOf(98 to TurnType.LEFT))
+        val climb = ClimbFinder.find(assertNotNull(ElevationProfile.fromRoute(route))).first()
+        val session = session(route, listOf(destinationOf(route)), FakeRouter { error("no reroute") })
+        val updates = collect(session)
+
+        (0..5).forEach { i -> feed(session, fixAt(i * 100.0, 0.0, i * 20)) }
+        feed(session, fixAt(climb.startM - 300.0, 0.0, 200)) // 회전 안내와 겹쳐 미룸
+        assertTrue(updates[6].utterances.any { it.priority == Priority.TURN }, "${updates[6].utterances}")
+        feed(session, fixAt(climb.startM + 10.0, 0.0, 260)) // 오르막 시작을 지남
+        feed(session, fixAt(climb.startM + 30.0, 0.0, 264))
+
+        assertTrue(updates[7].state.progress.distanceAlongM > climb.startM)
+        assertEquals(0, updates.flatMap { it.utterances }.count { "앞 오르막" in it.text })
+    }
+
+    @Test
+    fun profileFollowsReroutedRoute() = runTest {
+        // 처음 경로: deviate GPX와 같은 동쪽 2 km, 300~900 m가 6% 오르막.
+        val initial = eastRouteWithElevation(2_000.0) { d -> ((d - 300.0) * 0.06).coerceIn(0.0, 36.0) }
+        var newRoute: Route? = null
+        val router = FakeRouter { request ->
+            // 다시 탐색한 경로: 이탈 지점 → 북쪽 100 m 선을 따라 동쪽 2 km → 목적지. 1,000~1,600 m가 5% 오르막.
+            val vertices = listOf(request.start) + (20..200).map { pointAt(it * 10.0, 100.0) } + pointAt(2_000.0, 0.0)
+            val cumulative = GeoMath.cumulativeDistances(vertices)
+            val r = Route(
+                points = vertices,
+                cumulativeM = cumulative,
+                instructions = emptyList(),
+                stopPointIndices = listOf(vertices.size - 1),
+                summary = RouteSummary(cumulative.last(), 0, 0.0, RouteProfile.BALANCED),
+                elevationsM = cumulative.map { d -> ((d - 1_000.0) * 0.05).coerceIn(0.0, 30.0) },
+            )
+            newRoute = r
+            RouteResult.Success(r)
+        }
+        val session = session(initial, listOf(destination), router)
+        val updates = collect(session)
+
+        gpx("deviate").forEach { feed(session, it) }
+
+        val rerouted = assertNotNull(newRoute)
+        val state = updates.last().state
+        assertEquals(rerouted, state.route)
+        assertEquals(rerouted.cumulativeM.last(), assertNotNull(state.profile).totalM, 1e-6)
+        val newClimbs = ClimbFinder.find(assertNotNull(ElevationProfile.fromRoute(rerouted)))
+        assertEquals(1, newClimbs.size)
+        assertEquals(AheadOfRider.state(newClimbs, state.progress.distanceAlongM), state.ahead)
+        assertIs<AheadState.ClimbAhead>(state.ahead)
+    }
+
+    @Test
+    fun navStateCarriesProfileAndAhead() = runTest {
+        val route = climbRoute()
+        val climbs = ClimbFinder.find(assertNotNull(ElevationProfile.fromRoute(route)))
+        val climb = climbs.first()
+        val session = session(route, listOf(destinationOf(route)), FakeRouter { error("no reroute") })
+        val updates = collect(session)
+
+        feed(session, fixAt(0.0, 0.0, 0))
+        val start = updates.last().state
+        assertEquals(route.cumulativeM.last(), assertNotNull(start.profile).totalM, 1e-6)
+        assertIs<AheadState.ClimbAhead>(start.ahead)
+        assertEquals(AheadOfRider.state(climbs, start.progress.distanceAlongM), start.ahead)
+
+        listOf(500.0, 1_000.0, climb.startM + 100.0).forEachIndexed { i, east ->
+            feed(session, fixAt(east, 0.0, (i + 1) * 100))
+        }
+        val inside = updates.last().state
+        assertEquals(
+            AheadState.InClimb(climb.endM - inside.progress.distanceAlongM, climb.avgGradePct),
+            inside.ahead,
+        )
     }
 }

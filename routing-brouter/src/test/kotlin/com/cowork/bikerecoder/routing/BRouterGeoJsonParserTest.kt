@@ -105,4 +105,39 @@ class BRouterGeoJsonParserTest {
         assertEquals(0.0, r.summary.cyclewayRatio)
         assertEquals(listOf(1), r.stopPointIndices)
     }
+
+    private fun geometry(vararg coords: String) = """
+        {"type":"FeatureCollection","features":[{"type":"Feature","properties":{},
+          "geometry":{"type":"LineString","coordinates":[${coords.joinToString(",")}]}}]}
+    """.trimIndent()
+
+    @Test
+    fun `readsElevations`() {
+        val r = BRouterGeoJsonParser.parse(
+            geometry("[126.9,37.5,12.5]", "[126.91,37.5,13]"),
+            RouteProfile.BALANCED,
+            listOf(GeoPoint(37.5, 126.91)),
+        )
+        assertEquals(listOf<Double?>(12.5, 13.0), r.elevationsM)
+    }
+
+    @Test
+    fun `missingElevationsGiveEmptyList`() {
+        val r = BRouterGeoJsonParser.parse(
+            geometry("[126.9,37.5]", "[126.91,37.5]"),
+            RouteProfile.BALANCED,
+            listOf(GeoPoint(37.5, 126.91)),
+        )
+        assertEquals(emptyList(), r.elevationsM)
+    }
+
+    @Test
+    fun `partialElevationsKeepNulls`() {
+        val r = BRouterGeoJsonParser.parse(
+            geometry("[126.9,37.5,10.0]", "[126.91,37.5]", "[126.92,37.5,null]", "[126.93,37.5,11.0]"),
+            RouteProfile.BALANCED,
+            listOf(GeoPoint(37.5, 126.93)),
+        )
+        assertEquals(listOf<Double?>(10.0, null, null, 11.0), r.elevationsM)
+    }
 }

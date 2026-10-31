@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.data
 
+import com.cowork.bikerecoder.core.elevation.UsualSpeed
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.recording.DayTotals
 import com.cowork.bikerecoder.core.recording.RideSegment
@@ -35,6 +36,9 @@ class RoomRideStore(db: AppDatabase) : RideStore {
         dao.closeSegment(segmentId, endedAt, totals)
 
     override suspend fun openSegments(): List<RideSegment> = dao.openSegments().map { it.toModel() }
+
+    override suspend fun recentSegments(limit: Int): List<RideSegment> =
+        dao.recentSegments(UsualSpeed.MIN_DISTANCE_M, limit).map { it.toModel() }
 
     override suspend fun segment(id: Long): RideSegment? = dao.segment(id)?.toModel()
 

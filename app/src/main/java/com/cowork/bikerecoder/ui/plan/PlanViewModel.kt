@@ -6,10 +6,21 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
+import com.cowork.bikerecoder.WarnLog
+import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.export.ExportFormat
+import com.cowork.bikerecoder.export.ExportResult
+import com.cowork.bikerecoder.export.ExportRunner
+import com.cowork.bikerecoder.export.ExportState
+import com.cowork.bikerecoder.core.elevation.ElevationProfile
+import com.cowork.bikerecoder.core.elevation.RideTimeEstimator
+import com.cowork.bikerecoder.core.elevation.UsualSpeed
 import com.cowork.bikerecoder.core.model.GeoMath
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.LocationFix
+import com.cowork.bikerecoder.core.model.Route
 import com.cowork.bikerecoder.core.model.RouteProfile
+import com.cowork.bikerecoder.core.model.Stop
 import com.cowork.bikerecoder.core.routing.RouteFailure
 import com.cowork.bikerecoder.core.routing.RouteRequest
 import com.cowork.bikerecoder.core.routing.RouteResult
@@ -19,7 +30,10 @@ import com.cowork.bikerecoder.ui.common.PlaceLookup
 import com.cowork.bikerecoder.ui.common.PressedPlace
 import com.cowork.bikerecoder.ui.common.addressOrNull
 import com.cowork.bikerecoder.ui.common.routeFailureText
+import com.cowork.bikerecoder.ui.elevation.ElevationHandoff
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,6 +44,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The route being planned. Scoped to the Activity so the main screen's long-press sheet, the search
@@ -42,6 +58,13 @@ import kotlinx.coroutines.launch
  * @param defaultProfile the profile preselected from settings (used unless the user already picked one).
  * @param locations the shared current-location state; fixes older than [MAX_FIX_AGE_MS] (by `timeMillis`
  *   against [clock]) are ignored and the computation waits for a fresh one.
+ * @param usualSpeed reads the usual speed (V1.7.0 spec §1.6). It is read again for every route found (this view model
+ *   lives with the Activity, rides recorded meanwhile count); a read that fails or takes longer than
+ *   [USUAL_SPEED_TIMEOUT_MS] is logged and [UsualSpeed.DEFAULT_MPS]. The route is published with that speed, its time at
+ *   that speed corrected for the climbs ([RideTimeEstimator], spec §2.5) and its elevation profile computed on [compute].
+ * @param handoff where [openElevation] hands the profile and route line to the "고도" map screen.
+ * @param exportRoute [com.cowork.bikerecoder.export.TripExporter.exportRoute] (V1.7.0 spec §4.1): the ready route as
+ *   GPX or KML ([export]); without it the plan offers no export.
  */
 class PlanViewModel(
     private val router: Router,
@@ -51,7 +74,20 @@ class PlanViewModel(
     private val clock: () -> Long = System::currentTimeMillis,
     /** Address of a long-pressed point, null when unknown. */
     addressOf: suspend (GeoPoint) -> String? = { null },
+    private val usualSpeed: suspend () -> Double = { UsualSpeed.DEFAULT_MPS },
+    private val handoff: ElevationHandoff = ElevationHandoff(),
+    private val compute: CoroutineDispatcher = Dispatchers.Default,
+    private val log: WarnLog = androidWarnLog(TAG),
+    private val exportRoute: (suspend (Route, List<Stop>, String, ExportFormat) -> ExportResult)? = null,
 ) : ViewModel() {
+
+    private val exporter = ExportRunner(viewModelScope, log)
+
+    /** The export started from the summary's [⋮]. */
+    val exportState: StateFlow<ExportState> = exporter.state
+
+    /** The [⋮] is offered (while the route is ready). */
+    val canExport: Boolean get() = exportRoute != null
 
     private val lookup = PlaceLookup(addressOf, viewModelScope)
 
@@ -138,8 +174,40 @@ class PlanViewModel(
         if (stale) changes.update { it + 1 }
     }
 
-    /** Empties the plan and goes back to the settings' default profile (call when navigation starts). */
+    /**
+     * The elevation chart was tapped: hands the ready route's profile and line to the "고도" map screen
+     * ([ElevationHandoff]). False (nothing handed over) without a ready route with elevation.
+     */
+    fun openElevation(): Boolean {
+        val s = _state.value
+        val route = (s.route as? RouteUiState.Ready)?.route ?: return false
+        val profile = s.elevation ?: return false
+        handoff.put(profile, route.points)
+        return true
+    }
+
+    /**
+     * "GPX로 내보내기" / "KML로 내보내기": the ready route with its waypoints and destination, named after the destination.
+     * Nothing without a ready route.
+     */
+    fun export(format: ExportFormat) {
+        val run = exportRoute ?: return
+        val s = _state.value
+        val route = (s.route as? RouteUiState.Ready)?.route ?: return
+        val stops = s.stops.mapIndexed { i, stop -> Stop(stop.key, stop.name, stop.point, isDestination = i == s.stops.lastIndex) }
+        val destination = s.stops.lastOrNull()?.name ?: return
+        exporter.run { run(route, stops, destination, format) }
+    }
+
+    /** The export's outcome has been shown (dialog closed, Toast posted). */
+    fun clearExport() = exporter.clear()
+
+    /**
+     * Empties the plan and goes back to the settings' default profile (call when navigation starts). An export of the old
+     * route still running is forgotten, so its dialog does not show up on a later plan.
+     */
     fun clear() {
+        exporter.discard()
         profileChosen = false
         edit { it.withInputs(stops = emptyList(), profile = latestDefault) }
     }
@@ -165,6 +233,8 @@ class PlanViewModel(
             profile = profile,
             route = if (stops.isEmpty()) RouteUiState.Idle else RouteUiState.Loading,
             canStart = false,
+            elevation = null,
+            durationSeconds = null,
         )
     }
 
@@ -201,21 +271,66 @@ class PlanViewModel(
             RouteResult.Failure(RouteFailure.OTHER, e.message.orEmpty())
         }
         when (result) {
-            is RouteResult.Success -> publish(stops, profile, RouteUiState.Ready(result.route), startable = dataReady)
+            is RouteResult.Success -> {
+                val route = result.route
+                val elevation = withContext(compute) { ElevationProfile.fromRoute(route) }
+                val usual = readUsualSpeed()
+                val seconds = RideTimeEstimator.seconds(elevation, 0.0, route.summary.totalDistanceM, usual)
+                publish(stops, profile, RouteUiState.Ready(route), startable = dataReady, elevation, seconds, usual)
+            }
             is RouteResult.Failure -> publish(stops, profile, RouteUiState.Error(routeFailureText(result.reason)), startable = false)
         }
     }
 
-    /** Publishes only if the inputs are still the ones this computation started from. */
-    private fun publish(stops: List<PlannedStop>, profile: RouteProfile, route: RouteUiState, startable: Boolean) {
+    /** The usual speed now; [UsualSpeed.DEFAULT_MPS] (logged) if the read fails or hangs. */
+    private suspend fun readUsualSpeed(): Double {
+        val mps = try {
+            withTimeoutOrNull(USUAL_SPEED_TIMEOUT_MS) { usualSpeed() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn("Could not read the recent rides; the usual speed is the default", e)
+            return UsualSpeed.DEFAULT_MPS
+        }
+        if (mps == null) log.warn("Reading the recent rides took over $USUAL_SPEED_TIMEOUT_MS ms; the usual speed is the default", null)
+        return mps ?: UsualSpeed.DEFAULT_MPS
+    }
+
+    /**
+     * Publishes only if the inputs are still the ones this computation started from. [elevation], [durationSeconds] and
+     * [usualSpeedMps] (what [durationSeconds] was computed with) belong to a Ready [route] (null / unchanged otherwise).
+     */
+    private fun publish(
+        stops: List<PlannedStop>,
+        profile: RouteProfile,
+        route: RouteUiState,
+        startable: Boolean,
+        elevation: ElevationProfile? = null,
+        durationSeconds: Double? = null,
+        usualSpeedMps: Double? = null,
+    ) {
         _state.update { s ->
-            if (s.stops != stops || s.profile != profile) s else s.copy(route = route, canStart = startable && route is RouteUiState.Ready)
+            if (s.stops != stops || s.profile != profile) {
+                s
+            } else {
+                s.copy(
+                    route = route,
+                    canStart = startable && route is RouteUiState.Ready,
+                    elevation = elevation,
+                    durationSeconds = durationSeconds,
+                    usualSpeedMps = usualSpeedMps ?: s.usualSpeedMps,
+                )
+            }
         }
     }
 
     companion object {
         const val RECOMPUTE_DEBOUNCE_MS = 300L
         const val MAX_FIX_AGE_MS = 30_000L
+
+        /** A usual speed read taking longer than this falls back to the default (a hung store must not block the route). */
+        const val USUAL_SPEED_TIMEOUT_MS = 2_000L
+        private const val TAG = "PlanViewModel"
         private const val MIN_DESTINATION_DISTANCE_M = 50.0
         private val MSG_NO_SEGMENTS = routeFailureText(RouteFailure.NO_SEGMENT_DATA)
         private const val MSG_NO_LOCATION = "현재 위치를 확인하는 중입니다"
@@ -229,6 +344,11 @@ class PlanViewModel(
                     locations = container.currentLocation,
                     segmentsReady = { container.segments.hasRequired() },
                     addressOf = { container.placeSearch.addressOrNull(it) },
+                    usualSpeed = {
+                        withContext(Dispatchers.IO) { UsualSpeed.of(container.rideStore.recentSegments(UsualSpeed.RECENT)) }
+                    },
+                    handoff = container.elevationHandoff,
+                    exportRoute = container.tripExporter::exportRoute,
                 )
             }
         }

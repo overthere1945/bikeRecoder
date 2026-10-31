@@ -42,6 +42,10 @@ class KoreanPhrases(private val zone: ZoneId = ZoneId.of("Asia/Seoul")) {
         return "${km.toPlainString()}킬로미터"
     }
 
+    /** 오르막 음성: "{거리} 앞 오르막, {길이}, 평균 {n}퍼센트입니다". 평균 경사는 반올림 정수. */
+    fun climb(distanceM: Double, lengthM: Double, avgGradePct: Double): String =
+        "${distance(distanceM)} 앞 오르막, ${distance(lengthM)}, 평균 ${Math.round(avgGradePct)}퍼센트입니다"
+
     /** [epochMillis]를 [zone] 기준 "오전/오후 h시 m분"으로 표기한다(시는 12시간제, 분은 0패딩 없음). */
     fun clockTime(epochMillis: Long): String {
         val zdt = ZonedDateTime.ofInstant(Instant.ofEpochMilli(epochMillis), zone)

@@ -28,6 +28,8 @@ import com.cowork.bikerecoder.data.RoomTripLabelStore
 import com.cowork.bikerecoder.data.RoomTripMediaStore
 import com.cowork.bikerecoder.data.RoomTripStore
 import com.cowork.bikerecoder.data.SettingsRepository
+import com.cowork.bikerecoder.export.DownloadsWriter
+import com.cowork.bikerecoder.export.TripExporter
 import com.cowork.bikerecoder.favorite.FavoriteRepository
 import com.cowork.bikerecoder.feed.FeedThumbnails
 import com.cowork.bikerecoder.feed.TripRegions
@@ -63,6 +65,7 @@ import com.cowork.bikerecoder.search.RecentPlaceStore
 import com.cowork.bikerecoder.share.ShareCandidates
 import com.cowork.bikerecoder.tts.AndroidTtsVoiceOutput
 import com.cowork.bikerecoder.tts.VoiceOutput
+import com.cowork.bikerecoder.ui.elevation.ElevationHandoff
 import com.cowork.bikerecoder.video.AndroidVideoBackend
 import com.cowork.bikerecoder.video.FeedThumbnailRenderer
 import com.cowork.bikerecoder.video.SatelliteProbe
@@ -254,6 +257,9 @@ class AppContainer(context: Context) {
     /** The picked files on their way to the import screen (in memory only). */
     val importHandoff: ImportHandoff = ImportHandoff()
 
+    /** The plan preview's profile and route on their way to the "고도" map screen (V1.7.0 spec §2.2; in memory only). */
+    val elevationHandoff: ElevationHandoff = ElevationHandoff()
+
     /**
      * The one GPX import job (V1.6.0 spec §3.4), outside any screen; it stops with the process. The trip's route profile
      * is the settings' default.
@@ -281,6 +287,19 @@ class AppContainer(context: Context) {
 
     /** Gallery files of made videos and images (spec §3.5). */
     val mediaStoreWriter: MediaStoreWriter = MediaStoreWriter(appContext.contentResolver)
+
+    /** GPX/KML export of trips and planned routes into Download/bikeRecoder (V1.7.0 spec §4); it only reads the records. */
+    val tripExporter: TripExporter by lazy {
+        TripExporter(
+            rideStore = rideStore,
+            postStore = postStore,
+            writer = DownloadsWriter(appContext.contentResolver),
+            io = Dispatchers.IO,
+            clock = System::currentTimeMillis,
+            creator = TripExporter.creator(BuildConfig.VERSION_NAME),
+            log = androidWarnLog("TripExporter"),
+        )
+    }
 
     /** The made files of a trip that may still be shared (V1.5.0 spec §2.1). */
     val shareCandidates: ShareCandidates by lazy { ShareCandidates(mediaStoreWriter) }

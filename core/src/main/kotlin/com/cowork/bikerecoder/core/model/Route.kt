@@ -48,6 +48,8 @@ data class Route(
     /** 각 Stop(경유지들…, 목적지)에 대응하는 points 인덱스 */
     val stopPointIndices: List<Int>,
     val summary: RouteSummary,
+    /** points와 같은 길이의 점별 고도(m). 고도를 모르면 빈 목록, 일부만 모르면 그 점은 null. */
+    val elevationsM: List<Double?> = emptyList(),
 )
 
 /** 경유지 또는 목적지. */

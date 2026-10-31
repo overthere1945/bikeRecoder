@@ -98,6 +98,9 @@ interface RideStore {
     /** endedAt == null인 구간, startedAt 내림차순. */
     suspend fun openSegments(): List<RideSegment>
 
+    /** 끝난(endedAt != null) 구간 중 거리 1 km 이상·이동 시간 > 0, startedAt 내림차순 [limit]개(가져온 구간 포함). 평소 속도용. */
+    suspend fun recentSegments(limit: Int): List<RideSegment>
+
     suspend fun segment(id: Long): RideSegment?
 
     /** startedAt 오름차순. */
