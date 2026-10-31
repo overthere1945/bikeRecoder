@@ -172,7 +172,7 @@
   - **끝 표시:** 진한 선 끝에 원(primary, 지름 32dp 안쪽)을 그리고 `endText`를 흰 글씨로 쓴다. 원이 그래프 밖으로 나가지 않게 안쪽으로 붙인다.
   - **범례:** 아래 한 줄에 "━ {currentName}  ━ {previousName}  ┅ 목표"를 쓴다. 목표가 없으면 목표는 빼고, 색은 선과 같게 한다.
   - **기타:**
-    - 화면 읽기 설명: "누적 {currentName} {endText}{unit}, {previousName} {앞 기간 같은 날까지 값}{unit}"
+    - 화면 읽기 설명: "누적 {currentName} {metricText 값}, {previousName} {앞 기간 같은 날까지 metricText 값}" (예: "누적 이번 달 10시간 7분, 지난달 4시간 57분"; 실행 중 판정으로 고침)
     - [전체]에서는 이 그래프를 그리지 않는다.
     - 테스트 태그: `StatsTags.CUMULATIVE`
 - [ ] **Step 4: 문구와 문서**
