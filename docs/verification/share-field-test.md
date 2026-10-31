@@ -48,7 +48,9 @@ adb -s R5CT43TFS9A shell input keyevent KEYCODE_WAKEUP
 ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=<클래스> </dev/null
 ```
 
-**S22 전체 시험: 최종 수정 뒤 기록**
+**S22 전체 시험 (2026-10-31, 최종 코드 `f56a7e8`)**
+
+`app/src/androidTest`의 모든 클래스 **58개**를 S22에서 하나씩 돌렸습니다. 시험 **435개**가 모두 통과했고, 실패하거나 흔들린 시험은 없습니다(V1.4.0 기록 53개 클래스·367개보다 5개 클래스·68개 늘었습니다). `FrameRendererTest.screenshots`와 `SummaryImageRendererTest`의 스크린샷 시험 두 개는 `screenshots=true` 인자를 줄 때만 도는 시험이라 이번에는 건너뛰었고, XML 보고서에는 이 건너뜀이 `AssumptionViolatedException`, 곧 실패 1로 적힙니다. 두 클래스를 다시 따로 돌려 그 한 건이 `AssumptionViolatedException`임을 확인했고, Gradle 결과는 두 클래스 모두 성공입니다. 전체 시험 뒤 S22에 `installDebug`로 설치했습니다.
 
 스펙 §7.2의 S22 확인 범위(전체 시험 때 이 범위가 모두 들어 있는지 확인):
 - 시트: 앱 유무에 따른 단추 숨김(가짜 앱 찾기), 만드는 중 상태와 [취소], 만들 수 없음 상태(흐림과 문구), 감정 칩, [처음 글로], 기록 바뀜 줄, 단추마다 만든 인텐트 내용(받는 앱, 파일, 글, 제목 — 실제로 열지 않고 가짜 시작기로)
