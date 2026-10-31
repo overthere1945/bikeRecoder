@@ -16,6 +16,9 @@ class RoomTripLabelStore(db: AppDatabase) : TripLabelStore {
     override suspend fun setCustomTitle(tripId: Long, title: String?) = dao.setCustomTitle(tripId, title)
 
     override suspend fun setRegionName(tripId: Long, name: String) = dao.setRegionName(tripId, name)
+
+    override suspend fun setShareText(tripId: Long, text: String?, stamp: String?) =
+        dao.setShareText(tripId, text, stamp)
 }
 
-internal fun TripLabelEntity.toModel() = TripLabel(customTitle = customTitle, regionName = regionName)
+internal fun TripLabelEntity.toModel() = TripLabel(customTitle, regionName, shareText, shareStamp)

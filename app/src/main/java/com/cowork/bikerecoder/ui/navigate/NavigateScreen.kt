@@ -90,6 +90,7 @@ import com.cowork.bikerecoder.ui.record.RideNumbersPage
 import com.cowork.bikerecoder.ui.record.SegmentSummaryContent
 import com.cowork.bikerecoder.ui.record.StopButton
 import com.cowork.bikerecoder.ui.record.SummaryExtrasContent
+import com.cowork.bikerecoder.ui.record.SummaryShareButton
 import com.cowork.bikerecoder.ui.record.SummaryMap
 import com.cowork.bikerecoder.ui.record.rideSummaryLine
 import com.cowork.bikerecoder.ui.record.swipeTurnsPages
@@ -145,6 +146,8 @@ fun NavigateScreen(
     heartRateGate: HeartRateGate? = null,
     /** Under a completed trip's summary: [영상 만들기] [이미지 만들기] of that trip (V1.3.0 spec §1.1). */
     mediaEntry: @Composable (tripId: Long) -> Unit = {},
+    /** [공유] under the segment summary: the share sheet of its whole trip (V1.5.0 spec §1.1). */
+    onShare: (tripId: Long) -> Unit = {},
 ) {
     val ui by viewModel.ui.collectAsStateWithLifecycle()
     val summaryExtras by viewModel.summaryExtras.collectAsStateWithLifecycle()
@@ -260,8 +263,9 @@ fun NavigateScreen(
                                 onKeep = viewModel::keepShortRide,
                             )
                             if (view.completed) Text(TRIP_COMPLETED, style = MaterialTheme.typography.headlineSmall)
-                            // Under "여행을 완료했습니다" (spec §1.1).
+                            // Under "여행을 완료했습니다" (spec §1.1), then [공유] as on the record screen's summary.
                             summaryExtras.mediaTripId?.let { mediaEntry(it) }
+                            SummaryShareButton(summaryExtras, onShare)
                             if (view.canConvert) {
                                 OutlinedButton(
                                     onClick = viewModel::convertToMultiDay,

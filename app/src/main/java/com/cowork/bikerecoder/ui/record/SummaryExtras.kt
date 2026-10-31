@@ -1,13 +1,24 @@
 package com.cowork.bikerecoder.ui.record
 
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleStartEffect
 import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.stats.Goals
@@ -64,6 +75,11 @@ data class SummaryExtrasState(
      */
     val mediaTripId: Long? = null,
     /**
+     * The trip [공유] shares (V1.5.0 spec §1.1): the summary's whole trip once it has a finished ride of 10 m or more,
+     * also while it goes on; null otherwise.
+     */
+    val shareTripId: Long? = null,
+    /**
      * "이번 주 목표 100 km 달성", "올해 목표 1,000 km 달성", "🏆 가장 긴 주행 신기록" ... (spec §3.1, §3.4), in that order;
      * empty for a segment not closed yet, under 10 m, asked about as short or being discarded.
      */
@@ -84,6 +100,7 @@ data class SummaryExtrasState(
  *
  * [mediaTrip] gives the segment's trip when the video buttons are offered under the summary
  * ([SummaryExtrasState.mediaTripId]); read once per segment shown (the trip is completed before its summary shows).
+ * [shareTrip] likewise gives the trip [공유] shares ([SummaryExtrasState.shareTripId]).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SummaryExtras(
@@ -98,6 +115,7 @@ class SummaryExtras(
     private val goals: Flow<Pair<Int?, Int?>> = flowOf(null to null),
     /** Where the lines are worked out (they go through every ride). */
     private val computeContext: CoroutineContext = Dispatchers.Default,
+    private val shareTrip: suspend (segmentId: Long) -> Long? = { null },
     private val mediaTrip: suspend (segmentId: Long) -> Long? = { null },
 ) {
     private val segment = summarySegment.distinctUntilChanged().stateIn(scope, SharingStarted.Eagerly, null)
@@ -121,16 +139,21 @@ class SummaryExtras(
                 flowOf(SummaryExtrasState())
             } else {
                 val flags = combine(askShort(id), discarding.map { it == id }) { askShort, discarding -> askShort to discarding }
+                val trips = combine(
+                    flow { emit(mediaTrip(id)) }.catch { emit(null) },
+                    flow { emit(shareTrip(id)) }.catch { emit(null) },
+                ) { media, share -> media to share }
                 combine(
                     postStore.observePhotos(listOf(id)).map { photos -> photos.count { !it.hidden } }.catch { emit(0) },
                     postStore.observeExtras(listOf(id)).map { it.firstOrNull() }.catch { emit(null) },
                     flags,
-                    flow { emit(mediaTrip(id)) }.catch { emit(null) },
+                    trips,
                     achievements(id),
-                ) { photoCount, heartRate, (askShort, discarding), mediaTripId, lines ->
+                ) { photoCount, heartRate, (askShort, discarding), (mediaTripId, shareTripId), lines ->
                     SummaryExtrasState(
                         photoCount, heartRate, askShort, discarding, mediaTripId,
                         achievements = if (askShort || discarding) emptyList() else lines,
+                        shareTripId = shareTripId,
                     )
                 }
             }
@@ -261,7 +284,9 @@ class SummaryExtras(
  * rate ([HeartRateSection] with [heartRateGate]; [onRefetch] = [다시 가져오기]). [onScreen] is told while this is on a
  * started screen (it drives [SummaryExtras.onScreen]). A short ride ([SummaryExtrasState.askShort]) is asked about
  * over the summary: [onDiscard] = [버리기], [onKeep] = [저장] or the dialog dismissed (spec §6.10). Last, [mediaEntry]
- * for [SummaryExtrasState.mediaTripId] ([영상 만들기] [이미지 만들기] or the progress card, V1.3.0 spec §1.1).
+ * for [SummaryExtrasState.mediaTripId] ([영상 만들기] [이미지 만들기] or the progress card, V1.3.0 spec §1.1), and with
+ * [onShare] the [SummaryShareButton] (V1.5.0 spec §1.1). A summary that puts lines of its own between them (the guided
+ * ride's) leaves both out and draws them itself, in the same order.
  */
 @Composable
 fun SummaryExtrasContent(
@@ -273,6 +298,7 @@ fun SummaryExtrasContent(
     onDiscard: () -> Unit = {},
     onKeep: () -> Unit = {},
     mediaEntry: @Composable (tripId: Long) -> Unit = {},
+    onShare: ((tripId: Long) -> Unit)? = null,
 ) {
     val currentOnScreen by rememberUpdatedState(onScreen)
     LifecycleStartEffect(Unit) {
@@ -284,7 +310,27 @@ fun SummaryExtrasContent(
     photoPrompt()
     HeartRateSection(state.heartRate, onRefetch, heartRateGate)
     state.mediaTripId?.let { mediaEntry(it) }
+    onShare?.let { SummaryShareButton(state, it) }
     if (state.askShort) ShortRideDialog(onDiscard, onKeep)
+}
+
+/**
+ * [공유] under the media entry of a summary: the share sheet of its whole trip ([SummaryExtrasState.shareTripId]; nothing
+ * without one). Off while the summary's segment is being discarded, like its other actions (ruling R20).
+ */
+@Composable
+fun SummaryShareButton(state: SummaryExtrasState, onShare: (tripId: Long) -> Unit) {
+    val tripId = state.shareTripId ?: return
+    OutlinedButton(
+        onClick = { onShare(tripId) },
+        enabled = !state.discarding,
+        shape = MaterialTheme.shapes.medium,
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+    ) {
+        Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("공유")
+    }
 }
 
 /** "거의 움직이지 않은 기록입니다. 저장할까요?" with [버리기] (emphasized, the default) and [저장]. */

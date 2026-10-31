@@ -110,4 +110,46 @@ class RoomTripLabelStoreTest {
         store.setRegionName(id, "양평")
         assertEquals(mapOf(id to TripLabel("가을 라이딩", "양평")), store.observeLabels().first())
     }
+
+    @Test
+    fun shareTextSavedAndCleared() = runTest {
+        val id = newTrip()
+
+        store.setShareText(id, "한강 라이딩\n#자전거", "STAMP-1")
+        assertEquals(TripLabel(null, null, "한강 라이딩\n#자전거", "STAMP-1"), store.label(id))
+
+        store.setShareText(id, null, "ignored")
+        assertEquals(TripLabel(), store.label(id))
+    }
+
+    @Test
+    fun settingTitleKeepsShareText() = runTest {
+        val id = newTrip()
+        store.setShareText(id, "글", "S")
+
+        store.setCustomTitle(id, "가을 라이딩")
+
+        assertEquals(TripLabel("가을 라이딩", null, "글", "S"), store.label(id))
+    }
+
+    @Test
+    fun settingRegionKeepsShareText() = runTest {
+        val id = newTrip()
+        store.setCustomTitle(id, "가을 라이딩")
+        store.setShareText(id, "글", "S")
+
+        store.setRegionName(id, "양평")
+
+        assertEquals(TripLabel("가을 라이딩", "양평", "글", "S"), store.label(id))
+    }
+
+    @Test
+    fun shareTextCreatesRowForUnlabeledTrip() = runTest {
+        val id = newTrip()
+        assertEquals(emptyMap<Long, TripLabel>(), store.observeLabels().first())
+
+        store.setShareText(id, "글", "S")
+
+        assertEquals(mapOf(id to TripLabel(null, null, "글", "S")), store.observeLabels().first())
+    }
 }

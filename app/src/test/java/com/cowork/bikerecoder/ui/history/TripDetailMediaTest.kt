@@ -104,6 +104,23 @@ class TripDetailMediaTest {
         assertFalse(short.canMakeMedia.value)
     }
 
+    /** V1.5.0 spec §1.1: [공유] with a finished ride of 10 m or more, also while the trip goes on; not for a short ride. */
+    @Test
+    fun aTripWithAFinishedRideCanBeSharedEvenInProgress() = runTest(dispatcher) {
+        trip(TripStatus.ACTIVE)
+        ride(distanceM = 9.0)
+        ride(distanceM = 1_500.0, close = false)
+        val open = detail()
+        advanceUntilIdle()
+        assertFalse(open.canShare.value)
+
+        ride(distanceM = 10.0)
+        val shareable = detail()
+        advanceUntilIdle()
+        assertTrue(shareable.canShare.value)
+        assertFalse(shareable.canMakeMedia.value)
+    }
+
     @Test
     fun theMadeFilesAreListedNewestFirstAndGoneOnesPrunedOnOpen() = runTest(dispatcher) {
         trip(TripStatus.COMPLETED)

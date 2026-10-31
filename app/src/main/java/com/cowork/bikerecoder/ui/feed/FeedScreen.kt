@@ -39,7 +39,8 @@ import com.cowork.bikerecoder.video.TripMedia
 
 /**
  * The summary tab (V1.4.0 spec §2): the strip of this week, then the trips as big cards by month, and last "짧은 기록 N개 숨김".
- * [scrollToTop] counts the taps on the tab that is already open: each new value scrolls the list to the top.
+ * [scrollToTop] counts the taps on the tab that is already open: each new value scrolls the list to the top. [onShare]: a card's
+ * paper plane, the share sheet of its trip (V1.5.0 spec §1.1).
  */
 @Composable
 fun FeedScreen(
@@ -51,6 +52,7 @@ fun FeedScreen(
     onStartRecording: () -> Unit,
     onSetGoals: () -> Unit,
     scrollToTop: Int,
+    onShare: (tripId: Long) -> Unit = {},
 ) {
     val weekStrip by viewModel.weekStrip.collectAsStateWithLifecycle()
     val months by viewModel.months.collectAsStateWithLifecycle()
@@ -79,6 +81,7 @@ fun FeedScreen(
         onCardShown = viewModel::onCardShown,
         onCardHidden = viewModel::onCardHidden,
         scrollToTop = scrollToTop,
+        onShare = onShare,
     )
 }
 
@@ -104,10 +107,11 @@ fun FeedContent(
     onCardShown: (Long) -> Unit = {},
     onCardHidden: (Long) -> Unit = {},
     scrollToTop: Int = 0,
+    onShare: (tripId: Long) -> Unit = {},
 ) {
     FeedList(
         weekStrip, months, ready, hiddenShortCount, photo, onOpenTrip, onOpenVideo, onOpenStatsWeek,
-        onStartRecording, onSetGoals, onRequestDelete, onRequestCleanup, onCardShown, onCardHidden, scrollToTop,
+        onStartRecording, onSetGoals, onRequestDelete, onRequestCleanup, onCardShown, onCardHidden, scrollToTop, onShare,
     )
     HistoryDialogs(dialog, CONFIRM_DELETE_TRIP, onConfirmDelete, onDismiss, onConfirmCleanup)
 }
@@ -129,6 +133,7 @@ private fun FeedList(
     onCardShown: (Long) -> Unit,
     onCardHidden: (Long) -> Unit,
     scrollToTop: Int,
+    onShare: (Long) -> Unit,
 ) {
     val listState = rememberLazyListState()
     TrackVisibleCards(listState, onCardShown, onCardHidden)
@@ -159,6 +164,7 @@ private fun FeedList(
                     onClick = { onOpenTrip(card.tripId) },
                     onLongClick = { onRequestDelete(card.tripId) },
                     onOpenVideo = onOpenVideo,
+                    onShare = { onShare(card.tripId) },
                 )
             }
         }

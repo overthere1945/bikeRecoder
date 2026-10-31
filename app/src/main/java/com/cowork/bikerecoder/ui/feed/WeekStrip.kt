@@ -45,6 +45,7 @@ object FeedTags {
     fun trophy(tripId: Long) = "feed-trophy-$tripId"
     fun picture(tripId: Long) = "feed-picture-$tripId"
     fun photo(tripId: Long, index: Int) = "feed-photo-$tripId-$index"
+    fun share(tripId: Long) = "feed-share-$tripId"
 }
 
 /**

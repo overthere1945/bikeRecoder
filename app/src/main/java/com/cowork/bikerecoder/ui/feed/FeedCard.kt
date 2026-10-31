@@ -14,8 +14,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -59,6 +65,7 @@ private const val PHOTO_THUMB_PX = 320
  * A trip's card (V1.4.0 spec §2.3): title, date line, the satellite picture 16:9 (the line drawing until it exists) with 🏆 at
  * the top left and [▶ 영상] at the bottom right, the three big numbers, the average line and up to three photos (+N on the
  * third). A tap opens the trip ([onClick]), a long press asks to delete it ([onLongClick]); [photo] reads a gallery thumbnail.
+ * With [FeedCardState.canShare] the numbers end in the paper plane "공유" ([onShare], V1.5.0 spec §1.1).
  */
 @Composable
 fun FeedCard(
@@ -67,6 +74,7 @@ fun FeedCard(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onOpenVideo: (TripMedia) -> Unit,
+    onShare: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -91,13 +99,28 @@ fun FeedCard(
             )
         }
         CardPicture(card, onOpenVideo)
+        // Golden-ratio columns, φ² : φ² : φ : 1 (거리, 이동 시간, 상승, 공유): the two long values start at an even
+        // step, then each column is 1/φ of the one before it, down to the share icon.
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = if (card.canShare) 4.dp else 16.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            BigNumber("거리", kmText(card.distanceM))
-            BigNumber("이동 시간", RideFormat.duration(card.movingTimeMs))
-            BigNumber("상승", meterText(card.ascentM))
+            BigNumber("거리", kmText(card.distanceM), Modifier.weight(GOLDEN * GOLDEN))
+            BigNumber("이동 시간", RideFormat.duration(card.movingTimeMs), Modifier.weight(GOLDEN * GOLDEN))
+            BigNumber("상승", meterText(card.ascentM), Modifier.weight(GOLDEN))
+            if (card.canShare) {
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                    IconButton(onClick = onShare, modifier = Modifier.size(48.dp).testTag(FeedTags.share(card.tripId))) {
+                        Icon(
+                            Icons.Filled.Share,
+                            contentDescription = "공유",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
         }
         Text(
             averageLineText(card.avgSpeedMps, card.avgBpm),
@@ -110,12 +133,25 @@ fun FeedCard(
 }
 
 @Composable
-private fun BigNumber(label: String, value: String) {
-    Column {
+private fun BigNumber(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
         Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 1)
+        // A long value ("123.4 km", "1,234 m") shrinks to fit its column instead of being cut.
+        Text(
+            value,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            autoSize = TextAutoSize.StepBased(
+                minFontSize = 14.sp,
+                maxFontSize = MaterialTheme.typography.titleLarge.fontSize,
+            ),
+        )
     }
 }
+
+/** φ, the golden ratio of the card's number columns. */
+private const val GOLDEN = 1.618f
 
 /** The 16:9 picture with its two badges. */
 @Composable

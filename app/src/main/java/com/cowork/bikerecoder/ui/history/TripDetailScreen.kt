@@ -10,10 +10,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -60,6 +62,7 @@ import java.time.LocalDate
  * [map]: the map for its content (replaceable in tests).
  * [mediaEntry]: [영상 만들기] [이미지 만들기] (or the progress card) of this trip, shown when it is completed with a ride to
  * make it from (V1.3.0 spec §1.1); [mediaThumbnail] and [onOpenMedia]: "만든 영상·이미지" (§5.1).
+ * [onShare]: the paper plane on the title row, shown while the trip has a finished ride to share (V1.5.0 spec §1.1).
  */
 @Composable
 fun TripDetailScreen(
@@ -73,6 +76,7 @@ fun TripDetailScreen(
     mediaEntry: @Composable () -> Unit = {},
     mediaThumbnail: MediaThumbnail = { _, _ -> null },
     onOpenMedia: (TripMedia) -> Unit = {},
+    onShare: () -> Unit = {},
     map: @Composable (DetailMapContent, Modifier) -> Unit = { content, modifier -> DetailMap(content, tileSource, modifier) },
 ) {
     val segmentsByDate by viewModel.segmentsByDate.collectAsStateWithLifecycle()
@@ -84,6 +88,7 @@ fun TripDetailScreen(
     val photos by viewModel.photos.collectAsStateWithLifecycle()
     val refetching by viewModel.refetching.collectAsStateWithLifecycle()
     val canMakeMedia by viewModel.canMakeMedia.collectAsStateWithLifecycle()
+    val canShare by viewModel.canShare.collectAsStateWithLifecycle()
     val media by viewModel.media.collectAsStateWithLifecycle()
     val title by viewModel.title.collectAsStateWithLifecycle()
     val customTitle by viewModel.customTitle.collectAsStateWithLifecycle()
@@ -99,6 +104,7 @@ fun TripDetailScreen(
         total = total,
         title = title,
         onRename = { renaming = true },
+        onShare = onShare.takeIf { canShare },
         dialog = dialog,
         onOpenSegment = onOpenSegment,
         onRequestDelete = viewModel::requestDeleteSegment,
@@ -162,7 +168,8 @@ internal fun tripRefetchAction(access: HeartRateAccess, refetch: () -> Unit): ((
     refetch.takeIf { access == HeartRateAccess.GRANTED }
 
 /**
- * The trip's title row ([title] with [✎] that calls [onRename], V1.4.0 spec §2.5) above everything else, then the map ([map], every day's track and photos; outside the scrolling part, so it keeps its drags), then
+ * The trip's title row ([title] with [✎] that calls [onRename], V1.4.0 spec §2.5; the paper plane [onShare] before it,
+ * V1.5.0 spec §1.1) above everything else, then the map ([map], every day's track and photos; outside the scrolling part, so it keeps its drags), then
  * [videos] ([영상 만들기] [이미지 만들기] and "만든 영상·이미지", V1.3.0 spec §1.1, §5.1),
  * [photos] (the photo strip and card, spec §2.3), the totals (with the trip's [heartRate], spec §3.3) and its segments
  * under a header per date (with that day's average heart rate); a long press asks to delete.
@@ -185,13 +192,14 @@ fun TripDetailContent(
     videos: (@Composable () -> Unit)? = null,
     title: String? = null,
     onRename: (() -> Unit)? = null,
+    onShare: (() -> Unit)? = null,
 ) {
     HistoryScaffold(title = "여행 기록", onBack = onBack) {
         if (segmentsByDate.isEmpty()) {
             EmptyText()
         } else {
             Column(modifier = Modifier.fillMaxSize()) {
-                if (title != null && onRename != null) TripTitleRow(title, onRename)
+                if (title != null && onRename != null) TripTitleRow(title, onRename, onShare)
                 map?.invoke(Modifier.fillMaxWidth().height(240.dp))
                 TripDetailList(
                     segmentsByDate, total, heartRate, onOpenSegment, onRequestDelete, videos, photos, onRefetchHeartRate,
@@ -203,9 +211,9 @@ fun TripDetailContent(
     HistoryDialogs(dialog, CONFIRM_DELETE_SEGMENT, onConfirmDelete, onDismiss)
 }
 
-/** The shown title in `titleLarge`, and [✎] on the right: "제목 바꾸기". */
+/** The shown title in `titleLarge`, and on the right the paper plane "공유" (when [onShare]) and [✎]: "제목 바꾸기". */
 @Composable
-private fun TripTitleRow(title: String, onRename: () -> Unit) {
+private fun TripTitleRow(title: String, onRename: () -> Unit, onShare: (() -> Unit)?) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -217,6 +225,11 @@ private fun TripTitleRow(title: String, onRename: () -> Unit) {
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f).padding(vertical = 8.dp),
         )
+        if (onShare != null) {
+            IconButton(onClick = onShare, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.Filled.Share, contentDescription = "공유")
+            }
+        }
         IconButton(onClick = onRename) { Icon(Icons.Filled.Edit, contentDescription = RENAME_TITLE) }
     }
 }

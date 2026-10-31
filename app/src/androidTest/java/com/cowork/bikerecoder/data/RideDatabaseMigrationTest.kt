@@ -281,6 +281,41 @@ class RideDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun v6LabelsSurviveMigrationTo7() = runBlocking {
+        helper.createDatabase(DB, 6).apply {
+            execSQL(
+                "INSERT INTO trip (id, type, status, profile, createdAt, lastActiveAt, completedAt) " +
+                    "VALUES (5, 'MULTI_DAY', 'COMPLETED', 'BALANCED', 1000, 2000, 6000)",
+            )
+            execSQL(
+                "INSERT INTO trip (id, type, status, profile, createdAt, lastActiveAt, completedAt) " +
+                    "VALUES (6, 'MULTI_DAY', 'COMPLETED', 'BALANCED', 1000, 2000, 6000)",
+            )
+            execSQL("INSERT INTO trip_label (tripId, customTitle, regionName) VALUES (5, '남한강 일주', '양평')")
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(DB, 7, true)
+        migrated.query("PRAGMA foreign_key_check").use { assertEquals(0, it.count) }
+        migrated.close()
+
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, DB).build()
+        try {
+            val labels = RoomTripLabelStore(db)
+            // 이름표 있는 여행만 줄이 남고, 새 칸 둘은 비어 있다.
+            assertEquals(mapOf(5L to TripLabel("남한강 일주", "양평", null, null)), labels.observeLabels().first())
+            assertEquals(TripLabel(), labels.label(6))
+
+            // 새 칸을 쓸 수 있고, 제목을 바꿔도 남는다.
+            labels.setShareText(6, "글", "S")
+            labels.setCustomTitle(6, "새 제목")
+            assertEquals(TripLabel("새 제목", null, "글", "S"), labels.label(6))
+        } finally {
+            db.close()
+        }
+    }
+
     private companion object {
         const val DB = "migration-test.db"
     }

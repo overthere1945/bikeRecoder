@@ -38,6 +38,8 @@ data class AppSettings(
     val weeklyGoalKm: Int? = null,
     /** 연간 목표(km). 없으면 null. */
     val yearlyGoalKm: Int? = null,
+    /** Default hashtags of the share text (spec §3.5). null = never saved (the default applies), "" = none. */
+    val shareHashtags: String? = null,
 )
 
 /** 기록 중에 안내를 새로 시작할 때 기록을 어떻게 할지(스펙 §4.3). */
@@ -74,7 +76,14 @@ class SettingsRepository(context: Context) {
             prefs[HEART_RATE_PROMPT_DISMISSED] = next.heartRatePromptDismissed
             prefs.setOrRemove(WEEKLY_GOAL_KM, next.weeklyGoalKm)
             prefs.setOrRemove(YEARLY_GOAL_KM, next.yearlyGoalKm)
+            val hashtags = next.shareHashtags
+            if (hashtags == null) prefs.remove(SHARE_HASHTAGS) else prefs[SHARE_HASHTAGS] = hashtags
         }
+    }
+
+    /** Saves the default hashtags as given ("" = none). The other settings are left alone. */
+    suspend fun setShareHashtags(value: String) {
+        dataStore.edit { prefs -> prefs[SHARE_HASHTAGS] = value }
     }
 
     /** 목표를 저장한다. null이면 그 키를 지운다. 다른 설정은 건드리지 않는다. */
@@ -112,6 +121,7 @@ class SettingsRepository(context: Context) {
             heartRatePromptDismissed = this[HEART_RATE_PROMPT_DISMISSED] ?: defaults.heartRatePromptDismissed,
             weeklyGoalKm = this[WEEKLY_GOAL_KM],
             yearlyGoalKm = this[YEARLY_GOAL_KM],
+            shareHashtags = this[SHARE_HASHTAGS],
         )
     }
 
@@ -129,5 +139,6 @@ class SettingsRepository(context: Context) {
         val HEART_RATE_PROMPT_DISMISSED = booleanPreferencesKey("heart_rate_prompt_dismissed")
         val WEEKLY_GOAL_KM = intPreferencesKey("weekly_goal_km")
         val YEARLY_GOAL_KM = intPreferencesKey("yearly_goal_km")
+        val SHARE_HASHTAGS = stringPreferencesKey("share_hashtags")
     }
 }

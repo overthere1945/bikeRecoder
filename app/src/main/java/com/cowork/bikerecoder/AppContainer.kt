@@ -54,6 +54,7 @@ import com.cowork.bikerecoder.search.KakaoLocalClient
 import com.cowork.bikerecoder.search.SearchResult
 import com.cowork.bikerecoder.search.PlaceSearch
 import com.cowork.bikerecoder.search.RecentPlaceStore
+import com.cowork.bikerecoder.share.ShareCandidates
 import com.cowork.bikerecoder.tts.AndroidTtsVoiceOutput
 import com.cowork.bikerecoder.tts.VoiceOutput
 import com.cowork.bikerecoder.video.AndroidVideoBackend
@@ -250,6 +251,9 @@ class AppContainer(context: Context) {
 
     /** Gallery files of made videos and images (spec §3.5). */
     val mediaStoreWriter: MediaStoreWriter = MediaStoreWriter(appContext.contentResolver)
+
+    /** The made files of a trip that may still be shared (V1.5.0 spec §2.1). */
+    val shareCandidates: ShareCandidates by lazy { ShareCandidates(mediaStoreWriter) }
 
     /** The video/image job runs here, outside any screen; [VideoService] keeps the process up meanwhile. */
     private val videoScope = CoroutineScope(

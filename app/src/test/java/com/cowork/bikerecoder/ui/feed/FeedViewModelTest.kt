@@ -767,6 +767,25 @@ class FeedViewModelTest {
         assertEquals(0.0, vm.card(2).avgSpeedMps, 1e-9, "no moving time: 0")
     }
 
+    /** V1.5.0 spec §1.1: [공유] only for a trip with a finished ride of 10 m or more; an open one does not count yet. */
+    @Test
+    fun cardCanShareOnlyWithAFinishedRide() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        segment(1, startedAt = 100, totals = ride(2_000.0))
+        trip(2, TripStatus.ACTIVE)
+        segment(2, startedAt = 200, totals = ride(9.0))
+        recording(2, startedAt = 300)
+        trip(3, TripStatus.ACTIVE)
+        segment(3, startedAt = 400, totals = ride(10.0))
+        recording(3, startedAt = 500)
+        val vm = history()
+        advanceUntilIdle()
+
+        assertTrue(vm.card(1).canShare)
+        assertFalse(vm.card(2).canShare, "only under 10 m and an open segment")
+        assertTrue(vm.card(3).canShare, "in progress with a finished ride")
+    }
+
     @Test
     fun photoAndHeartRateOnlyWhenPresent() = runTest(dispatcher) {
         trip(1, TripStatus.COMPLETED)
