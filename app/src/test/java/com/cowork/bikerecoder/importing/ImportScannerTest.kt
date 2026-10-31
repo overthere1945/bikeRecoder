@@ -11,6 +11,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -104,17 +106,25 @@ class ImportScannerTest {
 
     @Test
     fun stopsAt500RidesWithNotice() {
-        val uris = (0 until 3).map { reader.add("r$it.gpx", gpx(T0 + it * hour)) }
+        val junk = (0 until 3).map { reader.add("junk$it.txt", "not a ride".toByteArray()) }
+        val rides = (0 until 3).map { reader.add("r$it.gpx", gpx(T0 + it * hour)) }
         val later = reader.add("later.gpx", gpx(T0 + 9 * hour))
+        // Unreadable rows around the rides do not count toward the cap.
+        val uris = listOf(junk[0], rides[0], junk[1], rides[1], junk[2], rides[2], later)
 
-        val result = scan(uris + later, ImportLimits(maxRides = 2))
+        val result = scan(uris, ImportLimits(maxRides = 2))
 
-        assertEquals(listOf(RideKey(1, 0), RideKey(0, 0)), result.rows.map { it.key })
+        assertEquals(
+            listOf("r1.gpx", "r0.gpx", "junk0.txt", "junk1.txt", "junk2.txt"),
+            result.rows.map { it.fileName },
+        )
         assertEquals(listOf("주행이 너무 많아 처음 2개만 보여 줍니다"), result.notices)
         assertTrue(later !in reader.opened, "reading stops at the limit")
 
-        // Exactly at the limit: no notice.
-        assertEquals(emptyList<String>(), scan(uris.take(2), ImportLimits(maxRides = 2)).notices)
+        // Exactly at the limit (with unreadable rows besides): no notice.
+        val atLimit = scan(listOf(junk[0], rides[0], junk[1], rides[1]), ImportLimits(maxRides = 2))
+        assertEquals(emptyList<String>(), atLimit.notices)
+        assertEquals(4, atLimit.rows.size)
     }
 
     @Test
@@ -176,5 +186,18 @@ class ImportScannerTest {
         runBlocking { scanner().scan(uris) { done, total -> synchronized(calls) { calls += done to total } } }
 
         assertEquals(listOf(0 to 3, 1 to 3, 2 to 3, 3 to 3), calls)
+    }
+
+    @Test
+    fun runsOnOneTestDispatcher() = runTest {
+        val one = StandardTestDispatcher(testScheduler)
+        val uris = listOf(
+            reader.add("a.gpx", gpx(T0)),
+            reader.add("b.zip", zip("1.gpx" to gpx(T0 + hour), "2.txt" to "x".toByteArray())),
+        )
+
+        val result = ImportScanner(reader, store, clock = { T0 + 1_000 * hour }, compute = one, io = one).scan(uris) { _, _ -> }
+
+        assertEquals(listOf("b.zip / 1.gpx", "a.gpx", "b.zip / 2.txt"), result.rows.map { it.fileName })
     }
 }

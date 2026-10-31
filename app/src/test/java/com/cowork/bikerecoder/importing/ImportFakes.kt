@@ -64,9 +64,12 @@ class FakeImportReader : ImportReader {
 
     override fun displayName(uri: String): String = uri.substringAfterLast('/')
 
+    /** Wraps every opened stream (to pace or pause the reading). */
+    @Volatile var wrap: (InputStream) -> InputStream = { it }
+
     override fun open(uri: String): InputStream {
         opened += uri
-        return ByteArrayInputStream(files[uri] ?: throw FileNotFoundException(uri))
+        return wrap(ByteArrayInputStream(files[uri] ?: throw FileNotFoundException(uri)))
     }
 
     override fun hold(uris: List<String>) {

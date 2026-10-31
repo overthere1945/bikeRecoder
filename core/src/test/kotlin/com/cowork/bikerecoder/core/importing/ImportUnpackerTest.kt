@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.core.importing
 
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -18,7 +19,12 @@ class ImportUnpackerTest {
 
     private fun collect(name: String, bytes: ByteArray, limits: ImportLimits = ImportLimits()): List<ImportItem> {
         val items = mutableListOf<ImportItem>()
-        ImportUnpacker.visit(name, ByteArrayInputStream(bytes), limits) { items += it }
+        runBlocking {
+            ImportUnpacker.visit(name, ByteArrayInputStream(bytes), limits) {
+                items += it
+                true
+            }
+        }
         return items
     }
 
@@ -197,19 +203,39 @@ class ImportUnpackerTest {
         var calls = 0
 
         assertFailsWith<java.io.IOException> {
-            ImportUnpacker.visit("a.gpx", ByteArrayInputStream(gpx)) {
-                calls++
-                throw java.io.IOException("visitor failed")
+            runBlocking {
+                ImportUnpacker.visit("a.gpx", ByteArrayInputStream(gpx)) {
+                    calls++
+                    throw java.io.IOException("visitor failed")
+                }
             }
         }
         assertEquals(1, calls)
         calls = 0
         assertFailsWith<java.io.IOException> {
-            ImportUnpacker.visit("a.zip", ByteArrayInputStream(zip("1.gpx" to gpx))) {
-                calls++
-                throw java.io.IOException("visitor failed")
+            runBlocking {
+                ImportUnpacker.visit("a.zip", ByteArrayInputStream(zip("1.gpx" to gpx))) {
+                    calls++
+                    throw java.io.IOException("visitor failed")
+                }
             }
         }
         assertEquals(1, calls)
+    }
+
+    @Test
+    fun visitorFalseStopsWalk() {
+        val seen = mutableListOf<Int>()
+        val bytes = zip("1.gpx" to gpx, "2.gpx" to gpx, "3.gpx" to gpx)
+
+        runBlocking {
+            ImportUnpacker.visit("a.zip", ByteArrayInputStream(bytes)) {
+                seen += it.index
+                it.index < 1
+            }
+        }
+
+        // 두 번째 항목에서 false를 돌려주면 세 번째는 읽지 않는다.
+        assertEquals(listOf(0, 1), seen)
     }
 }

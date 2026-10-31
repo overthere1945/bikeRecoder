@@ -17,7 +17,6 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
 
 /** One ride of the picked files: [sourceIndex] in the picked URIs, [itemIndex] the [ImportItem.index] inside it. */
@@ -47,8 +46,8 @@ data class ScanResult(val rows: List<ScanRow>, val notices: List<String>, val so
 
 /**
  * Reads the picked files into review rows (spec §1.2, §3.2, §3.3), for the import screen. Each file is read on [io]
- * ([items]), each GPX parsed and replayed on [compute] and only its summary kept. At [ImportLimits.maxRides] rows the
- * reading stops with a notice. The statuses come last, against the app's segments at [clock]
+ * ([walk]) one item at a time, each GPX parsed and replayed on [compute] and only its summary kept. At
+ * [ImportLimits.maxRides] readable rides the reading stops with a notice (unreadable rows do not count). The statuses come last, against the app's segments at [clock]
  * ([ImportStore.segmentSpans]). Cancelling the calling coroutine stops the reading at once.
  */
 class ImportScanner(
@@ -63,26 +62,26 @@ class ImportScanner(
     suspend fun scan(uris: List<String>, onProgress: (done: Int, total: Int) -> Unit): ScanResult {
         val read = ArrayList<Summary>()
         val notices = ArrayList<String>()
+        var rides = 0
         onProgress(0, uris.size)
         sources@ for ((sourceIndex, uri) in uris.withIndex()) {
             currentCoroutineContext().ensureActive()
             val name = withContext(io) { safeDisplayName(uri) }
             var full = false
-            reader.items(uri, name, limits, io).firstOrNull { item ->
-                when (item) {
-                    is ImportItem.TooManyEntries -> {
-                        notices += tooManyEntriesText(item.name, limits.maxZipEntries)
-                        false
-                    }
-                    else -> {
-                        if (read.size >= limits.maxRides) {
-                            full = true
-                        } else {
-                            read += summarize(RideKey(sourceIndex, item.index), item)
-                        }
-                        full
-                    }
+            reader.walk(uri, name, limits, io) { item ->
+                if (item is ImportItem.TooManyEntries) {
+                    notices += tooManyEntriesText(item.name, limits.maxZipEntries)
+                    return@walk true
                 }
+                val summary = summarize(RideKey(sourceIndex, item.index), item)
+                // The cap counts rides found; unreadable rows are bounded by the ZIP entry limit.
+                if (summary.span != null && rides >= limits.maxRides) {
+                    full = true
+                    return@walk false
+                }
+                if (summary.span != null) rides++
+                read += summary
+                true
             }
             if (full) {
                 notices += tooManyRidesText(limits.maxRides)

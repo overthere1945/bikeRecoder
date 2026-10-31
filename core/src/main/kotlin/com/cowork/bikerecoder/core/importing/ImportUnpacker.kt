@@ -50,17 +50,20 @@ sealed interface ImportItem {
  * - `\x1f\x8b`는 gzip: 한 번만 풀고, 푼 내용이 GPX가 아니면(gzip·ZIP 포함) GPX가 아닌 것으로 본다.
  * - 그 밖은 앞 4 KB에 `<gpx` 여는 태그가 있으면 GPX. 파일 이름·확장자는 보지 않는다.
  * 큰 파일은 읽는 도중 끊어 한 항목을 [ImportLimits.maxItemBytes]까지만 메모리에 둔다.
+ *
+ * visitor는 suspend이고 항목 하나를 다 다룬 뒤 돌아온다. 그래서 메모리에는 항목 하나만 있다. visitor가 false를 돌려주면
+ * 거기서 읽기를 멈춘다(ZIP의 나머지 항목을 읽지 않는다). 스트림 읽기는 막히는 호출이므로 호출하는 쪽이 IO 디스패처에서 부른다.
  */
 object ImportUnpacker {
 
     private const val SNIFF_BYTES = 4096
     private const val CHUNK = 8 * 1024
 
-    fun visit(
+    suspend fun visit(
         displayName: String,
         input: InputStream,
         limits: ImportLimits = ImportLimits(),
-        visitor: (ImportItem) -> Unit,
+        visitor: suspend (ImportItem) -> Boolean,
     ) {
         val stream = if (input.markSupported()) input else BufferedInputStream(input)
         // 읽기만 try로 감싼다. 호출한 쪽 visitor의 예외는 그대로 올라가야 한다.
@@ -82,7 +85,12 @@ object ImportUnpacker {
         visitor(item)
     }
 
-    private fun visitZip(displayName: String, input: InputStream, limits: ImportLimits, visitor: (ImportItem) -> Unit) {
+    private suspend fun visitZip(
+        displayName: String,
+        input: InputStream,
+        limits: ImportLimits,
+        visitor: suspend (ImportItem) -> Boolean,
+    ) {
         val zip = ZipInputStream(input)
         var index = 0
         while (true) {
@@ -103,7 +111,7 @@ object ImportUnpacker {
             } catch (_: IOException) {
                 ImportItem.Unreadable(name, index, ImportProblem.UNREADABLE)
             }
-            visitor(item)
+            if (!visitor(item)) break
             index++
         }
     }

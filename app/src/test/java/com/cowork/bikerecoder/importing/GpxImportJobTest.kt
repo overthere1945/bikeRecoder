@@ -16,7 +16,10 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.io.InputStream
 import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 class GpxImportJobTest {
@@ -179,6 +182,7 @@ class GpxImportJobTest {
         store.onSave = { heldWhileSaving.complete(reader.held.size to reader.released.size) }
 
         job.start(scanned.sources, scanned.rows.take(1))
+        assertEquals(listOf(scanned.sources), reader.held.toList(), "held when start returns")
         finished()
 
         assertEquals(1 to 0, runBlocking { heldWhileSaving.await() }, "held during the run, released after")
@@ -206,5 +210,39 @@ class GpxImportJobTest {
         assertEquals(listOf(ImportJobState.Importing(0, 2), ImportJobState.Importing(1, 2)), statesAtSave)
         job.acknowledge()
         assertEquals(ImportJobState.Idle, job.state.value)
+    }
+
+    @Test
+    fun stopSkipsLaterPicksInSameZip() {
+        val entries = listOf("first.gpx" to gpx(T0)) +
+            (1..40).map { "notes/$it.txt" to "not a ride".toByteArray() } +
+            listOf("last.gpx" to gpx(T0 + hour))
+        val bundle = reader.add("big.zip", zip(*entries.toTypedArray()))
+        val scanned = scan(listOf(bundle))
+        val picks = scanned.rows.filter { it.startedAt != null }
+        assertEquals(listOf(RideKey(0, 41), RideKey(0, 0)), picks.map { it.key })
+        // After the first ride is saved, the reading pauses among the unpicked notes until the stop is pressed.
+        val walkingNotes = CountDownLatch(1)
+        val resume = CountDownLatch(1)
+        reader.wrap = { input ->
+            object : InputStream() {
+                override fun read(): Int = input.read()
+                override fun read(b: ByteArray, off: Int, len: Int): Int {
+                    if (store.saved.isNotEmpty() && walkingNotes.count > 0) {
+                        walkingNotes.countDown()
+                        resume.await(20, TimeUnit.SECONDS)
+                    }
+                    return input.read(b, off, minOf(len, 64))
+                }
+            }
+        }
+
+        job.start(scanned.sources, picks)
+        assertTrue(walkingNotes.await(20, TimeUnit.SECONDS))
+        job.stop()
+        resume.countDown()
+
+        assertEquals(ImportJobState.Finished(imported = 1, skipped = 0, stopped = true), finished())
+        assertEquals(listOf(T0), store.saved.map { it.ride.startedAt })
     }
 }

@@ -10,12 +10,9 @@ import com.cowork.bikerecoder.core.importing.ImportProblem
 import com.cowork.bikerecoder.core.importing.ImportUnpacker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.trySendBlocking
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.buffer
-import kotlinx.coroutines.flow.channelFlow
-import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import java.io.FileNotFoundException
 import java.io.InputStream
 
@@ -40,7 +37,6 @@ interface ImportReader {
 /** [ImportReader] on the [android.content.ContentResolver]. */
 class ContentImportReader(context: Context) : ImportReader {
     private val resolver = context.applicationContext.contentResolver
-    private val held = mutableSetOf<String>()
 
     override fun displayName(uri: String): String {
         val parsed = Uri.parse(uri)
@@ -57,59 +53,96 @@ class ContentImportReader(context: Context) : ImportReader {
     override fun open(uri: String): InputStream =
         resolver.openInputStream(Uri.parse(uri)) ?: throw FileNotFoundException("No stream for the picked file")
 
-    override fun hold(uris: List<String>) {
-        for (uri in uris) {
-            try {
-                resolver.takePersistableUriPermission(Uri.parse(uri), Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                synchronized(held) { held += uri }
-            } catch (_: Exception) {
-                // Shared URIs and plain grants cannot be persisted; they stay readable while the grant lasts.
-            }
-        }
-    }
+    private val grants = UriGrants(
+        take = { resolver.takePersistableUriPermission(Uri.parse(it), Intent.FLAG_GRANT_READ_URI_PERMISSION) },
+        drop = { resolver.releasePersistableUriPermission(Uri.parse(it), Intent.FLAG_GRANT_READ_URI_PERMISSION) },
+    )
 
-    override fun release(uris: List<String>) {
-        for (uri in uris) {
-            val wasHeld = synchronized(held) { held.remove(uri) }
-            if (!wasHeld) continue
-            try {
-                resolver.releasePersistableUriPermission(Uri.parse(uri), Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            } catch (_: Exception) {
-                // Already gone.
-            }
-        }
-    }
+    override fun hold(uris: List<String>) = grants.hold(uris)
+
+    override fun release(uris: List<String>) = grants.release(uris)
 
     private fun lastPiece(parsed: Uri, uri: String): String =
         (parsed.lastPathSegment ?: uri).substringAfterLast('/').ifBlank { uri }
 }
 
 /**
- * The items of the picked file [uri] ([ImportUnpacker.visit]), read on [io] one at a time: the reading waits while the
- * collector works on an item, so at most one item's bytes are held. When the collector stops early (or is cancelled)
- * the reading stops too. A file that cannot be opened, or whose reading fails, ends with one
- * [ImportItem.Unreadable] (UNREADABLE) numbered after the items already given.
- *
- * [io] must not be the single thread the collector runs on: the reading blocks while it waits.
+ * The persisted read grants of [ImportReader.hold] / [ImportReader.release]. Android keeps at most 512 persisted grants
+ * per app and drops the oldest past that (which could be the music the video sheet keeps), so at most [limit] are taken
+ * at a time; the other files stay on their live grant. [take] failures are ignored (shared URIs and plain grants cannot
+ * be persisted). [release] drops only what was taken.
  */
-internal fun ImportReader.items(
+internal class UriGrants(
+    private val take: (String) -> Unit,
+    private val drop: (String) -> Unit,
+    private val limit: Int = MAX_PERSISTED_GRANTS,
+) {
+    private val held = mutableSetOf<String>()
+
+    fun hold(uris: List<String>) {
+        for (uri in uris) {
+            val room = synchronized(held) { held.size < limit && uri !in held }
+            if (!room) continue
+            try {
+                take(uri)
+                synchronized(held) { held += uri }
+            } catch (_: Exception) {
+                // Not persistable: readable while its grant lasts.
+            }
+        }
+    }
+
+    fun release(uris: List<String>) {
+        for (uri in uris) {
+            val wasHeld = synchronized(held) { held.remove(uri) }
+            if (!wasHeld) continue
+            try {
+                drop(uri)
+            } catch (_: Exception) {
+                // Already gone.
+            }
+        }
+    }
+
+    companion object {
+        const val MAX_PERSISTED_GRANTS = 128
+    }
+}
+
+/**
+ * Opens the picked file [uri] on [io] and walks its items ([ImportUnpacker.visit]): [visitor] handles one item at a time
+ * (so only that item's bytes are held) and returns false to stop. The stream is closed on every path, and a cancelled
+ * caller stops at the next item. A file that cannot be opened, or whose reading fails (say a malformed ZIP entry name,
+ * which [ImportUnpacker.visit] does not catch), ends with one [ImportItem.Unreadable] (UNREADABLE) numbered after the
+ * items already given. Exceptions of [visitor] itself propagate.
+ */
+internal suspend fun ImportReader.walk(
     uri: String,
     displayName: String,
     limits: ImportLimits,
     io: CoroutineDispatcher,
-): Flow<ImportItem> = channelFlow {
+    visitor: suspend (ImportItem) -> Boolean,
+): Unit = withContext(io) {
     var next = 0
+    var inVisitor = false
+    var stopped = false
     try {
         open(uri).use { input ->
             ImportUnpacker.visit(displayName, input, limits) { item ->
+                currentCoroutineContext().ensureActive()
                 if (item.index >= next) next = item.index + 1
-                if (!trySendBlocking(item).isSuccess) throw CancellationException("The collector stopped")
+                inVisitor = true
+                val goOn = visitor(item)
+                inVisitor = false
+                if (!goOn) stopped = true
+                goOn
             }
         }
     } catch (e: CancellationException) {
         throw e
-    } catch (_: Exception) {
-        // Opening (gone, no permission) or reading (a malformed ZIP entry name) failed: the rest is unreadable.
-        send(ImportItem.Unreadable(displayName, next, ImportProblem.UNREADABLE))
+    } catch (e: Exception) {
+        if (inVisitor) throw e
+        // Opening (gone, no permission) or reading failed: the rest of the file is unreadable.
+        if (!stopped) visitor(ImportItem.Unreadable(displayName, next, ImportProblem.UNREADABLE))
     }
-}.buffer(Channel.RENDEZVOUS).flowOn(io)
+}

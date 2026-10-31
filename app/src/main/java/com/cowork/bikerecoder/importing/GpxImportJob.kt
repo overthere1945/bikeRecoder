@@ -22,7 +22,6 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -78,7 +77,13 @@ class GpxImportJob(
             stopRequested = false
             _state.value = ImportJobState.Importing(0, picks.size)
         }
-        // ATOMIC: even a run cancelled at once reaches its `finally`, which ends the state and frees the job.
+        // Before the screen that received the files can go away; released at the end of the run.
+        try {
+            reader.hold(sources)
+        } catch (e: Exception) {
+            log.warn("Could not keep the picked files readable", e)
+        }
+        // ATOMIC: even a run cancelled at once reaches its `finally`, which releases the files, ends the state and frees the job.
         scope.launch(start = CoroutineStart.ATOMIC) { run(sources, picks) }
         return true
     }
@@ -103,7 +108,6 @@ class GpxImportJob(
         val counts = Counts(picks.size)
         var stopped = false
         try {
-            withContext(io) { reader.hold(sources) }
             val routeProfile = profile()
             for ((sourceIndex, rows) in picks.groupBy { it.key.sourceIndex }.toSortedMap()) {
                 if (stopRequested) break
@@ -150,13 +154,16 @@ class GpxImportJob(
                     uri.substringAfterLast('/')
                 }
             }
-            reader.items(uri, name, limits, io).firstOrNull { item ->
-                if (item is ImportItem.TooManyEntries) return@firstOrNull false
-                val row = wanted.remove(item.index) ?: return@firstOrNull false
+            reader.walk(uri, name, limits, io) { item ->
+                // Checked on every item, picked or not: a stop never waits for a later pick of a big ZIP.
+                if (stopRequested) return@walk false
+                if (item is ImportItem.TooManyEntries) return@walk true
+                val row = wanted.remove(item.index) ?: return@walk true
+                if (stopRequested) return@walk false
                 if (importOne(item, row, routeProfile)) counts.imported++
                 counts.done++
                 _state.value = ImportJobState.Importing(counts.done, counts.total)
-                stopRequested || wanted.isEmpty()
+                !stopRequested && wanted.isNotEmpty()
             }
         }
         if (stopRequested) return
