@@ -1,6 +1,8 @@
 package com.cowork.bikerecoder.importing
 
 import com.cowork.bikerecoder.core.importing.Activity
+import com.cowork.bikerecoder.core.importing.GpxReader
+import com.cowork.bikerecoder.core.importing.GpxTrack
 import com.cowork.bikerecoder.core.importing.ImportLimits
 import com.cowork.bikerecoder.core.importing.ImportProblem
 import com.cowork.bikerecoder.core.importing.RideStatus
@@ -139,6 +141,37 @@ class ImportScannerTest {
 
         assertEquals(listOf("묶음.zip: 항목이 너무 많아 처음 2개만 읽었습니다"), result.notices)
         assertEquals(listOf("next.gpx", "묶음.zip / 2.gpx", "묶음.zip / 1.gpx"), result.rows.map { it.fileName })
+    }
+
+    @Test
+    fun outOfMemoryIsTooLargeAndScanGoesOn() {
+        val huge = reader.add("huge.gpx", gpx(T0, type = "huge"))
+        val deep = reader.add("deep.gpx", gpx(T0 + hour, type = "deep"))
+        val streamed = reader.add("stream.gpx", gpx(T0 + 2 * hour))
+        reader.readFailures[streamed] = { OutOfMemoryError("test") }
+        val next = reader.add("next.gpx", gpx(T0 + 3 * hour))
+        val parse: (ByteArray) -> GpxTrack = { bytes ->
+            val text = bytes.toString(Charsets.UTF_8)
+            when {
+                "<type>huge</type>" in text -> throw OutOfMemoryError("test")
+                "<type>deep</type>" in text -> throw StackOverflowError("test")
+                else -> GpxReader.read(bytes)
+            }
+        }
+        val scanner = ImportScanner(reader, store, clock = { T0 + 1_000 * hour }, parse = parse)
+
+        val rows = runBlocking { withTimeout(20_000) { scanner.scan(listOf(huge, deep, streamed, next)) { _, _ -> } } }.rows
+
+        assertEquals(listOf("next.gpx", "huge.gpx", "deep.gpx", "stream.gpx"), rows.map { it.fileName })
+        assertEquals(
+            listOf(
+                RideStatus.New,
+                RideStatus.Unreadable(ImportProblem.TOO_LARGE),
+                RideStatus.Unreadable(ImportProblem.UNREADABLE),
+                RideStatus.Unreadable(ImportProblem.TOO_LARGE),
+            ),
+            rows.map { it.status },
+        )
     }
 
     @Test

@@ -133,6 +133,24 @@ class RoomImportStoreTest {
     }
 
     @Test
+    fun deleteAllImportedSkipsImportedTripsThatAreNotCompletedOrAreRecording() = runTest {
+        val done = store.saveImported(imported(startedAt = 2_000_000, fileName = "done.gpx"))
+        val reopened = store.saveImported(imported(startedAt = 3_000_000, fileName = "reopened.gpx"))
+        db.openHelper.writableDatabase.execSQL("UPDATE trip SET status = 'ACTIVE' WHERE id = $reopened")
+        val recording = store.saveImported(imported(startedAt = 4_000_000, fileName = "recording.gpx"))
+        val open = rides.openSegment(recording, 9_000_000, day)
+
+        assertEquals(1, store.deleteAllImported())
+
+        assertNull(trips.trip(done))
+        assertEquals(TripStatus.ACTIVE, trips.trip(reopened)?.status)
+        assertNotNull(trips.trip(recording))
+        assertTrue(open in rides.segments(recording).map { it.id })
+        assertEquals(mapOf(reopened to "reopened.gpx", recording to "recording.gpx"), store.observeImported().first())
+        assertEquals(0, store.deleteAllImported())
+    }
+
+    @Test
     fun deletingOneTripCascadesImportRow() = runTest {
         val a = store.saveImported(imported(startedAt = 2_000_000, fileName = "a.gpx"))
         val b = store.saveImported(imported(startedAt = 3_000_000, fileName = "b.gpx"))

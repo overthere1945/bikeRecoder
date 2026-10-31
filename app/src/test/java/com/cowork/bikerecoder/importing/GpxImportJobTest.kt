@@ -1,6 +1,8 @@
 package com.cowork.bikerecoder.importing
 
 import com.cowork.bikerecoder.WarnLog
+import com.cowork.bikerecoder.core.importing.GpxReader
+import com.cowork.bikerecoder.core.importing.GpxTrack
 import com.cowork.bikerecoder.core.importing.TimeSpan
 import com.cowork.bikerecoder.core.model.RouteProfile
 import kotlinx.coroutines.CompletableDeferred
@@ -36,7 +38,9 @@ class GpxImportJobTest {
     @AfterEach
     fun tearDown() = scope.cancel()
 
-    private val job = GpxImportJob(
+    private val job = makeJob()
+
+    private fun makeJob(parse: (ByteArray) -> GpxTrack = GpxReader::read) = GpxImportJob(
         reader = reader,
         store = store,
         postProcessor = { postRequests.incrementAndGet() },
@@ -47,6 +51,7 @@ class GpxImportJobTest {
         clock = { now },
         scope = scope,
         log = WarnLog { message, _ -> warnings += message },
+        parse = parse,
     )
 
     private fun scan(uris: List<String>): ScanResult =
@@ -180,14 +185,47 @@ class GpxImportJobTest {
         val scanned = scan(threeFiles())
         val heldWhileSaving = CompletableDeferred<Pair<Int, Int>>()
         store.onSave = { heldWhileSaving.complete(reader.held.size to reader.released.size) }
+        // c.gpx (T0+3h) and b.zip's second ride: only those two files are held, not a.gpx.
+        val picks = scanned.rows.filter { it.key in setOf(RideKey(2, 0), RideKey(1, 1)) }
+        val pickedFiles = listOf(scanned.sources[2], scanned.sources[1])
 
-        job.start(scanned.sources, scanned.rows.take(1))
-        assertEquals(listOf(scanned.sources), reader.held.toList(), "held when start returns")
+        job.start(scanned.sources, picks)
+        assertEquals(listOf(pickedFiles), reader.held.toList(), "held when start returns")
         finished()
 
         assertEquals(1 to 0, runBlocking { heldWhileSaving.await() }, "held during the run, released after")
-        assertEquals(listOf(scanned.sources), reader.held)
-        assertEquals(listOf(scanned.sources), reader.released)
+        assertEquals(listOf(pickedFiles), reader.held)
+        assertEquals(listOf(pickedFiles), reader.released)
+    }
+
+    @Test
+    fun outOfMemoryRideIsSkippedAndRunContinues() {
+        val uris = listOf(
+            reader.add("huge.gpx", gpx(T0, type = "huge")),
+            reader.add("deep.gpx", gpx(T0 + hour, type = "deep")),
+            reader.add("stream.gpx", gpx(T0 + 2 * hour)),
+            reader.add("ok.gpx", gpx(T0 + 3 * hour)),
+        )
+        val scanned = scan(uris)
+        assertEquals(4, scanned.rows.count { it.startedAt != null })
+        reader.readFailures[uris[2]] = { OutOfMemoryError("test") }
+        val oomJob = makeJob { bytes ->
+            val text = bytes.toString(Charsets.UTF_8)
+            when {
+                "<type>huge</type>" in text -> throw OutOfMemoryError("test")
+                "<type>deep</type>" in text -> throw StackOverflowError("test")
+                else -> GpxReader.read(bytes)
+            }
+        }
+
+        assertTrue(oomJob.start(scanned.sources, scanned.rows))
+
+        val result = runBlocking {
+            withTimeout(20_000) { oomJob.state.first { it is ImportJobState.Finished } as ImportJobState.Finished }
+        }
+        assertEquals(ImportJobState.Finished(imported = 1, skipped = 3, stopped = false), result)
+        assertEquals(listOf(T0 + 3 * hour), store.saved.map { it.ride.startedAt })
+        assertEquals(1, postRequests.get())
     }
 
     @Test

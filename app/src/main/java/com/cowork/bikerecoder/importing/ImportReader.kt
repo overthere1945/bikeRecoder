@@ -190,7 +190,8 @@ internal class UriGrants(
  * (so only that item's bytes are held) and returns false to stop. The stream is closed on every path, and a cancelled
  * caller stops at the next item. A file that cannot be opened, or whose reading fails (say a malformed ZIP entry name,
  * which [ImportUnpacker.visit] does not catch), ends with one [ImportItem.Unreadable] (UNREADABLE) numbered after the
- * items already given. Exceptions of [visitor] itself propagate.
+ * items already given; when the reading ran out of memory ([OutOfMemoryError]) that item is TOO_LARGE. Exceptions and
+ * errors of [visitor] itself propagate.
  */
 internal suspend fun ImportReader.walk(
     uri: String,
@@ -220,5 +221,9 @@ internal suspend fun ImportReader.walk(
         if (inVisitor) throw e
         // Opening (gone, no permission) or reading failed: the rest of the file is unreadable.
         if (!stopped) visitor(ImportItem.Unreadable(displayName, next, ImportProblem.UNREADABLE))
+    } catch (e: OutOfMemoryError) {
+        if (inVisitor) throw e
+        // The reading itself (say one huge item) ran out of memory: what it held is garbage now.
+        if (!stopped) visitor(ImportItem.Unreadable(displayName, next, ImportProblem.TOO_LARGE))
     }
 }

@@ -53,15 +53,12 @@ class RoomImportStore(private val db: AppDatabase) : ImportStore {
         importDao.observeImported().map { rows -> rows.associate { it.tripId to it.fileName } }
 
     /**
-     * Deletes through the DAO's trip delete (CASCADE takes segments, points, photos, labels, media rows, import row).
-     * The DAO is used directly, not [com.cowork.bikerecoder.core.trip.TripManager]: imported trips are always COMPLETED
-     * and never have offline maps or stops to clean up.
+     * One conditional DELETE ([ImportDao.deleteCompletedImportedTrips]): only trips with a `trip_import` row, COMPLETED and
+     * with no open segment (CASCADE takes segments, points, photos, labels, media rows, import row). Recorded trips are
+     * never touched. Not through [com.cowork.bikerecoder.core.trip.TripManager]: imported trips never have offline maps
+     * or stops to clean up.
      */
-    override suspend fun deleteAllImported(): Int = db.withTransaction {
-        val ids = importDao.importedTripIds()
-        ids.forEach { tripDao.deleteTrip(it) }
-        ids.size
-    }
+    override suspend fun deleteAllImported(): Int = importDao.deleteCompletedImportedTrips()
 
     /** Cuts to [MAX_FILE_NAME] chars without leaving half of a surrogate pair at the end. */
     private fun cutFileName(name: String): String {

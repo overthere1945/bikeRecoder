@@ -195,7 +195,8 @@ class ImportViewModelTest {
         assertEquals(ImportUiState.Job(ImportJobState.Importing(0, 2)), vm.uiState.value)
         assertEquals(emptyList<List<String>>(), reader.held)
         io.scheduler.advanceUntilIdle()
-        assertEquals(listOf(listOf(a, b, run)), reader.held)
+        // Only the files of checked rows (newest first); the unchecked run.gpx is not held.
+        assertEquals(listOf(listOf(b, a)), reader.held)
 
         val done = vm.await { (it as? ImportUiState.Job)?.state is ImportJobState.Finished } as ImportUiState.Job
         assertEquals(ImportJobState.Finished(imported = 2, skipped = 0, stopped = false), done.state)

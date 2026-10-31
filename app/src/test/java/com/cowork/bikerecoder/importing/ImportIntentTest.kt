@@ -2,6 +2,7 @@ package com.cowork.bikerecoder.importing
 
 import android.content.Intent
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 
 class ImportIntentTest {
@@ -53,5 +54,16 @@ class ImportIntentTest {
         assertEquals(emptyList<String>(), parse(Intent.ACTION_SEND, stream = a, fromHistory = true))
         assertEquals(emptyList<String>(), parse(Intent.ACTION_MAIN, stream = a, data = a))
         assertEquals(emptyList<String>(), parse(null, data = a))
+    }
+
+    @Test
+    fun handoffGivesTheListOnceThenNull() {
+        val handoff = ImportHandoff()
+        assertNull(handoff.take(), "nothing handed over yet")
+
+        handoff.put(listOf(a, b))
+
+        assertEquals(listOf(a, b), handoff.take())
+        assertNull(handoff.take(), "taken once")
     }
 }

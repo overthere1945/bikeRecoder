@@ -3,6 +3,7 @@ package com.cowork.bikerecoder.importing
 import com.cowork.bikerecoder.core.importing.Activity
 import com.cowork.bikerecoder.core.importing.GpxReadException
 import com.cowork.bikerecoder.core.importing.GpxReader
+import com.cowork.bikerecoder.core.importing.GpxTrack
 import com.cowork.bikerecoder.core.importing.ImportItem
 import com.cowork.bikerecoder.core.importing.ImportLimits
 import com.cowork.bikerecoder.core.importing.ImportProblem
@@ -46,9 +47,11 @@ data class ScanResult(val rows: List<ScanRow>, val notices: List<String>, val so
 
 /**
  * Reads the picked files into review rows (spec §1.2, §3.2, §3.3), for the import screen. Each file is read on [io]
- * ([walk]) one item at a time, each GPX parsed and replayed on [compute] and only its summary kept. At
- * [ImportLimits.maxRides] readable rides the reading stops with a notice (unreadable rows do not count). The statuses come last, against the app's segments at [clock]
- * ([ImportStore.segmentSpans]). Cancelling the calling coroutine stops the reading at once.
+ * ([walk]) one item at a time, each GPX parsed ([parse]) and replayed on [compute] and only its summary kept. At
+ * [ImportLimits.maxRides] readable rides the reading stops with a notice (unreadable rows do not count). The statuses
+ * come last, against the app's segments at [clock] ([ImportStore.segmentSpans]). Cancelling the calling coroutine stops
+ * the reading at once. A GPX too big to parse or replay in memory ([OutOfMemoryError]) is an unreadable TOO_LARGE row,
+ * one too deep ([StackOverflowError]) an UNREADABLE row; the scan goes on with the next item.
  */
 class ImportScanner(
     private val reader: ImportReader,
@@ -57,6 +60,7 @@ class ImportScanner(
     private val limits: ImportLimits = ImportLimits(),
     private val compute: CoroutineDispatcher = Dispatchers.Default,
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    private val parse: (ByteArray) -> GpxTrack = GpxReader::read,
 ) {
     /** [onProgress] gets (files read, files picked): (0, n) first, then once per file. */
     suspend fun scan(uris: List<String>, onProgress: (done: Int, total: Int) -> Unit): ScanResult {
@@ -117,15 +121,25 @@ class ImportScanner(
 
     private fun summarizeGpx(key: RideKey, item: ImportItem.Gpx): Summary {
         val track = try {
-            GpxReader.read(item.bytes)
+            parse(item.bytes)
         } catch (e: GpxReadException) {
             return unreadable(key, item.name, e.problem)
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
             return unreadable(key, item.name, ImportProblem.UNREADABLE)
+        } catch (_: OutOfMemoryError) {
+            return unreadable(key, item.name, ImportProblem.TOO_LARGE)
+        } catch (_: StackOverflowError) {
+            return unreadable(key, item.name, ImportProblem.UNREADABLE)
         }
-        val ride = RideReplay.replay(track.fixes) ?: return unreadable(key, item.name, ImportProblem.TOO_SHORT)
+        val ride = try {
+            RideReplay.replay(track.fixes)
+        } catch (_: OutOfMemoryError) {
+            return unreadable(key, item.name, ImportProblem.TOO_LARGE)
+        } catch (_: StackOverflowError) {
+            return unreadable(key, item.name, ImportProblem.UNREADABLE)
+        } ?: return unreadable(key, item.name, ImportProblem.TOO_SHORT)
         val row = ScanRow(
             key = key,
             fileName = item.name,

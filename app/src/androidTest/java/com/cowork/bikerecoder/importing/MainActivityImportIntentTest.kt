@@ -2,6 +2,7 @@ package com.cowork.bikerecoder.importing
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -25,6 +26,7 @@ import com.cowork.bikerecoder.ui.onboarding.OnboardingStep
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -63,12 +65,20 @@ class MainActivityImportIntentTest {
         Unit
     }
 
+    /** Every step runs even when an earlier one fails, so the onboarding choices are always put back and the files removed. */
     @After
     fun tearDown() = runBlocking {
-        scenario?.close()
-        app.container.importHandoff.take()
-        dir.deleteRecursively()
-        skippedBefore?.let { before -> app.container.settings.update { it.copy(skippedOnboardingSteps = before) } }
+        val steps = listOf<suspend () -> Unit>(
+            { scenario?.close() },
+            { app.container.importHandoff.take() },
+            { dir.deleteRecursively() },
+            { skippedBefore?.let { before -> app.container.settings.update { it.copy(skippedOnboardingSteps = before) } } },
+        )
+        val failures = steps.mapNotNull { step -> runCatching { step() }.exceptionOrNull() }
+        failures.firstOrNull()?.let { first ->
+            failures.drop(1).forEach(first::addSuppressed)
+            throw first
+        }
         Unit
     }
 
@@ -139,6 +149,25 @@ class MainActivityImportIntentTest {
         )
 
         assertReview(rides = 2, files = 2, rows = listOf(ImportTags.row(RideKey(0, 0)), ImportTags.row(RideKey(1, 0))))
+    }
+
+    @Test
+    fun gpxAndOctetStreamResolveToMainActivity() {
+        val uri = Uri.parse("content://com.android.providers.downloads.documents/document/1")
+        for (action in listOf(Intent.ACTION_SEND, Intent.ACTION_VIEW)) {
+            for (type in listOf("application/gpx+xml", "application/octet-stream")) {
+                val intent = Intent(action).setDataAndType(uri, type)
+                if (action == Intent.ACTION_SEND) intent.putExtra(Intent.EXTRA_STREAM, uri)
+
+                @Suppress("DEPRECATION")
+                val found = app.packageManager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
+
+                assertTrue(
+                    "$action $type resolves to ${found.map { it.activityInfo.name }}",
+                    found.any { it.activityInfo.packageName == app.packageName && it.activityInfo.name == MainActivity::class.java.name },
+                )
+            }
+        }
     }
 
     private companion object {

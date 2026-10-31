@@ -67,9 +67,19 @@ class FakeImportReader : ImportReader {
     /** Wraps every opened stream (to pace or pause the reading). */
     @Volatile var wrap: (InputStream) -> InputStream = { it }
 
+    /** Files whose stream opens but throws this on the first read (say an [OutOfMemoryError]). */
+    val readFailures: MutableMap<String, () -> Throwable> = Collections.synchronizedMap(LinkedHashMap())
+
     override fun open(uri: String): InputStream {
         opened += uri
-        return wrap(ByteArrayInputStream(files[uri] ?: throw FileNotFoundException(uri)))
+        val bytes = files[uri] ?: throw FileNotFoundException(uri)
+        readFailures[uri]?.let { fail ->
+            return object : InputStream() {
+                override fun read(): Int = throw fail()
+                override fun read(b: ByteArray, off: Int, len: Int): Int = throw fail()
+            }
+        }
+        return wrap(ByteArrayInputStream(bytes))
     }
 
     override fun hold(uris: List<String>) {

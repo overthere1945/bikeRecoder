@@ -163,4 +163,32 @@ class ImportReaderTest {
         assertEquals("visitor bug", caught?.message)
         assertTrue(reader.closed == 1)
     }
+
+    @Test
+    fun walkReadOutOfMemoryIsOneTooLargeItemButVisitorOutOfMemoryPropagates() {
+        val reader = FakeImportReader()
+        val uri = reader.add("huge.gpx", gpx(T0))
+        reader.readFailures[uri] = { OutOfMemoryError("test") }
+        val items = mutableListOf<ImportItem>()
+
+        runBlocking {
+            reader.walk(uri, "huge.gpx", ImportLimits(), Dispatchers.IO) {
+                items += it
+                true
+            }
+        }
+
+        assertEquals(listOf<ImportItem>(ImportItem.Unreadable("huge.gpx", 0, ImportProblem.TOO_LARGE)), items)
+
+        val ok = reader.add("ok.gpx", gpx(T0))
+        var caught: Throwable? = null
+        runBlocking {
+            try {
+                reader.walk(ok, "ok.gpx", ImportLimits(), Dispatchers.IO) { throw OutOfMemoryError("visitor") }
+            } catch (e: OutOfMemoryError) {
+                caught = e
+            }
+        }
+        assertEquals("visitor", caught?.message)
+    }
 }

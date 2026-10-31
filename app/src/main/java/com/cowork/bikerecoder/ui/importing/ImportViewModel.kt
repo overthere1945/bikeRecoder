@@ -74,9 +74,10 @@ fun ScanRow.isSelectable(): Boolean = status == RideStatus.New || status == Ride
  * The review list of the picked files and the hand-over to the one import job (V1.6.0 spec §1.2, §1.3). It lives as
  * long as the screen's back stack entry, so the list and the checks survive a rotation. When created it takes the files
  * of [handoff] and reads them; with none (the settings row during an import) it shows the job, or, when no import runs
- * either (the process was restarted on this screen), [ImportUiState.Closed].
+ * either (the process was restarted on this screen), [ImportUiState.Closed]. When files were handed over, [uiState]
+ * starts as their reading and never as [ImportUiState.Closed].
  *
- * [GpxImportJob.start] keeps the files readable with up to 128 binder calls, so it runs on [io].
+ * [GpxImportJob.start] keeps the files readable with up to 128 grant calls and 256 file opens, so it runs on [io].
  */
 class ImportViewModel(
     private val scanner: ImportScanner,

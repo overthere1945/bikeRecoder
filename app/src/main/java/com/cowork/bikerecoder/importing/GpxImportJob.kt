@@ -3,6 +3,7 @@ package com.cowork.bikerecoder.importing
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.core.importing.GpxReadException
 import com.cowork.bikerecoder.core.importing.GpxReader
+import com.cowork.bikerecoder.core.importing.GpxTrack
 import com.cowork.bikerecoder.core.importing.ImportItem
 import com.cowork.bikerecoder.core.importing.ImportLimits
 import com.cowork.bikerecoder.core.importing.ImportRules
@@ -39,7 +40,7 @@ sealed interface ImportJobState {
 /**
  * The one import job (spec §3.3, §3.4), outside any screen, in [scope]: the picked rides are read again and saved.
  *
- * The files are kept readable for the run ([ImportReader.hold] / [ImportReader.release]). Each file is opened once and
+ * The files with picked rides are kept readable for the run ([ImportReader.hold] / [ImportReader.release]). Each file is opened once and
  * only its picked items are handled: read → replay → skipped when its start or end differs from the review row (the file
  * changed) → skipped when it now overlaps a segment of the app ([ImportStore.segmentSpans], which includes the rides
  * saved earlier in this run) → [ImportStore.saveImported]. One ride's failure is logged and counted as skipped. A picked
@@ -58,6 +59,7 @@ class GpxImportJob(
     private val limits: ImportLimits = ImportLimits(),
     private val compute: CoroutineDispatcher = Dispatchers.Default,
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    private val parse: (ByteArray) -> GpxTrack = GpxReader::read,
 ) {
     private val _state = MutableStateFlow<ImportJobState>(ImportJobState.Idle)
     val state: StateFlow<ImportJobState> = _state.asStateFlow()
@@ -79,7 +81,7 @@ class GpxImportJob(
         }
         // Before the screen that received the files can go away; released at the end of the run.
         try {
-            reader.hold(sources)
+            reader.hold(pickedFiles(sources, picks))
         } catch (e: Exception) {
             log.warn("Could not keep the picked files readable", e)
         }
@@ -98,6 +100,10 @@ class GpxImportJob(
         val s = _state.value
         if (s is ImportJobState.Finished) _state.compareAndSet(s, ImportJobState.Idle)
     }
+
+    /** The files with at least one picked ride: only those are held and released (each grant is a binder call). */
+    private fun pickedFiles(sources: List<String>, picks: List<ScanRow>): List<String> =
+        picks.map { it.key.sourceIndex }.distinct().mapNotNull(sources::getOrNull)
 
     private class Counts(val total: Int) {
         var done = 0
@@ -122,7 +128,7 @@ class GpxImportJob(
         } finally {
             withContext(NonCancellable) {
                 try {
-                    withContext(io) { reader.release(sources) }
+                    withContext(io) { reader.release(pickedFiles(sources, picks)) }
                 } catch (e: Exception) {
                     log.warn("Could not release the picked files", e)
                 }
@@ -190,10 +196,19 @@ class GpxImportJob(
         }
     }
 
-    /** Null when the file no longer reads as a ride. */
+    /**
+     * Null when the file no longer reads as a ride, or is too big ([OutOfMemoryError]) or too deep
+     * ([StackOverflowError]) to parse and replay: that ride is skipped and the run goes on.
+     */
     private fun replay(item: ImportItem.Gpx): ReplayedRide? = try {
-        RideReplay.replay(GpxReader.read(item.bytes).fixes)
+        RideReplay.replay(parse(item.bytes).fixes)
     } catch (_: GpxReadException) {
+        null
+    } catch (e: OutOfMemoryError) {
+        log.warn("A picked ride is too large to import", e)
+        null
+    } catch (e: StackOverflowError) {
+        log.warn("A picked ride is too deep to import", e)
         null
     }
 }
