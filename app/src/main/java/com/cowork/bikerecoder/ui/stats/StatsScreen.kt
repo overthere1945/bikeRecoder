@@ -190,7 +190,7 @@ internal fun StatsContent(
                     state.streakText,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 4.dp).testTag(StatsTags.STREAK),
+                    modifier = Modifier.weight(1f, fill = false).padding(horizontal = 4.dp).testTag(StatsTags.STREAK),
                 )
                 HelpTip(StatsHelp.STREAK_TOPIC, StatsHelp.STREAK, openTip == StatsHelp.STREAK_TOPIC, onToggle = { onToggleTip(StatsHelp.STREAK_TOPIC) })
             }
@@ -288,7 +288,11 @@ private fun PeriodBlock(
             )
             state.comparisonText?.let {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag(StatsTags.COMPARISON))
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f, fill = false).testTag(StatsTags.COMPARISON),
+                    )
                     HelpTip(StatsHelp.COMPARISON_TOPIC, StatsHelp.COMPARISON, openTip == StatsHelp.COMPARISON_TOPIC, onToggle = { onToggleTip(StatsHelp.COMPARISON_TOPIC) })
                 }
             }
@@ -302,13 +306,16 @@ private fun PeriodBlock(
             TotalCell("상승 고도", meterText(state.totals.ascentM), StatsTags.ASCENT, Modifier.weight(1f))
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            for (metric in StatMetric.entries) {
-                FilterChip(
-                    selected = state.metric == metric,
-                    onClick = { onSelectMetric(metric) },
-                    label = { Text(metricLabel(metric)) },
-                    modifier = Modifier.testTag(StatsTags.metric(metric)),
-                )
+            // The chips give way to the "?" (which keeps its 48 dp), not the other way round.
+            Row(modifier = Modifier.weight(1f, fill = false), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (metric in StatMetric.entries) {
+                    FilterChip(
+                        selected = state.metric == metric,
+                        onClick = { onSelectMetric(metric) },
+                        label = { Text(metricLabel(metric)) },
+                        modifier = Modifier.testTag(StatsTags.metric(metric)),
+                    )
+                }
             }
             HelpTip(StatsHelp.CHART_TOPIC, StatsHelp.CHART, openTip == StatsHelp.CHART_TOPIC, onToggle = { onToggleTip(StatsHelp.CHART_TOPIC) })
         }

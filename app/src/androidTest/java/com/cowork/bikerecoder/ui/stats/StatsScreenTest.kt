@@ -520,27 +520,53 @@ class StatsScreenTest {
         composeRule.onNodeWithText(StatsHelp.RECORDS).assertExists()
     }
 
-    /** At a font scale of 2 a value that no longer fits its bar's column is left out, never drawn over the next bar. */
+    /** At a font scale of 2 the written values are measured: those that would touch another are left out, none overlaps. */
     @Test
-    fun valuesFitTheirBarsAtTheNormalSize() {
-        show()
-        composeRule.onNodeWithTag(StatsTags.kind(PeriodKind.YEAR)).performClick()
-        unmerged(StatsTags.barShort(7)).assertTextEquals("133") // August fits at the normal size
-    }
-
-    @Test
-    fun valuesDoNotOverflowTheirBarsAtDoubleFontSize() {
+    fun valuesDoNotOverlapAtDoubleFontSize() {
         show(fontScale = 2f)
         composeRule.onNodeWithTag(StatsTags.kind(PeriodKind.YEAR)).performClick()
         composeRule.waitForIdle()
 
-        // August (133) is wider than its column now: not written; whatever is written is inside its column.
-        unmerged(StatsTags.barShort(7)).assertDoesNotExist()
-        for (index in 0 until 12) {
-            val value = composeRule.onAllNodes(hasTestTag(StatsTags.barShort(index)), useUnmergedTree = true).fetchSemanticsNodes()
-            val column = composeRule.onNodeWithTag(StatsTags.bar(index)).fetchSemanticsNode()
-            for (node in value) assert(node.size.width <= column.size.width) { "bar $index: ${node.size.width} > ${column.size.width}" }
-        }
+        // August 133, September 117, October 186 (the tallest, written first): September touches it and its neighbour.
+        unmerged(StatsTags.barShort(9)).assertTextEquals("186")
+        unmerged(StatsTags.barShort(8)).assertDoesNotExist()
+        val boxes = (0 until 12).flatMap { index ->
+            composeRule.onAllNodes(hasTestTag(StatsTags.barShort(index)), useUnmergedTree = true).fetchSemanticsNodes()
+        }.map { node ->
+            val origin = node.layoutInfo.coordinates.positionOnScreen()
+            origin.x to origin.x + node.size.width
+        }.sortedBy { it.first }
+        for ((a, b) in boxes.zipWithNext()) assert(b.first >= a.second) { "values overlap: $a and $b" }
+    }
+
+    /** A long "?" row keeps its icon at a font scale of 1.5: the text and the chips give way. */
+    @Test
+    fun helpIconsKeepTheirSizeWithLongTextsAtBigFontSize() {
+        // Rides up to last week: "3주 연속 · 이번 주에 타면 4주"; October 61.5 km against September 49.2 km up to the 28th.
+        val longTexts = listOf(
+            ride(1, "2026-09-10", 49.2, 100, 10.0),
+            ride(2, "2026-10-06", 20.5, 60, 10.0),
+            ride(3, "2026-10-13", 20.5, 60, 10.0),
+            ride(4, "2026-10-20", 20.5, 60, 10.0),
+        )
+        show(rides = longTexts, fontScale = 1.5f)
+
+        composeRule.onNodeWithTag(StatsTags.STREAK).assertTextEquals("3주 연속 · 이번 주에 타면 4주")
+        composeRule.onNodeWithTag(StatsTags.help(StatsHelp.STREAK_TOPIC)).assertIsDisplayed()
+        scrollTo(StatsTags.COMPARISON)
+        composeRule.onNodeWithTag(StatsTags.COMPARISON).assertTextEquals("지난달 이맘때보다 +12.3 km (+25%)")
+        composeRule.onNodeWithTag(StatsTags.help(StatsHelp.COMPARISON_TOPIC)).assertIsDisplayed()
+        composeRule.onNodeWithTag(StatsTags.help(StatsHelp.CHART_TOPIC)).assertIsDisplayed()
+    }
+
+    /** At the biggest font the long totals text is cut short by the screen, and scrolls inside the bubble. */
+    @Test
+    fun theTotalsBubbleStaysInsideTheScreenAtDoubleFontSize() {
+        show(fontScale = 2f)
+        composeRule.onNodeWithContentDescription("도움말: ${StatsHelp.TOTALS_TOPIC}").performClick()
+        val node = composeRule.onNodeWithTag(StatsTags.HELP_TEXT).fetchSemanticsNode()
+        val screenHeight = InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.heightPixels
+        assert(node.size.height <= screenHeight * 0.6f + 1f) { "bubble ${node.size.height} px of $screenHeight px" }
     }
 
     /** The two pictures for the record (Download/bikeRecoderTest, pulled by hand): with goals, and without. */

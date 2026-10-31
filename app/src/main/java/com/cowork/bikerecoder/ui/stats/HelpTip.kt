@@ -3,9 +3,12 @@ package com.cowork.bikerecoder.ui.stats
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material3.Icon
@@ -15,6 +18,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
@@ -30,7 +34,7 @@ import androidx.compose.ui.window.PopupProperties
  * A "?" that explains [topic] with [text] in a bubble under it while [open]. The icon is 18 dp in a 48 dp touch target and
  * a screen reader reads it "도움말: $topic". A tap on the icon calls [onToggle]; so does a tap outside the bubble or Back
  * (the bubble takes that tap, so a tap on another "?" only closes this one). The screen keeps which tip is open
- * (one at a time).
+ * (one at a time). The bubble is at most 60 % of the screen high and scrolls beyond that.
  */
 @Composable
 fun HelpTip(topic: String, text: String, open: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
@@ -54,13 +58,18 @@ fun HelpTip(topic: String, text: String, open: Boolean, onToggle: () -> Unit, mo
                     color = MaterialTheme.colorScheme.surface,
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     shadowElevation = 4.dp,
-                    modifier = Modifier.padding(horizontal = 8.dp).widthIn(max = 320.dp).testTag(StatsTags.HELP_TEXT),
+                    modifier = Modifier
+                        .padding(horizontal = 8.dp)
+                        .widthIn(max = 320.dp)
+                        .heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.6f).dp)
+                        .testTag(StatsTags.HELP_TEXT),
                 ) {
                     Text(
                         text,
                         style = MaterialTheme.typography.bodyMedium,
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(16.dp),
+                        // A long text at a large font scrolls inside the bubble.
+                        modifier = Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
                     )
                 }
             }
