@@ -38,6 +38,12 @@ class HikeAnnouncer(
     private var sunsetMillis: Long? = null
     private val doneStages = mutableSetOf<SunsetStage>()
 
+    /** 일몰 시각을 처음(null 아닌 값으로) 정했는지. */
+    private var sunsetKnown = false
+
+    /** 안내를 살핀 마지막 시각: 첫 [setSunset]의 시각과 [due]를 부른 시각 중 가장 늦은 것. 아직 없으면 null. */
+    private var checkedUpTo: Long? = null
+
     /** 이미 처리한 가장 큰 30분 차례 번호(1이 첫 30분). */
     private var lastSlot = 0L
 
@@ -45,13 +51,21 @@ class HikeAnnouncer(
     private val skippedSlots = mutableSetOf<Long>()
 
     /**
-     * 일몰 시각을 정한다. null이면 일몰 안내를 하지 않는다.
-     * [nowMillis]까지 이미 지난 단계는 한 것으로 치고, 한 단계는 값이 바뀌어도 다시 하지 않는다.
+     * 일몰 시각을 정한다. null이면 일몰 안내를 하지 않는다. 한 단계는 값이 바뀌어도 다시 하지 않는다.
+     * 처음 정할 때는 [nowMillis]까지 이미 지난 단계를 한 것으로 친다. 다시 정할 때(위치·날짜가 바뀌어 다시 계산)는
+     * 마지막 [due] 때까지 지난 단계만 한 것으로 친다: 그 뒤 [nowMillis]까지 막 차례가 된 단계는 남겨 두어 다음
+     * [due]가 말한다(다시 계산이 막 차례가 된 안내를 말없이 지우지 않게).
      */
     fun setSunset(sunsetMillis: Long?, nowMillis: Long) {
         this.sunsetMillis = sunsetMillis
         if (sunsetMillis == null) return
-        SunsetStage.entries.filter { sunsetMillis - it.beforeMs <= nowMillis }.forEach { doneStages += it }
+        val passedUpTo = if (sunsetKnown) {
+            checkedUpTo ?: nowMillis
+        } else {
+            sunsetKnown = true
+            maxOf(checkedUpTo ?: nowMillis, nowMillis).also { checkedUpTo = it }
+        }
+        SunsetStage.entries.filter { sunsetMillis - it.beforeMs <= passedUpTo }.forEach { doneStages += it }
     }
 
     /**
@@ -59,6 +73,7 @@ class HikeAnnouncer(
      * 일몰 안내가 30분 안내보다 먼저다. 시계가 건너뛰어 같은 종류가 여럿 밀렸으면 가장 늦은 하나만 말하고 앞의 것은 한 것으로 친다.
      */
     fun due(nowMillis: Long): HikeCue? {
+        checkedUpTo = maxOf(checkedUpTo ?: nowMillis, nowMillis)
         val sunset = sunsetMillis
         if (sunset != null) {
             val pending = SunsetStage.entries.filter { it !in doneStages && sunset - it.beforeMs <= nowMillis }

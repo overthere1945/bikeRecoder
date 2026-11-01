@@ -92,6 +92,38 @@ class HikeAnnouncerTest {
     }
 
     @Test
+    fun recomputeKeepsAStageThatJustBecameDue() {
+        // H1은 70분. 69분 59초까지 살폈고, 70분 30초에 위치가 바뀌어 일몰이 20초 늦게 다시 계산됐다(H1 70분 20초).
+        val a = HikeAnnouncer(start)
+        a.setSunset(at(130), at(0))
+        a.run(0, 69)
+        assertNull(a.due(at(69, 59)))
+        a.setSunset(at(130, 20), at(70, 30))
+        assertEquals(HikeCue.Sunset(SunsetStage.H1), a.due(at(70, 31)))
+        assertNull(a.due(at(70, 32)))
+    }
+
+    @Test
+    fun recomputeDoesNotSpeakAStagePassedBeforeTheLastCheck() {
+        // 30분까지 살핀 뒤 일몰이 85분으로 당겨지면 H1(25분)은 이미 지난 때라 말하지 않는다. M30(55분)은 제때 나온다.
+        val a = HikeAnnouncer(start)
+        a.setSunset(at(130), at(0))
+        a.run(0, 30)
+        a.setSunset(at(85), at(30))
+        val stages = a.run(30, 86).map { it.second }.filterIsInstance<HikeCue.Sunset>().map { it.stage }
+        assertEquals(listOf(SunsetStage.M30, SunsetStage.NOW), stages)
+    }
+
+    @Test
+    fun firstSunsetMarksEverythingPassedUntilThen() {
+        // 첫 계산 전에 due를 불렀어도, 첫 계산 때 이미 지난 단계(H2, H1)는 말하지 않는다.
+        val a = HikeAnnouncer(start)
+        assertNull(a.due(at(0, 1)))
+        a.setSunset(at(60, 2), at(0, 5))
+        assertEquals(emptyList(), a.run(0, 29).filter { it.second is HikeCue.Sunset })
+    }
+
+    @Test
     fun mergesWithinTwoMinutes() {
         // M30은 31분, 30분 차례는 그 1분 앞이다. NOW는 61분, 60분 차례는 그 1분 앞이다.
         val a = HikeAnnouncer(start)
