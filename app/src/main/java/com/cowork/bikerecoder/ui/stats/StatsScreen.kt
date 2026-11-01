@@ -213,7 +213,7 @@ internal fun StatsContent(
         item(key = "goals") {
             GoalCard(
                 state.weeklyGoal, state.yearlyGoal, state.projectionText, onEditGoals,
-                rows = state.goalRows, openTip = openTip, onToggleTip = onToggleTip,
+                rows = state.goalRows, openTip = openTip, onToggleTip = onToggleTip, activity = state.activity,
             )
         }
         item(key = "streak") {
@@ -224,7 +224,8 @@ internal fun StatsContent(
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f, fill = false).padding(horizontal = 4.dp).testTag(StatsTags.STREAK),
                 )
-                HelpTip(StatsHelp.STREAK_TOPIC, StatsHelp.STREAK, openTip == StatsHelp.STREAK_TOPIC, onToggle = { onToggleTip(StatsHelp.STREAK_TOPIC) })
+                val streakTopic = StatsHelp.streakTopic(state.activity)
+                HelpTip(streakTopic, StatsHelp.streak(state.activity), openTip == streakTopic, onToggle = { onToggleTip(streakTopic) })
             }
         }
         item(key = "period") {
@@ -239,7 +240,7 @@ internal fun StatsContent(
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.testTag(StatsTags.RECORDS),
                     )
-                    HelpTip(StatsHelp.RECORDS_TOPIC, StatsHelp.RECORDS, openTip == StatsHelp.RECORDS_TOPIC, onToggle = { onToggleTip(StatsHelp.RECORDS_TOPIC) })
+                    HelpTip(StatsHelp.RECORDS_TOPIC, StatsHelp.records(state.activity), openTip == StatsHelp.RECORDS_TOPIC, onToggle = { onToggleTip(StatsHelp.RECORDS_TOPIC) })
                 }
             }
             itemsIndexed(state.records, key = { _, row -> row.label }) { index, row ->
@@ -330,7 +331,8 @@ private fun PeriodBlock(
             }
         }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            HelpTip(StatsHelp.TOTALS_TOPIC, StatsHelp.TOTALS, openTip == StatsHelp.TOTALS_TOPIC, onToggle = { onToggleTip(StatsHelp.TOTALS_TOPIC) })
+            val totalsTopic = StatsHelp.totalsTopic(state.activity)
+            HelpTip(totalsTopic, StatsHelp.totals(state.activity), openTip == totalsTopic, onToggle = { onToggleTip(totalsTopic) })
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (cell in state.cells) TotalCell(cell.label, cell.value, StatsTags.cell(cell.kind), Modifier.weight(1f))
@@ -347,7 +349,7 @@ private fun PeriodBlock(
                     )
                 }
             }
-            HelpTip(StatsHelp.CHART_TOPIC, StatsHelp.CHART, openTip == StatsHelp.CHART_TOPIC, onToggle = { onToggleTip(StatsHelp.CHART_TOPIC) })
+            HelpTip(StatsHelp.CHART_TOPIC, StatsHelp.chart(state.activity), openTip == StatsHelp.CHART_TOPIC, onToggle = { onToggleTip(StatsHelp.CHART_TOPIC) })
         }
         // A bike's bars keep the theme colour they always had; the other chips' plain bars take their activity's colour.
         val tint = state.activity?.takeIf { it != ActivityType.BIKE }?.let(ActivityStyle::color)

@@ -32,6 +32,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cowork.bikerecoder.post.PhotoThumbnails
+import com.cowork.bikerecoder.ui.activity.ActivityText
 import com.cowork.bikerecoder.ui.history.CONFIRM_DELETE_TRIP
 import com.cowork.bikerecoder.ui.history.HistoryDialog
 import com.cowork.bikerecoder.ui.history.HistoryDialogs
@@ -216,7 +217,7 @@ private fun EmptyFeed(onStartRecording: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp).testTag(FeedTags.EMPTY),
     ) {
-        Text("첫 주행을 기록해 보세요", style = MaterialTheme.typography.titleMedium)
+        Text(ActivityText.FEED_EMPTY, style = MaterialTheme.typography.titleMedium)
         Button(onClick = onStartRecording) { Text("기록 시작") }
     }
 }

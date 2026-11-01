@@ -34,6 +34,7 @@ import com.cowork.bikerecoder.core.series.MetricSeries
 import com.cowork.bikerecoder.core.trip.TripLabel
 import com.cowork.bikerecoder.core.trip.TripLabelStore
 import com.cowork.bikerecoder.core.trip.TripStore
+import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.core.video.RideTitle
 import com.cowork.bikerecoder.map.MapLine
 import com.cowork.bikerecoder.post.PostProcessor
@@ -189,6 +190,11 @@ class TripDetailViewModel(
         val activities = byDate.values.flatten().map { it.activity }.distinct()
         ActivityText.tripTotalRows(activities.singleOrNull() ?: ActivityType.BIKE, total)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, ActivityText.tripTotalRows(ActivityType.BIKE, SegmentTotals.ZERO))
+
+    private val _multiDay = MutableStateFlow(false)
+
+    /** The trip spans several days (the screen's title is then "여행 기록", else "활동 기록"; V1.9.1 §C). False until the trip is read. */
+    val multiDay: StateFlow<Boolean> = _multiDay.asStateFlow()
 
     private val _canMakeMedia = MutableStateFlow(false)
 
@@ -500,7 +506,9 @@ class TripDetailViewModel(
             _canShare.value = canShare(all)
             _recording.value = all.any { it.endedAt == null }
             tripStore?.let { trips ->
-                _canMakeMedia.value = guarded("Could not read trip $tripId") { canMakeMedia(trips.trip(tripId), all) } ?: false
+                val trip = guarded("Could not read trip $tripId") { trips.trip(tripId) }
+                _multiDay.value = trip?.type == TripType.MULTI_DAY
+                _canMakeMedia.value = canMakeMedia(trip, all)
             }
             pruneMedia()
             _segmentsByDate.value = segments.groupBy { it.localDate }.toSortedMap()

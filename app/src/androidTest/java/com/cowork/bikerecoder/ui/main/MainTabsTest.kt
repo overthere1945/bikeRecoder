@@ -405,7 +405,7 @@ class MainTabsTest {
         feedMonths = emptyList()
         show()
         tab(MainTab.FEED).performClick()
-        composeRule.onNodeWithText("첫 주행을 기록해 보세요").assertIsDisplayed()
+        composeRule.onNodeWithText("첫 활동을 기록해 보세요").assertIsDisplayed()
 
         composeRule.onNodeWithText("기록 시작").performClick()
 

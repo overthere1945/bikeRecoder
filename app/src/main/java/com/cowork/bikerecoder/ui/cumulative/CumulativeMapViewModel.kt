@@ -85,6 +85,8 @@ data class CumulativeMapState(
     val months: List<Int> = emptyList(),
     val weeks: List<WeekOption> = emptyList(),
     val week: WeekOption? = null,
+    /** The stats tab's chip the screen shows (null = [전체]): it words the summary, the list title and the empty text (V1.9.1 §C). */
+    val activity: ActivityType? = null,
 ) {
     /**
      * No ride recorded at all ("아직 기록이 없습니다…"). Never while the routes are still being read or a pass may
@@ -139,14 +141,14 @@ class CumulativeMapViewModel(
     }
         .mapLatest { (read, choice, selected, activities) ->
             if (read == null) {
-                CumulativeMapState(period = choice.period, quick = choice.quick)
+                CumulativeMapState(period = choice.period, quick = choice.quick, activity = activity)
             } else {
                 withContext(compute) {
                     cumulativeStateOf(read.rides, read.idle, choice.period, choice.quick, selected, activity, activities)
                 }
             }
         }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, CumulativeMapState())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, CumulativeMapState(activity = activity))
 
     private val _fit = MutableStateFlow<CameraFit?>(null)
     val fit: StateFlow<CameraFit?> = _fit.asStateFlow()
@@ -345,6 +347,7 @@ internal fun cumulativeStateOf(
         settled = idle,
         period = period,
         quick = quick,
+        activity = chip,
         entries = entries,
         rides = entries.mapIndexed { i, e -> rideRowOf(e, colors[i]) },
         lines = entries.mapIndexedNotNull { i, e -> if (e.points.size >= 2) RideLine(e.segmentId, e.points, colors[i]) else null },

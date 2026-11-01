@@ -656,13 +656,13 @@ class SummaryExtrasTest {
         shown.value = 2
         runCurrent()
         assertEquals(
-            listOf("🏆 가장 많이 오른 등산", "🏆 가장 높이 오른 등산", "🏆 가장 긴 산행"),
+            listOf("🏆 가장 많이 오른 산행", "🏆 가장 높이 오른 산행", "🏆 가장 긴 산행 시간"),
             extras.state.value.achievements,
         )
         shown.value = 4
         runCurrent()
         assertEquals(
-            listOf("🏆 가장 긴 걷기 신기록", "🏆 가장 오래 걸은 걷기 신기록"),
+            listOf("🏆 가장 긴 걷기 신기록", "🏆 가장 오래 걸은 기록 신기록"),
             extras.state.value.achievements,
         )
     }

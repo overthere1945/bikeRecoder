@@ -284,7 +284,7 @@ class FeedScreenTest {
     fun emptyFeedOffersToStartRecording() {
         show(months = emptyList())
 
-        composeRule.onNodeWithText("첫 주행을 기록해 보세요").assertIsDisplayed()
+        composeRule.onNodeWithText("첫 활동을 기록해 보세요").assertIsDisplayed()
         composeRule.onNodeWithText("기록 시작").performClick()
         assertEquals(1, recordings)
     }
@@ -293,7 +293,7 @@ class FeedScreenTest {
     fun noEmptyTextBeforeTheFeedIsRead() {
         show(months = emptyList(), ready = false)
 
-        composeRule.onNodeWithText("첫 주행을 기록해 보세요").assertDoesNotExist()
+        composeRule.onNodeWithText("첫 활동을 기록해 보세요").assertDoesNotExist()
         composeRule.onNodeWithTag(FeedTags.STRIP).assertIsDisplayed()
     }
 
@@ -432,7 +432,7 @@ class FeedScreenTest {
     fun onlyShortTripsStillOfferCleanup() {
         show(months = emptyList(), hiddenShortCount = 3)
 
-        composeRule.onNodeWithText("첫 주행을 기록해 보세요").assertIsDisplayed()
+        composeRule.onNodeWithText("첫 활동을 기록해 보세요").assertIsDisplayed()
         composeRule.onNodeWithText("짧은 기록 3개 숨김").assertIsDisplayed()
         composeRule.onNodeWithText("정리").assertIsDisplayed()
     }

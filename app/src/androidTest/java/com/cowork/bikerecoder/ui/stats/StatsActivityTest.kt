@@ -195,7 +195,7 @@ class StatsActivityTest {
             composeRule.onNodeWithTag(StatsTags.recordHeading(index)).assertTextEquals(name)
         }
         composeRule.onNodeWithText("가장 긴 달리기").assertExists()
-        composeRule.onNodeWithText("가장 높이 오른 등산").assertExists()
+        composeRule.onNodeWithText("가장 높이 오른 산행").assertExists()
     }
 
     @Test
