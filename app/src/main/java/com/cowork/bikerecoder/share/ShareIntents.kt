@@ -53,9 +53,10 @@ object ShareIntents {
         apps: ShareApps,
         multiple: Boolean = false,
     ): Intent = when (target) {
-        ShareTarget.FACEBOOK -> send.setPackage(FACEBOOK_PACKAGE)
-        ShareTarget.INSTAGRAM -> send.aimAtInstagram(if (multiple) apps.instagramFeedMultiple() else apps.instagramFeed())
-        ShareTarget.STORY -> send.aimAtInstagram(apps.instagramStory())
+        ShareTarget.FACEBOOK -> send.aimAt(apps.facebookFeed(multiple), FACEBOOK_PACKAGE)
+        ShareTarget.INSTAGRAM ->
+            send.aimAt(if (multiple) apps.instagramFeedMultiple() else apps.instagramFeed(), INSTAGRAM_PACKAGE)
+        ShareTarget.STORY -> send.aimAt(apps.instagramStory(), INSTAGRAM_PACKAGE)
         ShareTarget.EMAIL -> send.apply {
             putExtra(Intent.EXTRA_SUBJECT, emailSubject(text))
             putExtra(Intent.EXTRA_TEXT, text)
@@ -64,8 +65,8 @@ object ShareIntents {
         ShareTarget.COPY, ShareTarget.SAVE, ShareTarget.STICKER -> send
     }
 
-    private fun Intent.aimAtInstagram(component: ComponentName?): Intent =
-        if (component != null) setComponent(component) else setPackage(INSTAGRAM_PACKAGE)
+    private fun Intent.aimAt(component: ComponentName?, packageName: String): Intent =
+        if (component != null) setComponent(component) else setPackage(packageName)
 
     /**
      * Aims the mail at the mail apps themselves. A `mailto:` selector does not resolve with files (resolution keeps this

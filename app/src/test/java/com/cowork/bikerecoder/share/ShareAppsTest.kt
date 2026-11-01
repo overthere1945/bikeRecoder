@@ -4,7 +4,10 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 
-/** Which Instagram activity is the feed and which the story share screen (V1.5.0 final review I1). */
+/**
+ * Which Instagram activity is the feed and which the story share screen (V1.5.0 final review I1), and which Facebook's
+ * post screen.
+ */
 class ShareAppsTest {
     private val pkg = "com.instagram.android"
     private val feed = "com.instagram.share.handleractivity.ShareHandlerActivity"
@@ -13,7 +16,7 @@ class ShareAppsTest {
     private val direct = "com.instagram.direct.share.handler.DirectShareHandlerActivity"
     private val directStory = "com.instagram.share.handleractivity.DirectStoryShareHandlerActivity"
 
-    private fun r(className: String, exported: Boolean = true) = InstagramReceiver(pkg, className, exported)
+    private fun r(className: String, exported: Boolean = true) = ShareReceiver(pkg, className, exported)
 
     @Test
     fun feedPrefersShareHandlerActivityInAnyOrder() {
@@ -96,5 +99,38 @@ class ShareAppsTest {
         val reel = "com.instagram.share.handleractivity.ReelShareHandlerActivity"
         assertNull(pickInstagramFeed(listOf(r(reel), r(story))))
         assertNull(pickInstagramStory(listOf(r(reel))))
+    }
+
+    /** Facebook 585's receivers on the S25 in package-manager order: `ACTION_SEND` `image/png`, `ACTION_SEND_MULTIPLE`. */
+    private val fb = "com.facebook.katana"
+    private val fbPost = "com.facebook.composer.shareintent.ImplicitShareIntentHandlerDefaultAlias"
+    private val s25FacebookSingle = listOf(
+        "com.facebook.composer.shareintent.ShareToGroupsAlias",
+        fbPost,
+        "com.facebook.inspiration.fbshorts.shareintent.InpirationFbShortsSharePhotoAlias",
+        "com.facebook.inspiration.platformsharing.activity.InpirationCameraShareDefaultAlias",
+        "com.facebook.timeline.stagingground.Fb4aProfilePictureShareActivityAlias",
+    )
+    private val s25FacebookMultiple = listOf(
+        "com.facebook.composer.shareintent.ShareToGroupsAlias",
+        fbPost,
+        "com.facebook.inspiration.fbshorts.shareintent.InpirationFbShortsShareMultipleAlias",
+        "com.facebook.inspiration.platformsharing.activity.InpirationCameraShareMultipleAlias",
+    )
+
+    private fun f(className: String, exported: Boolean = true) = ShareReceiver(fb, className, exported)
+
+    @Test
+    fun s25FacebookPostIsTheImplicitShareHandlerNotGroups() {
+        assertEquals(fbPost, pickFacebookFeed(s25FacebookSingle.map { f(it) })?.className)
+        assertEquals(fbPost, pickFacebookFeed(s25FacebookSingle.reversed().map { f(it) })?.className)
+        assertEquals(fbPost, pickFacebookFeed(s25FacebookMultiple.map { f(it) })?.className)
+    }
+
+    @Test
+    fun facebookWithoutThePostHandlerIsNull() {
+        assertNull(pickFacebookFeed(s25FacebookMultiple.filter { it != fbPost }.map { f(it) }))
+        assertNull(pickFacebookFeed(listOf(f(fbPost, exported = false))))
+        assertNull(pickFacebookFeed(emptyList()))
     }
 }

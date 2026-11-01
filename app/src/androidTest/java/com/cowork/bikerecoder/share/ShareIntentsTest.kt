@@ -26,6 +26,8 @@ class ShareIntentsTest {
         private val story: ComponentName? = null,
         private val feedMultiple: ComponentName? = null,
         private val mail: List<String> = emptyList(),
+        private val facebook: ComponentName? = null,
+        private val facebookMultiple: ComponentName? = null,
     ) : ShareApps {
         override fun available(target: ShareTarget) = true
         override fun instagramFeed() = feed
@@ -33,6 +35,7 @@ class ShareIntentsTest {
         override fun instagramFeedMultiple() = feedMultiple
         override fun instagramTakesMultiple() = feedMultiple != null
         override fun mailPackages() = mail
+        override fun facebookFeed(multiple: Boolean) = if (multiple) facebookMultiple else facebook
         override fun icon(target: ShareTarget): Drawable? = null
     }
 
@@ -232,6 +235,27 @@ class ShareIntentsTest {
         assertEquals(1, intent.clipData!!.itemCount)
         assertTrue(intent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
         assertEquals("com.facebook.katana", intent.`package`)
+    }
+
+    @Test
+    fun facebookGoesToItsPostScreenWhenKnown() {
+        val post = ComponentName(
+            "com.facebook.katana",
+            "com.facebook.composer.shareintent.ImplicitShareIntentHandlerDefaultAlias",
+        )
+        val apps = FakeApps(facebook = post, facebookMultiple = post)
+
+        val many = ShareIntents.files(ShareTarget.FACEBOOK, cards, text, apps)
+        assertEquals(Intent.ACTION_SEND_MULTIPLE, many.action)
+        assertEquals(post, many.component)
+        assertEquals(3, many.clipData!!.itemCount)
+        assertTrue(many.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+        assertEquals(post, ShareIntents.files(ShareTarget.FACEBOOK, cards.take(1), text, apps).component)
+        assertEquals(post, ShareIntents.textOnly(ShareTarget.FACEBOOK, text, apps).component)
+        assertEquals(
+            "com.facebook.katana",
+            ShareIntents.files(ShareTarget.FACEBOOK, cards, text, FakeApps(facebook = post)).`package`,
+        )
     }
 
     @Test
