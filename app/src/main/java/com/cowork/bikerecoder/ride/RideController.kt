@@ -332,7 +332,8 @@ class RideController(
      * Meanwhile the state stays Active (old segment) → Starting → Active (new segment); the location stream stays
      * subscribed (a bridge collects the fixes in between for the new segment) and the day's km count goes on (the new
      * session starts from the day totals, which include the closed segment). The new segment keeps the closed one's
-     * auto-pause chip and activity.
+     * auto-pause chip. Its only caller is the guidance start, and guidance is for bikes (P14): the new segment always
+     * records [ActivityType.BIKE] (profile, km source and cues of a bike), whatever the closed one was.
      */
     suspend fun splitSegment(): String? {
         val r = run ?: return null
@@ -354,7 +355,7 @@ class RideController(
             } else {
                 error = finished.error
                 bridge.takenUpTo = r.lastFix?.timeMillis ?: Long.MIN_VALUE
-                next = launchRun(r.tripId, r.activity, phrases.newSegmentStarted, bridge, autoPause)
+                next = launchRun(r.tripId, ActivityType.BIKE, phrases.newSegmentStarted, bridge, autoPause)
             }
         }
         r.finishJob = job

@@ -823,17 +823,23 @@ class RideControllerTest {
     }
 
     @Test
-    fun splitKeepsActivity() = runTest {
+    fun splitAlwaysOpensABikeSegment() = runTest {
+        // The split's only caller is the guidance start, and guidance is for bikes (P14).
         val h = splitHarness()
         val tripId = h.trip()
         h.start(tripId, activity = ActivityType.WALK)
         play(20_000)
+        assertNull(h.navigation.kmSource, "a walk is not the guidance's km source")
 
         h.controller.splitSegment()
 
-        assertEquals(listOf(ActivityType.WALK, ActivityType.WALK), h.store.segments(tripId).map { it.activity })
-        assertEquals(ActivityType.WALK, h.active.activity)
+        assertEquals(listOf(ActivityType.WALK, ActivityType.BIKE), h.store.segments(tripId).map { it.activity })
+        assertEquals(ActivityType.BIKE, h.active.activity)
         assertEquals(RideUiState.Active::class, h.controller.ui.value::class)
+        assertNotNull(h.navigation.kmSource, "the bike segment supplies the guidance's km")
+
+        h.controller.stopRecording(RecordingEnd.SEGMENT_ONLY)
+        assertEquals(ActivityType.BIKE, (h.controller.ui.value as RideUiState.Finished).segment.activity)
     }
 
     @Test
