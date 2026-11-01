@@ -12,26 +12,26 @@ ROUTE	#낙동강자전거길	1577	456.7	osm relation 8283141
 ROUTE	#동해안자전거길	1263	288.3	osm relation 8377469
 ROUTE	#동해안자전거길	2183	477.4	osm relation 8381725
 ROUTE	#제주환상자전거길	1054	273.0	osm relation 8374627
-ROUTE	#해파랑길	0	0.0	DROPPED: no OSM relation matches /^해파랑 ?길/
-ROUTE	#남파랑길	0	0.0	DROPPED: no OSM relation matches /^남파랑 ?길/
-ROUTE	#서해랑길	0	0.0	DROPPED: no OSM relation matches /^서해랑 ?길/
-ROUTE	#DMZ평화의길	0	0.0	DROPPED: no OSM relation matches /^DMZ ?평화의 ?길/
+ROUTE	#해파랑길	0	0.0	DROPPED: no OSM relation matches /(^|[ \[])해파랑/
+ROUTE	#남파랑길	0	0.0	DROPPED: no OSM relation matches /(^|[ \[])남파랑/
+ROUTE	#서해랑길	0	0.0	DROPPED: no OSM relation matches /(^|[ \[])서해랑/
+ROUTE	#DMZ평화의길	0	0.0	DROPPED: no OSM relation matches /(^|[ \[])(DMZ|디엠지) ?평화의 ?길/
 ROUTE	#서울둘레길	870	135.7	osm relation 11361878,17486304,17496414,17497635,17500297,17500325,17505902,17506000,17506001,17506050,17506202,17506639,17536037,17536807,17538298,17538299,17538300,17538301
 ROUTE	#북한산둘레길	500	64.9	osm relation 11274316,11274540,11288178,11288179,11288180,11304602,11304603,11304604,11312768,11312769,11340574,11340616,11514826,11514831,11589490,11606773,11606774,11627660,11627661,11639674,11639675,11639676,11639794
 ROUTE	#지리산둘레길	1924	271.8	osm relation 15635353,15635389,15635509,15635510,15635568,15635696,15635697,15635698,15635711,15662694,15662861,15663108,15663109,15664473,15664838,15664903,15688853,15688948,15688970,15689317,15691452
-ROUTE	#제주올레	1093	151.8	osm relation 3793206,3809942,3878188,4869085,5232945,5458299,6089470,6089589,8246395,9149294,9149725,9173551,9180869
+ROUTE	#제주올레	1807	252.8	osm relation 3793143,3793206,3809942,3878188,4869085,5232945,5458299,5535857,5637062,5650389,6089470,6089589,6107767,7248520,7248521,7248522,7248523,8246395,9149294,9149725,9173551,9180869
 ROUTE	#탄천	135	50.6	osm relation 27411,20771158
 ROUTE	#양재천	55	18.9	osm relation 8423789
 ROUTE	#중랑천	184	63.8	osm relation 8391095,20810039
 ROUTE	#안양천	153	52.1	osm relation 8395919,20781037,20781038,20781041
 ROUTE	#불광천	12	8.6	osm relation 20582139,20582140,20582141,20582142,20582143
 ROUTE	#홍제천	28	9.8	osm relation 20582144,20582145,20582146,20582147
-ROUTE	#신천	0	0.0	DROPPED: no OSM relation matches /^신천[ (]/
-ROUTE	#금호강	0	0.0	DROPPED: no OSM relation matches /^금호강/
+ROUTE	#신천	0	0.0	DROPPED: no OSM relation matches /(^|[ \[])신천/ inside bbox 35.60,36.02,128.34,128.78 (outside: relation 10327246)
+ROUTE	#금호강	0	0.0	DROPPED: no OSM relation matches /(^|[ \[])금호강/
 ROUTE	#갑천	108	39.9	osm relation 16354648,16387249
 ROUTE	#광주천	184	35.7	osm relation 8447994,8447995
-ROUTE	#온천천	0	0.0	DROPPED: no OSM relation matches /^온천천/
-ROUTE	#수영강	0	0.0	DROPPED: no OSM relation matches /^수영강/
+ROUTE	#온천천	0	0.0	DROPPED: no OSM relation matches /(^|[ \[])온천천/
+ROUTE	#수영강	0	0.0	DROPPED: no OSM relation matches /(^|[ \[])수영강/
 CENTER	#화성시무인인증센터	0	0.0	DROPPED: node 13842007299 화성시 무인인증센터: no national route within 2 km
 CENTER	#쇠소깍인증센터	0	0.0	DROPPED: duplicate of node 8864759319 within 300 m
 CENTER	#낙동강하굿둑인증센터(자전거길)	0	0.0	DROPPED: duplicate of node 13608671409 within 300 m
@@ -205,7 +205,7 @@ PEAK	#조계산	1	0.0	osm node 2321410475 조계산 ele 884
 PEAK	#주왕산	1	0.0	osm node 5750034489 주왕산 주봉 ele 721
 PEAK	#주흘산	1	0.0	override (2 OSM matches) osm node 1865098593 주흘산(주흘영봉) 주흘산(주흘영봉) 1106 m; 주봉 1108.4 m also matches
 PEAK	#지리산	1	0.0	override (no OSM match) osm node 307955533 천왕봉 OSM name 천왕봉 1918 m
-PEAK	#지이망산	1	0.0	override (no OSM match) osm node 5376906399 지리산 사량도 OSM name 지리산, ele 368 m
+PEAK	#지리망산	1	0.0	override (no OSM match) osm node 5376906399 지리산 사량도 OSM name 지리산, ele 368 m
 PEAK	#천관산	1	0.0	osm node 3810195917 천관산연대봉 ele 723
 PEAK	#천마산	1	0.0	osm node 3169664778 천마산 ele 810.3
 PEAK	#천성산	1	0.0	override (no OSM match) osm node 7972716269 천성산(원효봉) 천성산(원효봉) 920.2 m; list height 812 m
