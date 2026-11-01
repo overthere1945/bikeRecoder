@@ -17,9 +17,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.CallSplit
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Bedtime
+import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Navigation
 import androidx.compose.material.icons.rounded.Route
+import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -67,6 +69,12 @@ enum class ChoiceIcon {
 
     /** 기록 끝내기 (while guiding: only the recording ends). */
     STOP_RECORDING,
+
+    /** 버리기 (a short ride, V1.9.2). */
+    DISCARD,
+
+    /** 저장 (a short ride, V1.9.2). */
+    KEEP,
 }
 
 /**
@@ -98,7 +106,7 @@ var SemanticsPropertyReceiver.recommended by Recommended
 
 /**
  * The bottom sheet that asks how to end or start (V1.9.1): [title], an optional [summary] line (with [summaryLeading]
- * before it, e.g. the activity badge), one card per [choices] (1–3) and a text button [dismissLabel] at the bottom.
+ * before it, e.g. the activity badge), one card per [choices] (1–3) and a text button [dismissLabel] at the bottom (none when null).
  * A card is one accessible button read as "{title}, {subtitle}" (the recommended one with the state "추천"); [title] is the
  * sheet's heading; tapping it calls [onChoose] (the caller removes the
  * sheet). [onDismiss]: the bottom button, a swipe down or a tap outside.
@@ -109,7 +117,7 @@ fun ChoiceSheet(
     title: String,
     choices: List<SheetChoice>,
     onChoose: (SheetChoice) -> Unit,
-    dismissLabel: String,
+    dismissLabel: String?,
     onDismiss: () -> Unit,
     summary: String? = null,
     summaryLeading: (@Composable () -> Unit)? = null,
@@ -138,10 +146,12 @@ fun ChoiceSheet(
                 }
             }
             choices.forEach { choice -> ChoiceCard(choice, onClick = { onChoose(choice) }) }
-            TextButton(
-                onClick = onDismiss,
-                modifier = Modifier.align(Alignment.CenterHorizontally).testTag(ChoiceSheetTags.DISMISS),
-            ) { Text(dismissLabel) }
+            if (dismissLabel != null) {
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.align(Alignment.CenterHorizontally).testTag(ChoiceSheetTags.DISMISS),
+                ) { Text(dismissLabel) }
+            }
         }
     }
 }
@@ -212,6 +222,8 @@ private fun ChoiceIcon.vector(): ImageVector = when (this) {
     ChoiceIcon.GUIDANCE_ONLY -> Icons.Rounded.Navigation
     ChoiceIcon.SPLIT -> Icons.AutoMirrored.Rounded.CallSplit
     ChoiceIcon.STOP_RECORDING -> Icons.Rounded.Stop
+    ChoiceIcon.DISCARD -> Icons.Rounded.DeleteOutline
+    ChoiceIcon.KEEP -> Icons.Rounded.Save
 }
 
 /** What a screen reader says after the recommended card ([SheetChoice.recommended]). */

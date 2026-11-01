@@ -13,6 +13,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -27,6 +29,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
+import com.cowork.bikerecoder.ui.common.ChoiceSheetTags
+import com.cowork.bikerecoder.ui.common.Recommended
 import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.recording.PauseKind
@@ -378,7 +382,7 @@ class RecordScreenTest {
         assertEquals(listOf(true), onScreen)
     }
 
-    /** Spec §6.10: a short ride's summary asks "거의 움직이지 않은 기록입니다. 저장할까요?" [버리기] [저장]. */
+    /** Spec §6.10, V1.9.2: a short ride's summary asks "이 기록을 저장할까요?" in a sheet with [버리기] (recommended) and [저장]. */
     @Test
     fun shortRideSummaryAsksToDiscard() {
         var state by mutableStateOf(SummaryExtrasState(askShort = true))
@@ -412,16 +416,20 @@ class RecordScreenTest {
             }
         }
 
-        composeRule.onNodeWithText("거의 움직이지 않은 기록입니다. 저장할까요?").assertIsDisplayed()
-        composeRule.onNodeWithText("버리기").assertIsDisplayed()
-        composeRule.onNodeWithText("버리기").performClick()
+        composeRule.onNodeWithText("이 기록을 저장할까요?").assertIsDisplayed()
+        composeRule.onNodeWithText("거의 움직이지 않은 기록입니다").assertIsDisplayed()
+        composeRule.onNodeWithTag(ChoiceSheetTags.card("discard"))
+            .assertIsDisplayed()
+            .assert(SemanticsMatcher.expectValue(Recommended, true))
+        composeRule.onNodeWithTag(ChoiceSheetTags.card("keep")).assert(SemanticsMatcher.expectValue(Recommended, false))
+        composeRule.onNodeWithTag(ChoiceSheetTags.card("discard")).performClick()
         composeRule.waitForIdle()
         assertEquals(1, discards)
 
-        composeRule.onNodeWithText("저장").performClick()
+        composeRule.onNodeWithTag(ChoiceSheetTags.card("keep")).performClick()
         composeRule.waitForIdle()
         assertEquals(1, keeps)
-        composeRule.onNodeWithText("거의 움직이지 않은 기록입니다. 저장할까요?").assertDoesNotExist()
+        composeRule.onNodeWithText("이 기록을 저장할까요?").assertDoesNotExist()
     }
 
     /**
