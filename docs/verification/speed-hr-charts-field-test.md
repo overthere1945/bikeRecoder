@@ -9,7 +9,7 @@
 
 ### PC 단위 테스트
 
-실행일: 2026-11-01 (브랜치 `feature/speed-hr-charts-v1.8.0`, 버전을 1.8.0으로 올린 뒤. 최종 수정 뒤에 다시 기록)
+실행일: 2026-11-01 (브랜치 `feature/speed-hr-charts-v1.8.0`, 최종 수정 커밋 `96134c0` 뒤, `--rerun-tasks`로 모두 다시 실행)
 
 명령:
 
@@ -17,16 +17,16 @@
 ./gradlew :core:test :app:testDebugUnitTest :routing-brouter:test
 ```
 
-결과: BUILD SUCCESSFUL in 1m 55s (`:core:test`는 core 소스가 바뀌지 않아 이전 실행 결과를 그대로 썼습니다)
+결과: BUILD SUCCESSFUL
 
 | 모음 | 클래스 수 | 테스트 수 | 실패 | 건너뜀 |
 |---|---|---|---|---|
-| `:core:test` | 61 | 539 | 0 | 0 |
-| `:app:testDebugUnitTest` | 107 | 1228 | 0 | 0 |
+| `:core:test` | 61 | 542 | 0 | 0 |
+| `:app:testDebugUnitTest` | 107 | 1233 | 0 | 0 |
 | `:routing-brouter:test` | 4 | 19 | 0 | 0 |
-| 합계 | 172 | 1786 | 0 | 0 |
+| 합계 | 172 | 1794 | 0 | 0 |
 
-수는 이 실행이 만든 JUnit XML(`*/build/test-results/{test,testDebugUnitTest}/TEST-*.xml`)에서 셌습니다. V1.7.0 기록(core 524, app 1190)에 비해 core가 15개, app이 38개 늘었습니다.
+수는 이 실행이 만든 JUnit XML(`*/build/test-results/{test,testDebugUnitTest}/TEST-*.xml`)에서 셌습니다. V1.7.0 기록(core 524, app 1190)에 비해 core가 18개, app이 43개 늘었습니다.
 
 스펙 §5.1의 PC 확인 범위:
 - `TrackAxis`: 구간 이어 붙이기(사이 거리 제외), 빈 구간 건너뛰기, 경계 목록, 점 2개 미만 → null, `ElevationProfile.fromSegments`가 바꾸기 전과 같은 값
@@ -48,9 +48,14 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.te
 
 **버전 올린 직후 확인** (2026-11-01): `ui.settings.SettingsScreenTest` 20개 통과(`V1.8.0` 표시 포함).
 
-**S22 전체 시험**: 최종 수정 뒤 기록
+**S22 전체 시험** (2026-11-01, 커밋 `96134c0`): `app/src/androidTest`의 68개 클래스를 한 클래스씩 실행해 527개 중 525개 통과, 실패 0. 나머지 2개는 `video.FrameRendererTest`·`video.SummaryImageRendererTest`의 선택 실행 스크린샷 시험이 가정(assumption)으로 건너뛴 것입니다(V1.7.0과 같음). 이번에 바뀐 클래스: `MetricChartTest` 9, `ElevationChartTest` 6, `ElevationMapScreenTest` 10, `TripDetailScreenTest` 21, `SegmentDetailScreenTest` 11, `SettingsScreenTest` 20 모두 통과. V1.7.0 S25 수정으로 더한 `DownloadsWriterTest`(`takenGpxNameKeepsItsExtension` 포함) 3개도 통과.
 
-**S22 실제 확인**: 최종 수정 뒤 기록
+**S22 실제 확인** (2026-11-01, `1.8.0-dev` installDebug 뒤 시험용 기록 사본을 다시 넣음):
+- 10월 25일 "저녁 라이딩"(1.6 km, 심박 있음): 여행 화면에 합계 카드 → `고도` → `속도` → `심박` 순서로 그래프가 나옴. 속도 그래프는 멈춘 곳이 움푹 들어간 모양으로 보이고, 심박 그래프는 표본이 없는 앞쪽 약 0.65 km가 비어 있음. 낭독은 저장된 값(`속도 그래프, 평균 7km/h, 최고 11km/h`, `심박 그래프, 평균 137bpm, 최고 162bpm`).
+- 속도 그래프의 [지도에 표시] → 큰 지도가 [속도] 탭으로 열리고 범례 `10 미만` … `25 이상`. 훑으면 지도 점이 따라가고 `912m · 3km/h`. [심박] 탭으로 바꾸면 선이 심박 색으로 바뀌고 표본이 없는 앞부분은 회색, 훑으면 `748m · 150bpm`.
+- 구간 화면: 예전 선 그래프 대신 같은 모양의 `속도`·`심박` 그래프와 각자의 [지도에 표시]. 심박 권한 안내 문구와 [기본]/[심박] 지도 색 보기는 그대로.
+- 10월 18일 "아침 라이딩"(1.87 km, 심박 없음): `고도`·`속도` 그래프만 있고 심박 그래프와 [심박] 지도 색 보기가 없음. 속도 색이 5구간으로 나뉘어 보임.
+- 시험용 기록이 짧은 주행뿐이라 긴 여행(멈춤이 평균에 묻히는 경우)은 S25 실사용 점검에서 확인.
 
 스펙 §5.2의 S22 확인 범위(전체 시험 때 이 범위가 모두 들어 있는지 확인):
 - `MetricChart`: 색칠, 끝 글, [지도에 표시], 훑기 줄·콜백, 낭독 문구, 속도 없음 문구
@@ -62,7 +67,7 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.te
 
 ## 알려진 한계
 
-- 하루 종일처럼 표본이 드문 심박은 그래프로 그리지 않습니다(줄인 뒤 이웃한 값이 없는 계열은 만들지 않음).
+- 하루 종일처럼 표본이 드문 심박은 그래프로 그리지 않습니다(구간마다 이동 1분에 표본 1개 이상인 "자세한 심박"이 아니면 그 구간은 값 없음).
 - 계획한 경로(경로 미리보기)에는 속도·심박 값이 없어 큰 지도에 고도 탭만 있습니다.
 - 구간 화면의 km 눈금이 이전 버전과 조금 다를 수 있습니다. 고도 그래프와 같은 거리 축을 쓰기 때문입니다(10초 넘게 끊긴 사이 거리를 빼던 이전과 다름).
 - 기기 시험의 큰 지도 스크린샷에는 바탕 지도 타일이 없을 수 있습니다. 시험 프로세스 안에서 MapLibre의 타일 요청이 멈추기 때문이며, 실제 앱에는 영향이 없습니다(V1.7.0과 같음).
