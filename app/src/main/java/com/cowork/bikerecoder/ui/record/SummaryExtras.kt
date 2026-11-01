@@ -7,17 +7,18 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
+import com.cowork.bikerecoder.ui.common.ChoiceIcon
+import com.cowork.bikerecoder.ui.common.ChoiceSheet
+import com.cowork.bikerecoder.ui.common.SheetChoice
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleStartEffect
 import com.cowork.bikerecoder.core.activity.ActivityType
@@ -322,7 +323,7 @@ fun SummaryExtrasContent(
     HeartRateSection(state.heartRate, onRefetch, heartRateGate)
     state.mediaTripId?.let { mediaEntry(it) }
     onShare?.let { SummaryShareButton(state, it) }
-    if (state.askShort) ShortRideDialog(onDiscard, onKeep)
+    if (state.askShort) ShortRideSheet(onDiscard, onKeep)
 }
 
 /**
@@ -344,14 +345,40 @@ fun SummaryShareButton(state: SummaryExtrasState, onShare: (tripId: Long) -> Uni
     }
 }
 
-/** "거의 움직이지 않은 기록입니다. 저장할까요?" with [버리기] (emphasized, the default) and [저장]. */
+/** The short-ride sheet's copy (V1.9.2): the question, why it is asked, and its two cards. */
+internal object ShortRideText {
+    const val TITLE = "이 기록을 저장할까요?"
+    const val REASON = "거의 움직이지 않은 기록입니다"
+    const val DISCARD = "버리기"
+    const val DISCARD_NOTE = "기록 목록과 통계에 남기지 않습니다"
+    const val KEEP = "저장"
+    const val KEEP_NOTE = "기록 목록과 통계에 남깁니다"
+}
+
+/**
+ * "이 기록을 저장할까요?" as a [ChoiceSheet] (V1.9.2): the reason under the title, then [버리기] (recommended, the default
+ * answer) and [저장]. A swipe down or a tap outside keeps the ride, as the old dialog's dismiss did.
+ */
 @Composable
-private fun ShortRideDialog(onDiscard: () -> Unit, onKeep: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onKeep,
-        text = { Text("거의 움직이지 않은 기록입니다. 저장할까요?") },
-        confirmButton = { Button(onClick = onDiscard) { Text("버리기") } },
-        dismissButton = { TextButton(onClick = onKeep) { Text("저장") } },
+private fun ShortRideSheet(onDiscard: () -> Unit, onKeep: () -> Unit) {
+    ChoiceSheet(
+        title = ShortRideText.TITLE,
+        summary = ShortRideText.REASON,
+        summaryLeading = {
+            Icon(
+                Icons.Rounded.Info,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
+        },
+        choices = listOf(
+            SheetChoice("discard", ShortRideText.DISCARD, ShortRideText.DISCARD_NOTE, ChoiceIcon.DISCARD, recommended = true),
+            SheetChoice("keep", ShortRideText.KEEP, ShortRideText.KEEP_NOTE, ChoiceIcon.KEEP),
+        ),
+        onChoose = { if (it.id == "discard") onDiscard() else onKeep() },
+        dismissLabel = null,
+        onDismiss = onKeep,
     )
 }
 
