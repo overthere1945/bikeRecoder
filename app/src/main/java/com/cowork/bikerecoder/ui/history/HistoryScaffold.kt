@@ -17,14 +17,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.cowork.bikerecoder.ui.common.GlyphIcon
 
-/** The screen frame of the trip, segment and cumulative-map screens: [←] and [title] above [content]. */
+/**
+ * The screen frame of the trip, segment and cumulative-map screens: [←] and [title] above [content]; [actions] sit at
+ * the right end of that row (e.g. the segment screen's [⋮]).
+ */
 @Composable
-internal fun HistoryScaffold(title: String, onBack: () -> Unit, content: @Composable () -> Unit) {
+internal fun HistoryScaffold(
+    title: String,
+    onBack: () -> Unit,
+    actions: @Composable () -> Unit = {},
+    content: @Composable () -> Unit,
+) {
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { GlyphIcon("←", "뒤로") }
-                Text(title, style = MaterialTheme.typography.titleLarge)
+                Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                actions()
             }
             Box(modifier = Modifier.weight(1f).fillMaxWidth()) { content() }
         }

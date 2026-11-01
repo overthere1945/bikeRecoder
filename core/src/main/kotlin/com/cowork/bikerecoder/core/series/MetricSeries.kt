@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.core.series
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.elevation.TrackAxis
 import com.cowork.bikerecoder.core.model.GeoMath
 import com.cowork.bikerecoder.core.post.HeartRateColor
@@ -27,6 +28,11 @@ class MetricSeries private constructor(
     val totalM: Double,
     /** 구간 경계의 거리(m). [TrackAxis.boundariesM]와 같다. */
     val boundariesM: List<Double>,
+    /**
+     * 축의 구간(빈 구간 제외, [TrackAxis.paths]와 같은 번호)마다의 활동 종류. 속도 색 구간을 이 종류로 정한다.
+     * 심박 계열에서는 쓰지 않는다.
+     */
+    val segmentActivities: List<ActivityType> = emptyList(),
 ) {
     /** 다듬은(줄인) 값의 최저. 그래프 아래 끝 글에 쓴다. */
     val minValue: Double = values.filterNotNull().min()
@@ -48,14 +54,36 @@ class MetricSeries private constructor(
         return a + f * (b - a)
     }
 
-    /** 거리 [d]의 색(`#RRGGBB`). 속도는 [SpeedBand], 심박은 [HeartRateColor.band]. 값이 없으면 null. */
-    fun colorHexAt(d: Double): String? {
+    /**
+     * 거리 [d]의 색(`#RRGGBB`). 속도는 [d]가 놓인 구간의 종류로 정한 [SpeedBand], 심박은 [HeartRateColor.band].
+     * 값이 없으면 null. 구간 이음매([boundariesM]) 위의 [d]는 그 이음매에서 시작하는 구간에 속한다
+     * (이음매 위의 점이 어느 구간 것인지 아는 곳은 `segment` 인자를 받는 [colorHexAt]을 쓴다).
+     */
+    fun colorHexAt(d: Double): String? = colorHexAt(d, segmentAt(d))
+
+    /** [colorHexAt]을 구간 번호([TrackAxis.paths]와 같은 번호)를 아는 점에 쓴다. 이음매 위 점도 자기 구간의 종류로 칠한다. */
+    fun colorHexAt(d: Double, segment: Int): String? {
         val v = valueAt(d) ?: return null
         return when (kind) {
-            MetricKind.SPEED -> SpeedBand.of(v).hex
+            MetricKind.SPEED -> SpeedBand.of(v, activityOf(segment)).hex
             MetricKind.HEART_RATE -> HeartRateColor.band(v.roundToInt()).colorHex
         }
     }
+
+    /** 거리 [d]가 놓인 구간 번호: [d] 이하인 이음매의 수. */
+    private fun segmentAt(d: Double): Int {
+        var lo = 0
+        var hi = boundariesM.size
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (boundariesM[mid] <= d) lo = mid + 1 else hi = mid
+        }
+        return lo
+    }
+
+    /** 구간 [segment]의 종류. 종류를 모르면 자전거. */
+    private fun activityOf(segment: Int): ActivityType =
+        if (segmentActivities.isEmpty()) ActivityType.BIKE else segmentActivities[segment.coerceIn(0, segmentActivities.lastIndex)]
 
     companion object {
         /** 그래프에 남기는 최대 점 수. */
@@ -68,8 +96,16 @@ class MetricSeries private constructor(
          * 속도 계열(km/h). 점의 값은 `speedMps`, 없으면 같은 구간 바로 앞 점과의 구간 속도다.
          * 시각 차가 0 이하면 구간 속도도 null이다. 값 있는 점이 2개 미만이거나 그릴 선분이 없으면 null.
          * [segments]는 [axis]를 만든 것과 같은 목록이어야 한다.
+         *
+         * 값은 늘 km/h다. [segmentActivities]는 축의 구간(빈 구간 제외)마다의 종류이고([TrackAxis.paths]와 같은 길이),
+         * 점의 색 구간([colorHexAt])이 자기 구간의 종류로 정해진다. 기본은 모두 자전거다.
          */
-        fun speed(axis: TrackAxis, segments: List<List<TrackPoint>>): MetricSeries? {
+        fun speed(
+            axis: TrackAxis,
+            segments: List<List<TrackPoint>>,
+            segmentActivities: List<ActivityType> = List(axis.paths.size) { ActivityType.BIKE },
+        ): MetricSeries? {
+            require(segmentActivities.size == axis.paths.size) { "segmentActivities must have one type per segment of the axis" }
             val raw = ArrayList<Double?>(axis.points.size)
             for (segment in segments) {
                 for (i in segment.indices) {
@@ -77,7 +113,7 @@ class MetricSeries private constructor(
                     raw.add(mps?.let { it * 3.6 }?.takeIf { it.isFinite() && it <= MAX_SPEED_KMH })
                 }
             }
-            return build(MetricKind.SPEED, axis, raw, SeriesSmoother.SPEED_WINDOW_MS)
+            return build(MetricKind.SPEED, axis, raw, SeriesSmoother.SPEED_WINDOW_MS, segmentActivities)
         }
 
         /**
@@ -110,13 +146,19 @@ class MetricSeries private constructor(
             return build(MetricKind.HEART_RATE, axis, raw, SeriesSmoother.HEART_WINDOW_MS)
         }
 
-        private fun build(kind: MetricKind, axis: TrackAxis, raw: List<Double?>, windowMs: Long): MetricSeries? {
+        private fun build(
+            kind: MetricKind,
+            axis: TrackAxis,
+            raw: List<Double?>,
+            windowMs: Long,
+            segmentActivities: List<ActivityType> = emptyList(),
+        ): MetricSeries? {
             require(raw.size == axis.points.size) { "segments do not match the axis" }
             if (raw.count { it != null } < 2) return null
             val smoothed = SeriesSmoother.smooth(axis.timesMs, axis.segmentOf, raw, windowMs)
             val (d, v) = downsample(axis.distancesM, smoothed, MAX_POINTS)
             if (!hasDrawableStep(v)) return null
-            return MetricSeries(kind, d, v, axis.totalM, axis.boundariesM)
+            return MetricSeries(kind, d, v, axis.totalM, axis.boundariesM, segmentActivities)
         }
 
         /** 이웃한 두 값이 모두 null이 아닌 곳이 있으면 true. */

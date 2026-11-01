@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.core.series
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.elevation.TrackAxis
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.HeartRateSample
@@ -158,6 +159,34 @@ class MetricSeriesTest {
         assertEquals("#FB8C00", heart.colorHexAt(heart.totalM / 2))
         val low = assertNotNull(heartOf((0 until 30).map { HeartRateSample(it * 1_000L, 99) }, track))
         assertEquals("#1E88E5", low.colorHexAt(low.totalM / 2))
+    }
+
+    @Test
+    fun bandsFollowSegmentActivity() {
+        // 같은 9 km/h(2.5 m/s)가 자전거 구간에서는 SLOW, 걷기 구간에서는 SPRINT다. 구간은 6 km/h 이상이면 걷기의 SPRINT.
+        val bike = segment(30) { 2.5f }
+        val walk = segment(30, startLat = 37.01, startMs = 3_600_000L) { 2.5f }
+        val list = listOf(bike, walk)
+        val axis = assertNotNull(TrackAxis.of(list))
+        val mixed = assertNotNull(MetricSeries.speed(axis, list, listOf(ActivityType.BIKE, ActivityType.WALK)))
+        val seam = mixed.boundariesM.single()
+        assertEquals(SpeedBand.SLOW.hex, mixed.colorHexAt(seam / 2))
+        assertEquals(SpeedBand.SPRINT.hex, mixed.colorHexAt(seam + (mixed.totalM - seam) / 2))
+        // 이음매 위의 점은 구간 번호를 아는 호출에서 자기 구간의 종류로 칠한다.
+        assertEquals(SpeedBand.SLOW.hex, mixed.colorHexAt(seam, 0))
+        assertEquals(SpeedBand.SPRINT.hex, mixed.colorHexAt(seam, 1))
+        // 종류를 넘기지 않으면 모두 자전거다(지금까지의 호출).
+        val plain = assertNotNull(MetricSeries.speed(axis, list))
+        assertEquals(SpeedBand.SLOW.hex, plain.colorHexAt(seam + (plain.totalM - seam) / 2))
+        // 값은 종류와 상관없이 같은 km/h다.
+        assertEquals(plain.values, mixed.values)
+    }
+
+    @Test
+    fun segmentActivitiesMustMatchSegments() {
+        val list = listOf(segment(30) { 2.5f })
+        val axis = assertNotNull(TrackAxis.of(list))
+        assertFailsWith<IllegalArgumentException> { MetricSeries.speed(axis, list, listOf(ActivityType.RUN, ActivityType.WALK)) }
     }
 
     @Test

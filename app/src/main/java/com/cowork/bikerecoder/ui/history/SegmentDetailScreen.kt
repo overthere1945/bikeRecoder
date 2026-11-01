@@ -4,6 +4,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -15,11 +18,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.model.GeoPoint
@@ -37,10 +44,13 @@ import com.cowork.bikerecoder.map.MapOverlay
 import com.cowork.bikerecoder.map.MapPhoto
 import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.post.PhotoThumbnails
+import com.cowork.bikerecoder.ui.activity.ActivityBadge
+import com.cowork.bikerecoder.ui.activity.ActivityText
 import com.cowork.bikerecoder.ui.elevation.ChartTab
 import com.cowork.bikerecoder.ui.elevation.ChartText
 import com.cowork.bikerecoder.ui.elevation.ElevationChart
 import com.cowork.bikerecoder.ui.elevation.MetricChart
+import com.cowork.bikerecoder.ui.elevation.SpeedChartStyle
 import com.cowork.bikerecoder.ui.health.HeartRateGate
 import com.cowork.bikerecoder.ui.health.HeartRateLegend
 import com.cowork.bikerecoder.ui.health.HeartRateSection
@@ -50,7 +60,7 @@ import com.cowork.bikerecoder.ui.photo.PhotoStrip
 import com.cowork.bikerecoder.ui.photo.PhotoViewerHost
 import com.cowork.bikerecoder.ui.photo.rememberMapPhotos
 import com.cowork.bikerecoder.ui.photo.rememberPhotoViewerState
-import com.cowork.bikerecoder.ui.record.NumberRow
+import com.cowork.bikerecoder.ui.record.NumberRows
 
 /**
  * What a detail screen's map shows: the [track] (with [trackColors], one per point, in [심박] — spec §3.3) or the
@@ -136,6 +146,8 @@ fun SegmentDetailScreen(
     val canColor by viewModel.canColorByHeartRate.collectAsStateWithLifecycle()
     val colorMode by viewModel.colorMode.collectAsStateWithLifecycle()
     val trackColors by viewModel.trackColors.collectAsStateWithLifecycle()
+    val canChange by viewModel.canChangeActivity.collectAsStateWithLifecycle()
+    val changeFailed by viewModel.changeFailed.collectAsStateWithLifecycle()
     val viewer = rememberPhotoViewerState()
     when (val s = state) {
         SegmentDetailState.Loading -> HistoryScaffold(title = "구간 기록", onBack = onBack) {
@@ -161,6 +173,7 @@ fun SegmentDetailScreen(
                     }
                 },
                 onBack = onBack,
+                onChangeActivity = viewModel::changeActivity.takeIf { canChange },
                 photos = {
                     PhotoStrip(
                         photos = photos.visible,
@@ -178,6 +191,7 @@ fun SegmentDetailScreen(
         }
     }
     PhotoViewerHost(viewer, photos, thumbnails, onToggleHidden = { viewModel.setHidden(it, hidden = !it.hidden) })
+    ChangeActivityFailure(changeFailed, onShown = viewModel::clearChangeFailed)
 }
 
 /**
@@ -187,6 +201,10 @@ fun SegmentDetailScreen(
  * V1.7.0 spec §2.4), the speed chart of [speedSeries] (read out with the segment's stored average and highest) and, when
  * there is heart rate ([heartSeries] not null), the heart-rate chart on the same track axis (read out as
  * [heartDescription], V1.8.0 spec §2.3); each opens the big map on its tab through [onOpenChart].
+ *
+ * V1.9.0 (spec §1.5, §3.2, §3.5): the segment's activity badge starts the date line, the totals are the activity's rows
+ * ([ActivityText.segmentTotalRows]), the speed chart of a run or walk is a 페이스 chart, and [onChangeActivity] (given for a
+ * finished segment) offers [⋮] "활동 종류 바꾸기" with the dialog that picks the new activity.
  */
 @Composable
 fun SegmentDetailContent(
@@ -200,9 +218,16 @@ fun SegmentDetailContent(
     heartRate: @Composable () -> Unit = {},
     heartSeries: MetricSeries? = null,
     heartDescription: String = "",
+    onChangeActivity: ((ActivityType) -> Unit)? = null,
 ) {
     val totals = segment.totals
-    HistoryScaffold(title = "구간 기록", onBack = onBack) {
+    val style = SpeedChartStyle(segment.activity)
+    var changing by rememberSaveable { mutableStateOf(false) }
+    HistoryScaffold(
+        title = "구간 기록",
+        onBack = onBack,
+        actions = { if (onChangeActivity != null) SegmentMoreMenu(onChange = { changing = true }) },
+    ) {
         Column(modifier = Modifier.fillMaxSize()) {
             map(Modifier.fillMaxWidth().height(240.dp))
             Column(
@@ -210,34 +235,24 @@ fun SegmentDetailContent(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 photos()
-                Text(
-                    "${RideFormat.date(segment.localDate)} · ${startTimeText(segment)}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                NumberRow(
-                    "거리" to RideFormat.distance(totals.distanceM),
-                    "이동 시간" to RideFormat.clock(totals.movingTimeMs),
-                )
-                NumberRow(
-                    "경과 시간" to RideFormat.clock(totals.elapsedMs),
-                    "평균/최고" to "${RideFormat.speedKmh(totals.avgSpeedMps)} / ${RideFormat.speedKmh(totals.maxSpeedMps)}km/h",
-                )
-                NumberRow(
-                    "누적 상승" to RideFormat.altitude(totals.ascentM),
-                    "누적 하강" to RideFormat.altitude(totals.descentM),
-                )
-                NumberRow(
-                    "최고 고도" to RideFormat.altitude(totals.maxAltitudeM),
-                    "최저 고도" to RideFormat.altitude(totals.minAltitudeM),
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ActivityBadge(segment.activity, DETAIL_BADGE)
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        "${RideFormat.date(segment.localDate)} · ${startTimeText(segment)}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                NumberRows(ActivityText.segmentTotalRows(segment.activity, totals))
                 heartRate()
                 Text(ChartText.TITLE_ELEVATION, style = MaterialTheme.typography.titleMedium)
                 ElevationChart(profile, onOpen = onOpenChart?.let { { it(ChartTab.ELEVATION) } })
-                Text(ChartText.TITLE_SPEED, style = MaterialTheme.typography.titleMedium)
+                Text(ChartText.title(style), style = MaterialTheme.typography.titleMedium)
                 MetricChart(
-                    speedSeries, MetricKind.SPEED, ChartText.speedDescription(totals),
+                    speedSeries, MetricKind.SPEED, ChartText.speedDescription(totals, style),
                     onOpen = onOpenChart?.let { { it(ChartTab.SPEED) } },
+                    pace = style.pace,
                 )
                 if (heartSeries != null) {
                     Text(ChartText.TITLE_HEART, style = MaterialTheme.typography.titleMedium)
@@ -249,7 +264,20 @@ fun SegmentDetailContent(
             }
         }
     }
+    if (changing && onChangeActivity != null) {
+        ChangeActivityDialog(
+            current = segment.activity,
+            onConfirm = {
+                changing = false
+                onChangeActivity(it)
+            },
+            onDismiss = { changing = false },
+        )
+    }
 }
+
+/** The activity badge beside the segment's date (spec §2.1: 24 dp in list rows and headers). */
+private val DETAIL_BADGE = 24.dp
 
 /**
  * The [track] (in [trackColors]) or the separate [lines] framed (keeping [fitPadding] free, if given), with a start

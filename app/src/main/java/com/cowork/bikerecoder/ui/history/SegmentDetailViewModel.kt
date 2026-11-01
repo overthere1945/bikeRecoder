@@ -9,6 +9,9 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.activity.ActivityChange
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.activity.BestEfforts
 import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.elevation.TrackAxis
 import com.cowork.bikerecoder.core.model.GeoPoint
@@ -44,7 +47,10 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.time.ZoneId
 
 sealed interface SegmentDetailState {
     data object Loading : SegmentDetailState
@@ -67,6 +73,9 @@ sealed interface SegmentDetailState {
  * (V1.8.0), its photos (spec §2.3) and its heart rate (spec §3.3: the row, the series on the same axis and its read-out,
  * the [기본]/[심박] track colours).
  * Opening it drops the photos deleted from the gallery and asks for a post-processing pass, once.
+ *
+ * V1.9.0 (spec §1.5): [changeActivity] gives a finished segment another activity ([canChangeActivity]); its totals are
+ * recomputed on [compute] with the new activity's recording rules and the screen is read again.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SegmentDetailViewModel(
@@ -76,6 +85,7 @@ class SegmentDetailViewModel(
     private val postProcessor: PostProcessor,
     private val log: WarnLog = WarnLog { _, _ -> },
     private val compute: CoroutineDispatcher = Dispatchers.Default,
+    private val zone: ZoneId = SEOUL,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<SegmentDetailState>(SegmentDetailState.Loading)
@@ -83,6 +93,18 @@ class SegmentDetailViewModel(
 
     val photos: StateFlow<RidePhotos> = observeRidePhotos(postStore.observePhotos(listOf(segmentId)), log)
         .stateIn(viewModelScope, SharingStarted.Eagerly, RidePhotos())
+
+    /** [활동 종류 바꾸기] is offered only for a segment that has ended (spec §1.5); false while it is recorded or not loaded. */
+    val canChangeActivity: StateFlow<Boolean> = state
+        .map { (it as? SegmentDetailState.Loaded)?.segment?.endedAt != null }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    private val _changeFailed = MutableStateFlow(false)
+
+    /** The last [changeActivity] could not be saved (nothing was written); the screen tells it, then [clearChangeFailed]. */
+    val changeFailed: StateFlow<Boolean> = _changeFailed.asStateFlow()
+
+    private val changeMutex = Mutex()
 
     /** The track with its times (for the heart-rate colours and chart); null until loaded. */
     private val trackPoints = MutableStateFlow<List<TrackPoint>?>(null)
@@ -154,6 +176,42 @@ class SegmentDetailViewModel(
         postProcessor.request()
     }
 
+    /**
+     * Gives the segment [type] (spec §1.5): nothing for the activity it already has, a recording still going on or a
+     * segment not loaded. Otherwise the stored points go through the recording rules of [type] again ([ActivityChange]);
+     * the new totals (kept as they were when the points are too few for the rules) are stored with the type and, for a
+     * run, the best efforts (none for other activities) in one transaction, and the screen is read again. A failure is
+     * logged and shown through [changeFailed]; nothing is written then.
+     */
+    fun changeActivity(type: ActivityType) {
+        val segment = (state.value as? SegmentDetailState.Loaded)?.segment ?: return
+        val endedAt = segment.endedAt ?: return
+        if (type == segment.activity) return
+        viewModelScope.launch {
+            changeMutex.withLock {
+                try {
+                    val points = rideStore.points(segmentId)
+                    val (totals, efforts) = withContext(compute) {
+                        ActivityChange.recompute(segment.startedAt, endedAt, points, type, zone) to
+                            if (type == ActivityType.RUN) BestEfforts.find(points) else emptyList()
+                    }
+                    rideStore.changeActivity(segmentId, type, totals, efforts)
+                    _state.value = load()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    log.warn("Could not change the activity of segment $segmentId", e)
+                    _changeFailed.value = true
+                }
+            }
+        }
+    }
+
+    /** The failure of [changeActivity] has been shown. */
+    fun clearChangeFailed() {
+        _changeFailed.value = false
+    }
+
     fun setColorMode(mode: TrackColorMode) {
         _colorMode.value = mode
     }
@@ -180,7 +238,7 @@ class SegmentDetailViewModel(
                     segment = segment,
                     track = points.map { it.point },
                     profile = ElevationProfile.fromSegments(listOf(points).filter { it.isNotEmpty() }),
-                    speedSeries = TrackAxis.of(listOf(points))?.let { MetricSeries.speed(it, listOf(points)) },
+                    speedSeries = TrackAxis.of(listOf(points))?.let { MetricSeries.speed(it, listOf(points), listOf(segment.activity)) },
                 )
             }
         }
@@ -202,6 +260,7 @@ class SegmentDetailViewModel(
 
     companion object {
         const val ARG_SEGMENT = "segmentId"
+        private val SEOUL: ZoneId = ZoneId.of("Asia/Seoul")
 
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer {

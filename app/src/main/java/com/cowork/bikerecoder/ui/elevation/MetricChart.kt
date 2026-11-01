@@ -45,7 +45,8 @@ private var SemanticsPropertyReceiver.endLabels by MetricTags.EndLabels
  * Read out as [description]. Where the series has no value the fill and the line stop (a lone value between gaps draws
  * nothing, as it has no neighbour to draw to), and the scrub line has no dot.
  *
- * Without a [series]: speed says "속도 정보가 없습니다", heart rate draws nothing at all (no place for it). A [series] must
+ * With [pace] a speed chart's end labels read as paces ("4'48"/km", the fastest on top; V1.9.0 spec §3.5), the values staying
+ * speeds. Without a [series]: speed says "속도 정보가 없습니다", heart rate draws nothing at all (no place for it). A [series] must
  * be of [kind].
  */
 @Composable
@@ -59,6 +60,7 @@ fun MetricChart(
     onOpen: (() -> Unit)? = null,
     onScrub: (distanceM: Double) -> Unit = {},
     scrubM: Double? = null,
+    pace: Boolean = false,
 ) {
     require(series == null || series.kind == kind) { "a ${series?.kind} series drawn as $kind" }
     if (series == null) {
@@ -68,8 +70,8 @@ fun MetricChart(
     val colors = chartColors()
     val labelStyle = MaterialTheme.typography.labelSmall
     val measurer = rememberTextMeasurer()
-    val top = ChartText.valueLabel(kind, series.maxValue)
-    val bottom = ChartText.valueLabel(kind, series.minValue)
+    val top = ChartText.valueLabel(kind, series.maxValue, pace)
+    val bottom = ChartText.valueLabel(kind, series.minValue, pace)
     // Remembered so a recomposition (e.g. every scrub) keeps the cached band areas instead of building them again.
     val drawChart = remember(series, kind, colors, labelStyle, measurer) {
         Modifier.drawWithCache {

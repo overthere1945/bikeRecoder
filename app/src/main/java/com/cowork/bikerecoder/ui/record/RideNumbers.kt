@@ -237,6 +237,18 @@ internal fun NumberRow(left: Pair<String, String>, middle: Pair<String, String>,
     }
 }
 
+/** The totals tables' [rows] ([com.cowork.bikerecoder.ui.activity.ActivityText.segmentTotalRows]): one to three cells to a row. */
+@Composable
+internal fun NumberRows(rows: List<List<Pair<String, String>>>) {
+    rows.forEach { row ->
+        when (row.size) {
+            1 -> NumberRow(row[0])
+            2 -> NumberRow(row[0], row[1])
+            else -> NumberRow(row[0], row[1], row[2])
+        }
+    }
+}
+
 /** The value on one line: shrunk (down to [MIN_VALUE_SIZE]) only when it would not fit, e.g. "14.5 / 23.4km/h" in a card. */
 @Composable
 private fun NumberCell(label: String, value: String, modifier: Modifier) {

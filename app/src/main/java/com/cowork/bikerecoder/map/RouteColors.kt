@@ -45,6 +45,17 @@ fun pathColors(paths: List<List<GeoPoint>>, colorAt: (Double) -> String?, axis: 
     return colorsAlong(paths, axis.distancesM, colorAt)
 }
 
+/**
+ * [pathColors] for a colour that depends on the path a point belongs to as well as on its distance: [colorAt] gets the
+ * path's number and the point's axis distance (a trip's speed line, whose paths are segments of different activities —
+ * a point at a seam takes its own segment's colour).
+ */
+fun pathColors(paths: List<List<GeoPoint>>, colorAt: (path: Int, distanceM: Double) -> String?, axis: TrackAxis): List<List<String>> {
+    require(paths.map { it.size } == axis.paths.map { it.size }) { "paths do not match the axis" }
+    var k = 0
+    return paths.mapIndexed { i, path -> path.map { colorAt(i, axis.distancesM[k++]) ?: NO_VALUE_HEX } }
+}
+
 /** [colorAt] of [distancesM] (one per point of [paths], in order), cut into the paths' lists; null is [NO_VALUE_HEX]. */
 private fun colorsAlong(paths: List<List<GeoPoint>>, distancesM: DoubleArray, colorAt: (Double) -> String?): List<List<String>> {
     var k = 0

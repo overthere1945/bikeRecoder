@@ -3,6 +3,7 @@ package com.cowork.bikerecoder.ui.activity
 import com.cowork.bikerecoder.core.activity.ActivityFormat
 import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.format.RideFormat
+import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.ui.feed.kmText
 import com.cowork.bikerecoder.ui.feed.meterText
 import java.time.Instant
@@ -19,6 +20,21 @@ object ActivityText {
     const val SUNSET_WARNING_MS = 3_600_000L
 
     private val HOUR_MINUTE = DateTimeFormatter.ofPattern("HH:mm")
+
+    /** The segment screen's [⋮] item (spec §1.5). */
+    const val CHANGE_ACTIVITY = "활동 종류 바꾸기"
+
+    /** The change dialog's note: points not saved during a pause are not in the recording to recompute from. */
+    const val CHANGE_NOTE = "일시정지 중에 저장되지 않은 위치는 되살릴 수 없습니다."
+
+    const val CHANGE_CONFIRM = "바꾸기"
+    const val CHANGE_CANCEL = "취소"
+
+    /** The toast when the new activity could not be saved. */
+    const val CHANGE_FAILED = "활동 종류를 바꾸지 못했습니다"
+
+    /** Where the big map's legend would be on a trip of several activities: their colour scales differ (spec §3.5). */
+    const val MIXED_COLOR_NOTE = "종류마다 색 기준이 다릅니다"
 
     /** The activity's name, also what a screen reader says for its badge or chip. */
     fun name(type: ActivityType): String = when (type) {
@@ -85,4 +101,66 @@ object ActivityText {
             )
         }
     }
+
+    /**
+     * The rows of a segment screen's totals table (spec §3.2) as (label, value) cells, one list per row: a bike 거리·이동
+     * 시간 / 경과 시간·평균/최고 / 누적 상승·하강 / 최고·최저 고도 (as it was); a run or walk shows "평균 페이스" and
+     * "평균 속도" instead of "평균/최고"; a hike starts with "산행 시간" (the elapsed time, rests included) and has no
+     * separate 경과 시간.
+     */
+    fun segmentTotalRows(activity: ActivityType, totals: SegmentTotals): List<List<Pair<String, String>>> {
+        val distance = "거리" to RideFormat.distance(totals.distanceM)
+        val moving = "이동 시간" to RideFormat.clock(totals.movingTimeMs)
+        val elapsed = "경과 시간" to RideFormat.clock(totals.elapsedMs)
+        val climb = listOf("누적 상승" to RideFormat.altitude(totals.ascentM), "누적 하강" to RideFormat.altitude(totals.descentM))
+        val altitude = listOf("최고 고도" to RideFormat.altitude(totals.maxAltitudeM), "최저 고도" to RideFormat.altitude(totals.minAltitudeM))
+        return when (activity) {
+            ActivityType.BIKE -> listOf(listOf(distance, moving), listOf(elapsed, averageMax(totals)), climb, altitude)
+            ActivityType.RUN, ActivityType.WALK ->
+                listOf(listOf(distance, moving, elapsed), paceAndSpeed(totals), climb, altitude)
+            ActivityType.HIKE -> listOf(
+                listOf("산행 시간" to RideFormat.clock(totals.elapsedMs)),
+                listOf(distance, moving),
+                listOf(averageMax(totals)),
+                climb,
+                altitude,
+            )
+        }
+    }
+
+    /**
+     * The rows of a trip screen's totals table (spec §3.2) for [activity] (a trip of several activities passes
+     * [ActivityType.BIKE]): 거리·이동 시간 / 평균/최고 / 누적 상승·하강·최고 고도; a run or walk has "평균 페이스" and
+     * "평균 속도" in the second row; a hike has "산행 시간" (the elapsed times summed, as [RideFormat.duration]) as the
+     * first row.
+     */
+    fun tripTotalRows(activity: ActivityType, totals: SegmentTotals): List<List<Pair<String, String>>> {
+        val distanceAndMoving = listOf(
+            "거리" to RideFormat.distance(totals.distanceM),
+            "이동 시간" to RideFormat.clock(totals.movingTimeMs),
+        )
+        val altitude = listOf(
+            "누적 상승" to RideFormat.altitude(totals.ascentM),
+            "누적 하강" to RideFormat.altitude(totals.descentM),
+            "최고 고도" to RideFormat.altitude(totals.maxAltitudeM),
+        )
+        return when (activity) {
+            ActivityType.BIKE -> listOf(distanceAndMoving, listOf(averageMax(totals)), altitude)
+            ActivityType.RUN, ActivityType.WALK -> listOf(distanceAndMoving, paceAndSpeed(totals), altitude)
+            ActivityType.HIKE -> listOf(
+                listOf("산행 시간" to RideFormat.duration(totals.elapsedMs)),
+                distanceAndMoving,
+                listOf(averageMax(totals)),
+                altitude,
+            )
+        }
+    }
+
+    private fun averageMax(totals: SegmentTotals): Pair<String, String> =
+        "평균/최고" to "${RideFormat.speedKmh(totals.avgSpeedMps)} / ${RideFormat.speedKmh(totals.maxSpeedMps)}km/h"
+
+    private fun paceAndSpeed(totals: SegmentTotals): List<Pair<String, String>> = listOf(
+        "평균 페이스" to "${ActivityFormat.paceOf(totals.distanceM, totals.movingTimeMs)}/km",
+        "평균 속도" to "${RideFormat.speedKmh(totals.avgSpeedMps)}km/h",
+    )
 }

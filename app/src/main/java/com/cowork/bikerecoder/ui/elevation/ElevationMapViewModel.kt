@@ -10,6 +10,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.elevation.TrackAxis
 import com.cowork.bikerecoder.core.model.GeoPoint
@@ -44,6 +45,8 @@ sealed interface ElevationMapUiState {
      * current tab's colours per point ([colors]: grade bands with FLAT the table's blue, speed or heart-rate bands with
      * grey where there is no value). [scrubM]: where the chart was last scrubbed, null before; kept across tabs, as is
      * [marker], the spot on the line there. [speedDescription] and [heartDescription]: what those charts read out.
+     * [speedStyle] (V1.9.0 spec §3.5): how the speed tab is named, valued and coloured — a pace for a run or walk alone,
+     * a mixed trip with each segment's own colour scale and a note for a legend.
      */
     data class Ready(
         val profile: ElevationProfile?,
@@ -57,6 +60,7 @@ sealed interface ElevationMapUiState {
         val marker: GeoPoint? = null,
         val speedDescription: String = "",
         val heartDescription: String = "",
+        val speedStyle: SpeedChartStyle = SpeedChartStyle.BIKE,
     ) : ElevationMapUiState
 
     /** Nothing to show (the plan's handoff was already taken, no data, or it could not be read): the screen goes back. */
@@ -143,13 +147,15 @@ class ElevationMapViewModel(
             is ElevationSource.Trip -> {
                 val segments = rideStore.segments(source.tripId).filterNot { it.isEmpty }.sortedBy { it.startedAt }
                 val tracks = segments.map { rideStore.points(it.id) }
-                fromTracks(tracks, heartInput(segments.map { it.id }, segments), tripTotals(segments))
+                fromTracks(tracks, segments.map { it.activity }, heartInput(segments.map { it.id }, segments), tripTotals(segments))
             }
             is ElevationSource.Segment -> {
                 val segment = rideStore.segment(source.segmentId)
                 val track = rideStore.points(source.segmentId)
                 val heart = heartInput(listOf(source.segmentId), listOfNotNull(segment))
-                fromTracks(listOf(track), heart, segment?.totals ?: SegmentTotals.ZERO)
+                fromTracks(
+                    listOf(track), listOf(segment?.activity ?: ActivityType.BIKE), heart, segment?.totals ?: SegmentTotals.ZERO,
+                )
             }
         }
     } catch (e: CancellationException) {
@@ -182,9 +188,10 @@ class ElevationMapViewModel(
         return Loaded(state, mapOf(ChartTab.ELEVATION to colors), profile::pointAt)
     }
 
-    /** Null when no tab has anything to draw. [heart]'s flags are in the order of [tracks]. */
+    /** Null when no tab has anything to draw. [activities] and [heart]'s flags are in the order of [tracks]. */
     private suspend fun fromTracks(
         tracks: List<List<TrackPoint>>,
+        activities: List<ActivityType>,
         heart: HeartInput?,
         totals: SegmentTotals,
     ): Loaded? = withContext(compute) {
@@ -192,11 +199,13 @@ class ElevationMapViewModel(
         val kept = keptAt.map { tracks[it] }
         val axis = TrackAxis.of(kept) ?: return@withContext null
         val profile = ElevationProfile.fromSegments(kept)
-        val speed = MetricSeries.speed(axis, kept)
+        val keptActivities = keptAt.map { activities[it] }
+        val speedStyle = SpeedChartStyle.of(keptActivities)
+        val speed = MetricSeries.speed(axis, kept, keptActivities)
         val heartRate = heart?.let { h -> MetricSeries.heartRate(axis, kept, h.samples, keptAt.map { h.detailed[it] }) }
         val colors = buildMap {
             profile?.let { put(ChartTab.ELEVATION, pathColors(axis.paths, it)) }
-            speed?.let { put(ChartTab.SPEED, pathColors(axis.paths, it::colorHexAt, axis)) }
+            speed?.let { put(ChartTab.SPEED, pathColors(axis.paths, { path, d -> it.colorHexAt(d, path) }, axis)) }
             heartRate?.let { put(ChartTab.HEART_RATE, pathColors(axis.paths, it::colorHexAt, axis)) }
         }
         val tabs = ChartTab.entries.filter { it in colors }
@@ -211,12 +220,13 @@ class ElevationMapViewModel(
             paths = axis.paths,
             colors = colors.getValue(shown),
             // Read out with the stored values (V1.8.0 spec §2.1).
-            speedDescription = ChartText.speedDescription(totals),
+            speedDescription = ChartText.speedDescription(totals, speedStyle),
             heartDescription = if (heart != null && heartRate != null) {
                 ChartText.heartDescription(heart.stored.avgBpm, heart.stored.maxBpm, heart.samples)
             } else {
                 ""
             },
+            speedStyle = speedStyle,
         )
         Loaded(state, colors, axis::pointAt)
     }
