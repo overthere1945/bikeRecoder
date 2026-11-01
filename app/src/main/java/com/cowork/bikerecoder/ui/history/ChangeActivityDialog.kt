@@ -76,11 +76,17 @@ internal fun SegmentMoreMenu(onChange: () -> Unit) {
 
 /**
  * "활동 종류 바꾸기" (V1.9.0 spec §1.5): the four activities as radio rows (18 dp badge and name, the [current] one
- * selected first), the note that positions not saved during a pause cannot be revived, and [취소] / [바꾸기]. [바꾸기]
- * gives the picked activity to [onConfirm] and is off while the pick is the one the segment has.
+ * selected first), the [note] that positions not saved during a pause cannot be revived (null: none, as in the GPX import
+ * list, where only the type changes), and [취소] / [바꾸기]. [바꾸기] gives the picked activity to [onConfirm] and is off
+ * while the pick is the one that is there.
  */
 @Composable
-internal fun ChangeActivityDialog(current: ActivityType, onConfirm: (ActivityType) -> Unit, onDismiss: () -> Unit) {
+internal fun ChangeActivityDialog(
+    current: ActivityType,
+    onConfirm: (ActivityType) -> Unit,
+    onDismiss: () -> Unit,
+    note: String? = ActivityText.CHANGE_NOTE,
+) {
     var picked by rememberSaveable { mutableStateOf(current) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -106,13 +112,15 @@ internal fun ChangeActivityDialog(current: ActivityType, onConfirm: (ActivityTyp
                         }
                     }
                 }
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    ActivityText.CHANGE_NOTE,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp).testTag(ChangeActivityTags.NOTE),
-                )
+                if (note != null) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        note,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp).testTag(ChangeActivityTags.NOTE),
+                    )
+                }
             }
         },
         confirmButton = {

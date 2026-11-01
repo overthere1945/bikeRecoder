@@ -1,6 +1,7 @@
 package com.cowork.bikerecoder.data
 
 import androidx.room.withTransaction
+import com.cowork.bikerecoder.core.activity.BestEffort
 import com.cowork.bikerecoder.core.importing.ImportStore
 import com.cowork.bikerecoder.core.importing.ImportedRide
 import com.cowork.bikerecoder.core.importing.TimeSpan
@@ -39,11 +40,19 @@ class RoomImportStore(private val db: AppDatabase) : ImportStore {
                 endedAt = replayed.endedAt,
                 localDate = replayed.localDate,
                 totals = replayed.totals,
+                activity = ride.activity,
             ).toEntity(),
         )
         rideDao.insertPoints(replayed.points.map { it.toEntity(segmentId) })
         importDao.insertImport(TripImportEntity(tripId, cutFileName(ride.fileName), ride.importedAt))
         tripId
+    }
+
+    /** The trip of an import has exactly one segment; the rows replace any the segment has. */
+    override suspend fun saveBestEfforts(tripId: Long, efforts: List<BestEffort>) = db.withTransaction {
+        rideDao.segments(tripId).forEach { segment ->
+            rideDao.replaceBestEfforts(segment.id, efforts.map { it.toEntity(segment.id) })
+        }
     }
 
     override suspend fun segmentSpans(now: Long): List<TimeSpan> =

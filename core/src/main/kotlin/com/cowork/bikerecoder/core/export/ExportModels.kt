@@ -12,12 +12,14 @@ import java.util.Locale
  * @property localDate 구간 시작의 Asia/Seoul 날짜. KML 이름 `{yyyy-MM-dd} 주행`에 쓴다.
  * @property points 기록 점(시간순)
  * @property heartRate 이 구간의 심박 표본(없으면 빈 목록)
+ * @property activity 구간의 활동 종류. GPX `<type>`과 KML 구간 이름에 쓴다.
  */
 data class ExportSegment(
     val startedAt: Long,
     val localDate: LocalDate,
     val points: List<TrackPoint>,
     val heartRate: List<HeartRateSample>,
+    val activity: ActivityType = ActivityType.BIKE,
 )
 
 /** GPX·KML 안에 들어가는 글(스펙 §5). */

@@ -1,6 +1,7 @@
 package com.cowork.bikerecoder.ui.importing
 
 import com.cowork.bikerecoder.WarnLog
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.importing.RideStatus
 import com.cowork.bikerecoder.core.importing.TimeSpan
 import com.cowork.bikerecoder.core.model.RouteProfile
@@ -116,20 +117,78 @@ class ImportViewModelTest {
     }
 
     @Test
-    fun notCyclingStartsUncheckedButToggles() {
+    fun rowStartsWithFileType() {
         val run = reader.add("run.gpx", gpx(T0, type = "running"))
-        val vm = viewModel(emptyList())
-        vm.scan(listOf(run))
+        val bike = reader.add("bike.gpx", gpx(T0 + hour))
+        val vm = viewModel(listOf(run, bike))
 
         val review = vm.review()
-        assertEquals(RideStatus.NotCycling, review.rows.single().status)
-        assertEquals(emptySet<RideKey>(), review.checked)
-        assertEquals("찾은 주행 1개 · 새로 0개", review.header)
+
+        assertEquals(ActivityType.RUN, review.rows.single { it.fileName == "run.gpx" }.activity)
+        assertEquals(ActivityType.BIKE, review.rows.single { it.fileName == "bike.gpx" }.activity)
+    }
+
+    @Test
+    fun hikingFileIsSelectable() {
+        val hike = reader.add("hike.gpx", gpx(T0, type = "hiking"))
+        val vm = viewModel(emptyList())
+        vm.scan(listOf(hike))
+
+        val review = vm.review()
+        assertEquals(RideStatus.New, review.rows.single().status)
+        assertEquals(setOf(RideKey(0, 0)), review.checked)
+        assertEquals(setOf(RideKey(0, 0)), review.selectable)
+        assertEquals("찾은 주행 1개 · 새로 1개", review.header)
 
         vm.toggle(RideKey(0, 0))
-        assertEquals(setOf(RideKey(0, 0)), (vm.uiState.value as ImportUiState.Review).checked)
-        vm.toggle(RideKey(0, 0))
         assertEquals(emptySet<RideKey>(), (vm.uiState.value as ImportUiState.Review).checked)
+        vm.toggle(RideKey(0, 0))
+        assertEquals(setOf(RideKey(0, 0)), (vm.uiState.value as ImportUiState.Review).checked)
+    }
+
+    @Test
+    fun setActivityChangesRow() {
+        val a = reader.add("a.gpx", gpx(T0))
+        val b = reader.add("b.gpx", gpx(T0 + hour))
+        val vm = viewModel(listOf(a, b))
+        val before = vm.review()
+        val index = before.rows.indexOfFirst { it.fileName == "a.gpx" }
+
+        vm.setActivity(index, ActivityType.HIKE)
+
+        val after = vm.uiState.value as ImportUiState.Review
+        // Only that row's type changes: the numbers stay as read, the checks stay, the other row is untouched.
+        assertEquals(before.rows[index].copy(activity = ActivityType.HIKE), after.rows[index])
+        assertEquals(ActivityType.BIKE, after.rows[1 - index].activity)
+        assertEquals(before.checked, after.checked)
+    }
+
+    @Test
+    fun setActivityIgnoresRowsThatCannotBePicked() {
+        store.spans += TimeSpan(T0 - 10_000, T0 + 10_000)
+        val overlap = reader.add("overlap.gpx", gpx(T0))
+        val text = reader.add("notes.txt", "hello".toByteArray())
+        val vm = viewModel(listOf(overlap, text))
+        val before = vm.review()
+
+        before.rows.indices.forEach { vm.setActivity(it, ActivityType.RUN) }
+        vm.setActivity(9, ActivityType.RUN)
+
+        assertEquals(before, vm.uiState.value)
+    }
+
+    @Test
+    fun importCheckedHandsTheChosenActivityToTheJob() {
+        val a = reader.add("a.gpx", gpx(T0, type = "running"))
+        val vm = viewModel(listOf(a))
+        vm.review()
+        vm.setActivity(0, ActivityType.WALK)
+
+        vm.importChecked()
+        io.scheduler.advanceUntilIdle()
+        vm.await { (it as? ImportUiState.Job)?.state is ImportJobState.Finished }
+
+        assertEquals(ActivityType.WALK, store.saved.single().activity)
     }
 
     @Test
@@ -167,7 +226,10 @@ class ImportViewModelTest {
         val review = vm.review()
         val selectable = setOf(review.keyOf("new.gpx"), review.keyOf("run.gpx"))
         assertEquals(selectable, review.selectable)
-        assertEquals(false, review.allChecked)
+        assertEquals(true, review.allChecked)
+
+        vm.toggle(review.keyOf("run.gpx"))
+        assertEquals(false, (vm.uiState.value as ImportUiState.Review).allChecked)
 
         vm.toggleAll()
         val all = vm.uiState.value as ImportUiState.Review
@@ -188,6 +250,7 @@ class ImportViewModelTest {
         val run = reader.add("run.gpx", gpx(T0 + 2 * hour, type = "running"))
         val vm = viewModel(listOf(a, b, run))
         vm.review()
+        vm.toggle(RideKey(2, 0))
 
         vm.importChecked()
 

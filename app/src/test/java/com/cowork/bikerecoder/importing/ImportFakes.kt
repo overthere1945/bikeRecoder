@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.importing
 
+import com.cowork.bikerecoder.core.activity.BestEffort
 import com.cowork.bikerecoder.core.importing.ImportStore
 import com.cowork.bikerecoder.core.importing.ImportedRide
 import com.cowork.bikerecoder.core.importing.TimeSpan
@@ -97,11 +98,20 @@ class FakeImportStore : ImportStore {
     val saved: MutableList<ImportedRide> = Collections.synchronizedList(mutableListOf())
     var onSave: suspend (ImportedRide) -> Unit = {}
 
+    /** The best efforts saved per trip id (the id [saveImported] returned). */
+    val efforts: MutableMap<Long, List<BestEffort>> = Collections.synchronizedMap(LinkedHashMap())
+    var onSaveEfforts: suspend (Long) -> Unit = {}
+
     override suspend fun saveImported(ride: ImportedRide): Long {
         onSave(ride)
         spans += TimeSpan(ride.ride.startedAt, ride.ride.endedAt)
         saved += ride
         return saved.size.toLong()
+    }
+
+    override suspend fun saveBestEfforts(tripId: Long, efforts: List<BestEffort>) {
+        onSaveEfforts(tripId)
+        this.efforts[tripId] = efforts
     }
 
     override suspend fun segmentSpans(now: Long): List<TimeSpan> = synchronized(spans) { spans.toList() }

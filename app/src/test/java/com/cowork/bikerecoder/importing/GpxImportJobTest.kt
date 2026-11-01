@@ -1,8 +1,11 @@
 package com.cowork.bikerecoder.importing
 
 import com.cowork.bikerecoder.WarnLog
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.activity.BestEffortDistance
 import com.cowork.bikerecoder.core.importing.GpxReader
 import com.cowork.bikerecoder.core.importing.GpxTrack
+import com.cowork.bikerecoder.core.importing.RideReplay
 import com.cowork.bikerecoder.core.importing.TimeSpan
 import com.cowork.bikerecoder.core.model.RouteProfile
 import kotlinx.coroutines.CompletableDeferred
@@ -82,6 +85,68 @@ class GpxImportJobTest {
         assertEquals(1, profileReads.get(), "the profile is read once per run")
         // Each file once; c.gpx not at all.
         assertEquals(listOf(scanned.sources[0], scanned.sources[1]), reader.opened.drop(3))
+    }
+
+    @Test
+    fun importsWithChosenActivity() {
+        // 0.6 m/s: a bike pauses on it, a walk does not, so the totals show which profile replayed it.
+        val slow = gpx(T0, points = 200, stepM = 1.2, type = "cycling")
+        val scanned = scan(listOf(reader.add("slow.gpx", slow)))
+        val row = scanned.rows.single()
+        assertEquals(ActivityType.BIKE, row.activity)
+
+        job.start(scanned.sources, listOf(row.copy(activity = ActivityType.WALK)))
+
+        assertEquals(ImportJobState.Finished(imported = 1, skipped = 0, stopped = false), finished())
+        val saved = store.saved.single()
+        assertEquals(ActivityType.WALK, saved.activity)
+        val fixes = GpxReader.read(slow).fixes
+        assertEquals(RideReplay.replay(fixes, activity = ActivityType.WALK)!!.totals, saved.ride.totals)
+        assertTrue(saved.ride.totals.movingTimeMs > RideReplay.replay(fixes, activity = ActivityType.BIKE)!!.totals.movingTimeMs)
+        assertTrue(store.efforts.isEmpty(), "only a run gets best efforts")
+    }
+
+    @Test
+    fun runImportSavesEfforts() {
+        // 129 points, 10 m every 2 s: 1.28 km at 5 m/s, so the 1 km best effort is there and the 5 km one is not.
+        val uri = reader.add("run.gpx", gpx(T0, points = 130, type = "running"))
+        val scanned = scan(listOf(uri))
+        assertEquals(ActivityType.RUN, scanned.rows.single().activity)
+
+        job.start(scanned.sources, scanned.rows)
+
+        assertEquals(ImportJobState.Finished(imported = 1, skipped = 0, stopped = false), finished())
+        val saved = store.saved.single()
+        assertEquals(ActivityType.RUN, saved.activity)
+        val efforts = store.efforts.getValue(1L)
+        assertEquals(listOf(BestEffortDistance.ONE_K), efforts.map { it.distance })
+        assertEquals(com.cowork.bikerecoder.core.activity.BestEfforts.find(saved.ride.points), efforts)
+    }
+
+    @Test
+    fun pickedRunGetsEffortsAndPickedBikeDoesNot() {
+        val file = gpx(T0, points = 130, type = "running")
+        val scanned = scan(listOf(reader.add("a.gpx", file)))
+        val row = scanned.rows.single()
+
+        job.start(scanned.sources, listOf(row.copy(activity = ActivityType.BIKE)))
+        assertEquals(ImportJobState.Finished(imported = 1, skipped = 0, stopped = false), finished())
+
+        assertEquals(ActivityType.BIKE, store.saved.single().activity)
+        assertTrue(store.efforts.isEmpty())
+    }
+
+    @Test
+    fun effortsFailureLeavesRideImported() {
+        val scanned = scan(listOf(reader.add("run.gpx", gpx(T0, points = 130, type = "running"))))
+        store.onSaveEfforts = { error("disk full") }
+
+        job.start(scanned.sources, scanned.rows)
+
+        assertEquals(ImportJobState.Finished(imported = 1, skipped = 0, stopped = false), finished())
+        assertEquals(1, store.saved.size)
+        assertEquals(1, warnings.size, warnings.toString())
+        assertEquals(1, postRequests.get())
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.core.export
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.Route
 import com.cowork.bikerecoder.core.model.Stop
@@ -22,14 +23,21 @@ object GpxWriter {
         DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.ROOT).withZone(ZoneOffset.UTC)
 
     /**
-     * 여행 GPX. 구간마다 `trkseg` 하나(넘겨 준 순서). 좌표가 유한하지 않은 점은 건너뛴다.
-     * 심박은 점 시각 ±[HR_WINDOW_MS] 안에서 가장 가까운 표본(같은 거리면 앞 표본).
+     * 여행 GPX. 구간마다 `trkseg` 하나(넘겨 준 순서). 이웃한 같은 종류 구간은 한 `trk`로 묶고, 종류가 바뀔 때마다
+     * 같은 제목의 새 `trk`를 연다. `type`은 그 `trk` 구간들의 종류(`ActivityType.gpxType`)다. 한 종류뿐인 여행은 `trk`가
+     * 하나다. 좌표가 유한하지 않은 점은 건너뛴다. 심박은 점 시각 ±[HR_WINDOW_MS] 안에서 가장 가까운 표본(같은 거리면 앞 표본).
      */
     fun trip(title: String, segments: List<ExportSegment>, creator: String, exportedAt: Long): String {
         val sb = StringBuilder(1024)
         header(sb, title, creator, exportedAt)
-        sb.append("<trk><name>").append(escapeXml(title)).append("</name><type>cycling</type>\n")
+        if (segments.isEmpty()) trkOpen(sb, title, ActivityType.BIKE)
+        var current: ActivityType? = null
         for (segment in segments) {
+            if (segment.activity != current) {
+                if (current != null) sb.append("</trk>\n")
+                trkOpen(sb, title, segment.activity)
+                current = segment.activity
+            }
             sb.append("<trkseg>\n")
             val samples = segment.heartRate.sortedBy { it.timeMillis }
             for (p in segment.points) {
@@ -47,6 +55,10 @@ object GpxWriter {
         }
         sb.append("</trk>\n</gpx>\n")
         return sb.toString()
+    }
+
+    private fun trkOpen(sb: StringBuilder, title: String, activity: ActivityType) {
+        sb.append("<trk><name>").append(escapeXml(title)).append("</name><type>").append(activity.gpxType).append("</type>\n")
     }
 
     /**

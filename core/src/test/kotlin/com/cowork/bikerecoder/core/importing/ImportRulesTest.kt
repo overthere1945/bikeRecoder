@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.core.importing
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import org.junit.jupiter.api.Test
@@ -16,23 +17,32 @@ class ImportRulesTest {
         RideSegment(1, 1, start, end, LocalDate.of(2026, 10, 6), SegmentTotals.ZERO)
 
     @Test
-    fun missingTypeIsCycling() {
-        assertEquals(Activity.CYCLING, ImportRules.activityOf(null))
-        assertEquals(Activity.CYCLING, ImportRules.activityOf(""))
-        assertEquals(Activity.CYCLING, ImportRules.activityOf("   "))
+    fun missingTypeIsBike() {
+        assertEquals(ActivityType.BIKE, ImportRules.activityOf(null))
+        assertEquals(ActivityType.BIKE, ImportRules.activityOf(""))
+        assertEquals(ActivityType.BIKE, ImportRules.activityOf("   "))
     }
 
     @Test
-    fun activityTable() {
-        listOf("cycling", "Ride", "road_biking", "1", "VirtualRide", " mountain_biking ").forEach {
-            assertEquals(Activity.CYCLING, ImportRules.activityOf(it), it)
+    fun bikeStringsStayBike() {
+        listOf("cycling", "Ride", "road_biking", "1", "VirtualRide", " mountain_biking ", "e-bike").forEach {
+            assertEquals(ActivityType.BIKE, ImportRules.activityOf(it), it)
         }
-        assertEquals(Activity.RUNNING, ImportRules.activityOf("running"))
-        assertEquals(Activity.WALKING, ImportRules.activityOf("Walking"))
-        assertEquals(Activity.HIKING, ImportRules.activityOf("Hiking"))
-        assertEquals(Activity.OTHER, ImportRules.activityOf("swimming"))
-        assertEquals(Activity.OTHER, ImportRules.activityOf("9"))
-        assertEquals(Activity.OTHER, ImportRules.activityOf("11"))
+    }
+
+    @Test
+    fun readsTypes() {
+        assertEquals(ActivityType.RUN, ImportRules.activityOf("running"))
+        assertEquals(ActivityType.RUN, ImportRules.activityOf("Run"))
+        assertEquals(ActivityType.RUN, ImportRules.activityOf("trail_running"))
+        assertEquals(ActivityType.WALK, ImportRules.activityOf("Walking"))
+        assertEquals(ActivityType.WALK, ImportRules.activityOf("walk"))
+        assertEquals(ActivityType.HIKE, ImportRules.activityOf("Hiking"))
+        assertEquals(ActivityType.HIKE, ImportRules.activityOf(" hike "))
+        // 모르는 글자·숫자는 자전거
+        assertEquals(ActivityType.BIKE, ImportRules.activityOf("swimming"))
+        assertEquals(ActivityType.BIKE, ImportRules.activityOf("9"))
+        assertEquals(ActivityType.BIKE, ImportRules.activityOf("11"))
     }
 
     @Test
@@ -60,10 +70,8 @@ class ImportRulesTest {
 
     @Test
     fun duplicateInListKeepsFirst() {
-        val cycling = Activity.CYCLING
         val result = ImportRules.statuses(
             spans = listOf(span(100, 200), span(150, 250), span(300, 400), span(350, 450)),
-            activities = listOf(cycling, cycling, cycling, cycling),
             existing = emptyList(),
         )
         assertEquals(
@@ -73,26 +81,33 @@ class ImportRulesTest {
     }
 
     @Test
-    fun existingBeatsDuplicateAndNotCycling() {
+    fun existingBeatsDuplicate() {
         val existing = listOf(span(100, 200))
         val result = ImportRules.statuses(
             spans = listOf(span(120, 180), span(130, 190), span(500, 600), span(550, 650)),
-            activities = listOf(Activity.CYCLING, Activity.CYCLING, Activity.RUNNING, Activity.RUNNING),
             existing = existing,
         )
         assertEquals(RideStatus.OverlapsExisting, result[0])
         // 둘째는 앞선 것과도 겹치지만 기존과 겹침이 우선
         assertEquals(RideStatus.OverlapsExisting, result[1])
-        assertEquals(RideStatus.NotCycling, result[2])
-        // 넷째는 자전거도 아니지만 목록에 같은 주행이 우선
+        assertEquals(RideStatus.New, result[2])
         assertEquals(RideStatus.DuplicateInList, result[3])
+    }
+
+    @Test
+    fun noNotCyclingStatus() {
+        // 종류는 상태에 관여하지 않는다: 겹치지 않는 읽은 주행은 모두 새 주행이다.
+        val result = ImportRules.statuses(
+            spans = listOf(span(100, 200), span(300, 400), span(500, 600)),
+            existing = emptyList(),
+        )
+        assertEquals(listOf(RideStatus.New, RideStatus.New, RideStatus.New), result)
     }
 
     @Test
     fun unreadableIgnoredForDuplicates() {
         val result = ImportRules.statuses(
             spans = listOf(null, span(100, 200), span(150, 250)),
-            activities = listOf(null, Activity.CYCLING, Activity.CYCLING),
             existing = emptyList(),
         )
         assertTrue(result[0] is RideStatus.Unreadable)

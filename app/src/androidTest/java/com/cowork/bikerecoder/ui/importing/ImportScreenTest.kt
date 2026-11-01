@@ -18,10 +18,11 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.platform.app.InstrumentationRegistry
-import com.cowork.bikerecoder.core.importing.Activity
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.importing.ImportProblem
 import com.cowork.bikerecoder.core.importing.RideStatus
 import com.cowork.bikerecoder.core.model.GeoPoint
+import com.cowork.bikerecoder.ui.history.ChangeActivityTags
 import com.cowork.bikerecoder.importing.ImportJobState
 import com.cowork.bikerecoder.importing.RideKey
 import com.cowork.bikerecoder.importing.ScanRow
@@ -51,23 +52,23 @@ class ImportScreenTest {
     )
 
     private val newRide = ScanRow(
-        RideKey(0, 0), "Relive_0514.gpx", t0, t0 + 6_900_000, 32_100.0, 6_300_000, Activity.CYCLING, RideStatus.New,
+        RideKey(0, 0), "Relive_0514.gpx", t0, t0 + 6_900_000, 32_100.0, 6_300_000, ActivityType.BIKE, RideStatus.New,
         route(0.0),
     )
     private val running = ScanRow(
-        RideKey(1, 0), "run.gpx", t0 - day, t0 - day + 2_400_000, 6_200.0, 2_100_000, Activity.RUNNING,
-        RideStatus.NotCycling, route(0.01),
+        RideKey(1, 0), "run.gpx", t0 - day, t0 - day + 2_400_000, 6_200.0, 2_100_000, ActivityType.RUN,
+        RideStatus.New, route(0.01),
     )
     private val overlap = ScanRow(
-        RideKey(2, 0), "today.gpx", t0 - 2 * day, t0 - 2 * day + 3_600_000, 15_000.0, 3_000_000, Activity.CYCLING,
+        RideKey(2, 0), "today.gpx", t0 - 2 * day, t0 - 2 * day + 3_600_000, 15_000.0, 3_000_000, ActivityType.BIKE,
         RideStatus.OverlapsExisting, route(0.02),
     )
     private val duplicate = ScanRow(
-        RideKey(3, 0), "copy.gpx", t0 - 3 * day, t0 - 3 * day + 3_600_000, 15_000.0, 3_000_000, Activity.CYCLING,
+        RideKey(3, 0), "copy.gpx", t0 - 3 * day, t0 - 3 * day + 3_600_000, 15_000.0, 3_000_000, ActivityType.BIKE,
         RideStatus.DuplicateInList, route(0.03),
     )
     private val unreadable = ScanRow(
-        RideKey(4, 0), "notes.bin", null, null, 0.0, 0, null, RideStatus.Unreadable(ImportProblem.NOT_GPX), emptyList(),
+        RideKey(4, 0), "notes.bin", null, null, 0.0, 0, ActivityType.BIKE, RideStatus.Unreadable(ImportProblem.NOT_GPX), emptyList(),
     )
     private val rows = listOf(newRide, running, overlap, duplicate, unreadable)
 
@@ -82,6 +83,7 @@ class ImportScreenTest {
                     onBack = { calls += "back" },
                     onToggle = { calls += "toggle ${it.sourceIndex}" },
                     onToggleAll = { calls += "toggleAll" },
+                    onSetActivity = { index, type -> calls += "setActivity $index $type" },
                     onImport = { calls += "import" },
                     onStop = { calls += "stop" },
                     onOpenSummary = { calls += "summary" },
@@ -101,7 +103,7 @@ class ImportScreenTest {
         composeRule.onNodeWithText("파일 5개에서").assertIsDisplayed()
         composeRule.onNodeWithText("2023년 5월 14일 (일) 오전 9:12").assertIsDisplayed()
         composeRule.onNodeWithText("32.1 km · 1시간 45분").assertIsDisplayed()
-        composeRule.onNodeWithText("달리기 · 6.2 km — 자전거가 아님").assertIsDisplayed()
+        composeRule.onNodeWithText("6.2 km · 35분").assertIsDisplayed()
         composeRule.onNodeWithText("이미 있는 주행과 겹칩니다").assertIsDisplayed()
         composeRule.onNodeWithText("목록에 같은 주행이 있습니다").assertIsDisplayed()
         composeRule.onNodeWithText("notes.bin").assertIsDisplayed()
@@ -121,6 +123,42 @@ class ImportScreenTest {
         composeRule.onNodeWithTag(ImportTags.SELECT_ALL).performClick()
         composeRule.onNodeWithTag(ImportTags.IMPORT).performClick()
         assertEquals(listOf("toggle 1", "toggleAll", "import"), calls)
+    }
+
+    @Test
+    fun readableRowsHaveABadgeAndUnreadableDoNot() {
+        show(review())
+
+        listOf(newRide, running, overlap, duplicate).forEach {
+            composeRule.onNodeWithTag(ImportTags.badge(it.key)).assertIsDisplayed()
+        }
+        composeRule.onNodeWithTag(ImportTags.badge(unreadable.key)).assertDoesNotExist()
+    }
+
+    @Test
+    fun badgeOpensThePickerAndConfirmChangesTheType() {
+        show(review())
+
+        composeRule.onNodeWithTag(ImportTags.badge(running.key)).performClick()
+        composeRule.onNodeWithTag(ChangeActivityTags.DIALOG).assertIsDisplayed()
+        // The note about paused positions is for a recorded segment, not for the import list.
+        composeRule.onNodeWithTag(ChangeActivityTags.NOTE).assertDoesNotExist()
+        composeRule.onNodeWithTag(ChangeActivityTags.CONFIRM).assertIsNotEnabled()
+        composeRule.onNodeWithTag(ChangeActivityTags.row(ActivityType.HIKE)).performClick()
+        composeRule.onNodeWithTag(ChangeActivityTags.CONFIRM).performClick()
+
+        composeRule.onNodeWithTag(ChangeActivityTags.DIALOG).assertDoesNotExist()
+        assertEquals(listOf("setActivity 1 HIKE"), calls)
+    }
+
+    @Test
+    fun badgeOfARowThatCannotBePickedDoesNothing() {
+        show(review())
+
+        composeRule.onNodeWithTag(ImportTags.badge(overlap.key)).performClick()
+
+        composeRule.onNodeWithTag(ChangeActivityTags.DIALOG).assertDoesNotExist()
+        assertEquals(emptyList<String>(), calls)
     }
 
     @Test

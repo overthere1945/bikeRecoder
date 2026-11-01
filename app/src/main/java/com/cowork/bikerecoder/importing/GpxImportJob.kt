@@ -1,6 +1,8 @@
 package com.cowork.bikerecoder.importing
 
 import com.cowork.bikerecoder.WarnLog
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.activity.BestEfforts
 import com.cowork.bikerecoder.core.importing.GpxReadException
 import com.cowork.bikerecoder.core.importing.GpxReader
 import com.cowork.bikerecoder.core.importing.GpxTrack
@@ -43,7 +45,9 @@ sealed interface ImportJobState {
  * The files with picked rides are kept readable for the run ([ImportReader.hold] / [ImportReader.release]). Each file
  * is opened once and only its picked items are handled: read → replay → skipped when its start or end differs from the
  * review row (the file changed) → skipped when it now overlaps a segment of the app ([ImportStore.segmentSpans], which
- * includes the rides saved earlier in this run) → [ImportStore.saveImported]. One ride's failure is logged and counted
+ * includes the rides saved earlier in this run) → [ImportStore.saveImported]. The replay uses the row's activity (the
+ * file's type, or the one picked in the list, spec V1.9.0 §5.3); a saved run also gets its best efforts
+ * ([ImportStore.saveBestEfforts]), whose failure is logged and leaves the ride imported. One ride's failure is logged and counted
  * as skipped. A picked ride whose item is gone is skipped too. [stop] ends the run after the ride being saved. When at
  * least one ride was saved, [postProcessor] is asked once at the end.
  */
@@ -183,11 +187,12 @@ class GpxImportJob(
     private suspend fun importOne(item: ImportItem, row: ScanRow, routeProfile: RouteProfile): Boolean {
         if (item !is ImportItem.Gpx) return false
         try {
-            val ride = withContext(compute) { replay(item) } ?: return false
+            val ride = withContext(compute) { replay(item, row.activity) } ?: return false
             if (ride.startedAt != row.startedAt || ride.endedAt != row.endedAt) return false
             val span = TimeSpan(ride.startedAt, ride.endedAt)
             if (store.segmentSpans(clock()).any { ImportRules.overlaps(span, it) }) return false
-            store.saveImported(ImportedRide(ride, routeProfile, item.name, clock()))
+            val tripId = store.saveImported(ImportedRide(ride, routeProfile, item.name, clock(), row.activity))
+            if (row.activity == ActivityType.RUN) saveBestEfforts(tripId, ride, row)
             return true
         } catch (e: CancellationException) {
             throw e
@@ -197,12 +202,24 @@ class GpxImportJob(
         }
     }
 
+    /** A failure here is logged: the ride is saved and stays imported. */
+    private suspend fun saveBestEfforts(tripId: Long, ride: ReplayedRide, row: ScanRow) {
+        try {
+            val efforts = withContext(compute) { BestEfforts.find(ride.points) }
+            store.saveBestEfforts(tripId, efforts)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn("Could not save the best efforts of ride ${row.key}", e)
+        }
+    }
+
     /**
      * Null when the file no longer reads as a ride, or is too big ([OutOfMemoryError]) or too deep
      * ([StackOverflowError]) to parse and replay: that ride is skipped and the run goes on.
      */
-    private fun replay(item: ImportItem.Gpx): ReplayedRide? = try {
-        RideReplay.replay(parse(item.bytes).fixes)
+    private fun replay(item: ImportItem.Gpx, activity: ActivityType): ReplayedRide? = try {
+        RideReplay.replay(parse(item.bytes).fixes, activity = activity)
     } catch (_: GpxReadException) {
         null
     } catch (e: OutOfMemoryError) {

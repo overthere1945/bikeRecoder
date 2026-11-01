@@ -1,7 +1,6 @@
 package com.cowork.bikerecoder.importing
 
 import com.cowork.bikerecoder.core.format.RideFormat
-import com.cowork.bikerecoder.core.importing.Activity
 import com.cowork.bikerecoder.core.importing.ImportProblem
 import com.cowork.bikerecoder.core.importing.RideStatus
 import com.cowork.bikerecoder.ui.feed.clockText
@@ -30,7 +29,6 @@ const val IMPORT_PICK_OTHER = "다른 파일 고르기"
 const val IMPORT_NOTHING_FOUND = "가져올 주행을 찾지 못했습니다"
 const val IMPORT_OVERLAPS_EXISTING = "이미 있는 주행과 겹칩니다"
 const val IMPORT_DUPLICATE_IN_LIST = "목록에 같은 주행이 있습니다"
-const val IMPORT_NOT_CYCLING_SUFFIX = " — 자전거가 아님"
 const val IMPORT_BUSY_SHARE = "가져오기가 끝난 뒤 다시 보내 주세요"
 
 /** Appended to an imported trip's card date line. */
@@ -56,21 +54,12 @@ fun problemText(p: ImportProblem): String = when (p) {
 /** A file that could not be read, under "가져올 주행을 찾지 못했습니다": "notes.txt: GPX 파일이 아닙니다". */
 fun unreadableText(fileName: String, problem: ImportProblem): String = "$fileName: ${problemText(problem)}"
 
-/** "달리기", "걷기", "등산", else "다른 활동". */
-fun activityText(a: Activity?): String = when (a) {
-    Activity.RUNNING -> "달리기"
-    Activity.WALKING -> "걷기"
-    Activity.HIKING -> "등산"
-    else -> "다른 활동"
-}
-
 /**
- * The second line of a row (spec §1.2): a new ride "32.1 km · 1시간 45분" (moving time), not cycling
- * "달리기 · 6.2 km — 자전거가 아님", the overlap texts, or the reason it cannot be read.
+ * The second line of a row (spec §1.2): a new ride "32.1 km · 1시간 45분" (moving time, as read from the file whatever
+ * activity the row has now), the overlap texts, or the reason it cannot be read.
  */
 fun statusLine(row: ScanRow): String = when (val s = row.status) {
     RideStatus.New -> "${kmText(row.distanceM)} · ${RideFormat.duration(row.movingTimeMs)}"
-    RideStatus.NotCycling -> "${activityText(row.activity)} · ${kmText(row.distanceM)}$IMPORT_NOT_CYCLING_SUFFIX"
     RideStatus.OverlapsExisting -> IMPORT_OVERLAPS_EXISTING
     RideStatus.DuplicateInList -> IMPORT_DUPLICATE_IN_LIST
     is RideStatus.Unreadable -> problemText(s.problem)
