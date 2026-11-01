@@ -13,7 +13,6 @@ import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.elevation.TrackAxis
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.HeartRateSample
-import com.cowork.bikerecoder.core.post.HeartRateSummary
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
@@ -202,8 +201,12 @@ class ElevationMapViewModel(
             paths = axis.paths,
             colors = colors.getValue(shown),
             // Read out with the stored values (V1.8.0 spec §2.1).
-            speedDescription = ChartText.speedDescription(totals.avgSpeedMps * MPS_TO_KMH, totals.maxSpeedMps * MPS_TO_KMH),
-            heartDescription = if (heart != null && heartRate != null) heartDescription(heart) else "",
+            speedDescription = ChartText.speedDescription(totals),
+            heartDescription = if (heart != null && heartRate != null) {
+                ChartText.heartDescription(heart.stored.avgBpm, heart.stored.maxBpm, heart.samples)
+            } else {
+                ""
+            },
         )
         Loaded(state, colors, axis::pointAt)
     }
@@ -249,19 +252,5 @@ class ElevationMapViewModel(
 /** The length of the line: the profile's, or the series' (the same track axis). */
 private fun ElevationMapUiState.Ready.totalM(): Double = profile?.totalM ?: speed?.totalM ?: heartRate?.totalM ?: 0.0
 
-private const val MPS_TO_KMH = 3.6
-
 /** Segments' heart-rate samples one after another and what is stored of their heart rate. */
 private class HeartInput(val samples: List<HeartRateSample>, val stored: TripHeartRate)
-
-/**
- * The heart-rate chart's read-out: the stored average (weighted by moving time over a trip's segments) and highest
- * ([tripHeartRate]); without either, the samples' mean and highest.
- */
-private fun heartDescription(heart: HeartInput): String {
-    val avg = heart.stored.avgBpm
-    val max = heart.stored.maxBpm
-    if (avg != null && max != null) return ChartText.heartDescription(avg, max)
-    val sampled = HeartRateSummary.of(heart.samples, movingTimeMs = 0L) ?: return ""
-    return ChartText.heartDescription(sampled.avgBpm, sampled.maxBpm)
-}

@@ -125,41 +125,4 @@ class HeartRateTest {
         assertEquals(listOf(HrBand.NONE, HrBand.NONE), HeartRateColor.bands(track, emptyList()))
         assertEquals(emptyList(), HeartRateColor.bands(emptyList(), listOf(hr(0, 100))))
     }
-
-    @Test
-    fun chartSkipsUnmatchedPoints() {
-        // Points every 10 s from t=0..60 s; the only sample is at t=0, so only points within 30 s match.
-        val track = (0..6).map { tp(it * 10_000L) }
-        val chart = HeartRateCharts.bpm(track, listOf(hr(0, 120)))
-        assertEquals(4, chart.size) // t = 0, 10, 20, 30 s
-        assertTrue(chart.all { it.value == 120.0 })
-        assertEquals(0.0, chart.first().distanceKm)
-        assertTrue(chart.zipWithNext().all { (a, b) -> b.distanceKm > a.distanceKm })
-    }
-
-    @Test
-    fun chartUsesTheDistanceAxisOfTheOtherCharts() {
-        val track = listOf(tp(0), tp(5_000), tp(10_000))
-        val chart = HeartRateCharts.bpm(track, listOf(hr(0, 100), hr(5_000, 110), hr(10_000, 120)))
-        assertEquals(listOf(100.0, 110.0, 120.0), chart.map { it.value })
-        assertEquals(0.0, chart[0].distanceKm)
-        // 5 s ≈ 5.56 m at 0.00001 deg/s latitude
-        assertEquals(0.0056, chart[1].distanceKm, 0.0003)
-        assertEquals(0.0111, chart[2].distanceKm, 0.0003)
-    }
-
-    @Test
-    fun chartDownsamplesToMaxPoints() {
-        val track = (0 until 100).map { tp(it * 1_000L) }
-        val samples = (0 until 100).map { hr(it * 1_000L, 100 + it) }
-        val chart = HeartRateCharts.bpm(track, samples, maxPoints = 10)
-        assertEquals(10, chart.size)
-        assertEquals(100.0, chart.first().value)
-        assertEquals(199.0, chart.last().value)
-    }
-
-    @Test
-    fun chartWithoutSamplesIsEmpty() {
-        assertEquals(emptyList(), HeartRateCharts.bpm(listOf(tp(0), tp(1_000)), emptyList()))
-    }
 }

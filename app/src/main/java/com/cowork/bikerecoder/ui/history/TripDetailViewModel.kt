@@ -17,7 +17,9 @@ import com.cowork.bikerecoder.export.ExportState
 import com.cowork.bikerecoder.export.TripExporter
 import com.cowork.bikerecoder.feed.TripRegions
 import com.cowork.bikerecoder.core.elevation.ElevationProfile
+import com.cowork.bikerecoder.core.elevation.TrackAxis
 import com.cowork.bikerecoder.core.post.HeartRateColor
+import com.cowork.bikerecoder.core.post.HeartRateSample
 import com.cowork.bikerecoder.core.post.HeartRateStats
 import com.cowork.bikerecoder.core.post.HeartRateSummary
 import com.cowork.bikerecoder.core.post.HrStatus
@@ -26,6 +28,7 @@ import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
+import com.cowork.bikerecoder.core.series.MetricSeries
 import com.cowork.bikerecoder.core.trip.TripLabel
 import com.cowork.bikerecoder.core.trip.TripLabelStore
 import com.cowork.bikerecoder.core.trip.TripStore
@@ -35,6 +38,7 @@ import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.post.RidePhoto
 import com.cowork.bikerecoder.post.SegmentExtras
+import com.cowork.bikerecoder.ui.elevation.ChartText
 import com.cowork.bikerecoder.ui.health.TrackColorMode
 import com.cowork.bikerecoder.ui.photo.RidePhotos
 import com.cowork.bikerecoder.ui.photo.observeRidePhotos
@@ -61,6 +65,7 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
@@ -91,6 +96,10 @@ import java.time.ZoneId
  *
  * V1.7.0 (spec §4.1, §4.2): [export] saves the trip as GPX or KML under the shown [title] through [exportTrip];
  * [exportState] is where that stands, and [recording] (some segment is still open) dims the export menu.
+ *
+ * V1.8.0 (spec §2.2): [speedSeries] and [heartSeries] lie on the same track axis of the segments in start order, computed
+ * with [profile] on [compute] (and again when it is); the heart rate from each segment's stored samples, left out (logged)
+ * when they cannot be read. [heartDescription] reads the heart-rate chart out with the stored figures ([heartRate]).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class TripDetailViewModel(
@@ -115,6 +124,8 @@ class TripDetailViewModel(
     private val exportTrip: (suspend (tripId: Long, format: ExportFormat, title: String) -> ExportResult)? = null,
     /** Builds the elevation profile from the segments' points in start order; a seam for tests. */
     private val profileOf: (List<List<TrackPoint>>) -> ElevationProfile? = ElevationProfile.Companion::fromSegments,
+    /** Builds the speed series on the axis of the segments' points in start order; a seam for tests. */
+    private val speedOf: (TrackAxis, List<List<TrackPoint>>) -> MetricSeries? = MetricSeries.Companion::speed,
 ) : ViewModel() {
 
     private val _segmentsByDate = MutableStateFlow<Map<LocalDate, List<RideSegment>>>(emptyMap())
@@ -130,8 +141,24 @@ class TripDetailViewModel(
 
     private val _profileLoaded = MutableStateFlow(false)
 
-    /** True once [profile] is computed (null then means "no elevation"), so the screen does not flash "고도 정보가 없습니다". */
+    /**
+     * True once [profile], [speedSeries] and [heartSeries] are computed (null then means "no data"), so the screen does not
+     * flash "고도 정보가 없습니다" or "속도 정보가 없습니다".
+     */
     val profileLoaded: StateFlow<Boolean> = _profileLoaded.asStateFlow()
+
+    private val _speedSeries = MutableStateFlow<MetricSeries?>(null)
+
+    /** The trip's speed chart (V1.8.0 spec §2.2); null while it is computed, without speed, or when computing it failed. */
+    val speedSeries: StateFlow<MetricSeries?> = _speedSeries.asStateFlow()
+
+    private val _heartSeries = MutableStateFlow<MetricSeries?>(null)
+
+    /** The trip's heart-rate chart; null while it is computed and when there is nothing to draw (no chart then). */
+    val heartSeries: StateFlow<MetricSeries?> = _heartSeries.asStateFlow()
+
+    /** The samples [heartSeries] was made from, in start order: the read-out falls back to them. */
+    private val chartSamples = MutableStateFlow<List<HeartRateSample>>(emptyList())
 
     private val _canMakeMedia = MutableStateFlow(false)
 
@@ -232,6 +259,13 @@ class TripDetailViewModel(
 
     val heartRate: StateFlow<TripHeartRate> = combine(_segmentsByDate, extras, ::tripHeartRate)
         .stateIn(viewModelScope, SharingStarted.Eagerly, TripHeartRate())
+
+    /** "심박 그래프, 평균 …bpm, 최고 …bpm" with [heartRate]'s stored figures; without them, the samples' (V1.8.0 spec §2.1). */
+    val heartDescription: StateFlow<String> = combine(heartRate, chartSamples) { hr, samples ->
+        ChartText.heartDescription(hr.avgBpm, hr.maxBpm, samples)
+    }
+        .flowOn(compute)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     private val _colorMode = MutableStateFlow(TrackColorMode.DEFAULT)
 
@@ -416,11 +450,27 @@ class TripDetailViewModel(
                 val read = ordered.map { it.id to rideStore.points(it.id) }
                 tracks.value = read
                 trackOf = segments
-                val byStart = ordered.indices.sortedBy { ordered[it].startedAt }.map { read[it].second }
+                val startOrder = ordered.indices.sortedBy { ordered[it].startedAt }
+                val byStart = startOrder.map { read[it].second }.filter { it.isNotEmpty() }
+                // Without them the trip is shown without heart rate.
+                val samples = guarded("Could not read the heart-rate samples of trip $tripId") {
+                    startOrder.flatMap { postStore.samples(ordered[it].id) }
+                }
                 // A failing computation (e.g. out of memory on a huge trip) must still end the loading state: no chart, no retry loop.
                 _profile.value = guarded("Could not compute the elevation profile of trip $tripId") {
-                    withContext(compute) { profileOf(byStart.filter { it.isNotEmpty() }) }
+                    withContext(compute) { profileOf(byStart) }
                 }
+                val series = guarded("Could not compute the speed and heart-rate series of trip $tripId") {
+                    withContext(compute) {
+                        val axis = TrackAxis.of(byStart)
+                        val speed = axis?.let { speedOf(it, byStart) }
+                        val heart = if (axis == null || samples == null) null else MetricSeries.heartRate(axis, byStart, samples)
+                        speed to heart
+                    }
+                }
+                _speedSeries.value = series?.first
+                _heartSeries.value = series?.second
+                chartSamples.value = samples.orEmpty()
                 _profileLoaded.value = true
             }
             askRegion(segments)

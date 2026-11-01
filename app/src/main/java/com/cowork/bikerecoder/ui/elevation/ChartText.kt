@@ -1,6 +1,9 @@
 package com.cowork.bikerecoder.ui.elevation
 
 import com.cowork.bikerecoder.core.format.SummaryFormatter
+import com.cowork.bikerecoder.core.post.HeartRateSample
+import com.cowork.bikerecoder.core.post.HeartRateSummary
+import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.series.MetricKind
 import com.cowork.bikerecoder.core.series.SpeedBand
 import kotlin.math.roundToInt
@@ -29,8 +32,22 @@ object ChartText {
     fun speedDescription(avgKmh: Double, maxKmh: Double): String =
         "속도 그래프, 평균 ${whole(avgKmh)}km/h, 최고 ${whole(maxKmh)}km/h"
 
+    /** The speed chart's read-out from the stored [totals] (a trip's or a segment's), never from the series (§2.1). */
+    fun speedDescription(totals: SegmentTotals): String =
+        speedDescription(totals.avgSpeedMps * MPS_TO_KMH, totals.maxSpeedMps * MPS_TO_KMH)
+
     /** "심박 그래프, 평균 132bpm, 최고 171bpm": what the heart-rate chart reads out. */
     fun heartDescription(avgBpm: Int, maxBpm: Int): String = "심박 그래프, 평균 ${avgBpm}bpm, 최고 ${maxBpm}bpm"
+
+    /**
+     * The heart-rate chart's read-out (§2.1): the stored [avgBpm] and [maxBpm] (a trip's moving-time-weighted average and
+     * highest, or a segment's); without either, the mean and highest of [samples]; "" without those either.
+     */
+    fun heartDescription(avgBpm: Int?, maxBpm: Int?, samples: List<HeartRateSample>): String {
+        if (avgBpm != null && maxBpm != null) return heartDescription(avgBpm, maxBpm)
+        val sampled = HeartRateSummary.of(samples, movingTimeMs = 0L) ?: return ""
+        return heartDescription(sampled.avgBpm, sampled.maxBpm)
+    }
 
     /** "34km/h", "162bpm": the chart's top and bottom labels. */
     fun valueLabel(kind: MetricKind, v: Double): String = "${whole(v)}${unit(kind)}"
@@ -39,6 +56,8 @@ object ChartText {
         MetricKind.SPEED -> "km/h"
         MetricKind.HEART_RATE -> "bpm"
     }
+
+    private const val MPS_TO_KMH = 3.6
 
     private fun whole(v: Double): Int = v.roundToInt().coerceAtLeast(0)
 }

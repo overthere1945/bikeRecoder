@@ -849,7 +849,7 @@ fun BikeNavHost(
                 tileSource = container.tileSource,
                 thumbnails = container.photoThumbnails,
                 onOpenSegment = { segmentId -> navController.navigate(Routes.segmentDetail(segmentId)) },
-                onOpenElevation = { navController.openElevation(ElevationSource.Trip(tripId)) },
+                onOpenChart = { tab -> navController.openChartMap(ElevationSource.Trip(tripId), tab) },
                 onBack = { navController.popBackStack() },
                 photoPrompt = { PhotoPrompt(container) },
                 heartRateGate = heartRateGate,
@@ -930,7 +930,7 @@ fun BikeNavHost(
                 tileSource = container.tileSource,
                 thumbnails = container.photoThumbnails,
                 onBack = { navController.popBackStack() },
-                onOpenElevation = { navController.openElevation(ElevationSource.Segment(segmentId)) },
+                onOpenChart = { tab -> navController.openChartMap(ElevationSource.Segment(segmentId), tab) },
                 photoPrompt = { PhotoPrompt(container) },
                 heartRateGate = heartRateGate,
             )

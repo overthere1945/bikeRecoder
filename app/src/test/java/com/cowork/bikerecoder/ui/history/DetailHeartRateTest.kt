@@ -1,8 +1,8 @@
 package com.cowork.bikerecoder.ui.history
 
+import com.cowork.bikerecoder.core.elevation.TrackAxis
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.RouteProfile
-import com.cowork.bikerecoder.core.post.HeartRateCharts
 import com.cowork.bikerecoder.core.post.HeartRateColor
 import com.cowork.bikerecoder.core.post.HeartRateSample
 import com.cowork.bikerecoder.core.post.HrRead
@@ -11,6 +11,8 @@ import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
+import com.cowork.bikerecoder.core.series.MetricKind
+import com.cowork.bikerecoder.core.series.MetricSeries
 import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripType
@@ -44,7 +46,7 @@ import org.junit.jupiter.api.Test
 import java.time.LocalDate
 
 /**
- * The heart rate of the segment and trip detail view models (spec §3.3): the [기본]/[심박] track colours, the chart,
+ * The heart rate of the segment and trip detail view models (spec §3.3): the [기본]/[심박] track colours, the series,
  * [다시 가져오기], the trip's time-weighted totals and its map of separate segment lines (ruling R10).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -149,17 +151,36 @@ class DetailHeartRateTest {
         assertNull(vm.trackColors.value)
     }
 
+    /** V1.8.0 §2.3: the heart-rate series lies on the segment's track axis, the same as the speed series. */
     @Test
-    fun theHeartRateChartUsesTheDistanceAxis() = runTest(dispatcher) {
+    fun theHeartRateSeriesUsesTheTrackAxis() = runTest(dispatcher) {
         val id = segment(startedAt = 0)
         val samples = listOf(HeartRateSample(0L, 110), HeartRateSample(2_000L, 130))
         ready(id, samples)
         val vm = segmentDetail(id)
         advanceUntilIdle()
 
-        assertEquals(HeartRateCharts.bpm(rides.points(id), samples), vm.heartRateChart.value)
-        assertEquals(4, vm.heartRateChart.value.size)
+        val points = rides.points(id)
+        val expected = MetricSeries.heartRate(TrackAxis.of(listOf(points))!!, listOf(points), samples)!!
+        val series = vm.heartSeries.value!!
+        assertEquals(MetricKind.HEART_RATE, series.kind)
+        assertEquals(expected.distancesM.toList(), series.distancesM.toList())
+        assertEquals(expected.values, series.values)
+        val speed = (vm.state.value as SegmentDetailState.Loaded).speedSeries
+        assertEquals(speed?.totalM, series.totalM, "one axis for both charts")
         assertEquals(120, vm.heartRate.value?.avgBpm)
+        assertEquals("심박 그래프, 평균 120bpm, 최고 150bpm", vm.heartDescription.value, "the stored values, not the samples'")
+    }
+
+    /** Without samples there is no heart-rate series, also while the stored figures are READY. */
+    @Test
+    fun noSamplesNoHeartRateSeries() = runTest(dispatcher) {
+        val id = segment(startedAt = 0)
+        ready(id, emptyList())
+        val vm = segmentDetail(id)
+        advanceUntilIdle()
+
+        assertNull(vm.heartSeries.value)
     }
 
     @Test
@@ -177,7 +198,7 @@ class DetailHeartRateTest {
         assertEquals(before + 1, heartRate.calls.size)
         assertEquals(HrStatus.READY, vm.heartRate.value?.hrStatus)
         assertEquals(140, vm.heartRate.value?.avgBpm)
-        assertEquals(4, vm.heartRateChart.value.size, "the new samples are charted")
+        assertEquals(listOf(140.0, 140.0, 140.0, 140.0), vm.heartSeries.value?.values, "the new samples are charted")
     }
 
     @Test

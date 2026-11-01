@@ -39,6 +39,8 @@ import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.SegmentTotals
+import com.cowork.bikerecoder.core.series.MetricKind
+import com.cowork.bikerecoder.core.series.MetricSeries
 import com.cowork.bikerecoder.export.ExportFormat
 import com.cowork.bikerecoder.export.ExportMenu
 import com.cowork.bikerecoder.export.ExportOutcome
@@ -47,7 +49,10 @@ import com.cowork.bikerecoder.export.ExportState
 import com.cowork.bikerecoder.importing.importedFromText
 import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.post.PhotoThumbnails
+import com.cowork.bikerecoder.ui.elevation.ChartTab
+import com.cowork.bikerecoder.ui.elevation.ChartText
 import com.cowork.bikerecoder.ui.elevation.ElevationChart
+import com.cowork.bikerecoder.ui.elevation.MetricChart
 import com.cowork.bikerecoder.ui.health.HR_REFETCH
 import com.cowork.bikerecoder.ui.health.HeartRateAccess
 import com.cowork.bikerecoder.ui.health.HeartRateGate
@@ -71,7 +76,7 @@ import java.time.LocalDate
  * [mediaEntry]: [영상 만들기] [이미지 만들기] (or the progress card) of this trip, shown when it is completed with a ride to
  * make it from (V1.3.0 spec §1.1); [mediaThumbnail] and [onOpenMedia]: "만든 영상·이미지" (§5.1).
  * [onShare]: the paper plane on the title row, shown while the trip has a finished ride to share (V1.5.0 spec §1.1).
- * [onOpenElevation]: the small elevation chart's [지도에 표시] / tap opens the "고도" map screen (V1.7.0 spec §2.3).
+ * [onOpenChart]: a small chart's [지도에 표시] / tap opens the big map on that chart's tab (V1.7.0 spec §2.3, V1.8.0 §2.2).
  * The title row's [⋮] exports the trip as GPX or KML (V1.7.0 spec §4.1, §4.2), through the view model.
  */
 @Composable
@@ -81,7 +86,7 @@ fun TripDetailScreen(
     thumbnails: PhotoThumbnails,
     onOpenSegment: (Long) -> Unit,
     onBack: () -> Unit,
-    onOpenElevation: () -> Unit = {},
+    onOpenChart: (ChartTab) -> Unit = {},
     photoPrompt: @Composable () -> Unit = {},
     heartRateGate: HeartRateGate? = null,
     mediaEntry: @Composable () -> Unit = {},
@@ -107,6 +112,9 @@ fun TripDetailScreen(
     val importedFrom by viewModel.importedFrom.collectAsStateWithLifecycle()
     val profile by viewModel.profile.collectAsStateWithLifecycle()
     val profileLoaded by viewModel.profileLoaded.collectAsStateWithLifecycle()
+    val speedSeries by viewModel.speedSeries.collectAsStateWithLifecycle()
+    val heartSeries by viewModel.heartSeries.collectAsStateWithLifecycle()
+    val heartDescription by viewModel.heartDescription.collectAsStateWithLifecycle()
     val exportState by viewModel.exportState.collectAsStateWithLifecycle()
     val recording by viewModel.recording.collectAsStateWithLifecycle()
     var renaming by rememberSaveable { mutableStateOf(false) }
@@ -124,7 +132,10 @@ fun TripDetailScreen(
         importedFrom = importedFrom,
         profile = profile,
         profileLoaded = profileLoaded,
-        onOpenElevation = onOpenElevation,
+        onOpenChart = onOpenChart,
+        speedSeries = speedSeries,
+        heartSeries = heartSeries,
+        heartDescription = heartDescription,
         onExport = if (viewModel.canExport) viewModel::export else null,
         exportEnabled = !recording,
         exporting = exportState == ExportState.Running,
@@ -197,9 +208,11 @@ internal fun tripRefetchAction(access: HeartRateAccess, refetch: () -> Unit): ((
  * spec §4.2), then the map ([map], every day's track and photos; outside the scrolling part, so it keeps its drags), then
  * [videos] ([영상 만들기] [이미지 만들기] and "만든 영상·이미지", V1.3.0 spec §1.1, §5.1),
  * [photos] (the photo strip and card, spec §2.3), the totals (with the trip's [heartRate], spec §3.3; the third row is
- * the ascent, descent and highest altitude, V1.7.0 spec §2.3), under them the small elevation chart of [profile] (with
- * [지도에 표시], opening the "고도" map screen through [onOpenElevation]; nothing while [profileLoaded] is false) and its
- * segments under a header per date (with that day's average heart rate); a long press asks to delete.
+ * the ascent, descent and highest altitude, V1.7.0 spec §2.3), under them the small charts (V1.8.0 spec §2.2), each under
+ * its title: 고도 of [profile], 속도 of [speedSeries] (read out with [total]'s average and highest) and, only with a
+ * [heartSeries], 심박 (read out as [heartDescription]); each with [지도에 표시], opening the big map on its tab through
+ * [onOpenChart]; none while [profileLoaded] is false. Then its segments under a header per date (with that day's average
+ * heart rate); a long press asks to delete.
  * [onExport]: the title row's [⋮] at its right end (the row is drawn for it even while there is no [title]) with "GPX로 내보내기" and "KML로 내보내기" (V1.7.0 spec §4.1), dimmed
  * with "기록을 마친 뒤 내보낼 수 있습니다" while [exportEnabled] is false; [exporting] shows a small progress indicator
  * over the screen's content (§4.2).
@@ -226,7 +239,10 @@ fun TripDetailContent(
     importedFrom: String? = null,
     profile: ElevationProfile? = null,
     profileLoaded: Boolean = true,
-    onOpenElevation: (() -> Unit)? = null,
+    onOpenChart: ((ChartTab) -> Unit)? = null,
+    speedSeries: MetricSeries? = null,
+    heartSeries: MetricSeries? = null,
+    heartDescription: String = "",
     onExport: ((ExportFormat) -> Unit)? = null,
     exportEnabled: Boolean = true,
     exporting: Boolean = false,
@@ -260,7 +276,13 @@ fun TripDetailContent(
                 map?.invoke(Modifier.fillMaxWidth().height(240.dp))
                 TripDetailList(
                     segmentsByDate, total, heartRate, onOpenSegment, onRequestDelete, videos, photos, onRefetchHeartRate,
-                    refetching, profile, profileLoaded, onOpenElevation, Modifier.weight(1f),
+                    refetching,
+                    charts = if (profileLoaded) {
+                        { TripCharts(profile, speedSeries, heartSeries, total, heartDescription, onOpenChart) }
+                    } else {
+                        null
+                    },
+                    modifier = Modifier.weight(1f),
                 )
             }
             // Over the content, in the scaffold's box.
@@ -314,9 +336,7 @@ private fun TripDetailList(
     photos: @Composable () -> Unit,
     onRefetchHeartRate: (() -> Unit)?,
     refetching: Boolean,
-    profile: ElevationProfile?,
-    showElevation: Boolean,
-    onOpenElevation: (() -> Unit)?,
+    charts: (@Composable () -> Unit)?,
     modifier: Modifier,
 ) {
     LazyColumn(
@@ -333,8 +353,8 @@ private fun TripDetailList(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { photos() }
         }
         item(key = "total") { TripTotal(total, heartRate, onRefetchHeartRate, refetching) }
-        if (showElevation) {
-            item(key = "elevation") { ElevationChart(profile, onOpen = onOpenElevation) }
+        if (charts != null) {
+            item(key = "charts") { charts() }
         }
         segmentsByDate.forEach { (date, segments) ->
             item(key = "date-$date") {
@@ -364,6 +384,40 @@ private fun TripDetailList(
             }
         }
     }
+}
+
+/**
+ * 고도, 속도 and 심박 (only with [heart]) under their `titleSmall` titles (V1.8.0 spec §2.2); [onOpenChart] opens the big
+ * map on the tab of the chart tapped. One item, so the three are laid out (and found) together.
+ */
+@Composable
+private fun TripCharts(
+    profile: ElevationProfile?,
+    speed: MetricSeries?,
+    heart: MetricSeries?,
+    total: SegmentTotals,
+    heartDescription: String,
+    onOpenChart: ((ChartTab) -> Unit)?,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ChartTitle(ChartText.TITLE_ELEVATION)
+        ElevationChart(profile, onOpen = onOpenChart?.let { { it(ChartTab.ELEVATION) } })
+        ChartTitle(ChartText.TITLE_SPEED)
+        MetricChart(
+            speed, MetricKind.SPEED, ChartText.speedDescription(total), onOpen = onOpenChart?.let { { it(ChartTab.SPEED) } },
+        )
+        if (heart != null) {
+            ChartTitle(ChartText.TITLE_HEART)
+            MetricChart(
+                heart, MetricKind.HEART_RATE, heartDescription, onOpen = onOpenChart?.let { { it(ChartTab.HEART_RATE) } },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ChartTitle(text: String) {
+    Text(text, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
 }
 
 @Composable

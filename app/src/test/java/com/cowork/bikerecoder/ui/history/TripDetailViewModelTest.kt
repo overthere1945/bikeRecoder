@@ -2,9 +2,13 @@ package com.cowork.bikerecoder.ui.history
 
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.RouteProfile
+import com.cowork.bikerecoder.core.post.HeartRateSample
+import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.core.elevation.ElevationProfile
+import com.cowork.bikerecoder.core.elevation.TrackAxis
+import com.cowork.bikerecoder.core.series.MetricSeries
 import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripLabel
 import com.cowork.bikerecoder.core.trip.TripStatus
@@ -19,6 +23,8 @@ import com.cowork.bikerecoder.post.FakeHeartRateSource
 import com.cowork.bikerecoder.post.FakePhotoSource
 import com.cowork.bikerecoder.post.FakePostStore
 import com.cowork.bikerecoder.post.PostProcessor
+import com.cowork.bikerecoder.post.PostStore
+import com.cowork.bikerecoder.post.SegmentExtras
 import com.cowork.bikerecoder.ride.FakeRideStore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -33,13 +39,17 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.time.LocalDate
 import java.time.ZoneId
 
-/** 여행 기록 화면의 제목 줄(스펙 §2.5): 보이는 제목, 지역 찾기, 제목 바꾸기. V1.7.0: 하강·최고 고도 합계와 고도 단면(스펙 §1.5, §2.3). */
+/**
+ * 여행 기록 화면의 제목 줄(스펙 §2.5): 보이는 제목, 지역 찾기, 제목 바꾸기. V1.7.0: 하강·최고 고도 합계와 고도 단면(스펙 §1.5, §2.3).
+ * V1.8.0: 속도·심박 계열과 그래프 낭독(스펙 §2.1, §2.2).
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
 class TripDetailViewModelTest {
 
@@ -75,8 +85,10 @@ class TripDetailViewModelTest {
     private fun TestScope.detail(
         imported: Flow<Map<Long, String>> = flowOf(emptyMap()),
         profileOf: (List<List<TrackPoint>>) -> ElevationProfile? = ElevationProfile.Companion::fromSegments,
+        speedOf: (TrackAxis, List<List<TrackPoint>>) -> MetricSeries? = MetricSeries.Companion::speed,
+        postStore: PostStore = store,
     ) = TripDetailViewModel(
-        rides, TRIP, store,
+        rides, TRIP, postStore,
         PostProcessor(rides, store, FakePhotoSource(), FakeHeartRateSource(), clock = { 0L }, scope = backgroundScope, warnLog = { _, _ -> }),
         compute = dispatcher,
         tripStore = trips,
@@ -84,6 +96,7 @@ class TripDetailViewModelTest {
         tripRegions = regions,
         imported = imported,
         profileOf = profileOf,
+        speedOf = speedOf,
         exportTrip = { id, format, title ->
             exports += Triple(id, format, title)
             exportGate?.await()
@@ -183,11 +196,12 @@ class TripDetailViewModelTest {
             TrackPoint(startedAt + i * 2_000L, GeoPoint(lat, 127.0), eleAt(i), 5f, 5f)
         }
 
-    /** 한 구간을 [points]·[totals]로 저장하고 닫는다. */
-    private suspend fun ride(startedAt: Long, day: LocalDate, points: List<TrackPoint>, totals: SegmentTotals) {
+    /** 한 구간을 [points]·[totals]로 저장하고 닫는다. 구간 id를 돌려준다. */
+    private suspend fun ride(startedAt: Long, day: LocalDate, points: List<TrackPoint>, totals: SegmentTotals): Long {
         val id = rides.openSegment(TRIP, startedAt, day)
         rides.appendPoints(id, points, totals)
         rides.closeSegment(id, points.last().timeMillis, totals)
+        return id
     }
 
     private suspend fun openTrip() {
@@ -258,6 +272,136 @@ class TripDetailViewModelTest {
         assertEquals(expected.boundariesM, actual.boundariesM)
         assertEquals(expected.elevationsM.toList(), actual.elevationsM.toList())
         assertEquals(1, actual.boundariesM.size)
+    }
+
+    /** [segment]의 점마다 [bpm] 표본을 두고, 저장된 평균·최고를 [avg]·[max]로 READY 처리한다. */
+    private suspend fun heart(segment: Long, points: List<TrackPoint>, bpm: (Int) -> Int, avg: Int?, max: Int?): List<HeartRateSample> {
+        val samples = points.mapIndexed { i, p -> HeartRateSample(p.timeMillis, bpm(i)) }
+        store.replaceSamples(segment, samples)
+        store.saveExtras(
+            SegmentExtras(segment, hrStatus = HrStatus.READY, hrLastTriedAt = 1L, hrDetailed = true, avgBpm = avg, maxBpm = max),
+        )
+        return samples
+    }
+
+    private fun assertSameSeries(expected: MetricSeries, actual: MetricSeries?) {
+        assertNotNull(actual)
+        assertEquals(expected.kind, actual!!.kind)
+        assertEquals(expected.distancesM.toList(), actual.distancesM.toList())
+        assertEquals(expected.values, actual.values)
+        assertEquals(expected.boundariesM, actual.boundariesM)
+    }
+
+    /** V1.8.0 §2.2: 속도·심박 계열은 고도 단면처럼 시작 시각 순 구간들의 한 축 위에 만들고, 표본은 구간마다 읽어 잇는다. */
+    @Test
+    fun speedAndHeartSeries() = runTest(dispatcher) {
+        openTrip()
+        val t = SegmentTotals.ZERO.copy(distanceM = 300.0, movingTimeMs = 60_000)
+        val later = track(90_000_000L, 37.6, 31) { null }
+        val earlier = track(1_000_000L, 37.5, 31) { null }
+        // 늦은 구간을 먼저 저장해도 시작 시각 순으로 이어 붙인다.
+        val laterId = ride(90_000_000L, LocalDate.of(2026, 10, 25), later, t)
+        val earlierId = ride(1_000_000L, LocalDate.of(2026, 10, 24), earlier, t)
+        val first = heart(earlierId, earlier, { 120 + it }, avg = 135, max = 150)
+        val second = heart(laterId, later, { 160 - it }, avg = 145, max = 160)
+        val vm = detail()
+        advanceUntilIdle()
+
+        val segments = listOf(earlier, later)
+        val axis = TrackAxis.of(segments)!!
+        assertSameSeries(MetricSeries.speed(axis, segments)!!, vm.speedSeries.value)
+        assertSameSeries(MetricSeries.heartRate(axis, segments, first + second)!!, vm.heartSeries.value)
+        assertEquals(1, vm.speedSeries.value!!.boundariesM.size)
+        assertEquals(true, vm.profileLoaded.value)
+    }
+
+    /** 심박 표본이 없으면(저장된 평균만 있어도) 심박 계열은 null이고, 속도 계열은 그대로 있다. */
+    @Test
+    fun noHeartRateGivesNullSeries() = runTest(dispatcher) {
+        openTrip()
+        val t = SegmentTotals.ZERO.copy(distanceM = 300.0, movingTimeMs = 60_000)
+        val points = track(1_000_000L, 37.5, 31) { null }
+        val id = ride(1_000_000L, LocalDate.of(2026, 10, 24), points, t)
+        store.saveExtras(SegmentExtras(id, hrStatus = HrStatus.READY, hrLastTriedAt = 1L, hrDetailed = true, avgBpm = 130, maxBpm = 150))
+        val vm = detail()
+        advanceUntilIdle()
+
+        assertNull(vm.heartSeries.value)
+        assertNotNull(vm.speedSeries.value)
+        assertEquals(true, vm.profileLoaded.value)
+    }
+
+    /** 합계 카드의 평균·최고와 그래프 낭독은 저장된 값이다. 다듬은 계열(18 km/h, 140 bpm 근처)에서 구하지 않는다. */
+    @Test
+    fun storedAveragesUnchanged() = runTest(dispatcher) {
+        openTrip()
+        // 저장된 합계: 300 m를 30초에 = 평균 10 m/s(36 km/h), 최고 15 m/s(54 km/h). 점은 모두 5 m/s(18 km/h)다.
+        val t = SegmentTotals.ZERO.copy(distanceM = 300.0, movingTimeMs = 30_000, maxSpeedMps = 15.0)
+        val points = track(1_000_000L, 37.5, 31) { null }
+        val id = ride(1_000_000L, LocalDate.of(2026, 10, 24), points, t)
+        heart(id, points, { 140 }, avg = 120, max = 175)
+        val vm = detail()
+        advanceUntilIdle()
+
+        assertEquals(10.0, vm.total.value.avgSpeedMps)
+        assertEquals(15.0, vm.total.value.maxSpeedMps)
+        assertEquals(120, vm.heartRate.value.avgBpm)
+        assertEquals(175, vm.heartRate.value.maxBpm)
+        assertEquals(140.0, vm.heartSeries.value!!.maxValue, 1e-9)
+        assertEquals("심박 그래프, 평균 120bpm, 최고 175bpm", vm.heartDescription.value)
+    }
+
+    /** 저장된 평균·최고가 없으면(READY 아님) 표본에서 구한 평균·최고를 읽는다. */
+    @Test
+    fun heartReadOutFallsBackToSamples() = runTest(dispatcher) {
+        openTrip()
+        val t = SegmentTotals.ZERO.copy(distanceM = 300.0, movingTimeMs = 60_000)
+        val points = track(1_000_000L, 37.5, 31) { null }
+        val id = ride(1_000_000L, LocalDate.of(2026, 10, 24), points, t)
+        // 130 … 160: 평균 145, 최고 160.
+        store.replaceSamples(id, points.mapIndexed { i, p -> HeartRateSample(p.timeMillis, 130 + i) })
+        val vm = detail()
+        advanceUntilIdle()
+
+        assertNull(vm.heartRate.value.avgBpm)
+        assertNotNull(vm.heartSeries.value)
+        assertEquals("심박 그래프, 평균 145bpm, 최고 160bpm", vm.heartDescription.value)
+    }
+
+    /** 계열 계산이 실패해도 불러오기는 끝나고(그래프 자리는 비지 않는다), 고도 단면은 그대로다. */
+    @Test
+    fun seriesFailureStillLoaded() = runTest(dispatcher) {
+        openTrip()
+        val t = SegmentTotals.ZERO.copy(distanceM = 600.0, movingTimeMs = 60_000)
+        val points = track(1_000_000L, 37.5, 61) { 100.0 + it }
+        val id = ride(1_000_000L, LocalDate.of(2026, 10, 24), points, t)
+        heart(id, points, { 140 }, avg = 140, max = 140)
+        val vm = detail(speedOf = { _, _ -> error("boom") })
+        advanceUntilIdle()
+
+        assertEquals(true, vm.profileLoaded.value)
+        assertNull(vm.speedSeries.value)
+        assertNull(vm.heartSeries.value)
+        assertNotNull(vm.profile.value)
+    }
+
+    /** 표본을 읽지 못하면 심박 없이 보인다(로그만 남긴다). 속도 계열은 있다. */
+    @Test
+    fun unreadableSamplesDropOnlyHeartRate() = runTest(dispatcher) {
+        openTrip()
+        val t = SegmentTotals.ZERO.copy(distanceM = 300.0, movingTimeMs = 60_000)
+        val points = track(1_000_000L, 37.5, 31) { null }
+        val id = ride(1_000_000L, LocalDate.of(2026, 10, 24), points, t)
+        heart(id, points, { 140 }, avg = 140, max = 140)
+        val failing = object : PostStore by store {
+            override suspend fun samples(segmentId: Long): List<HeartRateSample> = throw IllegalStateException("database busy")
+        }
+        val vm = detail(postStore = failing)
+        advanceUntilIdle()
+
+        assertNull(vm.heartSeries.value)
+        assertNotNull(vm.speedSeries.value)
+        assertEquals(true, vm.profileLoaded.value)
     }
 
     /** 가져온 여행(V1.6.0)도 기록한 여행과 같이 저장된 점으로 단면이 만들어진다. */
