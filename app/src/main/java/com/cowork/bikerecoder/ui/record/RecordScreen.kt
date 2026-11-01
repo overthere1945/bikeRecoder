@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -56,6 +57,8 @@ import com.cowork.bikerecoder.map.CameraMode
 import com.cowork.bikerecoder.map.MapOverlay
 import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.nav.NavigationService
+import com.cowork.bikerecoder.ui.activity.ActivityBadge
+import com.cowork.bikerecoder.ui.activity.ActivityText
 import com.cowork.bikerecoder.ui.common.KeepScreenOn
 import com.cowork.bikerecoder.ui.health.HeartRateGate
 import com.cowork.bikerecoder.ui.common.NoticeSnackbarHost
@@ -72,6 +75,9 @@ object RecordTags {
     const val STOP = "record-stop"
     const val BAND = "record-band"
     const val NUMBERS_PAGE = "record-numbers"
+
+    /** The activity's name beside its badge in the status line. */
+    const val ACTIVITY = "record-activity"
 
     /** The top strip (chip and bands). */
     const val TOP = "record-top"
@@ -238,6 +244,8 @@ fun RecordContent(
     var askEnd by rememberSaveable { mutableStateOf(false) }
     val paused = state.state as? RecordingState.Paused
     val dimAlpha = if (paused != null) DIMMED_ALPHA else 1f
+    // Ticks only for a hike with a known sunset: the sunset line counts down.
+    val now = rememberNowMillis(state.sunsetMillis != null)
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -250,7 +258,17 @@ fun RecordContent(
                     .testTag(RecordTags.TOP),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                AutoPauseChip(state.autoPause, onToggleAutoPause, Modifier.testTag(RecordTags.CHIP))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // The status line: the activity's badge and name, then the auto-pause chip (spec §1.4).
+                    ActivityBadge(state.activity, STATUS_BADGE, contentDescription = null)
+                    Text(
+                        ActivityText.name(state.activity),
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.testTag(RecordTags.ACTIVITY),
+                    )
+                    Spacer(Modifier.weight(1f))
+                    AutoPauseChip(state.autoPause, onToggleAutoPause, Modifier.testTag(RecordTags.CHIP))
+                }
                 if (paused != null) PauseBand(paused.kind, Modifier.testTag(RecordTags.BAND))
                 if (serviceWarning != null) Band(serviceWarning, MaterialTheme.colorScheme.error)
                 if (state.gpsWeak) Band("GPS 신호 약함", MaterialTheme.colorScheme.error)
@@ -277,7 +295,7 @@ fun RecordContent(
                             ) { Text("목적지 정하기") }
                         }
                         Text(
-                            rideMapSummaryLine(state.stats),
+                            rideMapSummaryLine(state.stats, state.activity, paused = paused != null),
                             style = MaterialTheme.typography.titleMedium,
                             textAlign = TextAlign.Center,
                             modifier = Modifier
@@ -292,6 +310,9 @@ fun RecordContent(
                 } else {
                     RideNumbersPage(
                         stats = state.stats,
+                        activity = state.activity,
+                        sunsetMillis = state.sunsetMillis,
+                        nowMillis = now,
                         dimmed = paused != null,
                         modifier = Modifier.fillMaxSize().swipeTurnsPages(pager, scope).testTag(RecordTags.NUMBERS_PAGE),
                     )
@@ -449,3 +470,6 @@ internal fun SummaryMap(track: List<GeoPoint>, tileSource: TileSource, modifier:
 }
 
 private const val DIMMED_ALPHA = 0.4f
+
+/** The activity badge of the status line (the list-row size, spec §2.1). */
+private val STATUS_BADGE = 24.dp

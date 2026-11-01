@@ -394,7 +394,7 @@ private fun ActiveContent(
                             TurnCard(nav)
                             if (ride != null) {
                                 Text(
-                                    rideSummaryLine(ride.stats),
+                                    rideSummaryLine(ride.stats, ride.activity),
                                     style = MaterialTheme.typography.titleMedium,
                                     textAlign = TextAlign.Center,
                                     modifier = Modifier

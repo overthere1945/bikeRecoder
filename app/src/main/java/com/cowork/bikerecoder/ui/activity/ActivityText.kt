@@ -1,7 +1,10 @@
 package com.cowork.bikerecoder.ui.activity
 
+import com.cowork.bikerecoder.core.activity.ActivityFormat
 import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.format.RideFormat
+import com.cowork.bikerecoder.ui.feed.kmText
+import com.cowork.bikerecoder.ui.feed.meterText
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -50,5 +53,36 @@ object ActivityText {
         !sunsetWarning(sunsetMillis, nowMillis) -> null
         nowMillis >= sunsetMillis -> "일몰 지남"
         else -> "일몰까지 ${RideFormat.duration(sunsetMillis - nowMillis)}"
+    }
+
+    /**
+     * The three numbers of a record card (spec §2.2) as (label, value), in the activity's order: a bike 거리·이동 시간·평균
+     * 속도, a run 거리·평균 페이스·이동 시간, a walk 거리·이동 시간·평균 페이스, a hike 산행 시간·누적 상승·최고 고도.
+     * Values use the feed card's formats ("5.0 km", "27분", "5'32"/km"); the hike time is the [elapsedMs] (rests included).
+     */
+    fun cardCells(
+        activity: ActivityType,
+        distanceM: Double,
+        movingTimeMs: Long,
+        elapsedMs: Long,
+        ascentM: Double,
+        maxAltitudeM: Double?,
+    ): List<Pair<String, String>> {
+        val distance = "거리" to kmText(distanceM)
+        val moving = "이동 시간" to RideFormat.duration(movingTimeMs)
+        val pace = "평균 페이스" to "${ActivityFormat.paceOf(distanceM, movingTimeMs)}/km"
+        return when (activity) {
+            ActivityType.BIKE -> {
+                val mps = if (movingTimeMs > 0) distanceM / (movingTimeMs / 1000.0) else 0.0
+                listOf(distance, moving, "평균 속도" to "${RideFormat.speedKmh(mps)} km/h")
+            }
+            ActivityType.RUN -> listOf(distance, pace, moving)
+            ActivityType.WALK -> listOf(distance, moving, pace)
+            ActivityType.HIKE -> listOf(
+                "산행 시간" to RideFormat.duration(elapsedMs),
+                "누적 상승" to meterText(ascentM),
+                "최고 고도" to (maxAltitudeM?.let(::meterText) ?: "--"),
+            )
+        }
     }
 }
