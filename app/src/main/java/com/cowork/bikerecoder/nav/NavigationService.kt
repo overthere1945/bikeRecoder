@@ -81,7 +81,10 @@ class NavigationService : Service() {
         if (mirror == null) {
             mirror = scope.launch {
                 // Latest: a new start while waiting for the voice below cancels the pending stop.
-                combine(container.navigationUi, container.rideUi, NavNotifications::rideNotice)
+                // A recording publishes every second, so a hike's sunset countdown follows the clock.
+                combine(container.navigationUi, container.rideUi) { nav, ride ->
+                    NavNotifications.rideNotice(nav, ride, System.currentTimeMillis())
+                }
                     .distinctUntilChanged()
                     .collectLatest { shown ->
                         if (shown != null) {

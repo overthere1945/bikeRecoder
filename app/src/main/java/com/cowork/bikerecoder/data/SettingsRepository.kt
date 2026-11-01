@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.ui.onboarding.OnboardingStep
 import kotlinx.coroutines.flow.Flow
@@ -40,6 +41,8 @@ data class AppSettings(
     val yearlyGoalKm: Int? = null,
     /** Default hashtags of the share text (spec §3.5). null = never saved (the default applies), "" = none. */
     val shareHashtags: String? = null,
+    /** The map screen's activity chip: what [● 기록 시작] records (V1.9.0 spec §1.4). Guided recordings never change it. */
+    val lastActivity: ActivityType = ActivityType.BIKE,
 )
 
 /** 기록 중에 안내를 새로 시작할 때 기록을 어떻게 할지(스펙 §4.3). */
@@ -78,7 +81,13 @@ class SettingsRepository(context: Context) {
             prefs.setOrRemove(YEARLY_GOAL_KM, next.yearlyGoalKm)
             val hashtags = next.shareHashtags
             if (hashtags == null) prefs.remove(SHARE_HASHTAGS) else prefs[SHARE_HASHTAGS] = hashtags
+            prefs[LAST_ACTIVITY] = next.lastActivity.stored
         }
+    }
+
+    /** Saves the activity chip's choice. The other settings are left alone. */
+    suspend fun setLastActivity(type: ActivityType) {
+        dataStore.edit { prefs -> prefs[LAST_ACTIVITY] = type.stored }
     }
 
     /** Saves the default hashtags as given ("" = none). The other settings are left alone. */
@@ -122,6 +131,7 @@ class SettingsRepository(context: Context) {
             weeklyGoalKm = this[WEEKLY_GOAL_KM],
             yearlyGoalKm = this[YEARLY_GOAL_KM],
             shareHashtags = this[SHARE_HASHTAGS],
+            lastActivity = this[LAST_ACTIVITY]?.let(ActivityType::fromStored) ?: defaults.lastActivity,
         )
     }
 
@@ -140,5 +150,6 @@ class SettingsRepository(context: Context) {
         val WEEKLY_GOAL_KM = intPreferencesKey("weekly_goal_km")
         val YEARLY_GOAL_KM = intPreferencesKey("yearly_goal_km")
         val SHARE_HASHTAGS = stringPreferencesKey("share_hashtags")
+        val LAST_ACTIVITY = stringPreferencesKey("last_activity")
     }
 }

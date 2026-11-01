@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.ride
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.recording.RecordingState
@@ -11,8 +12,8 @@ import com.cowork.bikerecoder.core.trip.TripType
 sealed interface RideUiState {
     data object Idle : RideUiState
 
-    /** Closing leftover segments and opening the new one. */
-    data class Starting(val tripId: Long) : RideUiState
+    /** Closing leftover segments and opening the new one, recorded as [activity]. */
+    data class Starting(val tripId: Long, val activity: ActivityType = ActivityType.BIKE) : RideUiState
 
     data class Active(
         val tripId: Long,
@@ -28,6 +29,10 @@ sealed interface RideUiState {
         val gpsWeak: Boolean,
         /** "기록 저장에 문제가 있습니다" from the first failed save on (once per recording). */
         val saveWarning: String?,
+        /** What this segment records (a guided recording is always [ActivityType.BIKE]). */
+        val activity: ActivityType = ActivityType.BIKE,
+        /** Today's sunset at the hike's location (epoch ms): hikes only, once a location is known; else null. */
+        val sunsetMillis: Long? = null,
     ) : RideUiState
 
     /** The start failed ("기록을 시작하지 못했습니다"); nothing records. */

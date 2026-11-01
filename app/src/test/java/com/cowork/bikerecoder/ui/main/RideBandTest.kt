@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.ui.main
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.navigation.NavState
 import com.cowork.bikerecoder.core.navigation.Progress
@@ -21,17 +22,27 @@ class RideBandTest {
 
     private val route = BRouterGeoJsonParser.parse(fixture("route_follow.geojson"), RouteProfile.BALANCED, emptyList())
 
-    private fun riding(state: RecordingState, distanceM: Double = 12_400.0, movingMinutes: Long = 48) = RideUiState.Active(
+    private fun riding(
+        state: RecordingState,
+        distanceM: Double = 12_400.0,
+        movingMinutes: Long = 48,
+        activity: ActivityType = ActivityType.BIKE,
+    ) = RideUiState.Active(
         tripId = 4,
         tripType = TripType.SINGLE_DAY,
         segmentId = 1,
         state = state,
-        stats = RideStats.ZERO.copy(distanceM = distanceM, movingTimeMs = movingMinutes * 60_000 + 59_000),
+        stats = RideStats.ZERO.copy(
+            distanceM = distanceM,
+            movingTimeMs = movingMinutes * 60_000 + 59_000,
+            elapsedMs = 125 * 60_000,
+        ),
         autoPause = true,
         track = emptyList(),
         fix = null,
         gpsWeak = false,
         saveWarning = null,
+        activity = activity,
     )
 
     private fun guiding(remainingM: Double) = NavUiState.Active(
@@ -78,5 +89,32 @@ class RideBandTest {
         assertNull(rideBandText(RideUiState.Starting(4), NavUiState.Starting(4)))
         assertNull(rideBandText(RideUiState.Failed(4, "x"), NavUiState.Failed(4, "x")))
         assertNull(rideBandText(RideUiState.Idle, NavUiState.Finished(4, TripType.SINGLE_DAY, FinishReason.ARRIVED)))
+    }
+
+    @Test
+    fun otherActivitiesSayTheirName() {
+        assertEquals(
+            "● 달리기 기록 중 · 12.4 km · 48분",
+            rideBandText(riding(RecordingState.Recording, activity = ActivityType.RUN), NavUiState.Idle),
+        )
+        assertEquals(
+            "● 걷기 기록 중 · 12.4 km · 48분",
+            rideBandText(riding(RecordingState.Recording, activity = ActivityType.WALK), NavUiState.Idle),
+        )
+        assertEquals(
+            "Ⅱ 일시정지 · 12.4 km · 48분",
+            rideBandText(riding(RecordingState.Paused(PauseKind.AUTO), activity = ActivityType.RUN), NavUiState.Idle),
+        )
+    }
+
+    @Test
+    fun hikeShowsTheHikingTime() {
+        // 산행 시간: the elapsed time (2 h 5 min), not the moving time (48 min).
+        assertEquals(
+            "● 등산 기록 중 · 12.4 km · 2시간 5분",
+            rideBandText(riding(RecordingState.Recording, activity = ActivityType.HIKE), NavUiState.Idle),
+        )
+        val paused = riding(RecordingState.Paused(PauseKind.MANUAL), activity = ActivityType.HIKE)
+        assertEquals("Ⅱ 일시정지 · 12.4 km · 2시간 5분", rideBandText(paused, NavUiState.Idle))
     }
 }

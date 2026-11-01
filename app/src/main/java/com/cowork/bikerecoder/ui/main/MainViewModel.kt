@@ -7,6 +7,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.recording.RideSegment
@@ -17,6 +18,7 @@ import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.search.PlaceSearch
+import com.cowork.bikerecoder.ui.activity.ActivityText
 import com.cowork.bikerecoder.ui.common.PlaceLookup
 import com.cowork.bikerecoder.ui.common.PressedPlace
 import com.cowork.bikerecoder.ui.common.addressOrNull
@@ -53,7 +55,10 @@ data class StaleTrip(val tripId: Long, val destinationName: String)
 /** Which screen the riding banner's [보기] opens. */
 enum class RideTarget { NAVIGATE, RECORD }
 
-/** "● 주행 중 · …" [보기] while guidance or a recording is starting or running (spec §3.1). */
+/**
+ * "● 주행 중 · …" [보기] while guidance or a recording is starting or running (spec §3.1); another activity than the bike
+ * says "● {이름} 기록 중 · …" (V1.9.0 spec §2.4).
+ */
 data class RidingBanner(val text: String, val target: RideTarget)
 
 /** A recording that never stopped (its segment is still open), offered as "기록이 중단되었습니다". */
@@ -76,6 +81,8 @@ data class MainUiState(
      * screen showed): it is shown before anything else records.
      */
     val pendingSummary: Boolean = false,
+    /** The activity chip: what [● 기록 시작] records (setting `last_activity`). */
+    val activity: ActivityType = ActivityType.BIKE,
 ) {
     /** The trip banner gives way to the riding banner. */
     val visibleBanner: TripBanner? get() = banner.takeUnless { guiding || riding != null }
@@ -97,6 +104,10 @@ class MainViewModel(
     private val interrupted: suspend () -> RideSegment? = { null },
     /** [종료] on the interrupted recording ([com.cowork.bikerecoder.ride.RideController.closeInterrupted]). */
     private val closeInterrupted: suspend () -> Unit = {},
+    /** The saved activity chip (setting `last_activity`). */
+    private val lastActivity: Flow<ActivityType> = flowOf(ActivityType.BIKE),
+    /** Saves the chip's choice. */
+    private val saveActivity: suspend (ActivityType) -> Unit = {},
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(MainUiState(recoveryBusy = true))
@@ -130,6 +141,21 @@ class MainViewModel(
                 }
         }
         viewModelScope.launch { checkInterrupted() }
+        viewModelScope.launch {
+            try {
+                lastActivity.distinctUntilChanged().collect { type -> _state.update { it.copy(activity = type) } }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // The chip stays as it is.
+            }
+        }
+    }
+
+    /** A chip: shown at once, then saved (a failed save only loses the choice for the next time). */
+    fun chooseActivity(type: ActivityType) {
+        _state.update { it.copy(activity = type) }
+        viewModelScope.launch { runCatchingNonCancel { saveActivity(type) } }
     }
 
     private data class Riding(
@@ -142,15 +168,21 @@ class MainViewModel(
     /** A starting recording shows zero distance and time; a summary or a start error is not riding. */
     private fun riding(nav: NavUiState, rideState: RideUiState): Riding {
         val guiding = nav is NavUiState.Starting || nav is NavUiState.Active
-        val stats = when (rideState) {
-            is RideUiState.Active -> rideState.stats
-            is RideUiState.Starting -> RideStats.ZERO
-            else -> null
+        val (stats, activity) = when (rideState) {
+            is RideUiState.Active -> rideState.stats to rideState.activity
+            is RideUiState.Starting -> RideStats.ZERO to rideState.activity
+            else -> null to ActivityType.BIKE
         }
         val target = if (guiding) RideTarget.NAVIGATE else RideTarget.RECORD
         val banner = when {
-            stats != null ->
+            stats != null && activity == ActivityType.BIKE ->
                 RidingBanner("● 주행 중 · ${RideFormat.distance(stats.distanceM)} · ${RideFormat.clock(stats.movingTimeMs)}", target)
+            // A hike counts its hiking (elapsed) time.
+            stats != null -> {
+                val clock = if (activity == ActivityType.HIKE) stats.elapsedMs else stats.movingTimeMs
+                val head = ActivityText.recordingHead(activity)
+                RidingBanner("● $head · ${RideFormat.distance(stats.distanceM)} · ${RideFormat.clock(clock)}", target)
+            }
             guiding -> RidingBanner("● 주행 중 · 안내 중", target)
             else -> null
         }
@@ -281,6 +313,8 @@ class MainViewModel(
                         }
                     },
                     closeInterrupted = { container.ride.closeInterrupted() },
+                    lastActivity = container.lastActivity,
+                    saveActivity = container.settings::setLastActivity,
                 )
             }
         }

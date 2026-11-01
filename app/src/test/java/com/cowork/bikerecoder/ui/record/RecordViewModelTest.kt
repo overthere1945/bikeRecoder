@@ -1,6 +1,7 @@
 package com.cowork.bikerecoder.ui.record
 
 import androidx.lifecycle.SavedStateHandle
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.post.PhotoPositionSource
@@ -81,6 +82,7 @@ class RecordViewModelTest {
     private fun TestScope.setup(
         args: Map<String, Any?> = emptyMap(),
         serviceStatus: GuidanceServiceStatus = GuidanceServiceStatus(),
+        lastActivity: ActivityType = ActivityType.BIKE,
     ): Setup {
         val clock = { testScheduler.currentTime }
         val tripManager = TripManager(trips, offline, clock)
@@ -120,6 +122,7 @@ class RecordViewModelTest {
         val vm = RecordViewModel(
             ride, navState, flowOf(true), SavedStateHandle(args), serviceStatus.warning, postStore, postProcessor,
             com.cowork.bikerecoder.ride.ShortRides(rideStore, com.cowork.bikerecoder.nav.RecordingOfflineMaps(), log),
+            lastActivity = MutableStateFlow(lastActivity),
         )
         val setup = Setup(vm, tripManager, navState, ride, postStore, heartRate)
         postStore.beforeList = { setup.passes++ }
@@ -159,6 +162,18 @@ class RecordViewModelTest {
         assertEquals(RecordingState.Recording, (s.vm.ui.value as RideUiState.Active).state)
         s.vm.setAutoPause(false)
         assertFalse((s.vm.ui.value as RideUiState.Active).autoPause)
+    }
+
+    @Test
+    fun startRecordsTheChosenActivity() = runTest(dispatcher) {
+        val s = setup(lastActivity = ActivityType.HIKE)
+        val tripId = s.tripManager.startTrip(TripType.SINGLE_DAY, RouteProfile.CYCLEWAY_FIRST, emptyList()).id
+
+        s.vm.start(tripId)
+        assertEquals(RideUiState.Starting(tripId, ActivityType.HIKE), s.vm.ui.value, "starting at once")
+        runCurrent()
+
+        assertEquals(ActivityType.HIKE, (s.vm.ui.value as RideUiState.Active).activity)
     }
 
     @Test

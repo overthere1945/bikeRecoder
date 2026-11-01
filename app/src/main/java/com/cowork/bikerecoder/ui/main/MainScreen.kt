@@ -53,6 +53,7 @@ import com.cowork.bikerecoder.map.CameraMode
 import com.cowork.bikerecoder.map.MapCamera
 import com.cowork.bikerecoder.map.MapOverlay
 import com.cowork.bikerecoder.map.TileSource
+import com.cowork.bikerecoder.ui.activity.ActivityChips
 import com.cowork.bikerecoder.ui.common.GlyphIcon
 import com.cowork.bikerecoder.ui.common.PressedPlaceSheet
 import com.cowork.bikerecoder.ui.record.RECORDING_INTERRUPTED
@@ -181,7 +182,7 @@ fun MainScreen(
             }
         }
 
-        // [● 기록 시작] bottom right, [내 위치] above it.
+        // [● 기록 시작] bottom right, the activity chips above it, [내 위치] above them.
         Column(
             modifier = Modifier.align(Alignment.BottomEnd).safeDrawingPadding().padding(bottom = 24.dp, end = 12.dp),
             horizontalAlignment = Alignment.End,
@@ -193,6 +194,7 @@ fun MainScreen(
                 }
             }
             if (!state.recording) {
+                ActivityChips(selected = state.activity, onSelect = viewModel::chooseActivity)
                 // Disabled until the interrupted recording is answered (closing it would race the new start).
                 Button(
                     onClick = { withLocationPermission(onStartRecording) },

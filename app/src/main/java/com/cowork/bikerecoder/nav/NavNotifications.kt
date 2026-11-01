@@ -14,6 +14,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.cowork.bikerecoder.MainActivity
 import com.cowork.bikerecoder.R
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.format.SummaryFormatter
 import com.cowork.bikerecoder.core.recording.RecordingState
@@ -21,6 +22,7 @@ import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.voice.KoreanPhrases
 import com.cowork.bikerecoder.ride.RideUiState
+import com.cowork.bikerecoder.ui.activity.ActivityText
 import java.math.BigDecimal
 import java.math.RoundingMode
 
@@ -72,18 +74,25 @@ object NavNotifications {
     }
 
     /**
-     * The ongoing notification for guidance [nav] and recording [ride]; null when neither is starting or running
-     * (the service then stops).
+     * The ongoing notification for guidance [nav] and recording [ride] at [nowMillis]; null when neither is starting or
+     * running (the service then stops). A recording's title names its activity ("등산 기록 중"; a bike keeps "주행 기록
+     * 중"); a hike's text adds the sunset from an hour before it ([ActivityText.sunsetNotice]).
      */
-    fun rideNotice(nav: NavUiState, ride: RideUiState): RideNotice? {
+    fun rideNotice(nav: NavUiState, ride: RideUiState, nowMillis: Long = System.currentTimeMillis()): RideNotice? {
         val guiding = isGuiding(nav)
         return when {
             guiding && ride is RideUiState.Active -> RideNotice("길 안내 중 · 기록 중", contentText(nav))
             guiding -> RideNotice("길 안내 중", contentText(nav))
-            ride is RideUiState.Starting -> RideNotice("주행 기록 중", "기록을 준비하는 중…")
+            ride is RideUiState.Starting -> RideNotice(ActivityText.recordingTitle(ride.activity), "기록을 준비하는 중…")
             ride is RideUiState.Active -> {
                 val text = "${noticeDistance(ride.stats.distanceM)} · 이동 ${RideFormat.duration(ride.stats.movingTimeMs)}"
-                RideNotice(if (ride.state is RecordingState.Paused) "일시정지됨" else "주행 기록 중", text)
+                val sunset = ride.sunsetMillis?.takeIf { ride.activity == ActivityType.HIKE }
+                    ?.let { ActivityText.sunsetNotice(it, nowMillis) }
+                val title = when (ride.state) {
+                    is RecordingState.Paused -> "일시정지됨"
+                    else -> ActivityText.recordingTitle(ride.activity)
+                }
+                RideNotice(title, if (sunset == null) text else "$text · $sunset")
             }
             else -> null
         }

@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.nav.NavNotifications
 import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.post.PostProcessor
@@ -58,6 +59,8 @@ class RecordViewModel(
     mediaTrip: suspend (segmentId: Long) -> Long? = { null },
     /** The summary's trip when it offers [공유] ([SummaryExtras]); none by default. */
     shareTrip: suspend (segmentId: Long) -> Long? = { null },
+    /** The map screen's activity chip (setting `last_activity`), already read: [start] records it at once. */
+    private val lastActivity: StateFlow<ActivityType> = MutableStateFlow(ActivityType.BIKE),
 ) : ViewModel() {
 
     val ui: StateFlow<RideUiState> = ride.ui
@@ -118,9 +121,12 @@ class RecordViewModel(
         return savedState.get<Long>(ARG_TRIP)
     }
 
-    /** Call right after starting the ride foreground service (from the visible screen). */
+    /**
+     * Call right after starting the ride foreground service (from the visible screen): records the chip's activity (a
+     * trip being guided records a bike anyway, [RideController.startRecording]).
+     */
     fun start(tripId: Long) {
-        ride.startRecording(tripId)
+        ride.startRecording(tripId, lastActivity.value)
     }
 
     fun pause() = ride.pause()
@@ -159,6 +165,7 @@ class RecordViewModel(
                     goals = container.settings.settings.map { it.weeklyGoalKm to it.yearlyGoalKm }.distinctUntilChanged(),
                     mediaTrip = { id -> mediaTripOf(id, container.rideStore, container.tripStore) },
                     shareTrip = { id -> shareTripOf(id, container.rideStore) },
+                    lastActivity = container.lastActivity,
                 )
             }
         }
