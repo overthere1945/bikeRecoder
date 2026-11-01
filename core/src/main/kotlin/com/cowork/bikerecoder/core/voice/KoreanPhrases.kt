@@ -122,11 +122,10 @@ class KoreanPhrases(private val zone: ZoneId = ZoneId.of("Asia/Seoul")) {
     }
 
     /**
-     * 시작 안내. 자전거는 [recordingStarted] 그대로, 다른 종류는 "{이름} 기록을 시작합니다".
+     * 시작 안내. 모든 종류가 "{이름} 기록을 시작합니다"다(자전거도 "자전거 기록을 시작합니다", V1.9.1).
      * 등산이고 일몰까지 [sunsetInMs]가 0 초과 2시간 미만이면 " 일몰까지 {시간} 남았습니다."를 붙인다.
      */
     fun recordingStarted(type: ActivityType, sunsetInMs: Long?): String {
-        if (type == ActivityType.BIKE) return recordingStarted
         val base = "${activityName(type)} $recordingStarted"
         return if (type == ActivityType.HIKE && sunsetInMs != null && sunsetInMs > 0 && sunsetInMs < 7_200_000) {
             "$base ${sunsetLeft(sunsetInMs)}"
