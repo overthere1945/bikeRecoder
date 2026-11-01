@@ -1,5 +1,8 @@
 package com.cowork.bikerecoder.core.recording
 
+import com.cowork.bikerecoder.core.activity.ActivityProfile
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.activity.KmBasis
 import com.cowork.bikerecoder.core.model.LocationFix
 import java.time.Instant
 import java.time.LocalDate
@@ -19,8 +22,17 @@ sealed interface RecordingEvent {
     data class Paused(val kind: PauseKind) : RecordingEvent
     data object Resumed : RecordingEvent
 
-    /** 그날 기록 거리가 [km]번째 킬로미터를 넘었다. day*는 그날(이 여행, Asia/Seoul) 합계. */
-    data class KmReached(val km: Int, val dayDistanceM: Double, val dayMovingTimeMs: Long) : RecordingEvent
+    /**
+     * 기록 거리가 [km]번째 킬로미터를 넘었다. [distanceM]·[movingTimeMs]는 프로필의 [KmBasis] 기준 합계다:
+     * 자전거는 그날(이 여행, Asia/Seoul), 달리기·걷기는 이 구간. 등산([KmBasis.NONE])은 이 이벤트를 내지 않는다.
+     * [lapMovingTimeMs]는 앞 km 표시(처음에는 세션 시작)부터 이 세션이 센 이동 시간이다.
+     */
+    data class KmReached(
+        val km: Int,
+        val distanceM: Double,
+        val movingTimeMs: Long,
+        val lapMovingTimeMs: Long,
+    ) : RecordingEvent
 }
 
 data class DayTotals(val distanceM: Double, val movingTimeMs: Long) {
@@ -55,6 +67,8 @@ data class RecordingUpdate(
  *   필요한 정지 지점까지 지워 버리기 때문이다.
  * - 그날 합계 [day] = initialDay + 이 세션의 거리·이동 시간. nowMillis의 [zone] 날짜가 바뀌면 0부터 다시
  *   세고 km도 1부터 센다. 날짜가 바뀌는 위치의 구간은 새 날짜에 들어간다.
+ * - 기록 기준은 [profile]이 정한다(필터·통계·자동 일시정지에 넘긴다). km 이벤트는 [ActivityProfile.kmBasis]를 따른다:
+ *   DAY는 위의 그날 합계, SEGMENT는 이 세션의 합계(0부터, 날짜가 바뀌어도 다시 세지 않음), NONE은 내지 않는다.
  * - GPS 감시: [onFix]는 필터가 채택한 위치일 때만 "봤음"을 표시하고(버린 위치는 신호로 치지 않는다), [onTick]이 마지막 활동 tick 이후 [gpsTimeoutMs]가 지나면 약함으로 본다.
  * - [stop] 이후 호출은 상태·통계를 바꾸지 않고 빈 이벤트를 돌려준다.
  *
@@ -66,15 +80,22 @@ class RecordingSession(
     initialDay: DayTotals = DayTotals.ZERO,
     private val zone: ZoneId = ZoneId.of("Asia/Seoul"),
     private val gpsTimeoutMs: Long = 10_000,
+    private val profile: ActivityProfile = ActivityProfile.of(ActivityType.BIKE),
 ) {
     var state: RecordingState = RecordingState.Recording
         private set
     var autoPause: Boolean = autoPause
         private set
 
-    private val filter = TrackFilter()
-    private val calc = RideStatsCalculator()
-    private val detector = AutoPauseDetector()
+    private val filter = TrackFilter(maxSpeedMps = profile.maxSpeedMps)
+    private val calc = RideStatsCalculator(minGapSpeedMps = profile.minGapSpeedMps)
+    private val detector = AutoPauseDetector(
+        pauseBelowMps = profile.pauseBelowMps,
+        pauseAfterMs = profile.pauseAfterMs,
+        resumeAtMps = profile.resumeAtMps,
+        resumeAfterMs = profile.resumeAfterMs,
+        resumeDistanceM = profile.resumeDistanceM,
+    )
     private val fusion = AltitudeFusion()
     private val ascent = AscentCounter()
 
@@ -89,7 +110,12 @@ class RecordingSession(
     private var dayBase: DayTotals = initialDay
     private var daySessionStartM = 0.0
     private var daySessionStartMs = 0L
-    private var lastKm: Int = floor(initialDay.distanceM / 1000).toInt()
+    private var lastKm: Int =
+        if (profile.kmBasis == KmBasis.DAY) floor(initialDay.distanceM / 1000).toInt() else 0
+
+    // 앞 km 표시 시점의 세션 이동 시간(랩 시간 기준)과 마지막 랩
+    private var lapStartMs = 0L
+    private var lastLapMs: Long? = null
 
     // GPS 감시(tick 시각만)
     private var lastActivityTickMillis: Long? = null
@@ -109,6 +135,8 @@ class RecordingSession(
             descentM = ascent.descentM,
             minAltitudeM = minAltitudeM,
             maxAltitudeM = maxAltitudeM,
+            recentSpeedMps = if (state == RecordingState.Recording) calc.recentSpeedMps else null,
+            lastLapMovingTimeMs = lastLapMs,
         )
 
     val day: DayTotals
@@ -223,11 +251,20 @@ class RecordingSession(
             maxAltitudeM = maxAltitudeM?.coerceAtLeast(altitude) ?: altitude
         }
 
-        val today = day
-        val km = floor(today.distanceM / 1000).toInt()
-        if (km > lastKm) {
-            lastKm = km
-            events += RecordingEvent.KmReached(km, today.distanceM, today.movingTimeMs)
+        val basis = when (profile.kmBasis) {
+            KmBasis.DAY -> day
+            KmBasis.SEGMENT -> DayTotals(calc.distanceM, calc.movingTimeMs)
+            KmBasis.NONE -> null
+        }
+        if (basis != null) {
+            val km = floor(basis.distanceM / 1000).toInt()
+            if (km > lastKm) {
+                lastKm = km
+                val lap = calc.movingTimeMs - lapStartMs
+                lapStartMs = calc.movingTimeMs
+                lastLapMs = lap
+                events += RecordingEvent.KmReached(km, basis.distanceM, basis.movingTimeMs, lap)
+            }
         }
 
         val point = TrackPoint(fix.timeMillis, fix.point, altitude, fix.speedMps, fix.accuracyM)
@@ -262,7 +299,10 @@ class RecordingSession(
             dayBase = DayTotals.ZERO
             daySessionStartM = calc.distanceM
             daySessionStartMs = calc.movingTimeMs
-            lastKm = 0
+            if (profile.kmBasis == KmBasis.DAY) {
+                lastKm = 0
+                lapStartMs = calc.movingTimeMs
+            }
         }
     }
 

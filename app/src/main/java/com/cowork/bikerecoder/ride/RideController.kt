@@ -601,8 +601,8 @@ class RideController(
         is RecordingEvent.KmReached -> if (navigation.ui.value is NavUiState.Active) {
             null
         } else {
-            val day = DayTotals(event.dayDistanceM, event.dayMovingTimeMs)
-            phrases.rideKmReport(event.km, day.avgSpeedMps, event.dayMovingTimeMs)
+            val day = DayTotals(event.distanceM, event.movingTimeMs)
+            phrases.rideKmReport(event.km, day.avgSpeedMps, event.movingTimeMs)
         }
     }
 

@@ -1,6 +1,8 @@
 package com.cowork.bikerecoder.core.recording
 
 import com.cowork.bikerecoder.core.model.LocationFix
+import com.cowork.bikerecoder.core.activity.ActivityProfile
+import com.cowork.bikerecoder.core.activity.ActivityType
 import org.junit.jupiter.api.Test
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -176,8 +178,8 @@ class RecordingSessionTest {
         val events = (0..120).flatMap { s.feed(fix(sec(it), 5.0 * it, 18.0)).events } // 600m
         val km = events.filterIsInstance<RecordingEvent.KmReached>().single()
         assertEquals(3, km.km)
-        assertTrue(km.dayDistanceM in 3_000.0..3_005.0, "${km.dayDistanceM}")
-        assertTrue(km.dayMovingTimeMs in 600_000L..601_000L, "${km.dayMovingTimeMs}")
+        assertTrue(km.distanceM in 3_000.0..3_005.0, "${km.distanceM}")
+        assertTrue(km.movingTimeMs in 600_000L..601_000L, "${km.movingTimeMs}")
         assertEquals(3_100.0, s.day.distanceM, 0.5)
         assertEquals(620_000L, s.day.movingTimeMs)
     }
@@ -191,7 +193,7 @@ class RecordingSessionTest {
         val events = (0..270).flatMap { i -> s.onFix(fix(t2359 + sec(i), 5.0 * i, 18.0), t2359 + sec(i)).events }
         val kms = events.filterIsInstance<RecordingEvent.KmReached>()
         assertEquals(listOf(3, 1), kms.map { it.km })
-        assertTrue(kms[1].dayDistanceM in 1_000.0..1_010.0, "${kms[1].dayDistanceM}")
+        assertTrue(kms[1].distanceM in 1_000.0..1_010.0, "${kms[1].distanceM}")
         assertEquals(1_055.0, s.day.distanceM, 0.5) // 23:59:59→0:00:00 구간은 0시 날짜에 들어간다
     }
 
@@ -276,5 +278,161 @@ class RecordingSessionTest {
     fun `day average speed`() {
         assertEquals(5.0, DayTotals(1_000.0, 200_000).avgSpeedMps)
         assertEquals(0.0, DayTotals(1_000.0, 0).avgSpeedMps)
+    }
+
+    private fun profiled(type: ActivityType, autoPause: Boolean = false, initialDay: DayTotals = DayTotals.ZERO, startMillis: Long = 0L) =
+        RecordingSession(startMillis, autoPause, initialDay, profile = ActivityProfile.of(type)).also { it.start() }
+
+    @Test
+    fun `segment basis counts from segment start`() {
+        val s = profiled(ActivityType.RUN, initialDay = DayTotals(5_000.0, 1_800_000))
+        val events = (0..220).flatMap { s.feed(fix(sec(it), 5.0 * it, 18.0)).events } // 1,100 m
+        val km = events.filterIsInstance<RecordingEvent.KmReached>().single()
+        assertEquals(1, km.km)
+        assertTrue(km.distanceM in 1_000.0..1_100.0, "${km.distanceM}")
+        assertTrue(km.movingTimeMs in 200_000L..201_000L, "${km.movingTimeMs}")
+    }
+
+    @Test
+    fun `segment basis does not restart at midnight`() {
+        val start = ZonedDateTime.of(2026, 10, 12, 23, 59, 0, 0, seoul).toInstant().toEpochMilli()
+        val s = profiled(ActivityType.WALK, startMillis = start)
+        // 5 m/s: 23:59:00부터 600초 = 3,000 m. 0시는 60초 뒤(300 m).
+        val kms = (0..600).flatMap { s.onFix(fix(start + sec(it), 5.0 * it, 18.0), start + sec(it)).events }
+            .filterIsInstance<RecordingEvent.KmReached>()
+        assertEquals(listOf(1, 2, 3), kms.map { it.km })
+    }
+
+    @Test
+    fun `hike has no km events`() {
+        val s = profiled(ActivityType.HIKE, autoPause = true)
+        val events = (0..1_300).flatMap { s.feed(fix(sec(it), 3.0 * it, 10.8)).events } // 3.9 km
+        assertTrue(s.stats.distanceM > 3_000.0)
+        assertTrue(events.none { it is RecordingEvent.KmReached })
+        assertNull(s.stats.lastLapMovingTimeMs)
+    }
+
+    @Test
+    fun `lap time is since last km`() {
+        val s = profiled(ActivityType.BIKE)
+        // 첫 1 km는 5 m/s(200초), 다음 1 km는 2.5 m/s(400초)
+        val events = ((0..200).map { fix(sec(it), 5.0 * it, 18.0) } +
+            (1..400).map { fix(sec(200 + it), 1_000.0 + 2.5 * it, 9.0) })
+            .flatMap { s.feed(it).events }
+        val kms = events.filterIsInstance<RecordingEvent.KmReached>()
+        assertEquals(listOf(1, 2), kms.map { it.km })
+        assertEquals(kms[0].movingTimeMs, kms[0].lapMovingTimeMs)
+        assertEquals(kms[1].movingTimeMs - kms[0].movingTimeMs, kms[1].lapMovingTimeMs)
+        assertEquals(400_000L, kms[1].lapMovingTimeMs, "두 번째 1 km는 400초")
+        assertEquals(400_000L, s.stats.lastLapMovingTimeMs)
+    }
+
+    @Test
+    fun `recent speed needs two points`() {
+        val s = profiled(ActivityType.BIKE, autoPause = false)
+        assertNull(s.stats.recentSpeedMps)
+        assertNull(s.feed(fix(sec(0), 0.0, 18.0)).stats.recentSpeedMps)
+        assertEquals(5.0, assertNotNull(s.feed(fix(sec(1), 5.0, 18.0)).stats.recentSpeedMps), 1e-6)
+
+        // 30초 창: 처음 10초는 5 m/s, 다음 40초는 2 m/s → 마지막 30초 창은 2 m/s
+        var m = 5.0
+        for (t in 2..50) {
+            m += if (t <= 10) 5.0 else 2.0
+            s.feed(fix(sec(t), m, 7.0))
+        }
+        assertEquals(2.0, assertNotNull(s.stats.recentSpeedMps), 1e-6)
+
+        // 일시정지 뒤에는 다시 null
+        s.pause(sec(51))
+        assertNull(s.stats.recentSpeedMps)
+        s.resume(sec(52))
+        assertNull(s.stats.recentSpeedMps)
+        assertNull(s.feed(fix(sec(53), m + 5.0, 18.0)).stats.recentSpeedMps)
+        assertNotNull(s.feed(fix(sec(54), m + 10.0, 18.0)).stats.recentSpeedMps)
+    }
+
+    // ---- V1.8.0 엔진 고정값(골든): 자전거 기록은 종류 기능이 들어와도 결과가 같아야 한다 ----
+
+    /** 정지 2번, 튐 1번, GPS 끊김 1번, 고도·기압이 있는 5.2 km 자전거 경로를 만들어 [s]에 넣고 (이벤트 설명, 점) 목록을 돌려준다. */
+    private fun driveGoldenBikeTrack(s: RecordingSession): Pair<List<String>, List<TrackPoint>> {
+        val lines = ArrayList<String>()
+        val points = ArrayList<TrackPoint>()
+        var m = 0.0
+        for (t in 0..1_100) {
+            val moving = when (t) {
+                in 300..330 -> false // 첫 번째 정지
+                in 640..690 -> false // 두 번째 정지(속도 값 없음: 구간 속도로 판정)
+                else -> true
+            }
+            if (moving) m += 5.0
+            if (t in 500..514) continue // 15초 GPS 끊김(평균 5 m/s라 이동으로 센다)
+            val kmh = if (moving) 17.0 + 2.0 * Math.sin(t / 7.0) else 0.0
+            val pos = if (t == 400) m + 500.0 else m // 튐(1,800 km/h)은 필터가 버린다
+            val alt = 50.0 + 10.0 * Math.sin(t / 60.0)
+            val f = fix(
+                sec(t), pos, if (t in 640..690) null else kmh,
+                accuracyM = if (t % 97 == 0) 40f else 5f, // 정확도 불량은 버린다
+                altitudeM = alt, verticalAccuracyM = 3f,
+            )
+            if (t % 5 == 0) s.onPressure(1013.25 * (1 - alt / 44330).pow(5.255), sec(t))
+            val u = s.feed(f)
+            u.events.forEach { lines += "$t ${describe(it)}" }
+            u.point?.let(points::add)
+            if (t % 5 == 0) s.onTick(sec(t))
+        }
+        return lines to points
+    }
+
+    /** 이벤트 한 건을 비교용 문자열로. */
+    private fun describe(e: RecordingEvent): String = when (e) {
+        RecordingEvent.Started -> "Started"
+        is RecordingEvent.Paused -> "Paused(${e.kind})"
+        RecordingEvent.Resumed -> "Resumed"
+        is RecordingEvent.KmReached -> "Km(${e.km}, ${e.distanceM}, ${e.movingTimeMs})"
+    }
+
+    private fun digest(points: List<TrackPoint>): String =
+        points.joinToString("|") { "${it.timeMillis},${it.point.lat},${it.point.lon},${it.altitudeM},${it.speedMps}" }
+
+    /**
+     * 값은 변경 전(V1.8.0, 9b31f7b) 엔진으로 같은 경로를 돌려 얻은 것이다. 엔진이 바뀌어도 자전거 결과는 그대로여야 한다.
+     * 기본 생성과 `profile = of(BIKE)` 생성 둘 다 같은 값을 내야 한다.
+     */
+    @Test
+    fun `bike profile matches V180 engine`() {
+        val expectedEvents = listOf(
+            "201 Km(1, 1000.000000000064, 200000)",
+            "305 Paused(AUTO)",
+            "333 Resumed",
+            "435 Km(2, 2000.000000000121, 406000)",
+            "635 Km(3, 3000.0000000002124, 606000)",
+            "645 Paused(AUTO)",
+            "693 Resumed",
+            "889 Km(4, 4000.000000001098, 812000)",
+            "1089 Km(5, 5000.000000001134, 1012000)",
+        )
+        val sessions = listOf(
+            started(autoPause = true),
+            RecordingSession(0L, autoPause = true, profile = ActivityProfile.of(ActivityType.BIKE)).also { it.start() },
+        )
+        for (s in sessions) {
+            val (lines, points) = driveGoldenBikeTrack(s)
+            val stats = s.stop(sec(1_101)).stats
+            assertEquals(expectedEvents, lines)
+            assertEquals(1_000, points.size)
+            assertEquals(-368011408, digest(points).hashCode())
+            assertEquals(5055.000000000686, stats.distanceM)
+            assertEquals(1_023_000L, stats.movingTimeMs)
+            assertEquals(1_101_000L, stats.elapsedMs)
+            assertEquals(0.0, stats.currentSpeedMps)
+            assertEquals(4.941348973607709, stats.avgSpeedMps)
+            assertEquals(5.275816440582275, stats.maxSpeedMps)
+            assertEquals(45.277081505657776, stats.altitudeM)
+            assertEquals(46.09060316267851, stats.ascentM)
+            assertEquals(49.56133686629977, stats.descentM)
+            assertEquals(40.21720169493877, stats.minAltitudeM)
+            assertEquals(60.29121418483479, stats.maxAltitudeM)
+            assertEquals(DayTotals(5055.000000000686, 1_023_000L), s.day)
+        }
     }
 }

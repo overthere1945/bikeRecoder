@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.core.recording
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.trip.Trip
 import java.time.LocalDate
 
@@ -43,7 +44,7 @@ fun RideStats.toTotals() = SegmentTotals(
     maxAltitudeM = maxAltitudeM,
 )
 
-/** 한 번의 기록 시작~종료. [endedAt]이 null이면 아직 열려 있다. */
+/** 한 번의 기록 시작~종료. [endedAt]이 null이면 아직 열려 있다. [activity]는 이 구간의 활동 종류(기본 자전거). */
 data class RideSegment(
     val id: Long,
     val tripId: Long,
@@ -51,6 +52,7 @@ data class RideSegment(
     val endedAt: Long?,
     val localDate: LocalDate,
     val totals: SegmentTotals,
+    val activity: ActivityType = ActivityType.BIKE,
 ) {
     /** 간 거리가 없는 구간(쓸 만한 위치 없이 끝난 기록 등): 기록 목록에 보이지 않는다(데이터는 지우지 않는다). */
     val isEmpty: Boolean get() = totals.distanceM <= 0.0

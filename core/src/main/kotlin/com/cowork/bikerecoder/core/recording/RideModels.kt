@@ -15,6 +15,10 @@ data class RideStats(
     val descentM: Double,
     val minAltitudeM: Double?,
     val maxAltitudeM: Double?,
+    /** 기록 중 사슬의 최근 30초 이동 거리 ÷ 시간. 창 안 점이 2개 미만이면(시작·일시정지 직후) null. */
+    val recentSpeedMps: Double? = null,
+    /** 이 세션의 마지막 [RecordingEvent.KmReached.lapMovingTimeMs]. 아직 km 표시가 없으면 null. */
+    val lastLapMovingTimeMs: Long? = null,
 ) {
     companion object {
         val ZERO = RideStats(
@@ -29,6 +33,8 @@ data class RideStats(
             descentM = 0.0,
             minAltitudeM = null,
             maxAltitudeM = null,
+            recentSpeedMps = null,
+            lastLapMovingTimeMs = null,
         )
     }
 }

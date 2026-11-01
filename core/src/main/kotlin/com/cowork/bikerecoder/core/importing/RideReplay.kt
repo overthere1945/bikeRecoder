@@ -1,5 +1,7 @@
 package com.cowork.bikerecoder.core.importing
 
+import com.cowork.bikerecoder.core.activity.ActivityProfile
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
 import com.cowork.bikerecoder.core.recording.RecordingSession
@@ -33,15 +35,25 @@ data class ReplayedRide(
 object RideReplay {
 
     /**
+     * [activity]의 기록 기준으로 계산한다(기본 자전거).
      * [fixes]는 시간순이고 같은 시간이 없어야 한다(`GpxReader`의 결과).
      * 비어 있거나, 채택된 점이 2개 미만이거나, 거리가 [MIN_RIDE_DISTANCE_M] 미만이면 null(호출자가 TOO_SHORT로 본다).
      */
-    fun replay(fixes: List<LocationFix>, zone: ZoneId = ZoneId.of("Asia/Seoul")): ReplayedRide? {
+    fun replay(
+        fixes: List<LocationFix>,
+        zone: ZoneId = ZoneId.of("Asia/Seoul"),
+        activity: ActivityType = ActivityType.BIKE,
+    ): ReplayedRide? {
         if (fixes.isEmpty()) return null
         val startedAt = fixes.first().timeMillis
         val endedAt = fixes.last().timeMillis
 
-        val session = RecordingSession(startMillis = startedAt, autoPause = true, zone = zone)
+        val session = RecordingSession(
+            startMillis = startedAt,
+            autoPause = true,
+            zone = zone,
+            profile = ActivityProfile.of(activity),
+        )
         session.start()
         val points = ArrayList<TrackPoint>()
         for (fix in fixes) {
