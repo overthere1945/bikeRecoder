@@ -32,6 +32,7 @@ import com.cowork.bikerecoder.ui.feed.FakeFeedMedia
 import com.cowork.bikerecoder.video.MediaKind
 import com.cowork.bikerecoder.video.TripMedia
 import com.cowork.bikerecoder.video.VideoOptionsJson
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -928,6 +929,24 @@ class ShareViewModelTest {
         assertTrue(ShareItem.Photo(21, 1) in s.items)
     }
 
+    /** Final review M1: every picked photo became unreadable at the press: told, not a silent no-op. */
+    @Test
+    fun allPickedPhotosUnreadableTells() = runTest(dispatcher) {
+        photos = listOf(21, 22)
+        cards.auto = true
+        val vm = opened()
+        vm.tap(ShareItem.SatelliteCard)
+        assertEquals(listOf(ShareItem.Photo(21, 1), ShareItem.Photo(22, 2)), sheet.selection.chosen)
+        cards.unreadable += listOf(21L, 22L)
+
+        vm.press(ShareTarget.INSTAGRAM)
+        advanceUntilIdle()
+
+        assertEquals(listOf<ShareEvent>(ShareEvent.Notice("사진을 읽지 못했습니다")), events)
+        assertEquals("사진을 읽지 못했습니다", ShareViewModel.MSG_PHOTOS_UNREADABLE)
+        assertFalse(sheet.waiting)
+    }
+
     // --- [저장] and [스티커] (spec §5.5, §5.6) -------------------------------------------------------------------------
 
     @Test
@@ -989,6 +1008,24 @@ class ShareViewModelTest {
             ),
             events,
         )
+    }
+
+    /** Final review M2: a sticker being saved is finished and kept although a quick send closes the sheet. */
+    @Test
+    fun stickerBeingSavedSurvivesClose() = runTest(dispatcher) {
+        val vm = opened()
+        val saving = CompletableDeferred<Unit>()
+        gallery.pngGate = saving
+
+        vm.press(ShareTarget.STICKER)
+        advanceUntilIdle()
+        vm.close()
+        advanceUntilIdle()
+        saving.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(listOf(STICKER to "bikeRecoder_sticker_20261025_213000.png"), gallery.pngs)
+        assertEquals(0, gallery.pngsCancelled)
     }
 
     // --- an unfinished trip ------------------------------------------------------------------------------------------
@@ -1096,7 +1133,17 @@ class ShareViewModelTest {
             jpegs += file to displayName
         }
 
+        /** While set, a PNG save waits for it; a save cancelled meanwhile is counted (the real one deletes its item). */
+        var pngGate: CompletableDeferred<Unit>? = null
+        var pngsCancelled = 0
+
         override suspend fun savePng(file: ShareFile, displayName: String) {
+            try {
+                pngGate?.await()
+            } catch (e: CancellationException) {
+                pngsCancelled++
+                throw e
+            }
             pngs += file to displayName
         }
     }

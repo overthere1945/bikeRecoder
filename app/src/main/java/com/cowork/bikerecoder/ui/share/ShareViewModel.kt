@@ -315,6 +315,7 @@ class ShareViewModel(
     /** Sends the picked items of [s] in order: cards as drawn, photos as slides drawn now, the video as it is. */
     private suspend fun send(session: Session, pending: Pending, s: ShareSheetState) {
         val files = mutableListOf<ShareFile>()
+        var unreadable = 0
         for (item in s.selection.chosen) {
             when (item) {
                 ShareItem.SatelliteCard, ShareItem.PhotoCard -> files += (s.cardOf(item) as CardStatus.Ready).file
@@ -322,6 +323,7 @@ class ShareViewModel(
                     files += cards.slide(session.tripId, item.mediaId, s.mode.size)
                 } catch (e: PhotoUnreadableException) {
                     // Spec §6: the photo leaves the strip; the others are sent.
+                    unreadable++
                     photoGone(session, item.mediaId)
                 } catch (e: CancellationException) {
                     throw e
@@ -335,6 +337,9 @@ class ShareViewModel(
         if (!end(session, pending)) return
         if (files.isNotEmpty() || pending.target == ShareTarget.EMAIL || pending.target == ShareTarget.MORE) {
             emit(ShareEvent.Send(pending.target, files, pending.text))
+        } else if (unreadable > 0) {
+            // Every picked photo became unreadable (final review M1): the press is not a silent no-op.
+            emit(ShareEvent.Notice(MSG_PHOTOS_UNREADABLE))
         }
     }
 
@@ -365,11 +370,15 @@ class ShareViewModel(
         )
     }
 
-    /** [스티커] (spec §5.6): drawn and saved into the gallery once per sheet. */
+    /**
+     * [스티커] (spec §5.6): drawn and saved into the gallery once per sheet. Once begun it runs outside the sheet's
+     * session, so a send that closes the sheet meanwhile (to paste the sticker into a story) does not cancel it and delete
+     * the half-saved item (final review M2); its notice is only told while the sheet is open.
+     */
     private fun sticker(session: Session) {
         if (session.stickerSaved) return emit(ShareEvent.Notice(MSG_ALREADY_SAVED))
         if (session.sticker?.isActive == true) return
-        session.sticker = viewModelScope.launch(session.job) {
+        session.sticker = viewModelScope.launch {
             try {
                 gallery.savePng(cards.sticker(session.tripId), ShareGalleryNames.sticker(clock(), zone))
             } catch (e: CancellationException) {
@@ -591,7 +600,8 @@ class ShareViewModel(
     }
 
     /**
-     * One open sheet of trip [tripId]: its drawing, sending and saving run under [job] (cancelled by [close]). [pending]
+     * One open sheet of trip [tripId]: its drawing, sending and saving run under [job] (cancelled by [close]; a sticker
+     * save once begun outlives it, see [sticker]). [pending]
      * is the press waiting for its cards and [finishing] its send or save once they are drawn; [savedCards] and
      * [stickerSaved] what this sheet put into the gallery (spec §5.5, §5.6); [retry] the button [retryCards] presses
      * again after it failed by itself.
@@ -611,6 +621,7 @@ class ShareViewModel(
     companion object {
         const val MSG_UNFINISHED = "여행을 마치면 카드를 만들 수 있습니다"
         const val MSG_CARD_FAILED = "카드를 만들지 못했습니다"
+        const val MSG_PHOTOS_UNREADABLE = "사진을 읽지 못했습니다"
         const val MSG_NO_SPACE = "저장 공간이 부족해 카드를 만들지 못했습니다"
         const val MSG_ALREADY_IN_GALLERY = "사진과 영상은 이미 갤러리에 있습니다"
         const val MSG_ALREADY_SAVED = "이미 저장했습니다"
