@@ -41,6 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.CumulativeTotals
@@ -50,16 +51,16 @@ import com.cowork.bikerecoder.map.CameraMode
 import com.cowork.bikerecoder.map.MapOverlay
 import com.cowork.bikerecoder.map.RideLine
 import com.cowork.bikerecoder.map.TileSource
+import com.cowork.bikerecoder.ui.activity.ActivityText
 import com.cowork.bikerecoder.ui.history.HistoryScaffold
 import java.time.LocalDate
 
-const val CUMULATIVE_EMPTY = "아직 기록이 없습니다. 주행을 기록하면 여기에 쌓입니다"
 const val CUMULATIVE_PERIOD_EMPTY = "이 기간에 기록이 없습니다"
 const val CUMULATIVE_LIST_HINT = "누르면 기록을 봅니다"
 const val CUMULATIVE_OPEN_RIDE = "기록 보기 ›"
 
-/** The list's heading (spec §6.8): "이 기간 주행 {n}회". */
-fun cumulativeListTitle(rides: Int): String = "이 기간 주행 ${rides}회"
+/** The list's heading (spec §6.8): "이 기간 라이딩 {n}회" after the stats tab's [chip] (V1.9.1 §C; null = [전체]: "활동"). */
+fun cumulativeListTitle(rides: Int, chip: ActivityType? = null): String = "이 기간 ${ActivityText.statsRidesWord(chip)} ${rides}회"
 
 object CumulativeMapTags {
     const val ALL = "cumulative-all"
@@ -76,9 +77,12 @@ object CumulativeMapTags {
 
 private val KOREA_CENTER = GeoPoint(36.5, 127.8)
 
-/** The summary line (spec §4): "{총 거리} · 주행 {n}회 · {총 이동 시간}", e.g. "35.00km · 주행 3회 · 1시간 45분". */
-fun cumulativeSummaryText(totals: CumulativeTotals): String =
-    "${RideFormat.distance(totals.distanceM)} · 주행 ${totals.rides}회 · ${RideFormat.duration(totals.movingTimeMs)}"
+/**
+ * The summary line (spec §4): "{총 거리} · {활동} {n}회 · {총 이동 시간}", e.g. "35.00km · 라이딩 3회 · 1시간 45분"; the word is the one of
+ * the stats tab's count cell for [chip] ([ActivityText.statsRidesWord]; null = [전체]: "활동"; V1.9.1 §C).
+ */
+fun cumulativeSummaryText(totals: CumulativeTotals, chip: ActivityType? = null): String =
+    "${RideFormat.distance(totals.distanceM)} · ${ActivityText.statsRidesWord(chip)} ${totals.rides}회 · ${RideFormat.duration(totals.movingTimeMs)}"
 
 /**
  * [map]: the map of the rides, told to call onUserGesture when the user moves it and onRideClick when a ride's line
@@ -153,13 +157,13 @@ fun CumulativeMapContent(
     HistoryScaffold(title = "누적 지도", onBack = onBack) {
         if (state.empty) {
             Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                Text(CUMULATIVE_EMPTY, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                Text(ActivityText.cumulativeEmpty(state.activity), color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
             }
         } else {
             Column(modifier = Modifier.fillMaxSize()) {
                 if (state.loaded && (state.settled || state.years.isNotEmpty())) {
                     Text(
-                        cumulativeSummaryText(state.totals),
+                        cumulativeSummaryText(state.totals, state.activity),
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                     )
@@ -291,7 +295,7 @@ private fun RideList(state: CumulativeMapState, actions: CumulativeMapActions, m
     Column(modifier = modifier) {
         if (state.rides.isNotEmpty()) {
             Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-                Text(cumulativeListTitle(state.rides.size), style = MaterialTheme.typography.titleSmall)
+                Text(cumulativeListTitle(state.rides.size, state.activity), style = MaterialTheme.typography.titleSmall)
                 Text(
                     CUMULATIVE_LIST_HINT,
                     style = MaterialTheme.typography.bodySmall,

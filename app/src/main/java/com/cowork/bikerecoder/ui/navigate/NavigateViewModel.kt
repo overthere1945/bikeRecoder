@@ -204,6 +204,7 @@ class NavigateViewModel(
     fun onEndChoice(action: EndAction) {
         when (action) {
             EndAction.STOP_TODAY -> controller.stopToday()
+            EndAction.CONTINUE_TOMORROW -> controller.continueTomorrow()
             EndAction.COMPLETE_TRIP -> viewModelScope.launch { controller.completeTrip() }
             // The trip stays as it is; the recording goes on (the screen then shows the record screen, which shows
             // the notice).

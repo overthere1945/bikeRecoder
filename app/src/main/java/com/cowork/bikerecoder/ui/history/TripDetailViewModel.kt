@@ -34,6 +34,7 @@ import com.cowork.bikerecoder.core.series.MetricSeries
 import com.cowork.bikerecoder.core.trip.TripLabel
 import com.cowork.bikerecoder.core.trip.TripLabelStore
 import com.cowork.bikerecoder.core.trip.TripStore
+import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.core.video.RideTitle
 import com.cowork.bikerecoder.map.MapLine
 import com.cowork.bikerecoder.post.PostProcessor
@@ -189,6 +190,14 @@ class TripDetailViewModel(
         val activities = byDate.values.flatten().map { it.activity }.distinct()
         ActivityText.tripTotalRows(activities.singleOrNull() ?: ActivityType.BIKE, total)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, ActivityText.tripTotalRows(ActivityType.BIKE, SegmentTotals.ZERO))
+
+    private val _multiDay = MutableStateFlow<Boolean?>(null)
+
+    /**
+     * The trip spans several days (the screen's title is then "여행 기록", else "활동 기록"; V1.9.1 §C). Null until the trip
+     * is read, so the title does not flash "활동 기록" before "여행 기록".
+     */
+    val multiDay: StateFlow<Boolean?> = _multiDay.asStateFlow()
 
     private val _canMakeMedia = MutableStateFlow(false)
 
@@ -494,14 +503,15 @@ class TripDetailViewModel(
 
     private suspend fun load() {
         guarded("Could not read the segments of trip $tripId") {
+            // The trip is read first: the screen's title waits for its type (a trip without a store is a single day).
+            val trip = tripStore?.let { trips -> guarded("Could not read trip $tripId") { trips.trip(tripId) } }
+            _multiDay.value = trip?.type == TripType.MULTI_DAY
             // Empty segments are kept in the store but not listed (nor counted in the totals).
             val all = rideStore.segments(tripId)
             val segments = all.filterNot { it.isEmpty }
             _canShare.value = canShare(all)
             _recording.value = all.any { it.endedAt == null }
-            tripStore?.let { trips ->
-                _canMakeMedia.value = guarded("Could not read trip $tripId") { canMakeMedia(trips.trip(tripId), all) } ?: false
-            }
+            if (tripStore != null) _canMakeMedia.value = canMakeMedia(trip, all)
             pruneMedia()
             _segmentsByDate.value = segments.groupBy { it.localDate }.toSortedMap()
             _total.value = tripTotals(segments)

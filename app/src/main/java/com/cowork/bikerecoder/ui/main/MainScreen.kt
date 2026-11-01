@@ -12,9 +12,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -53,7 +56,7 @@ import com.cowork.bikerecoder.map.CameraMode
 import com.cowork.bikerecoder.map.MapCamera
 import com.cowork.bikerecoder.map.MapOverlay
 import com.cowork.bikerecoder.map.TileSource
-import com.cowork.bikerecoder.ui.activity.ActivityChips
+import com.cowork.bikerecoder.ui.activity.ActivityTypeButton
 import com.cowork.bikerecoder.ui.common.GlyphIcon
 import com.cowork.bikerecoder.ui.common.PressedPlaceSheet
 import com.cowork.bikerecoder.ui.record.RECORDING_INTERRUPTED
@@ -182,7 +185,7 @@ fun MainScreen(
             }
         }
 
-        // [● 기록 시작] bottom right, the activity chips above it, [내 위치] above them.
+        // [● 기록 시작] bottom right with the activity type button on its left, [내 위치] above them.
         Column(
             modifier = Modifier.align(Alignment.BottomEnd).safeDrawingPadding().padding(bottom = 24.dp, end = 12.dp),
             horizontalAlignment = Alignment.End,
@@ -194,19 +197,26 @@ fun MainScreen(
                 }
             }
             if (!state.recording) {
-                ActivityChips(selected = state.activity, onSelect = viewModel::chooseActivity)
-                // Disabled until the interrupted recording is answered (closing it would race the new start).
-                Button(
-                    onClick = { withLocationPermission(onStartRecording) },
-                    enabled = state.canStartRecording,
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                    ),
-                    elevation = ButtonDefaults.elevatedButtonElevation(defaultElevation = 6.dp),
-                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
-                ) { Text("● 기록 시작") }
+                // Both are as high as the taller of the two (the start button).
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.height(IntrinsicSize.Min),
+                ) {
+                    ActivityTypeButton(selected = state.activity, onSelect = viewModel::chooseActivity, modifier = Modifier.fillMaxHeight())
+                    // Disabled until the interrupted recording is answered (closing it would race the new start).
+                    Button(
+                        onClick = { withLocationPermission(onStartRecording) },
+                        enabled = state.canStartRecording,
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                        ),
+                        elevation = ButtonDefaults.elevatedButtonElevation(defaultElevation = 6.dp),
+                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+                    ) { Text("● 기록 시작") }
+                }
             }
         }
     }

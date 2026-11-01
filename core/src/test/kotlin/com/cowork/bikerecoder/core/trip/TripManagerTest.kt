@@ -93,10 +93,10 @@ private fun stop(name: String, order: Int = 0, isDestination: Boolean = false, i
 class TripManagerTest {
 
     @Test
-    fun `no active trip asks type`() = runTest {
+    fun `no active trip starts a new trip without asking`() = runTest {
         val manager = TripManager(FakeTripStore(), FakeOfflineMapController(), clock = { 0L })
 
-        assertEquals(StartPrompt.AskType, manager.startPrompt())
+        assertEquals(StartPrompt.StartNew, manager.startPrompt())
     }
 
     @Test
@@ -115,7 +115,7 @@ class TripManagerTest {
     }
 
     @Test
-    fun `active single day trip asks type`() = runTest {
+    fun `active single day trip starts a new trip without asking`() = runTest {
         val store = FakeTripStore()
         store.trips[1] = Trip(
             id = 1, type = TripType.SINGLE_DAY, status = TripStatus.ACTIVE, profile = RouteProfile.BALANCED,
@@ -123,7 +123,7 @@ class TripManagerTest {
         )
         val manager = TripManager(store, FakeOfflineMapController(), clock = { 0L })
 
-        assertEquals(StartPrompt.AskType, manager.startPrompt())
+        assertEquals(StartPrompt.StartNew, manager.startPrompt())
     }
 
     @Test
@@ -232,6 +232,80 @@ class TripManagerTest {
         kotlin.test.assertFailsWith<IllegalStateException> {
             manager.endToday(1)
         }
+    }
+
+    @Test
+    fun `continue tomorrow turns the active single day trip into an active multi-day trip`() = runTest {
+        val store = FakeTripStore()
+        store.trips[1] = Trip(
+            id = 1, type = TripType.SINGLE_DAY, status = TripStatus.ACTIVE, profile = RouteProfile.BALANCED,
+            createdAt = 0L, lastActiveAt = 0L, completedAt = null,
+        )
+        val offline = FakeOfflineMapController()
+        val manager = TripManager(store, offline, clock = { 40_000L })
+
+        manager.continueTomorrow(1)
+
+        val trip = store.trips.getValue(1)
+        assertEquals(TripType.MULTI_DAY, trip.type)
+        assertEquals(TripStatus.ACTIVE, trip.status)
+        assertEquals(40_000L, trip.lastActiveAt)
+        assertNull(trip.completedAt)
+        assertEquals(0L, trip.createdAt, "day 1 stays the day it began")
+        assertTrue(offline.deleted.isEmpty(), "the offline maps stay for tomorrow")
+        assertEquals(StartPrompt.AskContinue(trip), manager.startPrompt(), "the next start asks to continue it")
+    }
+
+    @Test
+    fun `continue tomorrow on a multi-day trip only marks it active now`() = runTest {
+        val store = FakeTripStore()
+        store.trips[1] = Trip(
+            id = 1, type = TripType.MULTI_DAY, status = TripStatus.ACTIVE, profile = RouteProfile.BALANCED,
+            createdAt = 0L, lastActiveAt = 0L, completedAt = null,
+        )
+        val manager = TripManager(store, FakeOfflineMapController(), clock = { 7_000L })
+
+        manager.continueTomorrow(1)
+
+        assertEquals(store.trips.getValue(1).copy(lastActiveAt = 7_000L), store.trips.getValue(1))
+        assertEquals(TripType.MULTI_DAY, store.trips.getValue(1).type)
+    }
+
+    @Test
+    fun `continue tomorrow never revives a completed trip`() = runTest {
+        val store = FakeTripStore()
+        val completed = Trip(
+            id = 1, type = TripType.SINGLE_DAY, status = TripStatus.COMPLETED, profile = RouteProfile.BALANCED,
+            createdAt = 0L, lastActiveAt = 500L, completedAt = 500L,
+        )
+        store.trips[1] = completed
+        val manager = TripManager(store, FakeOfflineMapController(), clock = { 999L })
+
+        kotlin.test.assertFailsWith<IllegalStateException> {
+            manager.continueTomorrow(1)
+        }
+        assertEquals(completed, store.trips.getValue(1))
+    }
+
+    @Test
+    fun `a touch running with continue tomorrow keeps the trip multi-day`() = runTest {
+        // The recording's touch reads the row while "내일 이어서 하기" converts it: the touch must not write back the
+        // single-day copy it would have read without the lock.
+        val store = FakeTripStore()
+        store.trips[1] = Trip(
+            id = 1, type = TripType.SINGLE_DAY, status = TripStatus.ACTIVE, profile = RouteProfile.BALANCED,
+            createdAt = 0L, lastActiveAt = 0L, completedAt = null,
+        )
+        store.readDelayMs = 10
+        val manager = TripManager(store, FakeOfflineMapController(), clock = { 2_000L })
+
+        val convert = launch { manager.continueTomorrow(1) }
+        val touch = launch { manager.touch(1) }
+        convert.join()
+        touch.join()
+
+        assertEquals(TripType.MULTI_DAY, store.trips.getValue(1).type)
+        assertEquals(TripStatus.ACTIVE, store.trips.getValue(1).status)
     }
 
     @Test

@@ -215,10 +215,37 @@ class RecordScreenTest {
 
         composeRule.onNodeWithTag(RecordTags.STOP).performClick()
         composeRule.onNodeWithText("기록을 끝낼까요?").assertIsDisplayed()
-        composeRule.onNodeWithText("끝내기").performClick()
+        // The summary line: the activity, its distance and moving time so far.
+        composeRule.onNodeWithText("자전거 · 3.01km · 0:10:00").assertIsDisplayed()
+        composeRule.onNodeWithText("오늘로 끝내기").performClick()
 
         assertEquals(listOf(RecordingEnd.COMPLETE_TRIP), ends)
         composeRule.onNodeWithText("기록을 끝낼까요?").assertDoesNotExist()
+    }
+
+    @Test
+    fun stopCanKeepTheTripForTomorrowOrGoOnRecording() {
+        show(active())
+
+        composeRule.onNodeWithTag(RecordTags.STOP).performClick()
+        composeRule.onNodeWithText("계속 기록하기").performClick()
+        composeRule.onNodeWithText("기록을 끝낼까요?").assertDoesNotExist()
+        assertEquals(emptyList<RecordingEnd>(), ends)
+
+        composeRule.onNodeWithTag(RecordTags.STOP).performClick()
+        composeRule.onNodeWithText("내일 이어서 하기").performClick()
+        assertEquals(listOf(RecordingEnd.CONTINUE_TOMORROW), ends)
+    }
+
+    @Test
+    fun aMultiDayStopSaysWhichDayEnds() {
+        show(active().copy(tripType = TripType.MULTI_DAY, tripDay = 4))
+
+        composeRule.onNodeWithTag(RecordTags.STOP).performClick()
+        composeRule.onNodeWithText("4일째 기록을 마치고 여행은 이어 갑니다").assertIsDisplayed()
+        composeRule.onNodeWithText("여행 완료").performClick()
+
+        assertEquals(listOf(RecordingEnd.COMPLETE_TRIP), ends)
     }
 
     @Test

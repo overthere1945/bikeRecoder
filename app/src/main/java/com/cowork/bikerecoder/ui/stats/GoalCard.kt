@@ -24,6 +24,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.ui.activity.ActivityStyle
 import com.cowork.bikerecoder.ui.activity.ActivityText
 import com.cowork.bikerecoder.ui.feed.GOAL_REACHED
@@ -55,10 +56,12 @@ fun GoalCard(
     rows: List<ActivityGoal> = emptyList(),
     openTip: String? = null,
     onToggleTip: (String) -> Unit = {},
+    /** The stats tab's chip (null = [전체]): a bike's tip says "탄 거리", the others' "기록한 거리" (V1.9.1 §C). */
+    activity: ActivityType? = ActivityType.BIKE,
 ) {
     // One "?" for the card: by the hint without a goal, else by the title of the first goal.
     val tip: @Composable () -> Unit = {
-        HelpTip(StatsHelp.GOAL_TOPIC, StatsHelp.GOAL, openTip == StatsHelp.GOAL_TOPIC, onToggle = { onToggleTip(StatsHelp.GOAL_TOPIC) })
+        HelpTip(StatsHelp.GOAL_TOPIC, StatsHelp.goal(activity), openTip == StatsHelp.GOAL_TOPIC, onToggle = { onToggleTip(StatsHelp.GOAL_TOPIC) })
     }
     Surface(
         shape = MaterialTheme.shapes.medium,

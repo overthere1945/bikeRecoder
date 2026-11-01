@@ -152,7 +152,7 @@ class KoreanPhrasesTest {
 
     @Test
     fun startPhrases() {
-        assertEquals("기록을 시작합니다", p.recordingStarted(ActivityType.BIKE, null))
+        assertEquals("자전거 타기 기록을 시작합니다", p.recordingStarted(ActivityType.BIKE, null))
         assertEquals("기록을 시작합니다", p.recordingStarted)
         assertEquals("걷기 기록을 시작합니다", p.recordingStarted(ActivityType.WALK, null))
         assertEquals("달리기 기록을 시작합니다", p.recordingStarted(ActivityType.RUN, 3_600_000))

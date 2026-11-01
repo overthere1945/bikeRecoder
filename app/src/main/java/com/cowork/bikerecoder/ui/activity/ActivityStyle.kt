@@ -45,6 +45,13 @@ object ActivityStyle {
     /** The activity's colour (light theme): selected chips, map lines. */
     fun color(type: ActivityType): Color = Color(argb(type))
 
+    /**
+     * The colour of text and icons on a [color] fill (the map screen's type button, the selected chips): white. Its contrast on
+     * the four fills is 3.4–3.9 : 1 (see ActivityStyleTest), enough for bold text, not for AA body text.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun onColor(type: ActivityType): Color = Color.White
+
     /** `#RRGGBB` of [color], for the map's line layers. */
     fun hex(type: ActivityType): String = "#%06X".format(argb(type) and 0xFFFFFF)
 
@@ -126,22 +133,8 @@ fun ActivityBadges(types: List<ActivityType>, size: Dp, modifier: Modifier = Mod
 }
 
 /**
- * The map screen's activity chips, [자전거][걷기][달리기][등산] (spec §1.4): only the [selected] one is filled with its
- * activity colour. Each chip is read as the activity's name.
- */
-@Composable
-fun ActivityChips(selected: ActivityType, onSelect: (ActivityType) -> Unit, modifier: Modifier = Modifier) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = modifier.horizontalScroll(rememberScrollState()),
-    ) {
-        ActivityType.entries.forEach { type -> ActivityChip(type, type == selected) { onSelect(type) } }
-    }
-}
-
-/**
- * The same chips with a leading [전체] ([includeAll]) for the stats tab (spec §4.1): [selected] null is [전체], which is filled
+ * The activity chips [자전거][걷기][달리기][등산] with a leading [전체] ([includeAll]) for the stats tab (spec §4.1; the map screen has
+ * the type button since V1.9.1): only the [selected] one is filled with its activity colour. [selected] null is [전체], which is filled
  * with the theme's primary colour (it stands for no activity). [onSelect] gets the tapped activity, null for [전체].
  * Tags: [ActivityChipTags.chip].
  */

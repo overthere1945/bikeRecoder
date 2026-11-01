@@ -822,8 +822,8 @@ class StatsViewModelTest {
             ride(2, LocalDate.of(2026, 10, 21), 3.0, activity = ActivityType.WALK),
             ride(3, LocalDate.of(2026, 10, 28), 6.0, activity = ActivityType.RUN),
         )
-        assertEquals("3주 연속 주행 중", viewModel(FakeRides(rides), chip = FakeChip(null)).state.value!!.streakText)
-        assertEquals("1주 연속 주행 중", viewModel(FakeRides(rides), chip = FakeChip(ActivityType.RUN)).state.value!!.streakText)
+        assertEquals("3주 연속 활동 중", viewModel(FakeRides(rides), chip = FakeChip(null)).state.value!!.streakText)
+        assertEquals("1주 연속 달리는 중", viewModel(FakeRides(rides), chip = FakeChip(ActivityType.RUN)).state.value!!.streakText)
     }
 
     @Test
@@ -833,8 +833,8 @@ class StatsViewModelTest {
             ride(2, LocalDate.of(2026, 10, 21), 5.0), // a bike week breaks the hikes
             ride(3, LocalDate.of(2026, 10, 28), 5.0, activity = ActivityType.HIKE),
         )
-        assertEquals("1주 연속 주행 중", viewModel(FakeRides(rides), chip = FakeChip(ActivityType.HIKE)).state.value!!.streakText)
-        assertEquals("3주 연속 주행 중", viewModel(FakeRides(rides), chip = FakeChip(null)).state.value!!.streakText)
+        assertEquals("1주 연속 산행 중", viewModel(FakeRides(rides), chip = FakeChip(ActivityType.HIKE)).state.value!!.streakText)
+        assertEquals("3주 연속 활동 중", viewModel(FakeRides(rides), chip = FakeChip(null)).state.value!!.streakText)
     }
 
     @Test
@@ -952,7 +952,7 @@ class StatsViewModelTest {
         )
         val all = viewModel(fake, chip = FakeChip(null)).state.value!!.records
         val headed = all.filter { it.heading != null }
-        assertEquals(listOf("자전거" to "가장 긴 주행", "달리기" to "가장 긴 달리기", "전체" to "가장 많이 탄 주"), headed.map { it.heading to it.label })
+        assertEquals(listOf("자전거" to "가장 긴 주행", "달리기" to "가장 긴 달리기", "전체" to "가장 활발했던 주"), headed.map { it.heading to it.label })
         val best = all.first { it.label == "5 km 최고 기록" }
         assertTrue(best.value.startsWith("24'51\""), best.value)
         val longRun = viewModel(fake, chip = FakeChip(ActivityType.RUN)).state.value!!.records

@@ -352,7 +352,7 @@ class StatsViewModel(
             goalRows = if (chip == null) goalRowsOf(goalMap, everyRide, today) else emptyList(),
             goals = goalMap,
             projectionText = if (yearlyGoal == null) null else Goals.yearProjectionKm(yearDistance, today)?.let(::projectionText),
-            streakText = streakText(RideRecords.streak(rides, today)),
+            streakText = streakText(RideRecords.streak(rides, today), chip),
             records = recordRows(all, today, efforts, chip),
             cumulative = cumulativeOf(rides, period, sel.metric, goal, chip, today),
             cumulativeRides = totals.rides,

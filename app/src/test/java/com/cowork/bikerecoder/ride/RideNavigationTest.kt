@@ -23,6 +23,8 @@ import com.cowork.bikerecoder.nav.RecordingVoiceOutput
 import com.cowork.bikerecoder.nav.ScriptedLocationSource
 import com.cowork.bikerecoder.nav.fixture
 import com.cowork.bikerecoder.nav.gpxFixture
+import com.cowork.bikerecoder.ui.navigate.FinishedView
+import com.cowork.bikerecoder.ui.navigate.finishedView
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -137,7 +139,7 @@ class RideNavigationTest {
 
         assertInstanceOf(NavUiState.Active::class.java, h.navigation.ui.value)
         assertEquals(tripId, h.active.tripId)
-        assertEquals(1, voice.spoken.count { it == "기록을 시작합니다" }, voice.spoken.toString())
+        assertEquals(1, voice.spoken.count { it == "자전거 타기 기록을 시작합니다" }, voice.spoken.toString())
         assertNotNull(h.navigation.kmSource, "the recording supplies the km announcements")
         assertEquals(tripId, h.store.openSegments().single().tripId)
     }
@@ -153,7 +155,7 @@ class RideNavigationTest {
 
         assertInstanceOf(NavUiState.Active::class.java, h.navigation.ui.value)
         assertEquals(RideUiState.Idle, h.ride.ui.value)
-        assertTrue(voice.spoken.none { it == "기록을 시작합니다" }, voice.spoken.toString())
+        assertTrue(voice.spoken.none { it.endsWith("기록을 시작합니다") }, voice.spoken.toString())
         assertNull(h.navigation.kmSource)
         assertTrue(h.store.openSegments().isEmpty())
     }
@@ -171,7 +173,7 @@ class RideNavigationTest {
 
         assertEquals(ActivityType.BIKE, h.active.activity)
         assertEquals(ActivityType.BIKE, h.store.openSegments().single().activity)
-        assertEquals(1, voice.spoken.count { it == "기록을 시작합니다" }, voice.spoken.toString())
+        assertEquals(1, voice.spoken.count { it == "자전거 타기 기록을 시작합니다" }, voice.spoken.toString())
         assertNotNull(h.navigation.kmSource, "the bike recording supplies the km announcements")
     }
 
@@ -260,6 +262,30 @@ class RideNavigationTest {
     }
 
     @Test
+    fun continueTomorrowWhileRecordingKeepsTheTripForTomorrow() = runTest {
+        // Guidance [종료] → [내일 이어서 하기] on a single-day trip that records: the trip becomes multi-day and stays active.
+        val h = Harness(this)
+        val tripId = h.trip()
+        h.navigation.start(tripId)
+        h.guidedPast(500.0)
+
+        h.navigation.continueTomorrow()
+        val finished = h.rideFinished()
+
+        val nav = h.navigation.ui.first { it is NavUiState.Finished } as NavUiState.Finished
+        assertEquals(NavUiState.Finished(tripId, TripType.MULTI_DAY, FinishReason.STOPPED_TODAY), nav)
+        val trip = trips.trips.getValue(tripId)
+        assertEquals(TripType.MULTI_DAY, trip.type)
+        assertEquals(TripStatus.ACTIVE, trip.status)
+        assertNotNull(finished.segment.endedAt, "the recording's segment is closed")
+        assertNull(finished.error)
+        assertTrue(h.store.openSegments().isEmpty())
+        assertTrue(offline.deleted.isEmpty(), "not completed: the offline maps stay for tomorrow")
+        assertEquals(FinishedView.Done(finished, completed = false, canConvert = false), finishedView(nav, h.ride.ui.value))
+        assertNull(h.navigation.kmSource)
+    }
+
+    @Test
     fun kmSourceIsClearedWhenRecordingStops() = runTest {
         val h = Harness(this)
         val tripId = h.trip()
@@ -275,7 +301,7 @@ class RideNavigationTest {
         assertEquals(listOf(1, 2), guidanceKms(), voice.spoken.toString())
         assertTrue(combinedKms().isEmpty(), voice.spoken.toString())
         assertTrue(recordingKms().isEmpty(), voice.spoken.toString())
-        assertEquals(1, voice.spoken.count { it == "기록을 시작합니다" }, "not restarted while the guidance goes on")
+        assertEquals(1, voice.spoken.count { it == "자전거 타기 기록을 시작합니다" }, "not restarted while the guidance goes on")
     }
 
     @Test
@@ -312,7 +338,7 @@ class RideNavigationTest {
 
         assertInstanceOf(NavUiState.Active::class.java, h.navigation.ui.value)
         assertEquals(tripId, h.active.tripId)
-        assertEquals(2, voice.spoken.count { it == "기록을 시작합니다" }, voice.spoken.toString())
+        assertEquals(2, voice.spoken.count { it == "자전거 타기 기록을 시작합니다" }, voice.spoken.toString())
         assertNotNull(h.navigation.kmSource)
         assertEquals(2, h.store.segments(tripId).size)
     }
@@ -330,7 +356,7 @@ class RideNavigationTest {
         play(10_000)
 
         assertEquals(tripId, h.active.tripId)
-        assertEquals(1, voice.spoken.count { it == "기록을 시작합니다" }, voice.spoken.toString())
+        assertEquals(1, voice.spoken.count { it == "자전거 타기 기록을 시작합니다" }, voice.spoken.toString())
         assertEquals(tripId, h.store.openSegments().single().tripId)
     }
 
@@ -346,7 +372,7 @@ class RideNavigationTest {
         assertInstanceOf(NavUiState.Failed::class.java, h.navigation.ui.value)
         assertEquals(RideUiState.Idle, h.ride.ui.value)
         assertTrue(h.store.openSegments().isEmpty())
-        assertTrue(voice.spoken.none { it == "기록을 시작합니다" }, voice.spoken.toString())
+        assertTrue(voice.spoken.none { it.endsWith("기록을 시작합니다") }, voice.spoken.toString())
         assertNull(h.navigation.kmSource)
     }
 
@@ -384,7 +410,7 @@ class RideNavigationTest {
         h.ride.startRecording(tripId)!!.join()
 
         assertTrue(!voice.muted, "the shared voice is unmuted when the guidance finished")
-        assertEquals(listOf("기록을 시작합니다"), voice.spoken.toList())
+        assertEquals(listOf("자전거 타기 기록을 시작합니다"), voice.spoken.toList())
     }
     @Test
     fun recordingFirstThenGuidanceOfTheSameTripKeepsTheSegment() = runTest {
@@ -403,7 +429,7 @@ class RideNavigationTest {
         assertEquals(segmentId, segment.id)
         assertNull(segment.endedAt)
         assertEquals(segmentId, h.active.segmentId)
-        assertEquals(1, voice.spoken.count { it == "기록을 시작합니다" }, voice.spoken.toString())
+        assertEquals(1, voice.spoken.count { it == "자전거 타기 기록을 시작합니다" }, voice.spoken.toString())
         assertEquals(listOf(1), combinedKms(), voice.spoken.toString())
         assertTrue(guidanceKms().isEmpty(), voice.spoken.toString())
         assertTrue(recordingKms().isEmpty(), voice.spoken.toString())

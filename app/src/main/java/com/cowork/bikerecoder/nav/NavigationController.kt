@@ -57,7 +57,10 @@ sealed interface NavUiState {
     /** Waiting for the first fix or computing the route to the unvisited stops. */
     data class Starting(val tripId: Long) : NavUiState
 
-    /** Guidance is running. [stops] are the stops not reached yet; [fix] is the latest location. */
+    /**
+     * Guidance is running. [stops] are the stops not reached yet; [fix] is the latest location; [day]: which day of its
+     * trip this is (1 = the day it began, [TripManager.dayNumber]).
+     */
     data class Active(
         val tripId: Long,
         val type: TripType,
@@ -65,6 +68,7 @@ sealed interface NavUiState {
         val stops: List<Stop>,
         val fix: LocationFix?,
         val muted: Boolean,
+        val day: Int = 1,
     ) : NavUiState
 
     /**
@@ -108,8 +112,8 @@ val NavUiState.guidingTripId: Long?
  * every new kilometre and when the session ends. Session updates are spoken (unless [voiceEnabled] is off), reached stops are
  * marked visited, and reaching the destination completes the trip — except (ruling U1) for a guidance started while a
  * recording already ran ([kmSource] set at [begin]) that still runs at the arrival: then only the guidance ends
- * ([onArrivedKeepingRecording]), the trip stays active. Every way out of a session (arrival,
- * [stopToday], [completeTrip], [close], a new start) stops the location source and the ticks. A location stream
+ * ([onArrivedKeepingRecording]), the trip stays active. Every way out of a session (arrival, [stopToday],
+ * [continueTomorrow], [completeTrip], [close], a new start) stops the location source and the ticks. A location stream
  * that fails after the start point was taken is subscribed again every [LOCATION_RETRY_MS] until it works.
  * While [kmSource] is set (a recording runs), the 1 km announcements count its distance and speak its combined
  * sentence instead. Each session gets the usual speed of the [recentSegments] (V1.7.0 spec §1.6, read at its start; the
@@ -237,6 +241,16 @@ class NavigationController(
     fun stopToday() {
         val r = run ?: return
         if (r.trip?.type != TripType.MULTI_DAY) return
+        scope.launch { finish(r, FinishReason.STOPPED_TODAY) }
+    }
+
+    /**
+     * SINGLE_DAY only, "내일 이어서 하기": the trip becomes a multi-day trip ([TripManager.continueTomorrow]) and the guidance
+     * stops for today as [stopToday] does ([FinishReason.STOPPED_TODAY], the finished state says [TripType.MULTI_DAY]).
+     */
+    fun continueTomorrow() {
+        val r = run ?: return
+        if (r.trip?.type != TripType.SINGLE_DAY) return
         scope.launch { finish(r, FinishReason.STOPPED_TODAY) }
     }
 
@@ -452,7 +466,7 @@ class NavigationController(
         }
         if (run !== r) return
         val trip = r.trip ?: return
-        _ui.value = NavUiState.Active(r.tripId, trip.type, update.state, r.stops, r.lastFix, muted)
+        _ui.value = NavUiState.Active(r.tripId, trip.type, update.state, r.stops, r.lastFix, muted, tripManager.dayNumber(trip))
     }
 
     /** Ends [r]'s session and records the outcome. May be called from [r]'s own update collector. */
@@ -467,11 +481,18 @@ class NavigationController(
             FinishReason.ARRIVED, FinishReason.COMPLETED -> saving("complete trip ${trip.id}") {
                 tripManager.complete(trip.id)
             } || isCompleted(trip.id) // complete() saves first, then deletes the offline maps
-            FinishReason.STOPPED_TODAY -> saving("end today of trip ${trip.id}") { tripManager.endToday(trip.id) }
+            // A single-day trip stopped for today is kept for tomorrow ([continueTomorrow]).
+            FinishReason.STOPPED_TODAY -> if (trip.type == TripType.MULTI_DAY) {
+                saving("end today of trip ${trip.id}") { tripManager.endToday(trip.id) }
+            } else {
+                saving("keep trip ${trip.id} for tomorrow") { tripManager.continueTomorrow(trip.id) }
+            }
         }
+        // Stopped for today, the trip is a multi-day trip now (also one converted by [continueTomorrow]).
+        val type = if (reason == FinishReason.STOPPED_TODAY) TripType.MULTI_DAY else trip.type
         // A new start during the write wins.
         if (run == null) {
-            _ui.value = NavUiState.Finished(trip.id, trip.type, reason, error = if (saved) null else MSG_SAVE_FAILED)
+            _ui.value = NavUiState.Finished(trip.id, type, reason, error = if (saved) null else MSG_SAVE_FAILED)
         }
     }
 

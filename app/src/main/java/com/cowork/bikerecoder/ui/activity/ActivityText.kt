@@ -89,7 +89,10 @@ object ActivityText {
         return if (h > 0) String.format(Locale.ROOT, "%d:%02d'%02d\"", h, m, s) else String.format(Locale.ROOT, "%d'%02d\"", m, s)
     }
 
-    /** A personal record's name in the stats tab's list (spec §4.3). A bike keeps its wording. */
+    /**
+     * A personal record's name in the stats tab's list (spec §4.3, V1.9.1 §C) and, with "신기록", in the summary's new-record
+     * line. Each kind belongs to one activity and is worded after it; a bike keeps its wording.
+     */
     fun recordLabel(kind: RideRecordKind): String = when (kind) {
         RideRecordKind.LONGEST_DISTANCE -> "가장 긴 주행"
         RideRecordKind.LONGEST_TIME -> "가장 오래 탄 주행"
@@ -99,14 +102,100 @@ object ActivityText {
         RideRecordKind.RUN_BEST_1K, RideRecordKind.RUN_BEST_5K, RideRecordKind.RUN_BEST_10K, RideRecordKind.RUN_BEST_HALF ->
             "${kind.effort!!.label} 최고 기록"
         RideRecordKind.WALK_LONGEST_DISTANCE -> "가장 긴 걷기"
-        RideRecordKind.WALK_LONGEST_TIME -> "가장 오래 걸은 걷기"
-        RideRecordKind.HIKE_MOST_ASCENT -> "가장 많이 오른 등산"
-        RideRecordKind.HIKE_HIGHEST -> "가장 높이 오른 등산"
-        RideRecordKind.HIKE_LONGEST_ELAPSED -> "가장 긴 산행"
+        RideRecordKind.WALK_LONGEST_TIME -> "가장 오래 걸은 기록"
+        RideRecordKind.HIKE_MOST_ASCENT -> "가장 많이 오른 산행"
+        RideRecordKind.HIKE_HIGHEST -> "가장 높이 오른 산행"
+        RideRecordKind.HIKE_LONGEST_ELAPSED -> "가장 긴 산행 시간"
+    }
+
+    /** The 개인 기록 row of the best week under [chip] (null = [전체]): "가장 많이 탄 주", "산행을 가장 많이 한 주", "가장 활발했던 주". */
+    fun bestWeekLabel(chip: ActivityType?): String = bestPeriodLabel(chip, "주")
+
+    /** The row of the best month: "가장 많이 탄 달", "가장 많이 걸은 달", ... "가장 활발했던 달". */
+    fun bestMonthLabel(chip: ActivityType?): String = bestPeriodLabel(chip, "달")
+
+    private fun bestPeriodLabel(chip: ActivityType?, unit: String): String = when (chip) {
+        ActivityType.BIKE -> "가장 많이 탄 $unit"
+        ActivityType.WALK -> "가장 많이 걸은 $unit"
+        ActivityType.RUN -> "가장 많이 달린 $unit"
+        ActivityType.HIKE -> "산행을 가장 많이 한 $unit"
+        null -> "가장 활발했던 $unit"
+    }
+
+    /** The 개인 기록 row of the longest streak: "가장 긴 연속 주행", "가장 긴 연속 걷기", ... "가장 긴 연속 활동". */
+    fun longestStreakLabel(chip: ActivityType?): String = "가장 긴 연속 " + when (chip) {
+        ActivityType.BIKE -> "주행"
+        ActivityType.WALK -> "걷기"
+        ActivityType.RUN -> "달리기"
+        ActivityType.HIKE -> "산행"
+        null -> "활동"
+    }
+
+    /** The streak line while this week is counted: "4주 연속 주행 중", "걷는 중", "달리는 중", "산행 중", "활동 중". */
+    fun streakRunning(weeks: Int, chip: ActivityType?): String = "${weeks}주 연속 " + when (chip) {
+        ActivityType.BIKE -> "주행 중"
+        ActivityType.WALK -> "걷는 중"
+        ActivityType.RUN -> "달리는 중"
+        ActivityType.HIKE -> "산행 중"
+        null -> "활동 중"
+    }
+
+    /** The streak line before this week counts: "3주 연속 · 이번 주에 타면 4주" ("걸으면", "달리면", "산에 오르면", "활동하면"). */
+    fun streakPending(weeks: Int, chip: ActivityType?): String = "${weeks}주 연속 · 이번 주에 ${streakCondition(chip)} ${weeks + 1}주"
+
+    /** The streak line without one: "이번 주에 타면 연속 주행이 시작됩니다"; every other chip "... 연속 기록이 시작됩니다". */
+    fun streakNone(chip: ActivityType?): String =
+        "이번 주에 ${streakCondition(chip)} 연속 ${if (chip == ActivityType.BIKE) "주행" else "기록"}이 시작됩니다"
+
+    private fun streakCondition(chip: ActivityType?): String = when (chip) {
+        ActivityType.BIKE -> "타면"
+        ActivityType.WALK -> "걸으면"
+        ActivityType.RUN -> "달리면"
+        ActivityType.HIKE -> "산에 오르면"
+        null -> "활동하면"
+    }
+
+    /** The cumulative map's empty text for a bike, unchanged since V1.2.0. */
+    const val CUMULATIVE_EMPTY_BIKE = "아직 기록이 없습니다. 주행을 기록하면 여기에 쌓입니다"
+
+    /** The cumulative map's empty text under every other chip and [전체]. */
+    const val CUMULATIVE_EMPTY_ANY = "아직 기록이 없습니다. 활동을 기록하면 여기에 쌓입니다"
+
+    /** What the cumulative map says when no ride is recorded under [chip] (null = [전체]). */
+    fun cumulativeEmpty(chip: ActivityType?): String =
+        if (chip == ActivityType.BIKE) CUMULATIVE_EMPTY_BIKE else CUMULATIVE_EMPTY_ANY
+
+    /** The feed's empty state: the screen shows every activity. */
+    const val FEED_EMPTY = "첫 활동을 기록해 보세요"
+
+    /** The trip detail screen's title: a single day "활동 기록", a trip of several days "여행 기록", none until the trip is read (null). */
+    fun tripDetailTitle(multiDay: Boolean?): String = when (multiDay) {
+        null -> ""
+        true -> "여행 기록"
+        false -> "활동 기록"
     }
 
     /**
-     * The summary's new-record line (spec §4.3): "🏆 가장 긴 주행 신기록", "🏆 5 km 최고 기록 24'51\"", "🏆 가장 높이 오른 등산".
+     * The name of a trip without stops where a destination name would be shown (the multi-day banner, the "여행 이어서"
+     * card): "주행 기록" for a bike, "걷기 기록", "달리기 기록", "산행 기록"; "활동 기록" while the trip's activity is unknown (null).
+     */
+    fun recordName(activity: ActivityType?): String = when (activity) {
+        ActivityType.BIKE -> "주행 기록"
+        ActivityType.WALK -> "걷기 기록"
+        ActivityType.RUN -> "달리기 기록"
+        ActivityType.HIKE -> "산행 기록"
+        null -> "활동 기록"
+    }
+
+    // The activity type button on the map screen (V1.9.1 §A).
+    /** The sheet's title. */
+    const val TYPE_SHEET_TITLE = "활동 종류"
+
+    /** What a screen reader says for the type button: "활동 종류, 걷기. 눌러서 바꾸기". */
+    fun typeButtonDescription(type: ActivityType): String = "$TYPE_SHEET_TITLE, ${name(type)}. 눌러서 바꾸기"
+
+    /**
+     * The summary's new-record line (spec §4.3): "🏆 가장 긴 주행 신기록", "🏆 5 km 최고 기록 24'51\"", "🏆 가장 높이 오른 산행".
      * [effortMs] is the best effort's time (only for the run bests).
      */
     fun newRecordLine(kind: RideRecordKind, effortMs: Long?): String = when (kind) {

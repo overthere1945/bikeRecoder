@@ -145,8 +145,109 @@ class ActivityTextTest {
         )
         assertEquals("🏆 가장 긴 달리기 신기록", ActivityText.newRecordLine(RideRecordKind.RUN_LONGEST_DISTANCE, null))
         assertEquals("🏆 하프 최고 기록 1:52'10\"", ActivityText.newRecordLine(RideRecordKind.RUN_BEST_HALF, 6_730_000))
-        assertEquals("🏆 가장 긴 산행", ActivityText.newRecordLine(RideRecordKind.HIKE_LONGEST_ELAPSED, null))
+        assertEquals("🏆 가장 긴 산행 시간", ActivityText.newRecordLine(RideRecordKind.HIKE_LONGEST_ELAPSED, null))
         assertEquals("🏆 가장 오래 탄 주행 신기록", ActivityText.newRecordLine(RideRecordKind.LONGEST_TIME, null))
+    }
+
+    @Test
+    fun recordLabelsAreWordedAfterTheirActivity() {
+        assertEquals(
+            listOf("가장 긴 주행", "가장 오래 탄 주행", "가장 많이 오른 주행", "가장 빠른 평균 속도"),
+            listOf(RideRecordKind.LONGEST_DISTANCE, RideRecordKind.LONGEST_TIME, RideRecordKind.MOST_ASCENT, RideRecordKind.FASTEST_AVG)
+                .map(ActivityText::recordLabel),
+        )
+        assertEquals(
+            listOf("가장 긴 걷기", "가장 오래 걸은 기록"),
+            listOf(RideRecordKind.WALK_LONGEST_DISTANCE, RideRecordKind.WALK_LONGEST_TIME).map(ActivityText::recordLabel),
+        )
+        assertEquals("가장 긴 달리기", ActivityText.recordLabel(RideRecordKind.RUN_LONGEST_DISTANCE))
+        assertEquals(
+            listOf("가장 많이 오른 산행", "가장 높이 오른 산행", "가장 긴 산행 시간"),
+            listOf(RideRecordKind.HIKE_MOST_ASCENT, RideRecordKind.HIKE_HIGHEST, RideRecordKind.HIKE_LONGEST_ELAPSED)
+                .map(ActivityText::recordLabel),
+        )
+        // No two kinds of an activity share a name (the stats list keys its rows by it).
+        RideRecordKind.entries.groupBy { it.activity }.values.forEach { kinds ->
+            assertEquals(kinds.size, kinds.map(ActivityText::recordLabel).distinct().size)
+        }
+    }
+
+    @Test
+    fun newRecordLineUsesTheRecordLabelOfTheSegmentsActivity() {
+        assertEquals("🏆 가장 오래 걸은 기록 신기록", ActivityText.newRecordLine(RideRecordKind.WALK_LONGEST_TIME, null))
+        assertEquals("🏆 가장 긴 산행 시간", ActivityText.newRecordLine(RideRecordKind.HIKE_LONGEST_ELAPSED, null))
+        assertEquals("🏆 가장 높이 오른 산행", ActivityText.newRecordLine(RideRecordKind.HIKE_HIGHEST, null))
+    }
+
+    private val chips: List<ActivityType?> = listOf(ActivityType.BIKE, ActivityType.WALK, ActivityType.RUN, ActivityType.HIKE, null)
+
+    @Test
+    fun bestPeriodAndStreakLabelsPerChip() {
+        assertEquals(
+            listOf("가장 많이 탄 주", "가장 많이 걸은 주", "가장 많이 달린 주", "산행을 가장 많이 한 주", "가장 활발했던 주"),
+            chips.map(ActivityText::bestWeekLabel),
+        )
+        assertEquals(
+            listOf("가장 많이 탄 달", "가장 많이 걸은 달", "가장 많이 달린 달", "산행을 가장 많이 한 달", "가장 활발했던 달"),
+            chips.map(ActivityText::bestMonthLabel),
+        )
+        assertEquals(
+            listOf("가장 긴 연속 주행", "가장 긴 연속 걷기", "가장 긴 연속 달리기", "가장 긴 연속 산행", "가장 긴 연속 활동"),
+            chips.map(ActivityText::longestStreakLabel),
+        )
+    }
+
+    @Test
+    fun streakLinesPerChip() {
+        assertEquals(
+            listOf("4주 연속 주행 중", "4주 연속 걷는 중", "4주 연속 달리는 중", "4주 연속 산행 중", "4주 연속 활동 중"),
+            chips.map { ActivityText.streakRunning(4, it) },
+        )
+        assertEquals(
+            listOf(
+                "3주 연속 · 이번 주에 타면 4주", "3주 연속 · 이번 주에 걸으면 4주", "3주 연속 · 이번 주에 달리면 4주",
+                "3주 연속 · 이번 주에 산에 오르면 4주", "3주 연속 · 이번 주에 활동하면 4주",
+            ),
+            chips.map { ActivityText.streakPending(3, it) },
+        )
+        assertEquals(
+            listOf(
+                "이번 주에 타면 연속 주행이 시작됩니다", "이번 주에 걸으면 연속 기록이 시작됩니다", "이번 주에 달리면 연속 기록이 시작됩니다",
+                "이번 주에 산에 오르면 연속 기록이 시작됩니다", "이번 주에 활동하면 연속 기록이 시작됩니다",
+            ),
+            chips.map(ActivityText::streakNone),
+        )
+    }
+
+    @Test
+    fun cumulativeEmptyTextKeepsTheBikesAndIsNeutralForTheRest() {
+        assertEquals("아직 기록이 없습니다. 주행을 기록하면 여기에 쌓입니다", ActivityText.cumulativeEmpty(ActivityType.BIKE))
+        listOf(ActivityType.WALK, ActivityType.RUN, ActivityType.HIKE, null).forEach {
+            assertEquals("아직 기록이 없습니다. 활동을 기록하면 여기에 쌓입니다", ActivityText.cumulativeEmpty(it))
+        }
+    }
+
+    @Test
+    fun aTripWithoutStopsIsNamedAfterItsActivity() {
+        assertEquals("주행 기록", ActivityText.recordName(ActivityType.BIKE))
+        assertEquals("걷기 기록", ActivityText.recordName(ActivityType.WALK))
+        assertEquals("달리기 기록", ActivityText.recordName(ActivityType.RUN))
+        assertEquals("산행 기록", ActivityText.recordName(ActivityType.HIKE))
+        assertEquals("활동 기록", ActivityText.recordName(null))
+    }
+
+    @Test
+    fun tripDetailTitleAndFeedEmpty() {
+        assertEquals("활동 기록", ActivityText.tripDetailTitle(multiDay = false))
+        assertEquals("여행 기록", ActivityText.tripDetailTitle(multiDay = true))
+        assertEquals("", ActivityText.tripDetailTitle(multiDay = null), "the trip is not read yet")
+        assertEquals("첫 활동을 기록해 보세요", ActivityText.FEED_EMPTY)
+    }
+
+    @Test
+    fun typeButtonIsReadWithTheNameAndHowToChangeIt() {
+        assertEquals("활동 종류, 걷기. 눌러서 바꾸기", ActivityText.typeButtonDescription(ActivityType.WALK))
+        assertEquals("활동 종류", ActivityText.TYPE_SHEET_TITLE)
     }
 
     @Test

@@ -86,7 +86,7 @@ import com.cowork.bikerecoder.ui.record.AutoPauseChip
 import com.cowork.bikerecoder.ui.record.PageDots
 import com.cowork.bikerecoder.ui.record.PauseBand
 import com.cowork.bikerecoder.ui.record.PauseResumeButton
-import com.cowork.bikerecoder.ui.record.RecordEndDialog
+import com.cowork.bikerecoder.ui.record.RecordEndSheet
 import com.cowork.bikerecoder.ui.record.RIDE_MAP_PAGE
 import com.cowork.bikerecoder.ui.record.RIDE_PAGE_COUNT
 import com.cowork.bikerecoder.ui.record.RideNumbersPage
@@ -97,7 +97,7 @@ import com.cowork.bikerecoder.ui.record.SummaryShareButton
 import com.cowork.bikerecoder.ui.record.SummaryMap
 import com.cowork.bikerecoder.ui.record.rideSummaryLine
 import com.cowork.bikerecoder.ui.record.swipeTurnsPages
-import com.cowork.bikerecoder.ui.trip.EndNavigationDialog
+import com.cowork.bikerecoder.ui.trip.EndNavigationSheet
 import com.cowork.bikerecoder.ui.trip.TRIP_COMPLETED
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -285,9 +285,12 @@ fun NavigateScreen(
     }
 
     if (askEnd && state is NavUiState.Active) {
-        EndNavigationDialog(
-            type = state.type,
-            recording = recording,
+        // The cards are fixed when the sheet opens: a recording that starts or ends meanwhile must not move them under a finger.
+        val asked = remember { Triple(state.type, recording, state.day) }
+        EndNavigationSheet(
+            type = asked.first,
+            recording = asked.second,
+            day = asked.third,
             onChoose = { action ->
                 askEnd = false
                 viewModel.onEndChoice(action)
@@ -479,8 +482,8 @@ private fun ActiveContent(
 
     if (askEndRecording && ride != null) {
         // While guiding, only the recording ends (the guidance owns the trip).
-        RecordEndDialog(
-            type = ride.tripType,
+        RecordEndSheet(
+            ride = ride,
             navigating = true,
             onChoose = {
                 askEndRecording = false

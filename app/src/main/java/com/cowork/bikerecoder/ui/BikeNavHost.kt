@@ -445,7 +445,7 @@ fun BikeNavHost(
             val viewModel: MainViewModel = viewModel(factory = MainViewModel.factory(container))
             // A double tap must not push a second screen: only the main screen on top navigates.
             val isCurrent = { navController.currentBackStackEntry?.id == entry.id }
-            // The record-only start asks which trip, like [안내 시작] on the plan screen.
+            // The record-only start: a new trip at once, or the active multi-day trip if continued, like [안내 시작].
             val tripStart: TripStartViewModel = viewModel(factory = TripStartViewModel.factory(container))
             val startState by tripStart.state.collectAsStateWithLifecycle()
             // The summary and stats tabs live as long as this main screen (V1.4.0 spec §1.1); made when first needed.
@@ -569,7 +569,6 @@ fun BikeNavHost(
             }
             TripStartDialogs(
                 state = startState,
-                onChooseType = tripStart::chooseType,
                 onContinue = tripStart::continueTrip,
                 onStartNew = tripStart::startNew,
                 onDismiss = tripStart::dismiss,
@@ -699,7 +698,6 @@ fun BikeNavHost(
             )
             TripStartDialogs(
                 state = startState,
-                onChooseType = tripStart::chooseType,
                 onContinue = tripStart::continueTrip,
                 onStartNew = tripStart::startNew,
                 onDismiss = tripStart::dismiss,

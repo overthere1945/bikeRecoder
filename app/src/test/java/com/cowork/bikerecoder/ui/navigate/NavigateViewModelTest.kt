@@ -203,6 +203,22 @@ class NavigateViewModelTest {
     }
 
     @Test
+    fun continueTomorrowChoiceKeepsTheSingleDayTripAsAMultiDayTrip() = runTest(dispatcher) {
+        val s = setup()
+        val id = s.runningTrip(TripType.SINGLE_DAY)
+
+        s.vm.onEndChoice(EndAction.CONTINUE_TOMORROW)
+        runCurrent()
+
+        // The stop-for-today path: without a recording the finished guidance closes at once (the main banner follows).
+        val finished = NavUiState.Finished(id, TripType.MULTI_DAY, FinishReason.STOPPED_TODAY)
+        assertEquals(finished, s.vm.ui.value)
+        assertEquals(FinishedView.Close, finishedView(finished, RideUiState.Idle))
+        assertEquals(TripType.MULTI_DAY, store.trips.getValue(id).type)
+        assertEquals(TripStatus.ACTIVE, store.trips.getValue(id).status)
+    }
+
+    @Test
     fun completeChoiceCompletesTheTrip() = runTest(dispatcher) {
         val s = setup()
         val id = s.runningTrip(TripType.SINGLE_DAY)

@@ -33,10 +33,12 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.unit.dp
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.CumulativeEntry
 import com.cowork.bikerecoder.core.post.CumulativeSummary
 import com.cowork.bikerecoder.core.post.PeriodFilter
+import com.cowork.bikerecoder.ui.activity.ActivityText
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -123,7 +125,7 @@ class CumulativeMapScreenTest {
         show(stateFor(PeriodFilter())) { back++ }
 
         composeRule.onNodeWithText("누적 지도").assertIsDisplayed()
-        composeRule.onNodeWithText("35.00km · 주행 3회 · 1시간 45분").assertIsDisplayed()
+        composeRule.onNodeWithText("35.00km · 활동 3회 · 1시간 45분").assertIsDisplayed()
         composeRule.onNodeWithTag(MAP).assertIsDisplayed()
         composeRule.onNodeWithTag(CumulativeMapTags.ALL).assertIsSelected()
         composeRule.onNodeWithContentDescription("뒤로").performClick()
@@ -144,7 +146,7 @@ class CumulativeMapScreenTest {
         assertTrue("2026년 above 2025년", y2026 < y2025)
         composeRule.onNodeWithText("2026년").performClick()
 
-        composeRule.onNodeWithText("25.00km · 주행 2회 · 1시간 15분").assertIsDisplayed()
+        composeRule.onNodeWithText("25.00km · 활동 2회 · 1시간 15분").assertIsDisplayed()
         composeRule.onNodeWithText("2026년 ▾").assertIsDisplayed()
         composeRule.onNodeWithTag(CumulativeMapTags.ALL).assertIsNotSelected()
         composeRule.onNodeWithTag(CumulativeMapTags.MONTH).assertIsEnabled()
@@ -154,17 +156,17 @@ class CumulativeMapScreenTest {
         composeRule.onNodeWithText("1월").assertIsDisplayed()
         composeRule.onAllNodesWithText("2월").assertCountEquals(0)
         composeRule.onNodeWithText("3월").performClick()
-        composeRule.onNodeWithText("5.00km · 주행 1회 · 15분").assertIsDisplayed()
+        composeRule.onNodeWithText("5.00km · 활동 1회 · 15분").assertIsDisplayed()
         composeRule.onNodeWithText("3월 ▾").assertIsDisplayed()
 
         // [월 ▾] → 전체: the whole year again.
         composeRule.onNodeWithText("3월 ▾").performClick()
         composeRule.onNode(hasText("전체") and hasAnyAncestor(isPopup())).performClick()
-        composeRule.onNodeWithText("25.00km · 주행 2회 · 1시간 15분").assertIsDisplayed()
+        composeRule.onNodeWithText("25.00km · 활동 2회 · 1시간 15분").assertIsDisplayed()
 
         // [전체]: every ride.
         composeRule.onNodeWithTag(CumulativeMapTags.ALL).performClick()
-        composeRule.onNodeWithText("35.00km · 주행 3회 · 1시간 45분").assertIsDisplayed()
+        composeRule.onNodeWithText("35.00km · 활동 3회 · 1시간 45분").assertIsDisplayed()
         composeRule.onNodeWithText("연도 ▾").assertIsDisplayed()
         composeRule.onNodeWithTag(CumulativeMapTags.MONTH).assertIsNotEnabled()
     }
@@ -173,7 +175,7 @@ class CumulativeMapScreenTest {
     fun rideRowsNewestFirst() {
         show(stateFor(PeriodFilter(), october), october)
 
-        composeRule.onNodeWithText("이 기간 주행 4회").assertIsDisplayed()
+        composeRule.onNodeWithText("이 기간 활동 4회").assertIsDisplayed()
         composeRule.onNodeWithText("누르면 기록을 봅니다").assertIsDisplayed()
         // Newest first (the list scrolls; the screen may show only a few rows at a time).
         val rows = listOf(
@@ -240,7 +242,7 @@ class CumulativeMapScreenTest {
         // The card is between the map and the list.
         val mapBottom = composeRule.onNodeWithTag(MAP).fetchSemanticsNode().boundsInRoot.bottom
         val card = composeRule.onNodeWithTag(CumulativeMapTags.RIDE_CARD).fetchSemanticsNode().boundsInRoot
-        val listTop = composeRule.onNodeWithText("이 기간 주행 4회").fetchSemanticsNode().boundsInRoot.top
+        val listTop = composeRule.onNodeWithText("이 기간 활동 4회").fetchSemanticsNode().boundsInRoot.top
         assertTrue("card under the map", card.top >= mapBottom)
         assertTrue("card above the list", card.bottom <= listTop)
         // Its row stays in the list, in view.
@@ -288,7 +290,7 @@ class CumulativeMapScreenTest {
         composeRule.onNodeWithText("10월 5주 (10/26~11/1)").performClick()
 
         composeRule.onNodeWithText("5주 ▾").assertIsDisplayed()
-        composeRule.onNodeWithText("3.00km · 주행 1회 · 10분").assertIsDisplayed()
+        composeRule.onNodeWithText("3.00km · 활동 1회 · 10분").assertIsDisplayed()
         composeRule.onNodeWithText("10월 27일 (화)").assertIsDisplayed()
         composeRule.onNodeWithText("10월 24일 (토)").assertDoesNotExist()
 
@@ -307,13 +309,13 @@ class CumulativeMapScreenTest {
         composeRule.onNodeWithText("이번 주").performClick()
         composeRule.onNodeWithTag(CumulativeMapTags.THIS_WEEK).assertIsSelected()
         composeRule.onNodeWithTag(CumulativeMapTags.ALL).assertIsNotSelected()
-        composeRule.onNodeWithText("3.00km · 주행 1회 · 10분").assertIsDisplayed()
+        composeRule.onNodeWithText("3.00km · 활동 1회 · 10분").assertIsDisplayed()
         composeRule.onNodeWithText("5주 ▾").assertIsDisplayed()
 
         composeRule.onNodeWithText("이번 달").performClick()
         composeRule.onNodeWithTag(CumulativeMapTags.THIS_MONTH).assertIsSelected()
         composeRule.onNodeWithTag(CumulativeMapTags.THIS_WEEK).assertIsNotSelected()
-        composeRule.onNodeWithText("9.59km · 주행 3회 · 45분").assertIsDisplayed()
+        composeRule.onNodeWithText("9.59km · 활동 3회 · 45분").assertIsDisplayed()
         composeRule.onNodeWithText("10월 ▾").assertIsDisplayed()
         composeRule.onNodeWithText("9월 30일 (수)").assertDoesNotExist()
     }
@@ -338,8 +340,8 @@ class CumulativeMapScreenTest {
 
         composeRule.onNodeWithText(CUMULATIVE_PERIOD_EMPTY).assertIsDisplayed()
         composeRule.onNodeWithText("이 기간에 기록이 없습니다").assertIsDisplayed()
-        composeRule.onNodeWithText(CUMULATIVE_EMPTY).assertDoesNotExist()
-        composeRule.onNodeWithText("0.00km · 주행 0회 · 0분").assertIsDisplayed()
+        composeRule.onNodeWithText(ActivityText.CUMULATIVE_EMPTY_ANY).assertDoesNotExist()
+        composeRule.onNodeWithText("0.00km · 활동 0회 · 0분").assertIsDisplayed()
         composeRule.onNodeWithTag(MAP).assertIsDisplayed()
 
         // [전체]: the rides again.
@@ -360,10 +362,19 @@ class CumulativeMapScreenTest {
     fun emptyText() {
         show(CumulativeMapState(loaded = true, settled = true))
 
-        composeRule.onNodeWithText(CUMULATIVE_EMPTY).assertIsDisplayed()
-        composeRule.onNodeWithText("아직 기록이 없습니다. 주행을 기록하면 여기에 쌓입니다").assertIsDisplayed()
+        composeRule.onNodeWithText(ActivityText.CUMULATIVE_EMPTY_ANY).assertIsDisplayed()
+        composeRule.onNodeWithText("아직 기록이 없습니다. 활동을 기록하면 여기에 쌓입니다").assertIsDisplayed()
         composeRule.onNodeWithTag(MAP).assertDoesNotExist()
         composeRule.onNodeWithText("연도 ▾").assertDoesNotExist()
+    }
+
+    /** V1.9.1 §C: the bike chip keeps its "주행" wording on the empty text. */
+    @Test
+    fun emptyTextOfTheBikeChipKeepsItsWording() {
+        show(CumulativeMapState(loaded = true, settled = true, activity = ActivityType.BIKE))
+
+        composeRule.onNodeWithText("아직 기록이 없습니다. 주행을 기록하면 여기에 쌓입니다").assertIsDisplayed()
+        composeRule.onNodeWithText(ActivityText.CUMULATIVE_EMPTY_ANY).assertDoesNotExist()
     }
 
     @Test
@@ -371,8 +382,8 @@ class CumulativeMapScreenTest {
         // Read, nothing yet, but the first pass after the upgrade is still simplifying the earlier rides.
         show(CumulativeMapState(loaded = true, settled = false))
 
-        composeRule.onNodeWithText(CUMULATIVE_EMPTY).assertDoesNotExist()
-        composeRule.onNodeWithText("0.00km · 주행 0회 · 0분").assertDoesNotExist()
+        composeRule.onNodeWithText(ActivityText.CUMULATIVE_EMPTY_ANY).assertDoesNotExist()
+        composeRule.onNodeWithText("0.00km · 활동 0회 · 0분").assertDoesNotExist()
         composeRule.onNodeWithTag(MAP).assertIsDisplayed()
         composeRule.onNodeWithText("연도 ▾").assertIsDisplayed()
     }
@@ -381,8 +392,8 @@ class CumulativeMapScreenTest {
     fun nothingButTheMapWhileReading() {
         show(CumulativeMapState())
 
-        composeRule.onNodeWithText(CUMULATIVE_EMPTY).assertDoesNotExist()
-        composeRule.onNodeWithText("0.00km · 주행 0회 · 0분").assertDoesNotExist()
+        composeRule.onNodeWithText(ActivityText.CUMULATIVE_EMPTY_ANY).assertDoesNotExist()
+        composeRule.onNodeWithText("0.00km · 활동 0회 · 0분").assertDoesNotExist()
         composeRule.onNodeWithTag(MAP).assertIsDisplayed()
     }
 

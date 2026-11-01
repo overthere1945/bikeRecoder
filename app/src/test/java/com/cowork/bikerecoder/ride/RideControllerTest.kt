@@ -158,7 +158,7 @@ class RideControllerTest {
         assertTrue(h.pressure.collecting, "pressure is collected while recording")
         h.controller.stopRecording(RecordingEnd.COMPLETE_TRIP)
 
-        assertEquals(1, voice.spoken.count { it == "기록을 시작합니다" }, voice.spoken.toString())
+        assertEquals(1, voice.spoken.count { it == "자전거 타기 기록을 시작합니다" }, voice.spoken.toString())
         assertEquals(listOf(1, 2, 3), kmReports(), voice.spoken.toString())
         val saved = h.store.segments(tripId).single()
         assertEquals(3_010.0, saved.totals.distanceM, 1.0)
@@ -322,6 +322,56 @@ class RideControllerTest {
         assertEquals(100.0, finished.segment.totals.distanceM, 1.0)
         assertTrue(finished.track.isNotEmpty())
         assertEquals(finished.segment, h.store.segment(finished.segment.id))
+    }
+
+    @Test
+    fun continueTomorrowKeepsTheSingleDayTripAsAnActiveMultiDayTrip() = runTest {
+        val h = harness(straight(100.0))
+        val tripId = h.trip(TripType.SINGLE_DAY)
+        h.start(tripId)
+        assertEquals(TripType.SINGLE_DAY, h.active.tripType)
+        play(30_000)
+
+        h.controller.stopRecording(RecordingEnd.CONTINUE_TOMORROW)
+
+        val trip = trips.trips.getValue(tripId)
+        assertEquals(TripType.MULTI_DAY, trip.type)
+        assertEquals(TripStatus.ACTIVE, trip.status)
+        assertEquals(30_000L, trip.lastActiveAt)
+        assertNull(trip.completedAt)
+        assertTrue(offline.deleted.isEmpty(), "the offline maps stay for tomorrow")
+        // Ended as "오늘은 여기까지" ends it: the segment is closed and its summary shown.
+        val finished = h.controller.ui.value as RideUiState.Finished
+        assertNull(finished.error)
+        assertEquals(30_000L, finished.segment.endedAt)
+        assertEquals(finished.segment, h.store.segment(finished.segment.id))
+    }
+
+    @Test
+    fun continueTomorrowThatCannotBeSavedSaysSo() = runTest {
+        val h = harness(straight(100.0))
+        val tripId = h.trip(TripType.SINGLE_DAY)
+        h.start(tripId)
+        play(10_000)
+        // Completed meanwhile (e.g. elsewhere): it is not revived.
+        h.tripManager.complete(tripId)
+
+        h.controller.stopRecording(RecordingEnd.CONTINUE_TOMORROW)
+
+        assertEquals(TripStatus.COMPLETED, trips.trips.getValue(tripId).status)
+        assertEquals(RideController.MSG_SAVE_PROBLEM, (h.controller.ui.value as RideUiState.Finished).error)
+    }
+
+    @Test
+    fun theRecordingKnowsWhichDayOfItsTripItIs() = runTest {
+        val h = harness(straight(100.0))
+        val tripId = h.trip(TripType.MULTI_DAY)
+        // Began two calendar days before the test day (Asia/Seoul).
+        trips.trips[tripId] = trips.trips.getValue(tripId).copy(createdAt = -2 * 86_400_000L)
+
+        h.start(tripId)
+
+        assertEquals(3, h.active.tripDay)
     }
 
     @Test
@@ -597,8 +647,8 @@ class RideControllerTest {
         h.controller.splitSegment()
         play(5_000)
 
-        assertEquals(1, voice.spoken.count { it == "기록을 시작합니다" }, voice.spoken.toString())
-        assertEquals("기록을 시작합니다", voice.spoken.first())
+        assertEquals(1, voice.spoken.count { it == "자전거 타기 기록을 시작합니다" }, voice.spoken.toString())
+        assertEquals("자전거 타기 기록을 시작합니다", voice.spoken.first())
         assertEquals(1, voice.spoken.count { it == "새 구간으로 기록을 시작합니다" }, voice.spoken.toString())
         assertEquals("새 구간으로 기록을 시작합니다", h.controller.notice.value?.text)
     }
@@ -885,7 +935,7 @@ class RideControllerTest {
             listOf("1킬로미터 이동. 평균 시속 18.0킬로미터, 이동 시간 3분입니다."),
             voice.spoken.filter { "킬로미터" in it },
         )
-        assertEquals("기록을 시작합니다", voice.spoken.first())
+        assertEquals("자전거 타기 기록을 시작합니다", voice.spoken.first())
     }
 
     @Test

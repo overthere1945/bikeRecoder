@@ -883,8 +883,29 @@ class CumulativeMapViewModelTest {
 
     @Test
     fun summaryText() {
-        assertEquals("35.00km · 주행 3회 · 1시간 45분", cumulativeSummaryText(CumulativeTotals(35_000.0, 3, 6_300_000L)))
-        assertEquals("0.00km · 주행 0회 · 0분", cumulativeSummaryText(CumulativeTotals(0.0, 0, 0L)))
+        // Without a chip ([전체]) the word is 활동; the stats tab's chips give theirs (V1.9.1 §C).
+        assertEquals("35.00km · 활동 3회 · 1시간 45분", cumulativeSummaryText(CumulativeTotals(35_000.0, 3, 6_300_000L)))
+        assertEquals("0.00km · 활동 0회 · 0분", cumulativeSummaryText(CumulativeTotals(0.0, 0, 0L)))
+        val totals = CumulativeTotals(35_000.0, 3, 6_300_000L)
+        assertEquals("35.00km · 라이딩 3회 · 1시간 45분", cumulativeSummaryText(totals, ActivityType.BIKE))
+        assertEquals("35.00km · 걷기 3회 · 1시간 45분", cumulativeSummaryText(totals, ActivityType.WALK))
+        assertEquals("35.00km · 달리기 3회 · 1시간 45분", cumulativeSummaryText(totals, ActivityType.RUN))
+        assertEquals("35.00km · 등산 3회 · 1시간 45분", cumulativeSummaryText(totals, ActivityType.HIKE))
+    }
+
+    @Test
+    fun listTitleFollowsTheChip() {
+        assertEquals("이 기간 활동 4회", cumulativeListTitle(4))
+        assertEquals(
+            listOf("이 기간 라이딩 4회", "이 기간 걷기 4회", "이 기간 달리기 4회", "이 기간 등산 4회"),
+            ActivityType.entries.map { cumulativeListTitle(4, it) },
+        )
+    }
+
+    @Test
+    fun stateKnowsTheChipItWasBuiltFor() {
+        assertEquals(null, cumulativeStateOf(emptyList(), true, PeriodFilter(), null, null).activity)
+        assertEquals(ActivityType.RUN, cumulativeStateOf(emptyList(), true, PeriodFilter(), null, null, ActivityType.RUN).activity)
     }
 
     private companion object {

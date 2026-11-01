@@ -194,6 +194,24 @@ class RecordViewModelTest {
     }
 
     @Test
+    fun continueTomorrowEndsTheRecordingAndKeepsTheTrip() = runTest(dispatcher) {
+        val s = setup()
+        val tripId = s.tripManager.startTrip(TripType.SINGLE_DAY, RouteProfile.CYCLEWAY_FIRST, emptyList()).id
+        s.vm.start(tripId)
+        runCurrent()
+
+        s.vm.onEndChoice(RecordingEnd.CONTINUE_TOMORROW)
+        runCurrent()
+
+        // The summary shows as after "오늘은 여기까지"; the trip waits for tomorrow as a multi-day trip.
+        val finished = s.vm.ui.value as RideUiState.Finished
+        assertNull(finished.error)
+        assertEquals(tripId, finished.segment.tripId)
+        assertEquals(TripType.MULTI_DAY, trips.trips.getValue(tripId).type)
+        assertEquals(TripStatus.ACTIVE, trips.trips.getValue(tripId).status)
+    }
+
+    @Test
     fun navigatingFollowsTheGuidance() = runTest(dispatcher) {
         val s = setup()
         assertFalse(s.vm.navigating.value)

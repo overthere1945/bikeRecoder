@@ -126,6 +126,7 @@ fun TripDetailScreen(
     val heartDescription by viewModel.heartDescription.collectAsStateWithLifecycle()
     val exportState by viewModel.exportState.collectAsStateWithLifecycle()
     val recording by viewModel.recording.collectAsStateWithLifecycle()
+    val multiDay by viewModel.multiDay.collectAsStateWithLifecycle()
     var renaming by rememberSaveable { mutableStateOf(false) }
     val access = rememberHeartRateAccess(heartRateGate)
     val viewer = rememberPhotoViewerState()
@@ -145,6 +146,7 @@ fun TripDetailScreen(
         speedSeries = speedSeries,
         speedStyle = speedStyle,
         totalRows = totalRows,
+        multiDay = multiDay,
         heartSeries = heartSeries,
         heartDescription = heartDescription,
         onExport = if (viewModel.canExport) viewModel::export else null,
@@ -230,7 +232,7 @@ internal fun tripRefetchAction(access: HeartRateAccess, refetch: () -> Unit): ((
  *
  * V1.9.0 (spec §2.1, §3.2, §3.5): the title row starts with the trip's activity badges (up to three, the dominant first);
  * [totalRows] are the totals table's rows for the trip's activity (a bike's when they differ, see
- * [ActivityText.tripTotalRows]); [speedStyle] names the speed chart (페이스 for runs or walks alone) and reads it out.
+ * [ActivityText.tripTotalRows]); [multiDay] titles the screen "여행 기록" (else "활동 기록", V1.9.1 §C); [speedStyle] names the speed chart (페이스 for runs or walks alone) and reads it out.
  */
 @Composable
 fun TripDetailContent(
@@ -258,13 +260,14 @@ fun TripDetailContent(
     speedSeries: MetricSeries? = null,
     speedStyle: SpeedChartStyle = SpeedChartStyle.BIKE,
     totalRows: List<List<Pair<String, String>>> = ActivityText.tripTotalRows(ActivityType.BIKE, total),
+    multiDay: Boolean? = false,
     heartSeries: MetricSeries? = null,
     heartDescription: String = "",
     onExport: ((ExportFormat) -> Unit)? = null,
     exportEnabled: Boolean = true,
     exporting: Boolean = false,
 ) {
-    HistoryScaffold(title = "여행 기록", onBack = onBack) {
+    HistoryScaffold(title = ActivityText.tripDetailTitle(multiDay), onBack = onBack) {
         if (segmentsByDate.isEmpty()) {
             EmptyText()
         } else {
