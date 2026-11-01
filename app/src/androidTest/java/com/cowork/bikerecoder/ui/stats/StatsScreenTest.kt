@@ -186,6 +186,15 @@ class StatsScreenTest {
         composeRule.waitForIdle()
     }
 
+    /**
+     * Taps bar [index] after scrolling it into view: since V1.9.0 the activity chips sit above the goal card, and on a phone
+     * the month's and week's bars start below the list's bottom (a tap there never reaches them).
+     */
+    private fun tapBar(index: Int) {
+        scrollTo(StatsTags.bar(index))
+        composeRule.onNodeWithTag(StatsTags.bar(index)).performClick()
+    }
+
     /** Review M2: before the goals have been read the tab shows nothing: no "no goal" card, no zeros. */
     @Test
     fun nothingShowsBeforeTheGoalsAreRead() {
@@ -255,38 +264,38 @@ class StatsScreenTest {
         show()
 
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals(" ")
-        composeRule.onNodeWithTag(StatsTags.bar(3)).performClick() // 4주: 10/19~10/25
+        tapBar(3) // 4주: 10/19~10/25
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals("10월 4주 · 61.8 km")
 
-        composeRule.onNodeWithTag(StatsTags.bar(3)).performClick()
+        tapBar(3)
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals(" ")
 
-        composeRule.onNodeWithTag(StatsTags.bar(4)).performClick()
+        tapBar(4)
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals("10월 5주 · 64.3 km")
         composeRule.onNodeWithTag(StatsTags.metric(StatMetric.TIME)).performClick()
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals(" ")
-        composeRule.onNodeWithTag(StatsTags.bar(4)).performClick()
+        tapBar(4)
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals("10월 5주 · 3시간 30분")
     }
 
     @Test
     fun tappingElsewhereHidesTheBarValue() {
         show()
-        composeRule.onNodeWithTag(StatsTags.bar(3)).performClick()
+        tapBar(3)
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals("10월 4주 · 61.8 km")
 
         composeRule.onNodeWithTag(StatsTags.TITLE).performClick() // text on the background
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals(" ")
 
-        composeRule.onNodeWithTag(StatsTags.bar(3)).performClick()
+        tapBar(3)
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals("10월 4주 · 61.8 km")
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).performClick() // the value line itself
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals(" ")
 
         // A tap on the bar still toggles: on, then off (not on again).
-        composeRule.onNodeWithTag(StatsTags.bar(4)).performClick()
+        tapBar(4)
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals("10월 5주 · 64.3 km")
-        composeRule.onNodeWithTag(StatsTags.bar(4)).performClick()
+        tapBar(4)
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals(" ")
     }
 
@@ -297,7 +306,8 @@ class StatsScreenTest {
 
         // Thursday 10/29 to Sunday 11/1 are still to come.
         composeRule.onNodeWithTag(StatsTags.bar(3)).assertIsNotEnabled()
-        composeRule.onNodeWithTag(StatsTags.bar(2)).assertIsEnabled().performClick() // Wed 10/28
+        composeRule.onNodeWithTag(StatsTags.bar(2)).assertIsEnabled()
+        tapBar(2) // Wed 10/28
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals("10월 28일 (수) · 0.0 km")
     }
 

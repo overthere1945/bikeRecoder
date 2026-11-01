@@ -129,10 +129,11 @@ class ImportScreenTest {
     fun readableRowsHaveABadgeAndUnreadableDoNot() {
         show(review())
 
+        // A badge that cannot be tapped (a row that cannot be picked) is read with its row: it is in the unmerged tree only.
         listOf(newRide, running, overlap, duplicate).forEach {
-            composeRule.onNodeWithTag(ImportTags.badge(it.key)).assertIsDisplayed()
+            composeRule.onNodeWithTag(ImportTags.badge(it.key), useUnmergedTree = true).assertIsDisplayed()
         }
-        composeRule.onNodeWithTag(ImportTags.badge(unreadable.key)).assertDoesNotExist()
+        composeRule.onNodeWithTag(ImportTags.badge(unreadable.key), useUnmergedTree = true).assertDoesNotExist()
     }
 
     @Test
@@ -155,7 +156,8 @@ class ImportScreenTest {
     fun badgeOfARowThatCannotBePickedDoesNothing() {
         show(review())
 
-        composeRule.onNodeWithTag(ImportTags.badge(overlap.key)).performClick()
+        // Not a control of its own (it merges into its row for TalkBack), so it is found in the unmerged tree.
+        composeRule.onNodeWithTag(ImportTags.badge(overlap.key), useUnmergedTree = true).performClick()
 
         composeRule.onNodeWithTag(ChangeActivityTags.DIALOG).assertDoesNotExist()
         assertEquals(emptyList<String>(), calls)

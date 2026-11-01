@@ -154,6 +154,28 @@ class FrameRendererTest {
     private fun count(frame: Bitmap, box: Box, match: (Int) -> Boolean) =
         VideoTestTrip.count(frame, box.x.toInt(), box.y.toInt(), (box.x + box.w).toInt(), (box.y + box.h).toInt(), match)
 
+    /** The smallest box around the pixels of [box] that [match], grown by [margin] px (anti-aliased edges); null if none. */
+    private fun boundsOf(frame: Bitmap, box: Box, margin: Int = 2, match: (Int) -> Boolean): Box? {
+        var minX = Int.MAX_VALUE
+        var minY = Int.MAX_VALUE
+        var maxX = -1
+        var maxY = -1
+        for (y in box.y.toInt() until (box.y + box.h).toInt()) for (x in box.x.toInt() until (box.x + box.w).toInt()) {
+            if (match(frame.getPixel(x, y))) {
+                minX = min(minX, x)
+                minY = min(minY, y)
+                maxX = max(maxX, x)
+                maxY = max(maxY, y)
+            }
+        }
+        if (maxX < 0) return null
+        val left = max(0, minX - margin)
+        val top = max(0, minY - margin)
+        val right = min(frame.width, maxX + 1 + margin)
+        val bottom = min(frame.height, maxY + 1 + margin)
+        return Box(left.toFloat(), top.toFloat(), (right - left).toFloat(), (bottom - top).toFloat())
+    }
+
     // ---- the route and the current point (spec §3.1, §3.2) ----
 
     @Test
@@ -392,7 +414,9 @@ class FrameRendererTest {
     /**
      * Ruling F3: the sky view's route sits above the title, in portrait and landscape and from the first to the last
      * overview frame (the camera turns meanwhile). Over the plain background, so orange tint can only be the route; the
-     * date and name lines are white, so any tint inside them is route under the words.
+     * date and name lines are white, so any tint inside them is route under the words — except the activity badge left of
+     * the name (V1.9.0 spec §5.1), whose icon is tinted on its light square: that square (found by its light colour) is
+     * left out of the count. The badge is opaque, so no route can show inside it anyway.
      */
     @Test
     fun introRouteClearsTheTitle() {
@@ -414,7 +438,9 @@ class FrameRendererTest {
                 val above = VideoTestTrip.count(frame, 0, 0, w, title.block.y.toInt(), tinted)
                 // From the top of the date to below the name: white words only.
                 val words = Box(0f, title.block.y, w.toFloat(), title.nameBaseline + FrameLayout.DESCENT * FrameStyle.TITLE_NAME_SIZE * u - title.block.y)
-                val under = count(frame, words, tinted)
+                val badge = boundsOf(frame, words) { VideoTestTrip.near(it, BIKE_BADGE_LIGHT, 6) }
+                assertTrue("${w}x$h frame ${plan.index}: the bike badge on the name line", badge != null)
+                val under = count(frame, words, tinted) - count(frame, badge!!, tinted)
                 assertTrue("${w}x$h frame ${plan.index}: route above the title: $above", above > 1_000)
                 assertEquals("${w}x$h frame ${plan.index}: route inside the title's words", 0, under)
             }
@@ -454,11 +480,12 @@ class FrameRendererTest {
     @Test
     fun titleCardBadgeFollowsTheActivity() {
         val layout = FrameLayout.title(W, H)
-        val left = Box(W / 2f - 200 * unit, layout.nameBaseline - 24 * unit, 200 * unit, 36 * unit)
+        // The name line's left half, from the title's side margin to the middle (inside the frame).
+        val left = Box(layout.block.x, layout.nameBaseline - 24 * unit, W / 2f - layout.block.x, 36 * unit)
         val first = nth(SceneKind.INTRO_OVERVIEW, 0)
 
         val bike = renderer().frame(first)
-        val bikeBackground = count(bike, left) { VideoTestTrip.near(it, 0xFFFAECE7.toInt(), 6) }
+        val bikeBackground = count(bike, left) { VideoTestTrip.near(it, BIKE_BADGE_LIGHT, 6) }
         val bikeIcon = count(bike, left) { VideoTestTrip.near(it, 0xFF993C1D.toInt(), 30) }
         assertTrue("the bike badge's background: $bikeBackground", bikeBackground > 200)
         assertTrue("the bike icon on it: $bikeIcon", bikeIcon > 30)
@@ -798,6 +825,9 @@ class FrameRendererTest {
     private companion object {
         const val W = 1080
         const val H = 1920
+
+        /** The bike badge's light-theme background (spec §2.1), the square of the title card's badge. */
+        const val BIKE_BADGE_LIGHT = 0xFFFAECE7.toInt()
         const val TAG = "FrameRendererTest"
 
         /**
