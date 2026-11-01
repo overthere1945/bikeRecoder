@@ -150,11 +150,11 @@ private fun signedPercent(percent: Double): String {
     return (if (rounded.signum() < 0) "−" else "+") + rounded.abs().toPlainString() + "%"
 }
 
-/** The three sentences of spec §3.2. */
-fun streakText(streak: Streak): String = when {
-    streak.weeks >= 1 && streak.includesThisWeek -> "${streak.weeks}주 연속 주행 중"
-    streak.weeks >= 1 -> "${streak.weeks}주 연속 · 이번 주에 타면 ${streak.weeks + 1}주"
-    else -> "이번 주에 타면 연속 주행이 시작됩니다"
+/** The three sentences of spec §3.2, worded after the stats tab's [chip] (V1.9.1 §C; null = [전체]; a bike keeps its wording). */
+fun streakText(streak: Streak, chip: ActivityType? = ActivityType.BIKE): String = when {
+    streak.weeks >= 1 && streak.includesThisWeek -> ActivityText.streakRunning(streak.weeks, chip)
+    streak.weeks >= 1 -> ActivityText.streakPending(streak.weeks, chip)
+    else -> ActivityText.streakNone(chip)
 }
 
 /** "지금 속도면 연말에 약 1,180 km". */
@@ -241,14 +241,14 @@ fun recordRows(
     val periods = mutableListOf<RecordRow>()
     RideRecords.bestWeek(scope)?.let {
         periods += RecordRow(
-            "가장 많이 탄 주",
+            ActivityText.bestWeekLabel(activity),
             "${kmText(it.distanceM)} · ${weekName(it.start, withYear = it.start.year != today.year)}",
             RecordTarget.Period(PeriodKind.WEEK, it.start),
         )
     }
     RideRecords.bestMonth(scope)?.let {
         periods += RecordRow(
-            "가장 많이 탄 달",
+            ActivityText.bestMonthLabel(activity),
             "${kmText(it.distanceM)} · ${it.start.year}년 ${it.start.monthValue}월",
             RecordTarget.Period(PeriodKind.MONTH, it.start),
         )
@@ -260,7 +260,7 @@ fun recordRows(
         } else {
             "$first~${weekName(it.lastWeek, withYear = it.lastWeek.year != it.firstWeek.year)}"
         }
-        periods += RecordRow("가장 긴 연속 주행", "${it.weeks}주 ($range)", null)
+        periods += RecordRow(ActivityText.longestStreakLabel(activity), "${it.weeks}주 ($range)", null)
     }
     addGroup(periods, if (activity == null) ActivityText.STATS_ALL else null)
     return rows

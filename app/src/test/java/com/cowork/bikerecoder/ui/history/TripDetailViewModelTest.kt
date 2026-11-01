@@ -233,6 +233,21 @@ class TripDetailViewModelTest {
     }
 
     @Test
+    fun multiDayIsWhetherTheTripSpansSeveralDays() = runTest(dispatcher) {
+        evening()
+        val single = detail()
+        advanceUntilIdle()
+        assertEquals(false, single.multiDay.value)
+        assertEquals("활동 기록", ActivityText.tripDetailTitle(single.multiDay.value))
+
+        trips.trips[TRIP] = trips.trips.getValue(TRIP).copy(type = TripType.MULTI_DAY)
+        single.refresh()
+        advanceUntilIdle()
+        assertEquals(true, single.multiDay.value)
+        assertEquals("여행 기록", ActivityText.tripDetailTitle(single.multiDay.value))
+    }
+
+    @Test
     fun descentIsSumMaxAltitudeIsMax() = runTest(dispatcher) {
         openTrip()
         val d1 = LocalDate.of(2026, 10, 24)

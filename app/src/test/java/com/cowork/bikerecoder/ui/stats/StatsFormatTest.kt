@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.ui.stats
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.stats.Comparison
 import com.cowork.bikerecoder.core.stats.PeriodKind
 import com.cowork.bikerecoder.core.stats.RideStat
@@ -63,6 +64,11 @@ class StatsFormatTest {
         assertEquals("1주 연속 주행 중", streakText(Streak(1, includesThisWeek = true)))
         assertEquals("3주 연속 · 이번 주에 타면 4주", streakText(Streak(3, includesThisWeek = false)))
         assertEquals("이번 주에 타면 연속 주행이 시작됩니다", streakText(Streak(0, includesThisWeek = false)))
+        // Under another chip the words follow it; [전체] says 활동.
+        assertEquals("2주 연속 걷는 중", streakText(Streak(2, includesThisWeek = true), ActivityType.WALK))
+        assertEquals("3주 연속 · 이번 주에 달리면 4주", streakText(Streak(3, includesThisWeek = false), ActivityType.RUN))
+        assertEquals("이번 주에 산에 오르면 연속 기록이 시작됩니다", streakText(Streak(0, includesThisWeek = false), ActivityType.HIKE))
+        assertEquals("4주 연속 활동 중", streakText(Streak(4, includesThisWeek = true), null))
     }
 
     @Test
@@ -87,7 +93,14 @@ class StatsFormatTest {
         assertEquals("2025년 12월 5주", weekName(LocalDate.of(2025, 12, 29), withYear = true))
     }
 
-    private fun ride(id: Long, date: LocalDate, km: Double, minutes: Long, ascent: Double = 0.0) = RideStat(
+    private fun ride(
+        id: Long,
+        date: LocalDate,
+        km: Double,
+        minutes: Long,
+        ascent: Double = 0.0,
+        activity: ActivityType = ActivityType.BIKE,
+    ) = RideStat(
         segmentId = id,
         tripId = id,
         startedAt = date.atTime(8, 0).atZone(java.time.ZoneId.of("Asia/Seoul")).toInstant().toEpochMilli(),
@@ -95,7 +108,30 @@ class StatsFormatTest {
         distanceM = km * 1000.0,
         movingTimeMs = minutes * 60_000,
         ascentM = ascent,
+        activity = activity,
     )
+
+    @Test
+    fun periodAndStreakRowsAreWordedAfterTheChip() {
+        val walks = listOf(
+            ride(1, LocalDate.of(2026, 9, 14), 4.0, 50, activity = ActivityType.WALK),
+            ride(2, LocalDate.of(2026, 9, 21), 3.0, 40, activity = ActivityType.WALK),
+        )
+        val today = LocalDate.of(2026, 10, 31)
+
+        val walkLabels = recordRows(walks, today, activity = ActivityType.WALK).map { it.label }
+        assertEquals(
+            listOf("가장 긴 걷기", "가장 오래 걸은 기록", "가장 많이 걸은 주", "가장 많이 걸은 달", "가장 긴 연속 걷기"),
+            walkLabels,
+        )
+
+        val all = recordRows(walks, today, activity = null)
+        assertEquals(
+            listOf("가장 긴 걷기", "가장 오래 걸은 기록", "가장 활발했던 주", "가장 활발했던 달", "가장 긴 연속 활동"),
+            all.map { it.label },
+        )
+        assertEquals(listOf("걷기", null, "전체", null, null), all.map { it.heading })
+    }
 
     @Test
     fun recordRowTexts() {

@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
+import com.cowork.bikerecoder.core.activity.ActivityType
 
 /**
  * A "?" that explains [topic] with [text] in a bubble under it while [open]. The icon is 18 dp in a 48 dp touch target and
@@ -123,4 +124,41 @@ object StatsHelp {
     const val RECORDS =
         "처음 기록부터 지금까지 전체에서 가장 좋은 기록입니다. 평균 속도는 5 km 이상 탄 주행만 셉니다. " +
             "같은 기록이면 먼저 세운 것을 남깁니다."
+
+    // V1.9.1 §C: the words above are the bike's. Under another chip or [전체] a tip is worded neutrally ("기록한", "활동").
+    private const val GOAL_NEUTRAL =
+        "주간 목표는 월요일부터 일요일까지, 연간 목표는 1월 1일부터 기록한 거리입니다. " +
+            "'연말 예상'은 올해 하루 평균 거리에 올해 날 수를 곱한 값으로, 1월 7일부터 보입니다."
+    private const val STREAK_TOPIC_NEUTRAL = "연속 활동"
+    private const val STREAK_NEUTRAL =
+        "한 번 이상 기록한 주가 끊기지 않고 이어진 주 수입니다. 주는 월요일부터 일요일까지입니다. " +
+            "이번 주에 아직 기록이 없다면 지난주까지 센 수를 보여 줍니다."
+    private const val TOTALS_TOPIC_NEUTRAL = "활동·이동 시간·상승 고도"
+    private const val TOTALS_NEUTRAL =
+        "활동은 10 m 이상 움직이고 끝난 기록 하나를 1회로 셉니다. 이동 시간은 멈춰 있던 시간(일시정지)을 뺀, 실제로 움직인 시간입니다. " +
+            "1시간 중 15분을 쉬었다면 45분입니다. 상승 고도는 해발 높이가 아니라 오르막에서 올라간 높이를 모두 더한 값입니다. " +
+            "10 m를 올랐다가 내려와 다시 20 m를 오르면 30 m입니다."
+    private const val CHART_NEUTRAL =
+        "막대 하나는 그 칸(요일·주·달·해)에 기록한 합계입니다. 아래 선은 기간 첫날부터 쌓인 양으로, 진한 선은 이번 기간, " +
+            "회색 선은 앞 기간, 점선은 목표를 날마다 고르게 나눠 기록했을 때입니다. 위의 [거리] [시간] [상승 고도]로 보는 값을 바꿉니다."
+    private const val RECORDS_ALL =
+        "처음 기록부터 지금까지 전체에서 가장 좋은 기록입니다. 평균 속도는 5 km 이상 탄 자전거 주행만 셉니다. " +
+            "같은 기록이면 먼저 세운 것을 남깁니다."
+    private const val RECORDS_NEUTRAL =
+        "처음 기록부터 지금까지 전체에서 가장 좋은 기록입니다. 같은 기록이면 먼저 세운 것을 남깁니다."
+
+    /** The tips under [chip] (null = [전체]): a bike keeps the words above, the others are neutral. */
+    fun goal(chip: ActivityType?): String = if (chip == ActivityType.BIKE) GOAL else GOAL_NEUTRAL
+    fun streakTopic(chip: ActivityType?): String = if (chip == ActivityType.BIKE) STREAK_TOPIC else STREAK_TOPIC_NEUTRAL
+    fun streak(chip: ActivityType?): String = if (chip == ActivityType.BIKE) STREAK else STREAK_NEUTRAL
+    fun totalsTopic(chip: ActivityType?): String = if (chip == ActivityType.BIKE) TOTALS_TOPIC else TOTALS_TOPIC_NEUTRAL
+    fun totals(chip: ActivityType?): String = if (chip == ActivityType.BIKE) TOTALS else TOTALS_NEUTRAL
+    fun chart(chip: ActivityType?): String = if (chip == ActivityType.BIKE) CHART else CHART_NEUTRAL
+
+    /** The 개인 기록 tip: [전체] still has the bike's 평균 속도 row, so it names the bike; the others have none. */
+    fun records(chip: ActivityType?): String = when (chip) {
+        ActivityType.BIKE -> RECORDS
+        null -> RECORDS_ALL
+        else -> RECORDS_NEUTRAL
+    }
 }
