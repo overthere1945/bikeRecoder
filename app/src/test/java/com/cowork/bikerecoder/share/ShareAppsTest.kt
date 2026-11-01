@@ -57,4 +57,44 @@ class ShareAppsTest {
         assertEquals("a.b.STORYShare", pickInstagramStory(listOf(r("a.b.STORYShare")))?.className)
         assertNull(pickInstagramStory(listOf(r("a.b.STORYdirect"))))
     }
+
+    /** The `ACTION_SEND_MULTIPLE` `image/jpeg` receivers of Instagram on the S22, in package-manager order. */
+    private val s22Multiple = listOf(
+        "com.instagram.share.handleractivity.ShareHandlerActivityMultipleFeedAlias",
+        "com.instagram.share.handleractivity.ReelShareHandlerActivity",
+        "com.instagram.share.handleractivity.MultiStoryShareHandlerActivity",
+    )
+
+    /** The `ACTION_SEND` `image/jpeg` receivers of Instagram on the S22, in package-manager order. */
+    private val s22Single = listOf(
+        "com.instagram.direct.share.handler.DirectExternalMediaShareActivityPhoto",
+        "com.instagram.share.handleractivity.ShareHandlerActivity",
+        "com.instagram.share.handleractivity.StoryShareHandlerActivity",
+        "com.instagram.share.handleractivity.ReelShareHandlerActivity",
+    )
+
+    @Test
+    fun s22MultipleFeedIsTheMultipleFeedAliasNotTheReel() {
+        assertEquals(
+            "com.instagram.share.handleractivity.ShareHandlerActivityMultipleFeedAlias",
+            pickInstagramFeed(s22Multiple.map { r(it) })?.className,
+        )
+        assertEquals(
+            "com.instagram.share.handleractivity.ShareHandlerActivityMultipleFeedAlias",
+            pickInstagramFeed(s22Multiple.reversed().map { r(it) })?.className,
+        )
+    }
+
+    @Test
+    fun s22SingleFeedIsShareHandlerActivity() {
+        assertEquals(feed, pickInstagramFeed(s22Single.map { r(it) })?.className)
+        assertEquals(story, pickInstagramStory(s22Single.map { r(it) })?.className)
+    }
+
+    @Test
+    fun feedNeverPicksAReel() {
+        val reel = "com.instagram.share.handleractivity.ReelShareHandlerActivity"
+        assertNull(pickInstagramFeed(listOf(r(reel), r(story))))
+        assertNull(pickInstagramStory(listOf(r(reel))))
+    }
 }

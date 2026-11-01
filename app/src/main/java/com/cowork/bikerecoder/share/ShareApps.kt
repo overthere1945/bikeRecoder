@@ -91,19 +91,30 @@ data class InstagramReceiver(val packageName: String, val className: String, val
 
 /**
  * The feed share screen among [receivers]: of the exported ones, sorted by class name so the answer does not depend on
- * the order the package manager lists them, the one named exactly `ShareHandlerActivity`, else the first that is neither
- * a story nor a direct-message screen. Null when none is left.
+ * the order the package manager lists them, (1) the one whose simple name is exactly `ShareHandlerActivity`, else (2) the
+ * first whose simple name starts with `ShareHandlerActivity` (Instagram's `ShareHandlerActivityMultipleFeedAlias` for
+ * several images), else (3) the first that is neither a story, a direct-message nor a reel screen. Null when none is left.
+ * A reel screen is never the feed: sent several images, `ReelShareHandlerActivity` opens Instagram's home, not the post
+ * composer (seen on the S22).
  */
 fun pickInstagramFeed(receivers: List<InstagramReceiver>): InstagramReceiver? {
     val candidates = receivers.exportedByName()
-    return candidates.firstOrNull { it.className.substringAfterLast('.') == "ShareHandlerActivity" }
-        ?: candidates.firstOrNull { !it.className.has("story") && !it.className.has("direct") }
+    return candidates.firstOrNull { it.simpleName == "ShareHandlerActivity" }
+        ?: candidates.firstOrNull { it.simpleName.startsWith("ShareHandlerActivity") }
+        ?: candidates.firstOrNull {
+            !it.className.has("story") && !it.className.has("direct") && !it.className.has("reel")
+        }
 }
 
-/** The story share screen among [receivers]: the first exported one (by class name) that is a story and not a direct one. */
+/**
+ * The story share screen among [receivers]: the first exported one (by class name) that is a story and not a direct one —
+ * so never a reel. `MultiStoryShareHandlerActivity` would qualify, but a story only ever sends one file.
+ */
 fun pickInstagramStory(receivers: List<InstagramReceiver>): InstagramReceiver? =
     receivers.exportedByName().firstOrNull { it.className.has("story") && !it.className.has("direct") }
 
 private fun List<InstagramReceiver>.exportedByName() = filter { it.exported }.sortedBy { it.className }
+
+private val InstagramReceiver.simpleName get() = className.substringAfterLast('.')
 
 private fun String.has(part: String) = contains(part, ignoreCase = true)
