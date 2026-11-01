@@ -310,7 +310,7 @@ class TripDetailViewModelTest {
         val segments = listOf(earlier, later)
         val axis = TrackAxis.of(segments)!!
         assertSameSeries(MetricSeries.speed(axis, segments)!!, vm.speedSeries.value)
-        assertSameSeries(MetricSeries.heartRate(axis, segments, first + second)!!, vm.heartSeries.value)
+        assertSameSeries(MetricSeries.heartRate(axis, segments, first + second, listOf(true, true))!!, vm.heartSeries.value)
         assertEquals(1, vm.speedSeries.value!!.boundariesM.size)
         assertEquals(true, vm.profileLoaded.value)
     }
@@ -351,7 +351,7 @@ class TripDetailViewModelTest {
         assertEquals("심박 그래프, 평균 120bpm, 최고 175bpm", vm.heartDescription.value)
     }
 
-    /** 저장된 평균·최고가 없으면(READY 아님) 표본에서 구한 평균·최고를 읽는다. */
+    /** 저장된 평균·최고가 없으면 표본에서 구한 평균·최고를 읽는다. */
     @Test
     fun heartReadOutFallsBackToSamples() = runTest(dispatcher) {
         openTrip()
@@ -359,7 +359,7 @@ class TripDetailViewModelTest {
         val points = track(1_000_000L, 37.5, 31) { null }
         val id = ride(1_000_000L, LocalDate.of(2026, 10, 24), points, t)
         // 130 … 160: 평균 145, 최고 160.
-        store.replaceSamples(id, points.mapIndexed { i, p -> HeartRateSample(p.timeMillis, 130 + i) })
+        heart(id, points, { 130 + it }, avg = null, max = null)
         val vm = detail()
         advanceUntilIdle()
 
@@ -383,7 +383,7 @@ class TripDetailViewModelTest {
         val first = heart(id, points, { 120 }, avg = 120, max = 120)
         advanceUntilIdle()
         val axis = TrackAxis.of(listOf(points))!!
-        assertSameSeries(MetricSeries.heartRate(axis, listOf(points), first)!!, vm.heartSeries.value)
+        assertSameSeries(MetricSeries.heartRate(axis, listOf(points), first, listOf(true))!!, vm.heartSeries.value)
 
         // 다시 가져와 더 많은 표본이 저장되었다(hrLastTriedAt이 바뀐다).
         val second = points.mapIndexed { i, p -> HeartRateSample(p.timeMillis, 150 + i) }
@@ -392,10 +392,10 @@ class TripDetailViewModelTest {
             SegmentExtras(id, hrStatus = HrStatus.READY, hrLastTriedAt = 2L, hrDetailed = true, avgBpm = 165, maxBpm = 180),
         )
         advanceUntilIdle()
-        assertSameSeries(MetricSeries.heartRate(axis, listOf(points), second)!!, vm.heartSeries.value)
+        assertSameSeries(MetricSeries.heartRate(axis, listOf(points), second, listOf(true))!!, vm.heartSeries.value)
     }
 
-    /** 계열 계산이 실패해도 불러오기는 끝나고(그래프 자리는 비지 않는다), 고도 단면은 그대로다. */
+    /** 속도 계열 계산이 실패해도 불러오기는 끝나고(그래프 자리는 비지 않는다), 고도 단면과 심박 계열은 그대로다. */
     @Test
     fun seriesFailureStillLoaded() = runTest(dispatcher) {
         openTrip()
@@ -408,7 +408,7 @@ class TripDetailViewModelTest {
 
         assertEquals(true, vm.profileLoaded.value)
         assertNull(vm.speedSeries.value)
-        assertNull(vm.heartSeries.value)
+        assertEquals(140.0, vm.heartSeries.value!!.maxValue, 1e-9) // 축은 있으니 심박은 그려진다
         assertNotNull(vm.profile.value)
     }
 

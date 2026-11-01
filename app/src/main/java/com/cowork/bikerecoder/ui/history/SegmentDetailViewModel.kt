@@ -105,13 +105,15 @@ class SegmentDetailViewModel(
 
     /**
      * The heart-rate series on the same track axis as the speed series and the elevation profile (V1.8.0 spec §2.3);
-     * null without samples or with nothing to draw.
+     * null without samples, without detailed heart rate ([SegmentExtras.detailedHeartRate], as [canColorByHeartRate])
+     * or with nothing to draw.
      */
-    val heartSeries: StateFlow<MetricSeries?> = combine(trackPoints, samples) { points, samples ->
-        if (points == null || samples.isEmpty()) {
+    val heartSeries: StateFlow<MetricSeries?> = combine(trackPoints, samples, heartRate) { points, samples, extras ->
+        val detailed = extras?.detailedHeartRate == true
+        if (points == null || samples.isEmpty() || !detailed) {
             null
         } else {
-            TrackAxis.of(listOf(points))?.let { MetricSeries.heartRate(it, listOf(points), samples) }
+            TrackAxis.of(listOf(points))?.let { MetricSeries.heartRate(it, listOf(points), samples, listOf(detailed)) }
         }
     }
         .flowOn(compute)
@@ -126,7 +128,7 @@ class SegmentDetailViewModel(
 
     /** [심박] is offered only with detailed heart rate (spec §3.3). */
     val canColorByHeartRate: StateFlow<Boolean> = heartRate
-        .map { it?.hrStatus == HrStatus.READY && it.hrDetailed }
+        .map { it?.detailedHeartRate == true }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private val _colorMode = MutableStateFlow(TrackColorMode.DEFAULT)

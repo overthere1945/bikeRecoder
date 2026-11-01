@@ -61,6 +61,7 @@ class MetricChartTest {
         listOf(track),
         track.filter { it.timeMillis < 200_000L || it.timeMillis > 400_000L }
             .map { HeartRateSample(it.timeMillis, 120 + (it.timeMillis / 10_000L).toInt()) },
+        detailed = listOf(true),
     )!!
 
     private fun show(content: @Composable () -> Unit) {

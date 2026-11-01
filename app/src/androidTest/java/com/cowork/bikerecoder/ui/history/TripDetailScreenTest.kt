@@ -346,6 +346,7 @@ class TripDetailScreenTest {
         hillAxis,
         listOf(hillRide),
         hillRide.map { HeartRateSample(it.timeMillis, 110 + (it.timeMillis / 12_000L).toInt()) },
+        detailed = listOf(true),
     )!!
 
     private fun showTotals(

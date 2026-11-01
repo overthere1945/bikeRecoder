@@ -82,17 +82,29 @@ class MetricSeries private constructor(
 
         /**
          * 심박 계열(bpm). 점마다 시각이 가장 가까운 표본을 ±[HeartRateColor.MATCH_MS] 안에서 붙이고, 없으면 null 점이다.
-         * 붙은 점이 2개 미만이거나 그릴 선분이 없으면(예: 표본이 드문드문해 줄인 뒤 이웃한 값이 없음) null.
+         *
+         * 표본 밀도는 구간마다 따진다. [detailed]는 [segments]와 같은 순서·길이이고, 구간의 심박이 자세한지
+         * ([com.cowork.bikerecoder.core.post.HeartRateSummary.of]의 `detailed`: 이동 시간 1분에 표본 1개 이상 — 앱은
+         * 구간마다 저장한 값을 넘긴다)다. 자세하지 않은 구간(예: 10분에 하나뿐인 평소 심박)은 표본이 있어도 모든 점이 null이다.
+         * 표본 하나가 앞뒤 30초의 점들에 붙어 짧은 주행에서도 토막 선이 남기 때문이다. [심박] 지도 색과 같은 기준이다.
+         *
+         * 붙은 점이 2개 미만이거나 그릴 선분이 없으면(예: 자세한 구간이 없음) null.
          * [segments]는 [axis]를 만든 것과 같은 목록이어야 한다.
          */
         fun heartRate(
             axis: TrackAxis,
             segments: List<List<TrackPoint>>,
             samples: List<HeartRateSample>,
+            detailed: List<Boolean>,
         ): MetricSeries? {
+            require(detailed.size == segments.size) { "detailed must have one flag per segment" }
             val sorted = samples.sortedBy { it.timeMillis }
             val raw = ArrayList<Double?>(axis.points.size)
-            for (segment in segments) {
+            for ((s, segment) in segments.withIndex()) {
+                if (!detailed[s]) {
+                    repeat(segment.size) { raw.add(null) }
+                    continue
+                }
                 for (tp in segment) raw.add(HeartRateColor.matchedBpm(sorted, tp.timeMillis)?.toDouble())
             }
             return build(MetricKind.HEART_RATE, axis, raw, SeriesSmoother.HEART_WINDOW_MS)

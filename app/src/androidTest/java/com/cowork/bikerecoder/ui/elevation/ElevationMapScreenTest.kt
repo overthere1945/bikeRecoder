@@ -24,6 +24,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.cowork.bikerecoder.core.elevation.GradeBand
 import com.cowork.bikerecoder.core.format.SummaryFormatter
 import com.cowork.bikerecoder.core.post.HeartRateSample
+import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
@@ -31,6 +32,7 @@ import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.core.series.MetricKind
 import com.cowork.bikerecoder.map.OpenFreeMapSource
 import com.cowork.bikerecoder.post.FakePostStore
+import com.cowork.bikerecoder.post.SegmentExtras
 import com.cowork.bikerecoder.ui.history.NoTiles
 import com.cowork.bikerecoder.ui.history.ReadOnlyRides
 import okhttp3.OkHttpClient
@@ -77,7 +79,7 @@ class ElevationMapScreenTest {
 
     /**
      * A heart rate every 2 s (125 bpm on the flat, up to 170 at the top of the climb, 150 over it, 128 down), but none
-     * from 440 s to 560 s: no bpm from about 2.35 to 2.65 km.
+     * from 440 s to 560 s: no bpm from about 2.35 to 2.65 km. Stored READY and detailed, so it is charted.
      */
     private val posts = FakePostStore { listOf(segment) }.apply {
         samplesById[SEGMENT] = ridden.filter { it.timeMillis < 440_000L || it.timeMillis > 560_000L }.map { p ->
@@ -90,6 +92,7 @@ class ElevationMapScreenTest {
             }
             HeartRateSample(p.timeMillis, bpm.toInt())
         }
+        extrasById.value = mapOf(SEGMENT to SegmentExtras(SEGMENT, hrStatus = HrStatus.READY, hrDetailed = true))
     }
 
     /** What the map slot was last given. */

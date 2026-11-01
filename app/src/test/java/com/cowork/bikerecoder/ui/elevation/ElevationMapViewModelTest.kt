@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.ui.elevation
 
+import androidx.lifecycle.SavedStateHandle
 import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.HeartRateSample
@@ -53,7 +54,8 @@ class ElevationMapViewModelTest {
 
     /**
      * [count] points 20 m apart going north from [startLat], climbing 1 m per point (none without [altitude]) at 18 km/h;
-     * with [bpm] a heart-rate sample at every [samplesEvery]-th point. Returns the segment id.
+     * with [bpm] a heart-rate sample at every [samplesEvery]-th point, stored READY as [detailed] (no figures). Returns
+     * the segment id.
      */
     private suspend fun segment(
         startedAt: Long,
@@ -62,6 +64,7 @@ class ElevationMapViewModelTest {
         altitude: Boolean = true,
         bpm: Int? = null,
         samplesEvery: Int = 1,
+        detailed: Boolean = true,
     ): Long {
         val day = LocalDate.of(2026, 10, 25)
         val step = 20.0 / 111_320.0
@@ -74,6 +77,7 @@ class ElevationMapViewModelTest {
         rides.closeSegment(id, startedAt + count * 1_000L, totals)
         if (bpm != null) {
             posts.samplesById[id] = points.filterIndexed { i, _ -> i % samplesEvery == 0 }.map { HeartRateSample(it.timeMillis, bpm) }
+            posts.extrasById.update { it + (id to SegmentExtras(id, hrStatus = HrStatus.READY, hrDetailed = detailed)) }
         }
         return id
     }
@@ -218,9 +222,11 @@ class ElevationMapViewModelTest {
         assertEquals(ChartText.speedDescription(580.0 / 30.0 * 3.6, 0.0), b.speedDescription)
     }
 
-    /** READY stored heart rate of segment [id]. */
+    /** READY stored heart rate of segment [id] (detailed as [segment] stored it). */
     private fun stored(id: Long, avgBpm: Int?, maxBpm: Int?) {
-        posts.extrasById.update { it + (id to SegmentExtras(id, hrStatus = HrStatus.READY, avgBpm = avgBpm, maxBpm = maxBpm)) }
+        posts.extrasById.update {
+            it + (id to (it[id] ?: SegmentExtras(id)).copy(hrStatus = HrStatus.READY, avgBpm = avgBpm, maxBpm = maxBpm))
+        }
     }
 
     @Test
@@ -252,7 +258,7 @@ class ElevationMapViewModelTest {
 
     @Test
     fun heartDescriptionFallsBackToSamples() = runTest(dispatcher) {
-        // Nothing stored for one segment, a READY one without a highest for the other: the samples' mean and highest.
+        // No figures stored for one segment, no highest for the other: the samples' mean and highest.
         val a = segment(startedAt = 1_000_000L, startLat = 37.50, bpm = 110)
         val b = segment(startedAt = 10_000_000L, startLat = 37.60, bpm = 150)
         stored(b, avgBpm = 150, maxBpm = null)
@@ -279,6 +285,63 @@ class ElevationMapViewModelTest {
         assertEquals(ChartTab.HEART_RATE, ready.tab)
         assertEquals(List(30) { "#43A047" }, ready.colors[0])
         assertEquals(List(29) { "#FB8C00" }, ready.colors[1].drop(1))
+    }
+
+    /** Final review 1: heart rate that is not detailed has no tab; in a trip such a segment has no value (grey). */
+    @Test
+    fun heartRateThatIsNotDetailedIsNotCharted() = runTest(dispatcher) {
+        segment(startedAt = 1_000_000L, startLat = 37.50, bpm = 110)
+        val b = segment(startedAt = 10_000_000L, startLat = 37.60, bpm = 150, detailed = false)
+
+        val sparse = viewModel(ElevationSource.Segment(b), ChartTab.HEART_RATE)
+        val trip = viewModel(ElevationSource.Trip(TRIP), ChartTab.HEART_RATE)
+        advanceUntilIdle()
+
+        val one = sparse.uiState.value as ElevationMapUiState.Ready
+        assertEquals(listOf(ChartTab.ELEVATION, ChartTab.SPEED), one.tabs)
+        assertNull(one.heartRate)
+        val both = trip.uiState.value as ElevationMapUiState.Ready
+        assertEquals(110.0, both.heartRate!!.maxValue, 1e-9)
+        assertEquals(List(30) { "#43A047" }, both.colors[0])
+        assertEquals(List(29) { "#9E9E9E" }, both.colors[1].drop(1))
+    }
+
+    /** The selected tab is kept in the saved state (the route's `tab`), so it outlives the process. */
+    @Test
+    fun selectedTabIsSaved() = runTest(dispatcher) {
+        val id = segment(startedAt = 1_000_000L, startLat = 37.50, bpm = 130)
+        val handle = SavedStateHandle(mapOf(ElevationMapViewModel.ARG_TAB to ChartTab.ELEVATION.arg))
+        val vm = ElevationMapViewModel(
+            ElevationSource.Segment(id), rides, posts, handoff, ChartTab.of(handle[ElevationMapViewModel.ARG_TAB]),
+            { _, _ -> }, dispatcher, savedState = handle,
+        )
+        advanceUntilIdle()
+
+        vm.selectTab(ChartTab.HEART_RATE)
+        assertEquals("heartRate", handle.get<String>(ElevationMapViewModel.ARG_TAB))
+        // A new screen made from the saved state opens on it.
+        val again = ElevationMapViewModel(
+            ElevationSource.Segment(id), rides, posts, handoff, ChartTab.of(handle[ElevationMapViewModel.ARG_TAB]),
+            { _, _ -> }, dispatcher, savedState = handle,
+        )
+        advanceUntilIdle()
+        assertEquals(ChartTab.HEART_RATE, (again.uiState.value as ElevationMapUiState.Ready).tab)
+    }
+
+    /** A tab that is not there is not saved. */
+    @Test
+    fun missingTabIsNotSaved() = runTest(dispatcher) {
+        val id = segment(startedAt = 1_000_000L, startLat = 37.50)
+        val handle = SavedStateHandle()
+        val vm = ElevationMapViewModel(
+            ElevationSource.Segment(id), rides, posts, handoff, ChartTab.ELEVATION, { _, _ -> }, dispatcher, savedState = handle,
+        )
+        advanceUntilIdle()
+
+        vm.selectTab(ChartTab.HEART_RATE)
+        assertNull(handle.get<String>(ElevationMapViewModel.ARG_TAB))
+        vm.selectTab(ChartTab.SPEED)
+        assertEquals("speed", handle.get<String>(ElevationMapViewModel.ARG_TAB))
     }
 
     @Test

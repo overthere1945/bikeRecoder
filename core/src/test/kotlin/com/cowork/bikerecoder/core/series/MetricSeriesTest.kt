@@ -3,9 +3,11 @@ package com.cowork.bikerecoder.core.series
 import com.cowork.bikerecoder.core.elevation.TrackAxis
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.HeartRateSample
+import com.cowork.bikerecoder.core.post.HeartRateSummary
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -32,9 +34,21 @@ class MetricSeriesTest {
         return TrackAxis.of(list)?.let { MetricSeries.speed(it, list) }
     }
 
+    /** 모든 구간을 자세한 심박으로 친 심박 계열. */
     private fun heartOf(samples: List<HeartRateSample>, vararg segs: List<TrackPoint>): MetricSeries? {
         val list = segs.toList()
-        return TrackAxis.of(list)?.let { MetricSeries.heartRate(it, list, samples) }
+        return TrackAxis.of(list)?.let { MetricSeries.heartRate(it, list, samples, List(list.size) { true }) }
+    }
+
+    /** 앱처럼 구간마다 [HeartRateSummary.of]의 detailed(구간 시간 안 표본 수 ≥ 이동 분)로 거른 심박 계열. */
+    private fun heartByRuleOf(samples: List<HeartRateSample>, vararg segs: List<TrackPoint>): MetricSeries? {
+        val list = segs.toList()
+        val detailed = list.map { seg ->
+            val from = seg.first().timeMillis
+            val to = seg.last().timeMillis
+            HeartRateSummary.of(samples.filter { it.timeMillis in from..to }, movingTimeMs = to - from)?.detailed ?: false
+        }
+        return TrackAxis.of(list)?.let { MetricSeries.heartRate(it, list, samples, detailed) }
     }
 
     @Test
@@ -190,10 +204,51 @@ class MetricSeriesTest {
 
     @Test
     fun sparseHeartRateIsNull() {
-        // 5시간, 1 Hz. 표본은 10분마다 하나(±30 s만 붙는다) → 줄인 뒤 이웃한 두 값이 없다.
+        // 5시간, 1 Hz. 표본은 10분마다 하나(±30 s만 붙는다).
         val track = segment(5 * 3_600, spacingM = 5.0)
         val samples = (0 until 30).map { HeartRateSample(300_000L + it * 600_000L, 130) }
-        assertNull(heartOf(samples, track))
+        assertNull(heartByRuleOf(samples, track)) // 자세하지 않은 구간
+        assertNull(heartOf(samples, track)) // 자세하다고 쳐도 줄인 뒤 이웃한 두 값이 없다
+    }
+
+    @Test
+    fun shortSparseHeartRateIsNull() {
+        // 1시간, 1 Hz. 표본은 10분마다 하나(6개 < 60분). 줄여도 표본마다 이웃한 값 몇 개가 남지만 그리지 않는다.
+        val track = segment(3_600, spacingM = 5.0)
+        val samples = (0 until 6).map { HeartRateSample(300_000L + it * 600_000L, 130) }
+        assertNull(heartByRuleOf(samples, track))
+    }
+
+    @Test
+    fun sparseSegmentNextToDenseOneIsNull() {
+        // 10분 자세한 구간(5 s마다 표본) 뒤 1시간 드문 구간(10분마다 표본).
+        val dense = segment(600, spacingM = 5.0)
+        val sparse = segment(3_600, startLat = 37.1, startMs = 1_000_000L, spacingM = 5.0)
+        val samples = (0 until 120).map { HeartRateSample(it * 5_000L, 140) } +
+            (0 until 6).map { HeartRateSample(1_300_000L + it * 600_000L, 130) }
+        val s = assertNotNull(heartByRuleOf(samples, dense, sparse))
+        val boundary = s.boundariesM.single()
+        assertEquals(140.0, s.valueAt(boundary / 2)!!, 1e-9)
+        // 경계에 걸친 묶음 하나를 넘어서는 모두 null: 드문 표본 자리에도 값이 없다.
+        val inSparse = s.distancesM.indices.filter { s.distancesM[it] > boundary + 100.0 }
+        assertTrue(inSparse.isNotEmpty())
+        assertTrue(inSparse.all { s.values[it] == null }, "sparse part ${inSparse.mapNotNull { s.values[it] }}")
+        assertTrue(s.maxValue < 140.0 + 1e-9)
+
+        assertFailsWith<IllegalArgumentException> {
+            MetricSeries.heartRate(TrackAxis.of(listOf(dense))!!, listOf(dense), samples, listOf(true, false))
+        }
+    }
+
+    @Test
+    fun denseHeartRateIsCharted() {
+        // 1시간, 1 Hz. 표본은 30 s마다(120개 ≥ 60분): 모든 점에 붙는다.
+        val track = segment(3_600, spacingM = 5.0)
+        val samples = (0 until 121).map { HeartRateSample(it * 30_000L, 150) }
+        val s = assertNotNull(heartByRuleOf(samples, track))
+        assertEquals(MetricSeries.MAX_POINTS, s.values.size)
+        assertTrue(s.values.none { it == null })
+        assertEquals(150.0, s.maxValue, 1e-9)
     }
 
     @Test

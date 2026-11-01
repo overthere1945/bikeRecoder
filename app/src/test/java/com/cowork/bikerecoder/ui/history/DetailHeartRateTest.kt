@@ -161,7 +161,7 @@ class DetailHeartRateTest {
         advanceUntilIdle()
 
         val points = rides.points(id)
-        val expected = MetricSeries.heartRate(TrackAxis.of(listOf(points))!!, listOf(points), samples)!!
+        val expected = MetricSeries.heartRate(TrackAxis.of(listOf(points))!!, listOf(points), samples, listOf(true))!!
         val series = vm.heartSeries.value!!
         assertEquals(MetricKind.HEART_RATE, series.kind)
         assertEquals(expected.distancesM.toList(), series.distancesM.toList())
@@ -170,6 +170,42 @@ class DetailHeartRateTest {
         assertEquals(speed?.totalM, series.totalM, "one axis for both charts")
         assertEquals(120, vm.heartRate.value?.avgBpm)
         assertEquals("심박 그래프, 평균 120bpm, 최고 150bpm", vm.heartDescription.value, "the stored values, not the samples'")
+    }
+
+    /**
+     * Final review 1: heart rate that is not detailed (e.g. all-day samples every 10 min) is never charted, on the
+     * segment's screen nor the trip's, even with a sample at every point here.
+     */
+    @Test
+    fun heartRateThatIsNotDetailedIsNotCharted() = runTest(dispatcher) {
+        val id = segment(startedAt = 0)
+        ready(id, (0 until 4).map { HeartRateSample(it * 1_000L, 120) }, detailed = false)
+        val segmentVm = segmentDetail(id)
+        val tripVm = tripDetail()
+        advanceUntilIdle()
+
+        assertNull(segmentVm.heartSeries.value)
+        assertNull(tripVm.heartSeries.value)
+        assertTrue(tripVm.profileLoaded.value)
+    }
+
+    /** Final review 1: in a trip only the detailed segments are charted and coloured; the others have no value (grey). */
+    @Test
+    fun aTripChartsAndColoursOnlyItsDetailedSegments() = runTest(dispatcher) {
+        val a = segment(startedAt = 0, date = day1, lat = 37.0, n = 3)
+        val b = segment(startedAt = 100_000, date = day2, lat = 38.0, n = 5)
+        ready(a, listOf(HeartRateSample(0L, 90), HeartRateSample(2_000L, 90)))
+        ready(b, (0 until 5).map { HeartRateSample(100_000L + it * 1_000L, 170) }, detailed = false)
+        val vm = tripDetail()
+        advanceUntilIdle()
+
+        val series = vm.heartSeries.value!!
+        assertEquals(listOf(90.0, 90.0, 90.0, null, null, null, null, null), series.values)
+        vm.setColorMode(TrackColorMode.HEART_RATE)
+        advanceUntilIdle()
+        val lines = vm.lines.value
+        assertEquals(List(3) { "#1E88E5" }, lines[0].colors)
+        assertEquals(List(5) { "#9E9E9E" }, lines[1].colors, "no band for a segment without detailed heart rate")
     }
 
     /** Without samples there is no heart-rate series, also while the stored figures are READY. */

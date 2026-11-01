@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.ui.elevation
 
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.createSavedStateHandle
@@ -66,7 +67,9 @@ sealed interface ElevationMapUiState {
  * The big map screen (V1.7.0 spec §2.2, V1.8.0 spec §2.4) opened on [requestedTab] (or the first tab there is): a
  * trip's segments (in start order, empty ones left out) or one segment read from [rideStore] with their heart-rate
  * samples and stored heart rate from [postStore], or the plan preview's route taken from [handoff]; the profile, series
- * and every tab's colours are computed on [compute]. Heart rate that cannot be read is logged and left out.
+ * and every tab's colours are computed on [compute]. Heart rate that cannot be read is logged and left out; a segment
+ * without detailed heart rate ([com.cowork.bikerecoder.post.SegmentExtras.detailedHeartRate]) has no heart-rate value.
+ * The selected tab is kept in [savedState] under [ARG_TAB], so it outlives the process.
  */
 class ElevationMapViewModel(
     private val source: ElevationSource,
@@ -76,6 +79,7 @@ class ElevationMapViewModel(
     private val requestedTab: ChartTab = ChartTab.ELEVATION,
     private val log: WarnLog = WarnLog { _, _ -> },
     private val compute: CoroutineDispatcher = Dispatchers.Default,
+    private val savedState: SavedStateHandle? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow<ElevationMapUiState>(ElevationMapUiState.Loading)
@@ -110,7 +114,10 @@ class ElevationMapViewModel(
         }
     }
 
-    /** Shows [tab] (its chart, legend and line colours) if it is one of the tabs; the scrub stays where it is. */
+    /**
+     * Shows [tab] (its chart, legend and line colours) if it is one of the tabs and keeps it in [savedState]; the scrub
+     * stays where it is.
+     */
     fun selectTab(tab: ChartTab) {
         _uiState.update { state ->
             if (state is ElevationMapUiState.Ready && tab in state.tabs) {
@@ -119,6 +126,7 @@ class ElevationMapViewModel(
                 state
             }
         }
+        if ((_uiState.value as? ElevationMapUiState.Ready)?.tab == tab) savedState?.set(ARG_TAB, tab.arg)
     }
 
     private class Loaded(
@@ -155,7 +163,8 @@ class ElevationMapViewModel(
     private suspend fun heartInput(segmentIds: List<Long>, segments: List<RideSegment>): HeartInput? = try {
         val samples = segmentIds.flatMap { postStore.samples(it) }
         val extras = segmentIds.mapNotNull { postStore.extras(it) }
-        HeartInput(samples, tripHeartRate(segments.groupBy { it.localDate }, extras))
+        val detailed = segmentIds.map { id -> extras.any { it.segmentId == id && it.detailedHeartRate } }
+        HeartInput(samples, detailed, tripHeartRate(segments.groupBy { it.localDate }, extras))
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
@@ -173,17 +182,18 @@ class ElevationMapViewModel(
         return Loaded(state, mapOf(ChartTab.ELEVATION to colors), profile::pointAt)
     }
 
-    /** Null when no tab has anything to draw. */
+    /** Null when no tab has anything to draw. [heart]'s flags are in the order of [tracks]. */
     private suspend fun fromTracks(
         tracks: List<List<TrackPoint>>,
         heart: HeartInput?,
         totals: SegmentTotals,
     ): Loaded? = withContext(compute) {
-        val kept = tracks.filter { it.isNotEmpty() }
+        val keptAt = tracks.indices.filter { tracks[it].isNotEmpty() }
+        val kept = keptAt.map { tracks[it] }
         val axis = TrackAxis.of(kept) ?: return@withContext null
         val profile = ElevationProfile.fromSegments(kept)
         val speed = MetricSeries.speed(axis, kept)
-        val heartRate = heart?.let { MetricSeries.heartRate(axis, kept, it.samples) }
+        val heartRate = heart?.let { h -> MetricSeries.heartRate(axis, kept, h.samples, keptAt.map { h.detailed[it] }) }
         val colors = buildMap {
             profile?.let { put(ChartTab.ELEVATION, pathColors(axis.paths, it)) }
             speed?.let { put(ChartTab.SPEED, pathColors(axis.paths, it::colorHexAt, axis)) }
@@ -242,7 +252,7 @@ class ElevationMapViewModel(
                 val tab = ChartTab.of(handle.get<String>(ARG_TAB))
                 ElevationMapViewModel(
                     source, container.rideStore, container.postStore, container.elevationHandoff, tab,
-                    androidWarnLog("ElevationMap"),
+                    androidWarnLog("ElevationMap"), savedState = handle,
                 )
             }
         }
@@ -252,5 +262,8 @@ class ElevationMapViewModel(
 /** The length of the line: the profile's, or the series' (the same track axis). */
 private fun ElevationMapUiState.Ready.totalM(): Double = profile?.totalM ?: speed?.totalM ?: heartRate?.totalM ?: 0.0
 
-/** Segments' heart-rate samples one after another and what is stored of their heart rate. */
-private class HeartInput(val samples: List<HeartRateSample>, val stored: TripHeartRate)
+/**
+ * Segments' heart-rate samples one after another, whether each segment's heart rate is detailed (in the segments' order)
+ * and what is stored of their heart rate.
+ */
+private class HeartInput(val samples: List<HeartRateSample>, val detailed: List<Boolean>, val stored: TripHeartRate)

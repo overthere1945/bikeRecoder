@@ -11,8 +11,8 @@ enum class SpeedBand(val argb: Long, val legend: String) {
     SPRINT(0xFFE53935, "25 이상"),
     ;
 
-    /** `#RRGGBB`. */
-    val hex: String get() = String.format(Locale.ROOT, "#%06X", argb and 0xFFFFFF)
+    /** `#RRGGBB`. 한 번만 만든다. */
+    val hex: String = String.format(Locale.ROOT, "#%06X", argb and 0xFFFFFF)
 
     companion object {
         /** 경계 값은 위 구간에 넣는다(10은 [EASY]). */

@@ -15,6 +15,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -136,8 +137,8 @@ class SegmentDetailScreenTest {
      */
     @Test
     fun metricChartsReplaceLineCharts() {
-        // Not detailed: no [심박] chip on the map to share the chart's title.
-        ready(detailed = false)
+        // Detailed, so the heart rate is charted; the map's [심박] chip shares the chart's title (left out below).
+        ready(detailed = true)
         val opened = mutableListOf<ChartTab>()
         show(onOpenChart = { opened += it })
         composeRule.waitUntil(5_000) {
@@ -148,7 +149,9 @@ class SegmentDetailScreenTest {
         val elevation = span(composeRule.onNodeWithTag(ElevationTags.CHART))
         val speedTitle = span(composeRule.onNodeWithText(ChartText.TITLE_SPEED))
         val speed = span(composeRule.onNodeWithTag(MetricTags.SPEED_CHART))
-        val heartTitle = span(composeRule.onNodeWithText(ChartText.TITLE_HEART))
+        val heartTitle = span(
+            composeRule.onNode(hasText(ChartText.TITLE_HEART) and !hasAnyAncestor(hasTestTag(TrackColorTags.TOGGLE))),
+        )
         val heart = span(composeRule.onNodeWithTag(MetricTags.HEART_CHART))
         assertTrue("속도 under the elevation chart", speedTitle.first >= elevation.second)
         assertTrue("speed chart under its title", speed.first >= speedTitle.second)
@@ -170,11 +173,11 @@ class SegmentDetailScreenTest {
     }
 
     /**
-     * The heart-rate chart is shown as before: once the heart rate is READY with samples to chart, detailed or not;
-     * not while it is not READY, even with samples stored.
+     * The heart-rate chart is shown once the heart rate is READY and detailed with samples to chart (V1.8.0 final review
+     * 1: heart rate that is not detailed is never charted); not while it is not READY, even with samples stored.
      */
     @Test
-    fun heartRateGateUnchanged() {
+    fun heartRateChartOnlyWhenDetailed() {
         runBlocking {
             postStore.replaceSamples(1, listOf(HeartRateSample(1_000L, 95), HeartRateSample(4_000L, 165)))
             postStore.saveExtras(SegmentExtras(1, hrStatus = HrStatus.PENDING, hrLastTriedAt = 1L))
@@ -186,9 +189,18 @@ class SegmentDetailScreenTest {
 
         ready(detailed = false)
         composeRule.waitUntil(5_000) {
+            runCatching { composeRule.onNodeWithText("워치에서 운동을 시작하면 자세한 심박이 기록됩니다").assertExists() }.isSuccess
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(MetricTags.HEART_CHART).assertDoesNotExist()
+        composeRule.onAllNodesWithText(ChartText.TITLE_HEART).assertCountEquals(0)
+
+        ready(detailed = true)
+        composeRule.waitUntil(5_000) {
             runCatching { composeRule.onNodeWithTag(MetricTags.HEART_CHART).assertExists() }.isSuccess
         }
-        composeRule.onNodeWithText(ChartText.TITLE_HEART).performScrollTo().assertIsDisplayed()
+        composeRule.onNode(hasText(ChartText.TITLE_HEART) and !hasAnyAncestor(hasTestTag(TrackColorTags.TOGGLE)))
+            .performScrollTo().assertIsDisplayed()
     }
 
     /** The node's top and bottom in the root (px), not clipped to the scrolling column's viewport. */
