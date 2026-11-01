@@ -6,6 +6,7 @@ import com.cowork.bikerecoder.core.stats.GoalInput
 import com.cowork.bikerecoder.core.stats.PeriodKind
 import com.cowork.bikerecoder.core.stats.RideStat
 import com.cowork.bikerecoder.core.stats.RideStatsSource
+import com.cowork.bikerecoder.core.stats.StoredBestEffort
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.currentCoroutineContext
@@ -14,6 +15,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -39,6 +41,7 @@ class StatsViewModelTest {
     private class FakeRides(initial: List<RideStat> = emptyList()) : RideStatsSource {
         val flow = MutableStateFlow(initial)
         override fun observeRides(): Flow<List<RideStat>> = flow
+        override fun observeBestEfforts(): Flow<List<StoredBestEffort>> = flowOf(emptyList())
     }
 
     private class FakeGoals(weekly: Int? = null, yearly: Int? = null) : GoalSettings {
@@ -92,6 +95,7 @@ class StatsViewModelTest {
         val vm = StatsViewModel(
             object : RideStatsSource {
                 override fun observeRides(): Flow<List<RideStat>> = rides
+                override fun observeBestEfforts(): Flow<List<StoredBestEffort>> = flowOf(emptyList())
             },
             object : GoalSettings {
                 override val goals: Flow<GoalKm> = goals
@@ -129,6 +133,7 @@ class StatsViewModelTest {
                 emit(sample)
                 awaitCancellation()
             }
+            override fun observeBestEfforts(): Flow<List<StoredBestEffort>> = flowOf(emptyList())
         }
         val vm = StatsViewModel(rides, FakeGoals(), { today }, WarnLog { _, _ -> }, compute)
         advanceUntilIdle()

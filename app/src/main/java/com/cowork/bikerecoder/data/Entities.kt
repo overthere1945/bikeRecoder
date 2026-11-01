@@ -79,6 +79,8 @@ data class RideSegmentEntity(
     val descentM: Double,
     val minAltitudeM: Double?,
     val maxAltitudeM: Double?,
+    /** ActivityType.stored (BIKE, WALK, RUN, HIKE); rows from before V1.9.0 are BIKE. */
+    @ColumnInfo(defaultValue = "BIKE") val activity: String,
 )
 
 @Entity(
@@ -102,6 +104,27 @@ data class TrackPointEntity(
     val altitudeM: Double?,
     val speedMps: Float?,
     val accuracyM: Float,
+)
+
+/** The fastest time of one running distance in a segment; [distanceM] is BestEffortDistance.keyM. */
+@Entity(
+    tableName = "segment_best_effort",
+    primaryKeys = ["segmentId", "distanceM"],
+    foreignKeys = [
+        ForeignKey(
+            entity = RideSegmentEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["segmentId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("segmentId")],
+)
+data class SegmentBestEffortEntity(
+    val segmentId: Long,
+    val distanceM: Int,
+    val timeMs: Long,
+    val startIndex: Int,
 )
 
 /** kind는 FavoriteKind의 name. */

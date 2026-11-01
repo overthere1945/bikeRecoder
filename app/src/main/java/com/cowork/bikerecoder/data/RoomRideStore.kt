@@ -1,5 +1,7 @@
 package com.cowork.bikerecoder.data
 
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.activity.BestEffort
 import com.cowork.bikerecoder.core.elevation.UsualSpeed
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.recording.DayTotals
@@ -17,7 +19,7 @@ class RoomRideStore(db: AppDatabase) : RideStore {
     private val dao = db.rideDao()
     private val tripDao = db.tripDao()
 
-    override suspend fun openSegment(tripId: Long, startedAt: Long, localDate: LocalDate): Long =
+    override suspend fun openSegment(tripId: Long, startedAt: Long, localDate: LocalDate, activity: ActivityType): Long =
         dao.insertSegment(
             RideSegment(
                 id = 0,
@@ -26,6 +28,7 @@ class RoomRideStore(db: AppDatabase) : RideStore {
                 endedAt = null,
                 localDate = localDate,
                 totals = SegmentTotals.ZERO,
+                activity = activity,
             ).toEntity(),
         )
 
@@ -34,6 +37,16 @@ class RoomRideStore(db: AppDatabase) : RideStore {
 
     override suspend fun closeSegment(segmentId: Long, endedAt: Long, totals: SegmentTotals) =
         dao.closeSegment(segmentId, endedAt, totals)
+
+    override suspend fun saveBestEfforts(segmentId: Long, efforts: List<BestEffort>) =
+        dao.replaceBestEfforts(segmentId, efforts.map { it.toEntity(segmentId) })
+
+    override suspend fun changeActivity(
+        segmentId: Long,
+        activity: ActivityType,
+        totals: SegmentTotals?,
+        efforts: List<BestEffort>,
+    ) = dao.changeActivity(segmentId, activity.stored, totals, efforts.map { it.toEntity(segmentId) })
 
     override suspend fun openSegments(): List<RideSegment> = dao.openSegments().map { it.toModel() }
 
@@ -91,6 +104,7 @@ internal fun RideSegment.toEntity() = RideSegmentEntity(
     descentM = totals.descentM,
     minAltitudeM = totals.minAltitudeM,
     maxAltitudeM = totals.maxAltitudeM,
+    activity = activity.stored,
 )
 
 internal fun RideSegmentEntity.toModel() = RideSegment(
@@ -109,6 +123,14 @@ internal fun RideSegmentEntity.toModel() = RideSegment(
         minAltitudeM = minAltitudeM,
         maxAltitudeM = maxAltitudeM,
     ),
+    activity = ActivityType.fromStored(activity),
+)
+
+internal fun BestEffort.toEntity(segmentId: Long) = SegmentBestEffortEntity(
+    segmentId = segmentId,
+    distanceM = distance.keyM,
+    timeMs = timeMs,
+    startIndex = startIndex,
 )
 
 internal fun TrackPoint.toEntity(segmentId: Long) = TrackPointEntity(

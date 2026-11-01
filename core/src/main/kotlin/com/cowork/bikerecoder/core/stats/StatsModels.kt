@@ -1,5 +1,7 @@
 package com.cowork.bikerecoder.core.stats
 
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.activity.BestEffortDistance
 import java.time.LocalDate
 
 /** 통계에 쓰는 끝난 구간 한 건. 거르지 않은 상태로 들어오며, 걸러 쓰는 일은 [StatsCalculator.rides]가 한다. */
@@ -13,7 +15,16 @@ data class RideStat(
     val ascentM: Double,
     /** 끝난 시각(ms). 통계에는 쓰지 않고, 요약 카드 그림의 키가 구간 변경을 알아보는 데 쓴다. */
     val endedAt: Long = 0L,
+    /** 구간의 활동 종류. */
+    val activity: ActivityType = ActivityType.BIKE,
+    /** 구간의 경과 시간(ms, 멈춘 때 포함). */
+    val elapsedMs: Long = 0L,
+    /** 구간의 가장 높은 고도(m). 고도를 모르면 null. */
+    val maxAltitudeM: Double? = null,
 )
+
+/** 저장된 달리기 최고 기록 한 줄: [segmentId] 구간의 [distance] 거리를 [timeMs]에 달렸다. */
+data class StoredBestEffort(val segmentId: Long, val distance: BestEffortDistance, val timeMs: Long)
 
 enum class PeriodKind { WEEK, MONTH, YEAR, ALL }
 

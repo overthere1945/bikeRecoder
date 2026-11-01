@@ -1,6 +1,7 @@
 package com.cowork.bikerecoder.core.recording
 
 import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.activity.BestEffort
 import com.cowork.bikerecoder.core.trip.Trip
 import java.time.LocalDate
 
@@ -90,7 +91,13 @@ enum class TripDeleteCondition {
 }
 
 interface RideStore {
-    suspend fun openSegment(tripId: Long, startedAt: Long, localDate: LocalDate): Long
+    /** 새 구간을 연다. [activity]는 이 구간의 활동 종류(기본 자전거). */
+    suspend fun openSegment(
+        tripId: Long,
+        startedAt: Long,
+        localDate: LocalDate,
+        activity: ActivityType = ActivityType.BIKE,
+    ): Long
 
     /** 점 삽입과 구간 합계 갱신을 한 트랜잭션으로 한다. */
     suspend fun appendPoints(segmentId: Long, points: List<TrackPoint>, totals: SegmentTotals)
@@ -100,7 +107,7 @@ interface RideStore {
     /** endedAt == null인 구간, startedAt 내림차순. */
     suspend fun openSegments(): List<RideSegment>
 
-    /** 끝난(endedAt != null) 구간 중 거리 1 km 이상·이동 시간 > 0, startedAt 내림차순 [limit]개(가져온 구간 포함). 평소 속도용. */
+    /** 끝난(endedAt != null) 자전거 구간 중 거리 1 km 이상·이동 시간 > 0, startedAt 내림차순 [limit]개(가져온 구간 포함). 평소 속도용. */
     suspend fun recentSegments(limit: Int): List<RideSegment>
 
     suspend fun segment(id: Long): RideSegment?
@@ -111,11 +118,20 @@ interface RideStore {
     /** timeMillis 오름차순. */
     suspend fun points(segmentId: Long): List<TrackPoint>
 
-    /** 그 여행·그 날짜 구간의 합. */
+    /** 그 여행·그 날짜 자전거 구간의 합(다른 종류 구간은 더하지 않는다). */
     suspend fun dayTotals(tripId: Long, localDate: LocalDate): DayTotals
 
     /** 빈 구간이 아닌([RideSegment.isEmpty]) 구간이 1개 이상인 여행, lastStartedAt 내림차순. */
     suspend fun tripSummaries(): List<TripRideSummary>
+
+    /** 그 구간의 달리기 최고 기록 행을 모두 [efforts]로 바꾼다. */
+    suspend fun saveBestEfforts(segmentId: Long, efforts: List<BestEffort>)
+
+    /**
+     * 구간의 종류를 바꾼다. 한 트랜잭션으로, [totals]가 null이면 합계는 그대로 두고, 최고 기록은 [efforts]로 바꾼다
+     * ([activity]가 달리기가 아니면 빈 목록을 넘긴다).
+     */
+    suspend fun changeActivity(segmentId: Long, activity: ActivityType, totals: SegmentTotals?, efforts: List<BestEffort>)
 
     /** 위치 기록도 CASCADE로 지운다. */
     suspend fun deleteSegment(id: Long)

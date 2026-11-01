@@ -46,11 +46,13 @@ import com.cowork.bikerecoder.core.post.PeriodFilter
 import com.cowork.bikerecoder.core.stats.PeriodKind
 import com.cowork.bikerecoder.core.stats.RideStat
 import com.cowork.bikerecoder.core.stats.RideStatsSource
+import com.cowork.bikerecoder.core.stats.StoredBestEffort
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -65,6 +67,7 @@ class StatsScreenTest {
     private class FakeRides(rides: List<RideStat>) : RideStatsSource {
         val flow = MutableStateFlow(rides)
         override fun observeRides(): Flow<List<RideStat>> = flow
+        override fun observeBestEfforts(): Flow<List<StoredBestEffort>> = flowOf(emptyList())
     }
 
     private class FakeGoals(weekly: Int?, yearly: Int?) : GoalSettings {
