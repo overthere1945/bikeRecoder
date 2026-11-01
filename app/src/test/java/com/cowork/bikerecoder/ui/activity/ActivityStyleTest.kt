@@ -31,6 +31,21 @@ class ActivityStyleTest {
         assertEquals(Color(0xFF27500A) to Color(0xFFC0DD97), ActivityStyle.badgeColors(ActivityType.HIKE, dark = true))
     }
 
+    /** The text on the type button's fill (V1.9.1 §A): white, at least 3 : 1 (bold text) on all four colours. */
+    @Test
+    fun onColourIsReadableOnEachFill() {
+        fun lum(c: Color): Double {
+            fun lin(v: Float) = if (v <= 0.03928f) v / 12.92 else Math.pow((v + 0.055) / 1.055, 2.4)
+            return 0.2126 * lin(c.red) + 0.7152 * lin(c.green) + 0.0722 * lin(c.blue)
+        }
+        ActivityType.entries.forEach { type ->
+            val on = ActivityStyle.onColor(type)
+            assertEquals(Color.White, on)
+            val ratio = (lum(on) + 0.05) / (lum(ActivityStyle.color(type)) + 0.05)
+            assertTrue(ratio >= 3.0, "$type: contrast $ratio")
+        }
+    }
+
     @Test
     fun namesAreTheActivityNames() {
         assertEquals(listOf("자전거", "걷기", "달리기", "등산"), ActivityType.entries.map(ActivityStyle::name))
