@@ -1,0 +1,297 @@
+package com.cowork.bikerecoder.share.cards
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
+import android.util.Log
+import com.cowork.bikerecoder.core.model.GeoPoint
+import com.cowork.bikerecoder.core.video.Box
+import com.cowork.bikerecoder.core.video.Camera
+import com.cowork.bikerecoder.core.video.CameraPath
+import com.cowork.bikerecoder.core.video.CardSize
+import com.cowork.bikerecoder.core.video.ShareCardLayout
+import com.cowork.bikerecoder.map.TileSource
+import com.cowork.bikerecoder.video.FeedThumbnailRenderer
+import com.cowork.bikerecoder.video.MapMarks
+import com.cowork.bikerecoder.video.MapSnapshots
+import com.cowork.bikerecoder.video.RouteOverlay
+import com.cowork.bikerecoder.video.RouteStyle
+import com.cowork.bikerecoder.video.TitleBadge
+import com.cowork.bikerecoder.video.VideoInputs
+import com.cowork.bikerecoder.video.activitiesBySegment
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.ln
+import kotlin.math.min
+import kotlin.math.pow
+import kotlin.math.roundToInt
+import kotlin.math.tan
+
+/**
+ * The share cards (spec §2). [satellite] draws the satellite card (spec §2.1, §2.2): a map snapshot of the whole card with
+ * the route fitted to [ShareCardLayout.satellite]'s map box, glowing in each segment's activity colour with the green
+ * start and black end points, a black 35% band on top (the badge, "title · region", the date line) and a black 50% band
+ * below (the three numbers, the small line, "bikeRecoder"), and the map's attribution under the top band.
+ *
+ * The map is the [satellite] source (null: no key, or the start check failed), then the [plain] map (null only in tests),
+ * each given [MAP_TIMEOUT_MS]; without either the card is a dark [NO_MAP] fill with the route alone and no attribution.
+ * Returns a software ARGB_8888 bitmap (the route's glow is a blur mask filter) that the caller owns.
+ */
+class ShareCardRenderer(
+    private val context: Context,
+    private val satellite: TileSource?,
+    private val plain: TileSource?,
+) {
+
+    /** The satellite card (spec §2.2) of [size], [CardSize.FEED] or [CardSize.STORY]. */
+    suspend fun satellite(inputs: VideoInputs, facts: CardFacts, size: CardSize): Bitmap {
+        val boxes = ShareCardLayout.satellite(size)
+        val w = size.width
+        val h = size.height
+        val unit = min(w, h) / 360f
+        val timeline = inputs.timeline
+        val points = timeline.points
+        val camera = CameraPath.overviewInBox(points.map { it.point }, w, h, boxes.map)
+        val overlay = RouteOverlay(timeline, FeedThumbnailRenderer.lineColors(timeline, inputs.activitiesBySegment()))
+        val ends = listOf(points.first().point, points.last().point)
+
+        val image = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        try {
+            val canvas = Canvas(image)
+            val map = snapshot(camera, w, h)
+            val projected = if (map == null) {
+                canvas.drawColor(NO_MAP)
+                flat(inputs, camera, w, h, ends)
+            } else {
+                val (shot, _) = map
+                try {
+                    canvas.drawBitmap(shot.bitmap, 0f, 0f, null)
+                    overlay.project(shot, camera, ends)
+                } finally {
+                    shot.bitmap.recycle()
+                }
+            }
+            overlay.draw(canvas, projected, Double.POSITIVE_INFINITY, unit, split = null, style = RouteStyle.FULL)
+            val xy = projected.extras
+            MapMarks.startAndEnd(canvas, xy[0], xy[1], xy[2], xy[3], unit)
+
+            canvas.drawRect(boxes.top.left, boxes.top.y, boxes.top.right, boxes.top.bottom, fill(Color.BLACK, TOP_BAND_ALPHA))
+            canvas.drawRect(boxes.bottom.left, boxes.bottom.y, boxes.bottom.right, boxes.bottom.bottom, fill(Color.BLACK, BOTTOM_BAND_ALPHA))
+            drawTitle(canvas, facts, boxes.top, unit)
+            map?.second?.let { drawAttribution(canvas, it.attribution, boxes.top, unit) }
+            drawNumbers(canvas, facts, boxes.bottom, size, unit)
+            return image
+        } catch (e: Throwable) {
+            image.recycle()
+            throw e
+        }
+    }
+
+    /** A snapshot of the whole card and its source: satellite, then plain, each within [MAP_TIMEOUT_MS]; null: no map. */
+    private suspend fun snapshot(camera: Camera, w: Int, h: Int): Pair<MapSnapshots.Shot, TileSource>? {
+        for (source in listOfNotNull(satellite, plain)) {
+            val maps = MapSnapshots(context, source, w, h)
+            val shot = try {
+                withTimeoutOrNull(MAP_TIMEOUT_MS) { maps.take(camera) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // The message may quote a tile URL with the key (ruling K1): the type only.
+                Log.w(TAG, "Card map failed: ${e.javaClass.simpleName}")
+                null
+            } finally {
+                maps.close()
+            }
+            if (shot != null) return shot to source
+            Log.w(TAG, "No card map from ${source.javaClass.simpleName}")
+        }
+        return null
+    }
+
+    /**
+     * The route without a map: each segment one run, projected flat with the [camera]'s Web-Mercator maths (512-px tiles,
+     * north up, no tilt), as MapLibre would have placed it on a [w]×[h] snapshot. Also the pixels of [extras].
+     */
+    private fun flat(inputs: VideoInputs, camera: Camera, w: Int, h: Int, extras: List<GeoPoint>): RouteOverlay.Projected {
+        val world = TILE_SIZE * 2.0.pow(camera.zoom)
+        val cx = mercatorX(camera.center.lon)
+        val cy = mercatorY(camera.center.lat)
+        fun x(p: GeoPoint) = ((mercatorX(p.lon) - cx) * world + w / 2.0).toFloat()
+        fun y(p: GeoPoint) = ((mercatorY(p.lat) - cy) * world + h / 2.0).toFloat()
+        val points = inputs.timeline.points
+        val runs = ArrayList<RouteOverlay.Run>()
+        var start = 0
+        for (i in 1..points.size) {
+            if (i < points.size && points[i].segmentIndex == points[start].segmentIndex) continue
+            if (i - start >= 2) {
+                val xy = FloatArray(2 * (i - start))
+                for (k in start until i) {
+                    xy[2 * (k - start)] = x(points[k].point)
+                    xy[2 * (k - start) + 1] = y(points[k].point)
+                }
+                runs += RouteOverlay.Run(DoubleArray(i - start) { (start + it).toDouble() }, xy)
+            }
+            start = i
+        }
+        val ends = FloatArray(2 * extras.size)
+        extras.forEachIndexed { i, p ->
+            ends[2 * i] = x(p)
+            ends[2 * i + 1] = y(p)
+        }
+        return RouteOverlay.Projected(runs, ends)
+    }
+
+    /** The top band: the badge and "title · region" on one line, the date line below, centred in [band] together. */
+    private fun drawTitle(canvas: Canvas, facts: CardFacts, band: Box, unit: Float) {
+        val left = band.x + PAD * unit
+        val lineCentre = band.y + band.h / 2 - TITLE_ABOVE_CENTRE * unit
+        val badge = BADGE * unit
+        TitleBadge.draw(canvas, facts.activity, left, lineCentre - badge / 2, badge, 1f)
+        val title = listOfNotNull(facts.title, facts.region).joinToString(" · ")
+        val titleX = left + badge + BADGE_GAP * unit
+        val titlePaint = text(unit, TITLE_SIZE, Color.WHITE, bold = true)
+        fit(titlePaint, title, band.x + band.w - PAD * unit - titleX)
+        canvas.drawText(title, titleX, centred(titlePaint, lineCentre), titlePaint)
+        val datePaint = text(unit, DATE_SIZE, white(DATE_ALPHA))
+        fit(datePaint, facts.dateLine, band.w - 2 * PAD * unit)
+        canvas.drawText(facts.dateLine, left, lineCentre + DATE_BELOW * unit, datePaint)
+    }
+
+    /** The map's attribution in one line right under the top band, at the right; at most half the card wide. */
+    private fun drawAttribution(canvas: Canvas, attribution: String, band: Box, unit: Float) {
+        val paint = text(unit, ATTRIBUTION_SIZE, white(ATTRIBUTION_ALPHA), align = Paint.Align.RIGHT)
+        fit(paint, attribution, band.w / 2)
+        canvas.drawText(attribution, band.x + band.w - PAD * unit, band.y + band.h + ATTRIBUTION_BELOW * unit, paint)
+    }
+
+    /**
+     * The bottom band: a feed card's three cells in one row; a story's first cell large on its own row and the other two
+     * below it. Then the small line at the bottom left and "bikeRecoder" at the bottom right.
+     */
+    private fun drawNumbers(canvas: Canvas, facts: CardFacts, band: Box, size: CardSize, unit: Float) {
+        val left = band.x + PAD * unit
+        val column = (band.w - 2 * PAD * unit) / COLUMNS
+        val cells = facts.cells
+        if (size == CardSize.STORY) {
+            cells.firstOrNull()?.let { cell(canvas, it, left, band.w - 2 * PAD * unit, band.y, STORY_FIRST_LABEL, STORY_FIRST_VALUE, BIG_VALUE_SIZE, unit) }
+            cells.drop(1).forEachIndexed { i, it -> cell(canvas, it, left + i * column, column, band.y, STORY_ROW_LABEL, STORY_ROW_VALUE, VALUE_SIZE, unit) }
+        } else {
+            cells.forEachIndexed { i, it -> cell(canvas, it, left + i * column, column, band.y, FEED_LABEL, FEED_VALUE, VALUE_SIZE, unit) }
+        }
+
+        val baseline = band.y + band.h - LAST_ROW_ABOVE_BOTTOM * unit
+        val brand = text(unit, BRAND_SIZE, white(BRAND_ALPHA), align = Paint.Align.RIGHT)
+        val right = band.x + band.w - PAD * unit
+        canvas.drawText(BRAND, right, baseline, brand)
+        facts.smallLine?.let { line ->
+            val paint = text(unit, SMALL_SIZE, white(SMALL_ALPHA))
+            fit(paint, line, right - brand.measureText(BRAND) - BADGE_GAP * unit - left)
+            canvas.drawText(line, left, baseline, paint)
+        }
+    }
+
+    /** A cell: its label small, its value large and bold below, shrunk to [width] if need be; baselines in units from [top]. */
+    private fun cell(
+        canvas: Canvas, cell: Pair<String, String>, x: Float, width: Float, top: Float,
+        labelAt: Float, valueAt: Float, valueSize: Float, unit: Float,
+    ) {
+        val label = text(unit, LABEL_SIZE, white(LABEL_ALPHA))
+        fit(label, cell.first, width - CELL_GAP * unit)
+        canvas.drawText(cell.first, x, top + labelAt * unit, label)
+        val value = text(unit, valueSize, Color.WHITE, bold = true)
+        fit(value, cell.second, width - CELL_GAP * unit)
+        canvas.drawText(cell.second, x, top + valueAt * unit, value)
+    }
+
+    /** Shrinks [paint]'s text size so [text] is at most [width] wide. */
+    private fun fit(paint: Paint, text: String, width: Float) {
+        val wide = paint.measureText(text)
+        if (wide > width && width > 0f) paint.textSize *= width / wide
+    }
+
+    /** The baseline that centres [paint]'s line on [centre]. */
+    private fun centred(paint: Paint, centre: Float): Float = centre - (paint.ascent() + paint.descent()) / 2
+
+    private fun text(unit: Float, size: Float, color: Int, bold: Boolean = false, align: Paint.Align = Paint.Align.LEFT) =
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = size * unit
+            this.color = color
+            typeface = if (bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            textAlign = align
+        }
+
+    private fun fill(color: Int, alpha: Float) = Paint().apply {
+        this.color = color
+        this.alpha = (alpha * 255).roundToInt()
+    }
+
+    private fun white(alpha: Float) = Color.argb((alpha * 255).roundToInt(), 255, 255, 255)
+
+    private val Box.left get() = x
+    private val Box.right get() = x + w
+    private val Box.bottom get() = y + h
+
+    companion object {
+        private const val TAG = "ShareCardRenderer"
+
+        /** Each map source's time limit (spec §2.2). */
+        const val MAP_TIMEOUT_MS = 8_000L
+
+        /** The card without a map (spec §2.2). */
+        const val NO_MAP = 0xFF1E2A22.toInt()
+
+        private const val BRAND = "bikeRecoder"
+        private const val TOP_BAND_ALPHA = 0.35f
+        private const val BOTTOM_BAND_ALPHA = 0.5f
+
+        // Sizes and places in units (the card's short side / 360).
+        private const val PAD = 12f
+        private const val BADGE = 18f
+        private const val BADGE_GAP = 6f
+        private const val TITLE_SIZE = 15f
+        private const val DATE_SIZE = 11f
+        private const val DATE_ALPHA = 0.85f
+
+        /** The title line's centre sits this far above the band's centre; the date's baseline this far below that line. */
+        private const val TITLE_ABOVE_CENTRE = 7f
+        private const val DATE_BELOW = 22f
+        private const val ATTRIBUTION_SIZE = 7f
+        private const val ATTRIBUTION_ALPHA = 0.7f
+        private const val ATTRIBUTION_BELOW = 10f
+        private const val COLUMNS = 3
+        private const val CELL_GAP = 4f
+        private const val LABEL_SIZE = 11f
+        private const val LABEL_ALPHA = 0.75f
+        private const val VALUE_SIZE = 20f
+        private const val BIG_VALUE_SIZE = 32f
+
+        /** Label and value baselines from the band's top: a feed card's row, a story's first cell and its second row. */
+        private const val FEED_LABEL = 26f
+        private const val FEED_VALUE = 52f
+        private const val STORY_FIRST_LABEL = 20f
+        private const val STORY_FIRST_VALUE = 53f
+        private const val STORY_ROW_LABEL = 71f
+        private const val STORY_ROW_VALUE = 94f
+
+        /** The small line's and "bikeRecoder"'s baseline above the band's bottom. */
+        private const val LAST_ROW_ABOVE_BOTTOM = 13f
+        private const val SMALL_SIZE = 11f
+        private const val SMALL_ALPHA = 0.85f
+        private const val BRAND_SIZE = 10f
+        private const val BRAND_ALPHA = 0.85f
+
+        private const val TILE_SIZE = 512.0
+
+        private fun mercatorX(lon: Double) = (lon + 180.0) / 360.0
+
+        private fun mercatorY(lat: Double): Double {
+            val r = Math.toRadians(lat)
+            return (1.0 - ln(tan(r) + 1.0 / cos(r)) / PI) / 2.0
+        }
+    }
+}
