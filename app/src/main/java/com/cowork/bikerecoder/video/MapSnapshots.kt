@@ -30,6 +30,8 @@ import kotlin.coroutines.resumeWithException
  * MapLibre runs on the main thread only (taking, cancelling, projecting, [close]). A snapshot that fails (style or tiles
  * unreachable, spec §3.4) is retried once, then taken over a plain background so the overlays still have a projection;
  * after such a fallback the real style gets a short time limit, so a dead network costs seconds a frame, not minutes.
+ * Such a shot, and every shot when the style itself could not be had (drawn over the plain background from the start),
+ * is marked [Shot.fallback]: the video draws over it as before, the share cards treat it as no map.
  */
 internal class MapSnapshots(
     context: Context,
@@ -46,6 +48,9 @@ internal class MapSnapshots(
     /** MapLibre's errors may quote a tile URL: the key is replaced by "***" in messages and errors, causes included. */
     private val log: WarnLog = VideoMapStyle.redacting(log, secret)
     private var styleJson: String? = null
+
+    /** The style could not be had: the main snapshotter draws the plain background (its shots are [Shot.fallback]). */
+    private var styleless = false
     private var map: MapSnapshotter? = null
     private var plain: MapSnapshotter? = null
 
@@ -56,8 +61,11 @@ internal class MapSnapshots(
     var taken = 0
         private set
 
-    /** A snapshot: its software ARGB_8888 [bitmap] and the projection of the camera it was taken with. */
-    class Shot internal constructor(val bitmap: Bitmap, private val snapshot: MapSnapshot) {
+    /**
+     * A snapshot: its software ARGB_8888 [bitmap] and the projection of the camera it was taken with. [fallback]: taken
+     * over the plain background because the style or its snapshot failed, not the [tileSource]'s map.
+     */
+    class Shot internal constructor(val bitmap: Bitmap, private val snapshot: MapSnapshot, val fallback: Boolean = false) {
         /** Pixel x, y of each of [points] (x0, y0, x1, y1, …) on [bitmap]. */
         suspend fun project(points: List<GeoPoint>): FloatArray = withContext(Dispatchers.Main) {
             val out = FloatArray(points.size * 2)
@@ -78,9 +86,9 @@ internal class MapSnapshots(
             val position = position(camera)
             val main = map ?: newSnapshotter(json, position).also { map = it }
             val limit = if (degraded) DEGRADED_TIMEOUT_MS else TIMEOUT_MS
-            val real = attempt(main, position, limit) ?: attempt(main, position, limit)
+            val real = attempt(main, position, limit, styleless) ?: attempt(main, position, limit, styleless)
             degraded = real == null
-            real ?: attempt(plain ?: newSnapshotter(PLAIN_STYLE, position).also { plain = it }, position, TIMEOUT_MS)
+            real ?: attempt(plain ?: newSnapshotter(PLAIN_STYLE, position).also { plain = it }, position, TIMEOUT_MS, fallback = true)
                 ?: throw IllegalStateException("map snapshot failed even without tiles")
         }
     }
@@ -89,7 +97,7 @@ internal class MapSnapshots(
      * Main thread. Null (logged) when the snapshot fails or takes longer than [timeoutMs]. A cancelled or timed-out
      * snapshot is cancelled here, after resuming on Main: a cancellation handler would run on the canceller's thread.
      */
-    private suspend fun attempt(snapshotter: MapSnapshotter, position: CameraPosition, timeoutMs: Long): Shot? {
+    private suspend fun attempt(snapshotter: MapSnapshotter, position: CameraPosition, timeoutMs: Long, fallback: Boolean = false): Shot? {
         snapshotter.setCameraPosition(position)
         val snapshot = try {
             withTimeoutOrNull(timeoutMs) {
@@ -120,7 +128,7 @@ internal class MapSnapshots(
             log.warn("Map snapshot took longer than $timeoutMs ms", null)
             return null
         }
-        return Shot(software(snapshot.bitmap), snapshot)
+        return Shot(software(snapshot.bitmap), snapshot, fallback)
     }
 
     /** Cancels any snapshot under way and lets the snapshotters go; on Main (posted there if called elsewhere). */
@@ -151,6 +159,7 @@ internal class MapSnapshots(
         throw e
     } catch (e: Exception) {
         log.warn("Map style unavailable; drawing over a plain background", e)
+        styleless = true
         PLAIN_STYLE
     }.also { styleJson = it }
 

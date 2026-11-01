@@ -39,7 +39,8 @@ import kotlin.math.tan
  * below (the three numbers, the small line, "bikeRecoder"), and the map's attribution under the top band.
  *
  * The map is the [satellite] source (null: no key, or the start check failed), then the [plain] map (null only in tests),
- * each given [MAP_TIMEOUT_MS]; without either the card is a dark [NO_MAP] fill with the route alone and no attribution.
+ * each given [MAP_TIMEOUT_MS]; a source whose snapshot falls back to a plain background ([MapSnapshots.Shot.fallback])
+ * gives no map. Without either the card is a dark [NO_MAP] fill with the route alone and no attribution.
  * Returns a software ARGB_8888 bitmap (the route's glow is a blur mask filter) that the caller owns.
  */
 class ShareCardRenderer(
@@ -92,7 +93,11 @@ class ShareCardRenderer(
         }
     }
 
-    /** A snapshot of the whole card and its source: satellite, then plain, each within [MAP_TIMEOUT_MS]; null: no map. */
+    /**
+     * A snapshot of the whole card and its source: satellite, then plain, each within [MAP_TIMEOUT_MS]; null: no map. A
+     * [MapSnapshots.Shot.fallback] (the source's style or snapshot failed, drawn over a plain background) is no map from
+     * that source.
+     */
     private suspend fun snapshot(camera: Camera, w: Int, h: Int): Pair<MapSnapshots.Shot, TileSource>? {
         for (source in listOfNotNull(satellite, plain)) {
             val maps = MapSnapshots(context, source, w, h)
@@ -107,7 +112,8 @@ class ShareCardRenderer(
             } finally {
                 maps.close()
             }
-            if (shot != null) return shot to source
+            if (shot != null && !shot.fallback) return shot to source
+            shot?.bitmap?.recycle()
             Log.w(TAG, "No card map from ${source.javaClass.simpleName}")
         }
         return null
@@ -170,8 +176,9 @@ class ShareCardRenderer(
     }
 
     /**
-     * The bottom band: a feed card's three cells in one row; a story's first cell large on its own row and the other two
-     * below it. Then the small line at the bottom left and "bikeRecoder" at the bottom right.
+     * The bottom band: a feed card's three cells in one row, its small line ("상승 410 m · ♥ 128") at the bottom left; a
+     * story's first cell large on its own row, the other two and the ascent (when there is one) small in a row below it,
+     * and only the heart rate at the bottom left (spec §2.2). "bikeRecoder" at the bottom right.
      */
     private fun drawNumbers(canvas: Canvas, facts: CardFacts, band: Box, size: CardSize, unit: Float) {
         val left = band.x + PAD * unit
@@ -179,7 +186,8 @@ class ShareCardRenderer(
         val cells = facts.cells
         if (size == CardSize.STORY) {
             cells.firstOrNull()?.let { cell(canvas, it, left, band.w - 2 * PAD * unit, band.y, STORY_FIRST_LABEL, STORY_FIRST_VALUE, BIG_VALUE_SIZE, unit) }
-            cells.drop(1).forEachIndexed { i, it -> cell(canvas, it, left + i * column, column, band.y, STORY_ROW_LABEL, STORY_ROW_VALUE, VALUE_SIZE, unit) }
+            val row = cells.drop(1) + listOfNotNull(facts.ascent?.let { CardFacts.LABEL_ASCENT to it })
+            row.forEachIndexed { i, it -> cell(canvas, it, left + i * column, column, band.y, STORY_ROW_LABEL, STORY_ROW_VALUE, VALUE_SIZE, unit) }
         } else {
             cells.forEachIndexed { i, it -> cell(canvas, it, left + i * column, column, band.y, FEED_LABEL, FEED_VALUE, VALUE_SIZE, unit) }
         }
@@ -188,7 +196,8 @@ class ShareCardRenderer(
         val brand = text(unit, BRAND_SIZE, white(BRAND_ALPHA), align = Paint.Align.RIGHT)
         val right = band.x + band.w - PAD * unit
         canvas.drawText(BRAND, right, baseline, brand)
-        facts.smallLine?.let { line ->
+        val small = if (size == CardSize.STORY) facts.heart else facts.smallLine
+        small?.let { line ->
             val paint = text(unit, SMALL_SIZE, white(SMALL_ALPHA))
             fit(paint, line, right - brand.measureText(BRAND) - BADGE_GAP * unit - left)
             canvas.drawText(line, left, baseline, paint)

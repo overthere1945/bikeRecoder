@@ -36,8 +36,8 @@ import kotlin.math.pow
 import kotlin.math.sin
 
 /**
- * The satellite share card (spec §2.2) on a fixed trip: a 5 km bike loop near 36.4 N 128.2 E. The map is a source
- * without a style, which draws over a plain colour (deterministic), or no map at all.
+ * The satellite share card (spec §2.2) on a fixed trip: a 5 km bike loop near 36.4 N 128.2 E. The map is a style of one
+ * plain colour (deterministic), a source whose style cannot be had (MapSnapshots falls back: no map), or none at all.
  */
 @RunWith(AndroidJUnit4::class)
 class ShareCardRendererTest {
@@ -48,12 +48,20 @@ class ShareCardRendererTest {
         override val attribution = "test"
         override suspend fun styleJson(): String = throw IOException("offline")
     }
+
+    /** A real map of one colour, [MAP_COLOR]. */
+    private val mapped = object : TileSource {
+        override val styleUrl = "https://example.invalid/plain.json"
+        override val attribution = "test map"
+        override suspend fun styleJson(): String =
+            """{"version":8,"sources":{},"layers":[{"id":"background","type":"background","paint":{"background-color":"#F8F4F0"}}]}"""
+    }
     private val inputs = loop()
     private val facts = cardFacts(inputs, "경북 상주시")
     private val bike = ActivityStyle.color(ActivityType.BIKE).toArgb()
 
-    private fun render(size: CardSize, plain: TileSource? = offline) =
-        runBlocking { ShareCardRenderer(context, satellite = null, plain = plain).satellite(inputs, facts, size) }
+    private fun render(size: CardSize, plain: TileSource? = mapped, satellite: TileSource? = null) =
+        runBlocking { ShareCardRenderer(context, satellite = satellite, plain = plain).satellite(inputs, facts, size) }
 
     @Test
     fun feedSize() {
@@ -91,12 +99,39 @@ class ShareCardRendererTest {
         }
     }
 
+    /** Spec §2.2: nothing at all (no text, no band) in the story's top and bottom 14%. */
     @Test
     fun storySafeZonesHaveNoWhiteText() {
         val card = render(CardSize.STORY, plain = null)
-        val white = { c: Int -> Color.red(c) > 240 && Color.green(c) > 240 && Color.blue(c) > 240 }
-        assertEquals(0, count(card, 0, 0, 1080, 269, white))
-        assertEquals(0, count(card, 0, 1652, 1080, 1920, white))
+        val other = { c: Int -> c != ShareCardRenderer.NO_MAP }
+        assertEquals(0, count(card, 0, 0, 1080, 269, other))
+        assertEquals(0, count(card, 0, 1652, 1080, 1920, other))
+    }
+
+    /** The map is there: the plain colour beside the bands (the satellite failing first, so the plain map is the next). */
+    @Test
+    fun satelliteFailsPlainMapDrawn() {
+        val card = render(CardSize.STORY, satellite = offline, plain = mapped)
+        assertTrue(Integer.toHexString(card.getPixel(0, 0)), near(card.getPixel(0, 0), MAP_COLOR, 3))
+    }
+
+    /** A source whose style cannot be had falls back to a plain background inside MapSnapshots: no map, the dark card. */
+    @Test
+    fun fallbackShotMovesOn() {
+        assertDarkWithoutAttribution(render(CardSize.STORY, satellite = offline, plain = null))
+    }
+
+    @Test
+    fun satelliteFallsBackToPlain() {
+        assertDarkWithoutAttribution(render(CardSize.STORY, satellite = offline, plain = offline))
+    }
+
+    private fun assertDarkWithoutAttribution(card: Bitmap) {
+        assertEquals(ShareCardRenderer.NO_MAP, card.getPixel(0, 0))
+        // Where the attribution would be: right under the top band, on the right half.
+        val top = ShareCardLayout.satellite(CardSize.STORY).top
+        val below = (top.y + top.h).toInt() + 1
+        assertEquals(0, count(card, 540, below, 1080, below + 42) { it != ShareCardRenderer.NO_MAP })
     }
 
     @Test
@@ -123,6 +158,10 @@ class ShareCardRendererTest {
         save("satellite-story", render(CardSize.STORY))
         save("satellite-feed-nomap", render(CardSize.FEED, plain = null))
         save("satellite-story-nomap", render(CardSize.STORY, plain = null))
+        save("satellite-story-hike", runBlocking {
+            val hike = inputs.copy(activity = ActivityType.HIKE, segmentActivities = listOf(ActivityType.HIKE))
+            ShareCardRenderer(context, satellite = null, plain = mapped).satellite(hike, cardFacts(hike, "경북 상주시"), CardSize.STORY)
+        })
     }
 
     private fun Bitmap.count(box: Box, match: (Int) -> Boolean) =
@@ -158,6 +197,7 @@ class ShareCardRendererTest {
 
     private companion object {
         const val TAG = "ShareCardRendererTest"
+        const val MAP_COLOR = 0xFFF8F4F0.toInt()
 
         /** A 5 km circle near 36.4 N 128.2 E, one point every ~10 m at 5 m/s, one bike segment on 2026-11-03. */
         fun loop(): VideoInputs {

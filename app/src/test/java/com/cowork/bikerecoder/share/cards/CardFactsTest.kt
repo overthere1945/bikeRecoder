@@ -73,7 +73,15 @@ class CardFactsTest {
         assertEquals("경북 상주시", facts.region)
         assertEquals("2026년 11월 1일 (일)", facts.dateLine)
         assertEquals(ActivityText.cardCells(ActivityType.BIKE, 32_140.0, 6_300_000L, 7_200_000L, 410.2, 835.6), facts.cells)
+        assertEquals("410 m", facts.ascent)
+        assertEquals("♥ 128", facts.heart)
         assertEquals("상승 410 m · ♥ 128", facts.smallLine)
+    }
+
+    @Test
+    fun smallLineWithOnePart() {
+        assertEquals("상승 410 m", cardFacts(inputs(avgBpm = null), null).smallLine)
+        assertEquals("♥ 128", cardFacts(inputs(ascentM = 0.0), null).smallLine)
     }
 
     /** The date line counts the timeline's days and spans its first and last point (Seoul dates). */
@@ -86,12 +94,16 @@ class CardFactsTest {
     fun hikeSmallLineDropsAscent() {
         val facts = cardFacts(inputs(activity = ActivityType.HIKE), null)
         assertEquals(ActivityText.cardCells(ActivityType.HIKE, 32_140.0, 6_300_000L, 7_200_000L, 410.2, 835.6), facts.cells)
+        assertNull(facts.ascent)
         assertEquals("♥ 128", facts.smallLine)
     }
 
     /** An ascent under 1 m counts as none, as in the auto text. */
     @Test
     fun noAscentNoHeartNoSmallLine() {
-        assertNull(cardFacts(inputs(ascentM = 0.6, avgBpm = null), null).smallLine)
+        val facts = cardFacts(inputs(ascentM = 0.6, avgBpm = null), null)
+        assertNull(facts.ascent)
+        assertNull(facts.heart)
+        assertNull(facts.smallLine)
     }
 }

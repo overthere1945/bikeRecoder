@@ -12,7 +12,8 @@ import java.time.ZoneId
 /**
  * The words drawn on a share card (spec §2.1): the dominant [activity] (the badge), the record's [title] and its [region]
  * (null: left out), the [dateLine] ([cardDateLine]), the three number [cells] (label, value) of
- * [ActivityText.cardCells] over the trip totals, and the satellite card's [smallLine] ("상승 410 m · ♥ 128"; null: none).
+ * [ActivityText.cardCells] over the trip totals, the [ascent] value ("410 m"; null for a hike, whose cells have it, or
+ * under 1 m) and the average [heart] rate ("♥ 128"; null: unknown) of the satellite card (spec §2.2).
  */
 data class CardFacts(
     val activity: ActivityType,
@@ -20,13 +21,23 @@ data class CardFacts(
     val region: String?,
     val dateLine: String,
     val cells: List<Pair<String, String>>,
-    val smallLine: String?,
-)
+    val ascent: String?,
+    val heart: String?,
+) {
+    /** The feed card's small line: "상승 410 m · ♥ 128", either part alone, or null without both. */
+    val smallLine: String?
+        get() = listOfNotNull(ascent?.let { "$LABEL_ASCENT $it" }, heart).joinToString(" · ").ifEmpty { null }
+
+    companion object {
+        /** The ascent's label: in the feed card's small line and as the story card's third small cell. */
+        const val LABEL_ASCENT = "상승"
+    }
+}
 
 /**
  * The [CardFacts] of a trip (spec §2.1). The dates are the Seoul dates of the timeline's first and last point, the days
- * its distinct riding days. The small line joins the ascent (not for a hike, whose cells have it already; under 1 m counts
- * as none, as in the auto text) and the average heart rate when known, with " · ".
+ * its distinct riding days. The ascent is left out for a hike (its cells have it already) and under 1 m (none, as in the
+ * auto text); the heart rate when it is known.
  */
 fun cardFacts(inputs: VideoInputs, region: String?): CardFacts {
     val t = inputs.totals
@@ -42,11 +53,8 @@ fun cardFacts(inputs: VideoInputs, region: String?): CardFacts {
         paceDistanceM = t.paceDistanceM ?: t.distanceM,
         paceMovingTimeMs = t.paceMovingTimeMs ?: t.movingTimeMs,
     )
-    val small = buildList {
-        if (activity != ActivityType.HIKE && t.ascentM >= 1.0) add("상승 ${meterText(t.ascentM)}")
-        t.avgBpm?.let { add("♥ $it") }
-    }
-    return CardFacts(activity, inputs.rideTitle, region, dateLine, cells, small.joinToString(" · ").ifEmpty { null })
+    val ascent = if (activity != ActivityType.HIKE && t.ascentM >= 1.0) meterText(t.ascentM) else null
+    return CardFacts(activity, inputs.rideTitle, region, dateLine, cells, ascent, t.avgBpm?.let { "♥ $it" })
 }
 
 /**
