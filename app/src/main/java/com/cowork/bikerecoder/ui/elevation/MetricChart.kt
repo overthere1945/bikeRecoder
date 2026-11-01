@@ -45,7 +45,8 @@ private var SemanticsPropertyReceiver.endLabels by MetricTags.EndLabels
  * Read out as [description]. Where the series has no value the fill and the line stop (a lone value between gaps draws
  * nothing, as it has no neighbour to draw to), and the scrub line has no dot.
  *
- * Without a [series]: speed says "속도 정보가 없습니다", heart rate draws nothing at all (no place for it).
+ * Without a [series]: speed says "속도 정보가 없습니다", heart rate draws nothing at all (no place for it). A [series] must
+ * be of [kind].
  */
 @Composable
 fun MetricChart(
@@ -59,6 +60,7 @@ fun MetricChart(
     onScrub: (distanceM: Double) -> Unit = {},
     scrubM: Double? = null,
 ) {
+    require(series == null || series.kind == kind) { "a ${series?.kind} series drawn as $kind" }
     if (series == null) {
         if (kind == MetricKind.SPEED) NoChartData(ChartText.NO_SPEED, MetricTags.NO_SPEED, modifier, height)
         return
@@ -69,7 +71,7 @@ fun MetricChart(
     val top = ChartText.valueLabel(kind, series.maxValue)
     val bottom = ChartText.valueLabel(kind, series.minValue)
     // Remembered so a recomposition (e.g. every scrub) keeps the cached band areas instead of building them again.
-    val drawChart = remember(series, colors, labelStyle, measurer) {
+    val drawChart = remember(series, kind, colors, labelStyle, measurer) {
         Modifier.drawWithCache {
             val plot = Size(size.width, size.height - AXIS_HEIGHT.toPx())
             val shapes = seriesShapes(series, plot, columnPx = 2.dp.toPx())
@@ -156,7 +158,8 @@ private fun seriesShapes(series: MetricSeries, plot: Size, columnPx: Float): Pro
     return ProfileShapes(areas, line)
 }
 
-private fun colorOf(hex: String): Color = Color(android.graphics.Color.parseColor(hex))
+/** The colour of "#RRGGBB" [hex]. */
+internal fun colorOf(hex: String): Color = Color(android.graphics.Color.parseColor(hex))
 
 /** The plot's y of [value]: [yIn] the series' range, at least [minSpan] of its kind tall so an even ride stays flat. */
 private fun yOf(value: Double, series: MetricSeries, plot: Size): Float =

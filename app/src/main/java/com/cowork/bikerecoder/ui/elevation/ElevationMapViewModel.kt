@@ -10,10 +10,17 @@ import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
 import com.cowork.bikerecoder.core.elevation.ElevationProfile
+import com.cowork.bikerecoder.core.elevation.TrackAxis
 import com.cowork.bikerecoder.core.model.GeoPoint
+import com.cowork.bikerecoder.core.post.HeartRateSample
+import com.cowork.bikerecoder.core.post.HeartRateSummary
 import com.cowork.bikerecoder.core.recording.RideStore
+import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
+import com.cowork.bikerecoder.core.series.MetricSeries
 import com.cowork.bikerecoder.map.pathColors
+import com.cowork.bikerecoder.post.PostStore
+import com.cowork.bikerecoder.ui.history.tripTotals
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -28,28 +35,43 @@ sealed interface ElevationMapUiState {
     data object Loading : ElevationMapUiState
 
     /**
-     * The [profile] with the line it runs along: one path per segment (a trip of several days has several), each with
-     * its band colours ([pathColors], FLAT the table's blue). [scrubM]: where the chart was last scrubbed, null before.
+     * What the screen shows (V1.8.0 spec §2.4): the elevation [profile] and the [speed] and [heartRate] series, each null
+     * when there is none, giving the [tabs] (in that order, only those with data; the plan has only elevation) of which
+     * [tab] is shown. The line it all runs along: one path per segment (a trip of several days has several) with the
+     * current tab's colours per point ([colors]: grade bands with FLAT the table's blue, speed or heart-rate bands with
+     * grey where there is no value). [scrubM]: where the chart was last scrubbed, null before; kept across tabs, as is
+     * [marker], the spot on the line there. [speedDescription] and [heartDescription]: what those charts read out.
      */
     data class Ready(
-        val profile: ElevationProfile,
+        val profile: ElevationProfile?,
+        val speed: MetricSeries?,
+        val heartRate: MetricSeries?,
+        val tabs: List<ChartTab>,
+        val tab: ChartTab,
         val paths: List<List<GeoPoint>>,
         val colors: List<List<String>>,
         val scrubM: Double? = null,
+        val marker: GeoPoint? = null,
+        val speedDescription: String = "",
+        val heartDescription: String = "",
     ) : ElevationMapUiState
 
-    /** Nothing to show (the plan's handoff was already taken, no profile, or it could not be read): the screen goes back. */
+    /** Nothing to show (the plan's handoff was already taken, no data, or it could not be read): the screen goes back. */
     data object Closed : ElevationMapUiState
 }
 
 /**
- * The "고도" map screen (V1.7.0 spec §2.2): a trip's segments (in start order, empty ones left out) or one segment read
- * from [rideStore], or the plan preview's route taken from [handoff]; the profile and colours are computed on [compute].
+ * The big map screen (V1.7.0 spec §2.2, V1.8.0 spec §2.4) opened on [requestedTab] (or the first tab there is): a
+ * trip's segments (in start order, empty ones left out) or one segment read from [rideStore] with their heart-rate
+ * samples from [postStore], or the plan preview's route taken from [handoff]; the profile, series and every tab's colours
+ * are computed on [compute]. Samples that cannot be read are logged and leave the heart rate out.
  */
 class ElevationMapViewModel(
     private val source: ElevationSource,
     private val rideStore: RideStore,
+    private val postStore: PostStore,
     private val handoff: ElevationHandoff,
+    private val requestedTab: ChartTab = ChartTab.ELEVATION,
     private val log: WarnLog = WarnLog { _, _ -> },
     private val compute: CoroutineDispatcher = Dispatchers.Default,
 ) : ViewModel() {
@@ -57,49 +79,133 @@ class ElevationMapViewModel(
     private val _uiState = MutableStateFlow<ElevationMapUiState>(ElevationMapUiState.Loading)
     val uiState: StateFlow<ElevationMapUiState> = _uiState.asStateFlow()
 
+    /** Every tab's line colours and where a distance is on the line, set with the first [ElevationMapUiState.Ready]. */
+    private var tabColors: Map<ChartTab, List<List<String>>> = emptyMap()
+    private var pointAt: (Double) -> GeoPoint = { error("not loaded") }
+
     init {
         // Taken at once (not in the coroutine): a second screen must not find it again.
         val handedOver = if (source == ElevationSource.Plan) handoff.take() else null
-        viewModelScope.launch { _uiState.value = load(handedOver) }
-    }
-
-    /** The chart was scrubbed to [distanceM] (held within the profile). */
-    fun scrub(distanceM: Double) {
-        _uiState.update { state ->
-            if (state is ElevationMapUiState.Ready) state.copy(scrubM = distanceM.coerceIn(0.0, state.profile.totalM)) else state
+        viewModelScope.launch {
+            val loaded = load(handedOver)
+            if (loaded != null) {
+                tabColors = loaded.colors
+                pointAt = loaded.pointAt
+            }
+            _uiState.value = loaded?.state ?: ElevationMapUiState.Closed
         }
     }
 
-    private suspend fun load(handedOver: Pair<ElevationProfile, List<GeoPoint>>?): ElevationMapUiState = try {
+    /** The chart was scrubbed to [distanceM] (held within the line). */
+    fun scrub(distanceM: Double) {
+        _uiState.update { state ->
+            if (state is ElevationMapUiState.Ready) {
+                val d = distanceM.coerceIn(0.0, state.totalM())
+                state.copy(scrubM = d, marker = pointAt(d))
+            } else {
+                state
+            }
+        }
+    }
+
+    /** Shows [tab] (its chart, legend and line colours) if it is one of the tabs; the scrub stays where it is. */
+    fun selectTab(tab: ChartTab) {
+        _uiState.update { state ->
+            if (state is ElevationMapUiState.Ready && tab in state.tabs) {
+                state.copy(tab = tab, colors = tabColors.getValue(tab))
+            } else {
+                state
+            }
+        }
+    }
+
+    private class Loaded(
+        val state: ElevationMapUiState.Ready,
+        val colors: Map<ChartTab, List<List<String>>>,
+        val pointAt: (Double) -> GeoPoint,
+    )
+
+    private suspend fun load(handedOver: Pair<ElevationProfile, List<GeoPoint>>?): Loaded? = try {
         when (source) {
             ElevationSource.Plan -> handedOver?.let { (profile, path) ->
-                withContext(compute) { ready(profile, listOf(path)) }
-            } ?: ElevationMapUiState.Closed
+                withContext(compute) { plan(profile, path) }
+            }
             is ElevationSource.Trip -> {
                 val segments = rideStore.segments(source.tripId).filterNot { it.isEmpty }.sortedBy { it.startedAt }
-                fromTracks(segments.map { rideStore.points(it.id) })
+                val tracks = segments.map { rideStore.points(it.id) }
+                fromTracks(tracks, samples(segments.map { it.id }), tripTotals(segments))
             }
-            is ElevationSource.Segment -> fromTracks(listOf(rideStore.points(source.segmentId)))
+            is ElevationSource.Segment -> {
+                val totals = rideStore.segment(source.segmentId)?.totals ?: SegmentTotals.ZERO
+                fromTracks(listOf(rideStore.points(source.segmentId)), samples(listOf(source.segmentId)), totals)
+            }
         }
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
         log.warn("Could not read the elevation of $source", e)
-        ElevationMapUiState.Closed
+        null
     }
 
-    private suspend fun fromTracks(tracks: List<List<TrackPoint>>): ElevationMapUiState = withContext(compute) {
+    /** The heart-rate samples of [segmentIds] one after another; null (logged) when they cannot be read. */
+    private suspend fun samples(segmentIds: List<Long>): List<HeartRateSample>? = try {
+        segmentIds.flatMap { postStore.samples(it) }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        log.warn("Could not read the heart rate of $source", e)
+        null
+    }
+
+    private fun plan(profile: ElevationProfile, path: List<GeoPoint>): Loaded {
+        val paths = listOf(path)
+        val colors = pathColors(paths, profile)
+        val state = ElevationMapUiState.Ready(
+            profile, speed = null, heartRate = null, tabs = listOf(ChartTab.ELEVATION), tab = ChartTab.ELEVATION,
+            paths = paths, colors = colors,
+        )
+        return Loaded(state, mapOf(ChartTab.ELEVATION to colors), profile::pointAt)
+    }
+
+    /** Null when no tab has anything to draw. */
+    private suspend fun fromTracks(
+        tracks: List<List<TrackPoint>>,
+        samples: List<HeartRateSample>?,
+        totals: SegmentTotals,
+    ): Loaded? = withContext(compute) {
         val kept = tracks.filter { it.isNotEmpty() }
+        val axis = TrackAxis.of(kept) ?: return@withContext null
         val profile = ElevationProfile.fromSegments(kept)
-        if (profile == null) ElevationMapUiState.Closed else ready(profile, kept.map { track -> track.map { it.point } })
+        val speed = MetricSeries.speed(axis, kept)
+        val heartRate = samples?.let { MetricSeries.heartRate(axis, kept, it) }
+        val colors = buildMap {
+            profile?.let { put(ChartTab.ELEVATION, pathColors(axis.paths, it)) }
+            speed?.let { put(ChartTab.SPEED, pathColors(axis.paths, it::colorHexAt, axis)) }
+            heartRate?.let { put(ChartTab.HEART_RATE, pathColors(axis.paths, it::colorHexAt, axis)) }
+        }
+        val tabs = ChartTab.entries.filter { it in colors }
+        if (tabs.isEmpty()) return@withContext null
+        val shown = requestedTab.takeIf { it in tabs } ?: tabs.first()
+        // Read out with the stored totals' speeds and the samples' heart rate (V1.8.0 spec §2.1).
+        val heart = if (heartRate != null) HeartRateSummary.of(samples, movingTimeMs = 0L) else null
+        val state = ElevationMapUiState.Ready(
+            profile = profile,
+            speed = speed,
+            heartRate = heartRate,
+            tabs = tabs,
+            tab = shown,
+            paths = axis.paths,
+            colors = colors.getValue(shown),
+            speedDescription = ChartText.speedDescription(totals.avgSpeedMps * MPS_TO_KMH, totals.maxSpeedMps * MPS_TO_KMH),
+            heartDescription = heart?.let { ChartText.heartDescription(it.avgBpm, it.maxBpm) }.orEmpty(),
+        )
+        Loaded(state, colors, axis::pointAt)
     }
-
-    private fun ready(profile: ElevationProfile, paths: List<List<GeoPoint>>) =
-        ElevationMapUiState.Ready(profile, paths, pathColors(paths, profile))
 
     companion object {
         const val ARG_KIND = "kind"
         const val ARG_ID = "id"
+        const val ARG_TAB = "tab"
         const val KIND_TRIP = "trip"
         const val KIND_SEGMENT = "segment"
         const val KIND_PLAN = "plan"
@@ -124,8 +230,17 @@ class ElevationMapViewModel(
                 val handle = createSavedStateHandle()
                 val id = requireNotNull(handle.get<Long>(ARG_ID)) { "missing $ARG_ID" }
                 val source = requireNotNull(sourceOf(handle.get<String>(ARG_KIND), id)) { "unknown $ARG_KIND" }
-                ElevationMapViewModel(source, container.rideStore, container.elevationHandoff, androidWarnLog("ElevationMap"))
+                val tab = ChartTab.of(handle.get<String>(ARG_TAB))
+                ElevationMapViewModel(
+                    source, container.rideStore, container.postStore, container.elevationHandoff, tab,
+                    androidWarnLog("ElevationMap"),
+                )
             }
         }
     }
 }
+
+/** The length of the line: the profile's, or the series' (the same track axis). */
+private fun ElevationMapUiState.Ready.totalM(): Double = profile?.totalM ?: speed?.totalM ?: heartRate?.totalM ?: 0.0
+
+private const val MPS_TO_KMH = 3.6

@@ -2,10 +2,14 @@ package com.cowork.bikerecoder.ui.elevation
 
 import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.model.GeoPoint
+import com.cowork.bikerecoder.core.post.HeartRateSample
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
+import com.cowork.bikerecoder.map.pathColors
 import com.cowork.bikerecoder.nav.FakeTripStore
+import com.cowork.bikerecoder.post.FakePostStore
+import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.ride.FakeRideStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -17,18 +21,25 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.io.IOException
 import java.time.LocalDate
 
-/** The "고도" map screen's state (V1.7.0 spec §2.2): a trip's, a segment's or the plan's profile, paths and colours. */
+/**
+ * The "고도" map screen's state (V1.7.0 spec §2.2, V1.8.0 spec §2.4): a trip's, a segment's or the plan's profile,
+ * speed and heart rate, the tabs they give, paths and the current tab's colours.
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
 class ElevationMapViewModelTest {
 
     private val dispatcher = StandardTestDispatcher()
     private val rides = FakeRideStore(FakeTripStore())
+    private val posts = FakePostStore { emptyList() }
     private val handoff = ElevationHandoff()
 
     @BeforeEach
@@ -37,22 +48,32 @@ class ElevationMapViewModelTest {
     @AfterEach
     fun tearDown() = Dispatchers.resetMain()
 
-    /** [count] points 20 m apart going north from [startLat], climbing 1 m per point; returns the segment id. */
-    private suspend fun segment(startedAt: Long, startLat: Double, count: Int = 30): Long {
+    /**
+     * [count] points 20 m apart going north from [startLat], climbing 1 m per point (none without [altitude]) at 18 km/h;
+     * with [bpm] a heart-rate sample at every point. Returns the segment id.
+     */
+    private suspend fun segment(
+        startedAt: Long,
+        startLat: Double,
+        count: Int = 30,
+        altitude: Boolean = true,
+        bpm: Int? = null,
+    ): Long {
         val day = LocalDate.of(2026, 10, 25)
         val step = 20.0 / 111_320.0
         val points = List(count) { i ->
-            TrackPoint(startedAt + i * 1_000L, GeoPoint(startLat + i * step, 127.0), 30.0 + i, 5f, 5f)
+            TrackPoint(startedAt + i * 1_000L, GeoPoint(startLat + i * step, 127.0), if (altitude) 30.0 + i else null, 5f, 5f)
         }
         val totals = SegmentTotals.ZERO.copy(distanceM = (count - 1) * 20.0, movingTimeMs = count * 1_000L)
         val id = rides.openSegment(TRIP, startedAt, day)
         rides.appendPoints(id, points, totals)
         rides.closeSegment(id, startedAt + count * 1_000L, totals)
+        if (bpm != null) posts.samplesById[id] = points.map { HeartRateSample(it.timeMillis, bpm) }
         return id
     }
 
-    private fun TestScope.viewModel(source: ElevationSource) =
-        ElevationMapViewModel(source, rides, handoff, log = { _, _ -> }, compute = dispatcher)
+    private fun TestScope.viewModel(source: ElevationSource, tab: ChartTab = ChartTab.ELEVATION) =
+        ElevationMapViewModel(source, rides, posts, handoff, tab, log = { _, _ -> }, compute = dispatcher)
 
     @Test
     fun tripLoadsProfile() = runTest(dispatcher) {
@@ -69,7 +90,7 @@ class ElevationMapViewModelTest {
         assertEquals(37.50, ready.paths[0][0].lat, 1e-9)
         assertEquals(ready.paths.map { it.size }, ready.colors.map { it.size })
         // The segments join without the gap between them: 19 × 20 m + 29 × 20 m.
-        assertEquals(960.0, ready.profile.totalM, 5.0)
+        assertEquals(960.0, ready.profile!!.totalM, 5.0)
         assertEquals(null, ready.scrubM)
     }
 
@@ -85,7 +106,7 @@ class ElevationMapViewModelTest {
         assertEquals(1, ready.paths.size)
         assertEquals(25, ready.paths[0].size)
         assertEquals(37.60, ready.paths[0][0].lat, 1e-9)
-        assertEquals(480.0, ready.profile.totalM, 5.0)
+        assertEquals(480.0, ready.profile!!.totalM, 5.0)
     }
 
     @Test
@@ -128,14 +149,14 @@ class ElevationMapViewModelTest {
         // Outside the profile: held at its ends.
         vm.scrub(5_000.0)
         val ready = vm.uiState.value as ElevationMapUiState.Ready
-        assertEquals(ready.profile.totalM, ready.scrubM)
+        assertEquals(ready.profile!!.totalM, ready.scrubM)
     }
 
     @Test
-    fun tripWithoutAltitudesCloses() = runTest(dispatcher) {
-        // Points without altitude: no profile.
+    fun tripWithNothingToDrawCloses() = runTest(dispatcher) {
+        // One point: no line, so neither a profile nor a speed or heart-rate series.
         val day = LocalDate.of(2026, 10, 25)
-        val points = List(30) { i -> TrackPoint(i * 1_000L, GeoPoint(37.5 + i * 20.0 / 111_320.0, 127.0), null, 5f, 5f) }
+        val points = listOf(TrackPoint(0L, GeoPoint(37.5, 127.0), 30.0, 5f, 5f))
         val totals = SegmentTotals.ZERO.copy(distanceM = 580.0, movingTimeMs = 30_000L)
         val id = rides.openSegment(TRIP, 0L, day)
         rides.appendPoints(id, points, totals)
@@ -155,13 +176,165 @@ class ElevationMapViewModelTest {
         }
         val warned = mutableListOf<String>()
 
-        val trip = ElevationMapViewModel(ElevationSource.Trip(TRIP), failing, handoff, { m, _ -> warned += m }, dispatcher)
-        val segment = ElevationMapViewModel(ElevationSource.Segment(id), failing, handoff, { m, _ -> warned += m }, dispatcher)
+        val trip = ElevationMapViewModel(
+            ElevationSource.Trip(TRIP), failing, posts, handoff, ChartTab.ELEVATION, { m, _ -> warned += m }, dispatcher,
+        )
+        val segment = ElevationMapViewModel(
+            ElevationSource.Segment(id), failing, posts, handoff, ChartTab.ELEVATION, { m, _ -> warned += m }, dispatcher,
+        )
         advanceUntilIdle()
 
         assertEquals(ElevationMapUiState.Closed, trip.uiState.value)
         assertEquals(ElevationMapUiState.Closed, segment.uiState.value)
         assertEquals(2, warned.size)
+    }
+
+    @Test
+    fun tabsFollowData() = runTest(dispatcher) {
+        val plain = segment(startedAt = 1_000_000L, startLat = 37.50)
+        val withHeart = segment(startedAt = 10_000_000L, startLat = 37.60, bpm = 130)
+
+        val noHeart = viewModel(ElevationSource.Segment(plain))
+        val all = viewModel(ElevationSource.Segment(withHeart))
+        advanceUntilIdle()
+
+        // Without heart rate: [고도][속도].
+        val a = noHeart.uiState.value as ElevationMapUiState.Ready
+        assertEquals(listOf(ChartTab.ELEVATION, ChartTab.SPEED), a.tabs)
+        assertEquals(ChartTab.ELEVATION, a.tab)
+        assertNotNull(a.profile)
+        assertNotNull(a.speed)
+        assertNull(a.heartRate)
+        val b = all.uiState.value as ElevationMapUiState.Ready
+        assertEquals(ChartTab.entries, b.tabs)
+        assertEquals(130.0, b.heartRate!!.maxValue, 1e-9)
+        // Read out with the stored totals (580 m in 30 s) and the samples.
+        assertEquals(ChartText.speedDescription(580.0 / 30.0 * 3.6, 0.0), b.speedDescription)
+        assertEquals(ChartText.heartDescription(130, 130), b.heartDescription)
+    }
+
+    @Test
+    fun tripHeartRateJoinsSegments() = runTest(dispatcher) {
+        segment(startedAt = 1_000_000L, startLat = 37.50, bpm = 110)
+        segment(startedAt = 10_000_000L, startLat = 37.60, bpm = 150)
+
+        val vm = viewModel(ElevationSource.Trip(TRIP), ChartTab.HEART_RATE)
+        advanceUntilIdle()
+
+        // Each segment's own samples colour its path (green, orange); the second path's first point is at the joint,
+        // which reads the first segment's end.
+        val ready = vm.uiState.value as ElevationMapUiState.Ready
+        assertEquals(ChartTab.HEART_RATE, ready.tab)
+        assertEquals(List(30) { "#43A047" }, ready.colors[0])
+        assertEquals(List(29) { "#FB8C00" }, ready.colors[1].drop(1))
+    }
+
+    @Test
+    fun heartRateReadFailureLeavesTheRest() = runTest(dispatcher) {
+        val id = segment(startedAt = 1_000_000L, startLat = 37.50, bpm = 130)
+        val failing = object : PostStore by posts {
+            override suspend fun samples(segmentId: Long): List<HeartRateSample> = throw IOException("disk")
+        }
+        val warned = mutableListOf<String>()
+
+        val vm = ElevationMapViewModel(
+            ElevationSource.Segment(id), rides, failing, handoff, ChartTab.HEART_RATE, { m, _ -> warned += m }, dispatcher,
+        )
+        advanceUntilIdle()
+
+        val ready = vm.uiState.value as ElevationMapUiState.Ready
+        assertEquals(listOf(ChartTab.ELEVATION, ChartTab.SPEED), ready.tabs)
+        assertNull(ready.heartRate)
+        assertEquals(1, warned.size)
+    }
+
+    @Test
+    fun missingTabFallsBackToFirst() = runTest(dispatcher) {
+        val id = segment(startedAt = 1_000_000L, startLat = 37.50)
+
+        val vm = viewModel(ElevationSource.Segment(id), ChartTab.HEART_RATE)
+        advanceUntilIdle()
+
+        val ready = vm.uiState.value as ElevationMapUiState.Ready
+        assertEquals(ChartTab.ELEVATION, ready.tab)
+        // A tab that is not there is not selected.
+        vm.selectTab(ChartTab.HEART_RATE)
+        assertEquals(ready, vm.uiState.value)
+    }
+
+    @Test
+    fun scrubKeptAcrossTabs() = runTest(dispatcher) {
+        val id = segment(startedAt = 1_000_000L, startLat = 37.50, bpm = 130)
+        val vm = viewModel(ElevationSource.Segment(id))
+        advanceUntilIdle()
+
+        vm.scrub(250.0)
+        val scrubbed = vm.uiState.value as ElevationMapUiState.Ready
+        assertEquals(scrubbed.profile!!.pointAt(250.0), scrubbed.marker)
+        vm.selectTab(ChartTab.SPEED)
+        vm.selectTab(ChartTab.HEART_RATE)
+
+        val ready = vm.uiState.value as ElevationMapUiState.Ready
+        assertEquals(ChartTab.HEART_RATE, ready.tab)
+        assertEquals(250.0, ready.scrubM)
+        assertEquals(scrubbed.marker, ready.marker)
+    }
+
+    @Test
+    fun colorsFollowTab() = runTest(dispatcher) {
+        val id = segment(startedAt = 1_000_000L, startLat = 37.50, bpm = 130)
+        val vm = viewModel(ElevationSource.Segment(id))
+        advanceUntilIdle()
+
+        val elevation = vm.uiState.value as ElevationMapUiState.Ready
+        assertEquals(pathColors(elevation.paths, elevation.profile!!), elevation.colors)
+        vm.selectTab(ChartTab.SPEED)
+        // 18 km/h: STEADY green.
+        assertEquals(listOf(List(30) { "#66BB6A" }), (vm.uiState.value as ElevationMapUiState.Ready).colors)
+        vm.selectTab(ChartTab.HEART_RATE)
+        // 130 bpm: yellow.
+        assertEquals(listOf(List(30) { "#FDD835" }), (vm.uiState.value as ElevationMapUiState.Ready).colors)
+        vm.selectTab(ChartTab.ELEVATION)
+        assertEquals(elevation.colors, (vm.uiState.value as ElevationMapUiState.Ready).colors)
+        assertNotEquals(elevation.colors, listOf(List(30) { "#66BB6A" }))
+    }
+
+    @Test
+    fun noElevationOpensOnSpeed() = runTest(dispatcher) {
+        val id = segment(startedAt = 1_000_000L, startLat = 37.50, altitude = false)
+
+        val vm = viewModel(ElevationSource.Segment(id))
+        advanceUntilIdle()
+
+        val ready = vm.uiState.value as ElevationMapUiState.Ready
+        assertNull(ready.profile)
+        assertEquals(listOf(ChartTab.SPEED), ready.tabs)
+        assertEquals(ChartTab.SPEED, ready.tab)
+        // The scrub is held on the speed's axis and the dot is on the line.
+        vm.scrub(5_000.0)
+        val scrubbed = vm.uiState.value as ElevationMapUiState.Ready
+        assertEquals(ready.speed!!.totalM, scrubbed.scrubM)
+        assertEquals(ready.paths[0].last(), scrubbed.marker)
+    }
+
+    @Test
+    fun planHasOnlyElevation() = runTest(dispatcher) {
+        val path = List(30) { GeoPoint(37.5 + it * 20.0 / 111_320.0, 127.0) }
+        val profile = ElevationProfile.fromSegments(
+            listOf(path.mapIndexed { i, p -> TrackPoint(i * 1_000L, p, 10.0 + i, 5f, 5f) }),
+        )!!
+        handoff.put(profile, path)
+
+        val vm = viewModel(ElevationSource.Plan, ChartTab.SPEED)
+        advanceUntilIdle()
+
+        val ready = vm.uiState.value as ElevationMapUiState.Ready
+        assertEquals(listOf(ChartTab.ELEVATION), ready.tabs)
+        assertEquals(ChartTab.ELEVATION, ready.tab)
+        assertNull(ready.speed)
+        assertNull(ready.heartRate)
+        vm.scrub(100.0)
+        assertEquals(profile.pointAt(100.0), (vm.uiState.value as ElevationMapUiState.Ready).marker)
     }
 
     private companion object {

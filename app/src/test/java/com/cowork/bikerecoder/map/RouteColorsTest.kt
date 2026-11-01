@@ -9,6 +9,7 @@ import com.cowork.bikerecoder.core.model.RouteSummary
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 
 /** The gradient route line's colours (V1.7.0 spec §3.1): one "#RRGGBB" per route point from the profile's band. */
@@ -101,5 +102,14 @@ class RouteColorsTest {
 
         assertEquals(listOf("#9E9E9E", "#9E9E9E", "#9E9E9E", "#9E9E9E", "#9E9E9E", "#123456"), colors[0].take(6))
         assertEquals("#123456", colors[1][0])
+    }
+
+    @Test
+    fun metricColorsRejectOtherPaths() {
+        // As many points as the axis, cut differently: not the axis' paths.
+        val all = axis.paths.flatten()
+        val recut = listOf(all.subList(0, 10), all.subList(10, all.size))
+
+        assertThrows(IllegalArgumentException::class.java) { pathColors(recut, { "#123456" }, axis) }
     }
 }

@@ -64,6 +64,34 @@ class TrackAxisTest {
         assertNotNull(TrackAxis.of(listOf(segment(37.0, 1), segment(37.1, 1))))
     }
 
+    @Test
+    fun pointAtFollowsAxis() {
+        val a = segment(37.0, 11) // 100 m
+        val b = segment(37.1, 11, startMs = 600_000L)
+        val axis = assertNotNull(TrackAxis.of(listOf(a, b)))
+        val joint = axis.boundariesM[0]
+
+        // 구간 안에서는 이웃 점 사이 선형이다.
+        val mid = axis.pointAt(axis.distancesM[3] + (axis.distancesM[4] - axis.distancesM[3]) / 2)
+        assertEquals((a[3].point.lat + a[4].point.lat) / 2, mid.lat, 1e-12)
+        // 이음매는 앞 구간의 끝점이고, 그 뒤는 다음 구간 위다.
+        assertEquals(a.last().point, axis.pointAt(joint))
+        assertEquals(b[5].point.lat, axis.pointAt(axis.distancesM[16]).lat, 1e-12)
+        // 범위 밖은 끝점이다.
+        assertEquals(a.first().point, axis.pointAt(-5.0))
+        assertEquals(b.last().point, axis.pointAt(axis.totalM + 5.0))
+    }
+
+    @Test
+    fun pointAtOnOneSpot() {
+        // 한 자리에서 기록해 전체 거리가 0이면 첫 점이다.
+        val still = (0 until 3).map { i -> TrackPoint(i * 1_000L, north(37.0, 0.0), null, null, 5f) }
+        val axis = assertNotNull(TrackAxis.of(listOf(still)))
+
+        assertEquals(0.0, axis.totalM)
+        assertEquals(still[0].point, axis.pointAt(0.0))
+    }
+
     /** V1.7.0 코드(TrackAxis로 옮기기 전)로 [profileInput]에서 계산해 둔 값. */
     @Test
     fun profileUnchanged() {

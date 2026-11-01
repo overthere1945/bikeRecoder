@@ -29,6 +29,27 @@ class TrackAxis private constructor(
     /** 전체 거리(m). */
     val totalM: Double get() = distancesM.last()
 
+    /**
+     * 축 위 [distanceM]의 좌표. 이웃 점 사이 선형이고, 0 이하면 첫 점, 전체 거리 이상이면 끝점이다.
+     * 구간 이음매([boundariesM])에서는 앞 구간의 끝점이다([ElevationProfile.pointAt]과 같다).
+     */
+    fun pointAt(distanceM: Double): GeoPoint {
+        val xs = distancesM
+        if (distanceM <= xs.first()) return points.first()
+        if (distanceM >= xs.last()) return points.last()
+        // xs[i] >= distanceM인 첫 i. 위에서 양 끝을 걸렀으므로 1 ≤ i이고 xs[i - 1] < distanceM이다.
+        var lo = 0
+        var hi = xs.size
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (xs[mid] >= distanceM) hi = mid else lo = mid + 1
+        }
+        val a = points[lo - 1]
+        val b = points[lo]
+        val f = (distanceM - xs[lo - 1]) / (xs[lo] - xs[lo - 1])
+        return GeoPoint(a.lat + f * (b.lat - a.lat), a.lon + f * (b.lon - a.lon))
+    }
+
     companion object {
         /** 빈 구간은 건너뛴다. 점이 2개 미만이면 null. */
         fun of(segments: List<List<TrackPoint>>): TrackAxis? {

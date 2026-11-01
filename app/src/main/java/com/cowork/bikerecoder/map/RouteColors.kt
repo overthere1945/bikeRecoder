@@ -41,7 +41,7 @@ fun pathColors(paths: List<List<GeoPoint>>, profile: ElevationProfile, flatHex: 
  * a speed or heart-rate line; a point without a colour (no value there) is [NO_VALUE_HEX] grey.
  */
 fun pathColors(paths: List<List<GeoPoint>>, colorAt: (Double) -> String?, axis: TrackAxis): List<List<String>> {
-    require(paths.sumOf { it.size } == axis.distancesM.size) { "paths do not match the axis" }
+    require(paths.map { it.size } == axis.paths.map { it.size }) { "paths do not match the axis" }
     return colorsAlong(paths, axis.distancesM, colorAt)
 }
 

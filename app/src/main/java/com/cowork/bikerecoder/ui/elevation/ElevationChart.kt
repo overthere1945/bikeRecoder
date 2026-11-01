@@ -221,7 +221,11 @@ internal fun ChartFrame(
             // The line first, the dot over it.
             Box(
                 Modifier
-                    .offset { IntOffset((d / totalM * constraints.maxWidth).roundToInt() - 1.dp.roundToPx(), 0) }
+                    .offset {
+                        // [xOf]: a line of no length (a ride at one spot) puts it at the left edge.
+                        val x = xOf(d, totalM, Size(constraints.maxWidth.toFloat(), 0f)).roundToInt()
+                        IntOffset(x - 1.dp.roundToPx(), 0)
+                    }
                     .width(2.dp)
                     .height(plotHeight)
                     .background(Color.White)

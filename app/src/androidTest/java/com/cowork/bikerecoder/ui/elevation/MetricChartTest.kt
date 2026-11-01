@@ -30,6 +30,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
 import com.cowork.bikerecoder.core.elevation.TrackAxis
+import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.HeartRateSample
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.core.series.MetricKind
@@ -200,6 +201,46 @@ class MetricChartTest {
         for (y in 0 until plotBottom) assertClose(surface, image[mid, y], "x=$mid y=$y")
         // Where there is heart rate, the fill is drawn.
         assertTrue(far(surface, image[image.width / 5, plotBottom - 2]))
+    }
+
+    @Test
+    fun scrubOnLineOfNoLength() {
+        // Recorded at one spot: the line is 0 m long.
+        val still = List(5) { i -> TrackPoint(i * 1_000L, GeoPoint(37.5, 127.0), null, 3f, 5f) }
+        val series = MetricSeries.speed(TrackAxis.of(listOf(still))!!, listOf(still))!!
+        assertEquals(0.0, series.totalM, 0.0)
+        val scrubbed = mutableListOf<Double>()
+        show {
+            MetricChart(
+                series, MetricKind.SPEED, "속도 그래프", height = 160.dp, scrubbable = true,
+                onScrub = { scrubbed += it }, scrubM = 0.0,
+            )
+        }
+
+        composeRule.onNodeWithTag(MetricTags.chart(MetricKind.SPEED)).performTouchInput {
+            down(Offset(width * 0.5f, height / 2f))
+            up()
+        }
+        composeRule.waitForIdle()
+
+        assertEquals(listOf(0.0), scrubbed)
+        // The scrub line stands at the left edge.
+        val chart = composeRule.onNodeWithTag(MetricTags.chart(MetricKind.SPEED)).getBoundsInRoot()
+        val line = composeRule.onNodeWithTag(ElevationTags.SCRUB_LINE, useUnmergedTree = true).getBoundsInRoot()
+        assertEquals(chart.left.value, ((line.left + line.right) / 2).value, 1f)
+    }
+
+    @Test
+    fun seriesOfAnotherKindIsRejected() {
+        val failure = runCatching {
+            show { MetricChart(speed, MetricKind.HEART_RATE, "심박 그래프") }
+            composeRule.waitForIdle()
+        }.exceptionOrNull()
+
+        assertTrue(
+            "$failure",
+            generateSequence(failure) { it.cause }.any { it is IllegalArgumentException && "drawn as" in it.message.orEmpty() },
+        )
     }
 
     private fun assertClose(expected: Color, actual: Color, where: String) {
