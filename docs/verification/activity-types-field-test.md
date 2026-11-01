@@ -9,7 +9,7 @@
 
 ### PC 단위 테스트
 
-실행일: 2026-11-01 (브랜치 `feature/activity-types-v1.9.0`, 구현 커밋 `f1b42c1` 위에 버전 1.9.0을 올린 상태)
+실행일: 2026-11-01 (브랜치 `feature/activity-types-v1.9.0`, 최종 수정 뒤 커밋 `8626282`)
 
 명령:
 
@@ -21,12 +21,12 @@
 
 | 모음 | 클래스 수 | 테스트 수 | 실패 | 건너뜀 |
 |---|---|---|---|---|
-| `:core:test` | 69 | 659 | 0 | 0 |
-| `:app:testDebugUnitTest` | 114 | 1375 | 0 | 0 |
+| `:core:test` | 69 | 665 | 0 | 0 |
+| `:app:testDebugUnitTest` | 114 | 1386 | 0 | 0 |
 | `:routing-brouter:test` | 4 | 19 | 0 | 0 |
-| 합계 | 187 | 2053 | 0 | 0 |
+| 합계 | 187 | 2070 | 0 | 0 |
 
-수는 JUnit XML(`*/build/test-results/{test,testDebugUnitTest}/TEST-*.xml`)에서 셌습니다. `:core:test`는 core 코드가 이전 실행과 같아 Gradle이 `UP-TO-DATE`로 건너뛰었고(버전만 올렸으므로 입력이 같음), 위 수는 그 직전 실행의 XML입니다. V1.8.0 기록(core 542, app 1233)에 비해 core가 117개, app이 142개 늘었습니다.
+수는 JUnit XML(`*/build/test-results/{test,testDebugUnitTest}/TEST-*.xml`)에서 셌습니다. V1.8.0 기록(core 542, app 1233)에 비해 core가 123개, app이 153개 늘었습니다.
 
 스펙 §7.1의 PC 확인 범위:
 - `ActivityProfile`과 엔진: 종류마다 자동 일시정지·재개 경계값 위·아래, 튐 거르기, GPS 끊김 규칙. 자전거 회귀(`RecordingSessionTest`, `AutoPauseDetectorTest`, `TrackFilterTest`, `RideStatsCalculatorTest` 그대로 통과, 같은 점이면 V1.8.0과 같은 합계)
@@ -57,14 +57,14 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.te
 
 **컴파일 확인** (2026-11-01): `./gradlew :app:assembleDebugAndroidTest` 성공(androidTest 코드가 컴파일됨).
 
-**버전 올린 직후 확인**: `ui.settings.SettingsScreenTest`는 이 시점에 S22가 연결되어 있지 않아(`adb devices`에 기기 없음) 돌리지 못했습니다. 최종 수정 뒤 전체 시험 때 `V1.9.0` 표시와 함께 확인합니다.
+**버전 올린 직후 확인**: 이 시점에는 S22가 연결되어 있지 않아 최종 수정 뒤 전체 시험에서 함께 확인했습니다(`SettingsScreenTest` 22/22, `V1.9.0` 표시 포함).
+
+**최종 검토 전 미리 돌린 결과**: 바뀐 클래스 25개 가운데 5개에서 10건이 실패했고 모두 시험 쪽 문제였습니다(통계 막대가 칩 때문에 화면 아래로 내려가 누름이 빗나감, 카드 경로 색 `#D85A30`, 영상 배지 영역 계산, 이번 주 목표 링의 자전거 거리, 고를 수 없는 줄의 배지는 줄에 합쳐짐). 최종 수정에서 시험을 고쳤습니다.
 
 #### 최종 수정 뒤 기록
 
-(최종 검토와 수정이 끝난 뒤 S22에서 한 클래스씩 돌려 여기에 적습니다. 날짜, 커밋, 통과 수를 적을 자리입니다.)
-
-- 실행일 / 커밋:
-- `app/src/androidTest` 전체(클래스 수 / 테스트 수 / 통과 / 건너뜀):
+- 실행일 / 커밋: 2026-11-01 / `a30b426`(이후 커밋은 스펙 문서만 고침)
+- `app/src/androidTest` 전체(클래스 수 / 테스트 수 / 통과 / 건너뜀): 73 / 582 / 580 / 2. 건너뛴 2건은 `FrameRendererTest.screenshots`·`SummaryImageRendererTest.screenshots`로, `screenshots=true` 인자가 없으면 건너뛰는 것이 정상입니다.
 - 이번 버전에서 더하거나 고친 클래스(스펙 §7.2):
   - `data.RideDatabaseMigrationTest` (`migrate8To9`: 기존 구간이 모두 `BIKE`, 데이터 그대로, 빈 `segment_best_effort` 표)
   - `data.RoomImportStoreTest`
@@ -84,19 +84,19 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.te
   - `ui.importing.ImportScreenTest` (GPX 확인 목록 종류 배지와 바꾸기)
   - `ui.settings.SettingsScreenTest` (`V1.9.0`, 종류별 기본 해시태그 줄)
   - `video.FrameRendererTest`
-- 이전 버전 클래스 전체 회귀: 모든 androidTest 클래스를 하나씩
+- 이전 버전 클래스 전체 회귀: 모든 androidTest 클래스를 하나씩 — 위 73개에 포함, 실패 0
 - 스크린샷(`Download/bikeRecoderTest/`)
 
 | 파일 | 만드는 시험 | 확인 |
 |---|---|---|
-| `v190-chips.png` | `ActivityChipsTest` (달리기 칩을 고른 모양) | |
-| `v190-hike-numbers.png` | `RideNumbersPageTest` | |
-| `v190-run-numbers.png` | `RideNumbersPageTest` | |
-| `v190-feed-cards.png` | `FeedCardActivityTest` | |
-| `v190-stats-hike.png` | `StatsActivityTest` | |
-| `v190-change-activity.png` | `ChangeActivityTest` | |
+| `v190-chips.png` | `ActivityChipsTest` (달리기 칩을 고른 모양) | 확인 — 달리기 칩이 분홍으로 채워짐 |
+| `v190-hike-numbers.png` | `RideNumbersPageTest` | 확인 — 산행 시간·현재 고도 큰 숫자, `일몰 17:32 · 50분 남음` 경고 색 |
+| `v190-run-numbers.png` | `RideNumbersPageTest` | 확인 — 현재 페이스 큰 숫자, 평균 페이스·직전 1 km |
+| `v190-feed-cards.png` | `FeedCardActivityTest` | 확인 — 자전거·달리기 배지와 종류 색 경로, 자전거 3번째 칸 평균 속도 |
+| `v190-stats-hike.png` | `StatsActivityTest` | 확인 — 등산 칩, 등산 2회·산행 시간·누적 상승 칸 |
+| `v190-change-activity.png` | `ChangeActivityTest` | 확인 — 네 종류 창과 안내 문구 |
 
-- 시험용 기록 사본(`s22-seed2/bikerecoder.db`)을 다시 넣어 DB가 9판으로 옮겨지는지, 지도 칩·피드 카드·구간 화면 종류 바꾸기·통계 칩이 보이는지:
+- 시험용 기록 사본(`s22-seed2/bikerecoder.db`)을 다시 넣어 DB가 9판으로 옮겨지는지, 지도 칩·피드 카드·구간 화면 종류 바꾸기·통계 칩이 보이는지: 확인. 사본(7판)이 9판으로 옮겨지고 구간 2개가 `BIKE`. 지도 화면에 칩 네 개(자전거 채움). 10/25 구간을 걷기로 바꾸자 카드 제목이 `저녁 걷기`, 경로가 초록, 3번째 칸이 `평균 페이스 8'18"/km`, 통계 [걷기] 10월 1회·1.6 km. 상승·하강·최저/최고 고도·경과 시간은 바뀌지 않음. 다시 자전거로 되돌리면 거리 1,586.7 → 1,564.1 m, 이동 시간 12분 44초 → 12분 35초로 처음 기록과 조금 다릅니다(저장된 위치 점으로 다시 계산하므로).
 
 ## 알려진 한계
 
@@ -128,6 +128,11 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.te
 - **GPX 내보내기**: 이웃한 같은 종류 구간을 한 `<trk>`로 묶고, 종류가 바뀔 때마다 새 `<trk>`입니다(P8).
 - **DB 9판**: `AutoMigration` 8→9. 기존 구간은 모두 `BIKE`가 됩니다.
 - **하프 기록**: 저장 키 `distanceM = 21098`, 계산 목표 21,097.5 m입니다(P12).
+- **길안내를 시작하며 나눈 새 구간**: 늘 `BIKE`입니다(스펙 §1.4).
+- **종류 바꾸기 다시 계산**: 거리·이동 시간·최고 속도(와 평균)만 다시 셉니다. 상승·하강·최저/최고 고도·경과 시간은 저장된 값 그대로입니다(스펙 §1.5). 바꿨다가 되돌리면 거리·이동 시간이 처음 기록과 조금 다를 수 있습니다.
+- **섞인 여행의 페이스**: 칸은 대표 종류를 따르고, 페이스 값(카드 칸·아래 줄·공유 문구·영상 마지막 카드)은 대표 종류 구간만으로 셉니다. 평균 속도 칸은 여행 전체 값입니다.
+- **페이스 그래프 아래 끝 글**: 멈춘 점(0 km/h)이 있으면 `--'--"/km`입니다.
+- **통계 연속 문구**: 종류 칩에서도 `N주 연속 주행 중`처럼 "주행"을 씁니다(V2.0.0에서 바꿈).
 
 ## 실사용 점검표 (V1.9.0, 스펙 §7.3)
 
