@@ -88,7 +88,7 @@ private var SemanticsPropertyReceiver.stripAlpha by ElevationTags.StripAlpha
 internal fun GradeBand.color(): Color = Color(argb.toInt())
 
 /** Height of the km axis under the plot. */
-private val AXIS_HEIGHT = 16.dp
+internal val AXIS_HEIGHT = 16.dp
 private const val STRIP_DIMMED_ALPHA = 0.4f
 
 /**
@@ -112,19 +112,10 @@ fun ElevationChart(
     scrubM: Double? = null,
 ) {
     if (profile == null) {
-        Box(modifier.fillMaxWidth().height(height).testTag(ElevationTags.NO_ELEVATION), contentAlignment = Alignment.Center) {
-            Text(
-                ElevationText.NO_ELEVATION,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        NoChartData(ElevationText.NO_ELEVATION, ElevationTags.NO_ELEVATION, modifier, height)
         return
     }
     val climbs = remember(profile) { ClimbFinder.find(profile).size }
-    val description = ElevationText.chartDescription(profile.minElevationM, profile.maxElevationM, climbs)
-    val currentOnScrub by rememberUpdatedState(onScrub)
-    val open = onOpen.takeUnless { scrubbable }
     val colors = chartColors()
     val labelStyle = MaterialTheme.typography.labelSmall
     val measurer = rememberTextMeasurer()
@@ -136,14 +127,60 @@ fun ElevationChart(
             val label = labelStyle.copy(color = colors.label)
             onDrawBehind {
                 drawProfile(shapes, colors.line)
-                drawBoundaries(profile, plot, colors.axis)
-                drawKmAxis(profile, plot, measurer, label, colors.axis)
-                drawHeightLabel(measurer, RideFormat.altitude(profile.maxElevationM), label, colors.labelBackground, top = true, plot)
-                drawHeightLabel(measurer, RideFormat.altitude(profile.minElevationM), label, colors.labelBackground, top = false, plot)
+                drawBoundaries(profile.boundariesM, profile.totalM, plot, colors.axis)
+                drawKmAxis(profile.totalM, plot, measurer, label, colors.axis)
+                drawEndLabel(measurer, RideFormat.altitude(profile.maxElevationM), label, colors.labelBackground, top = true, plot)
+                drawEndLabel(measurer, RideFormat.altitude(profile.minElevationM), label, colors.labelBackground, top = false, plot)
             }
         }
     }
+    ChartFrame(
+        totalM = profile.totalM,
+        description = ElevationText.chartDescription(profile.minElevationM, profile.maxElevationM, climbs),
+        tag = ElevationTags.CHART,
+        modifier = modifier,
+        height = height,
+        scrubbable = scrubbable,
+        onOpen = onOpen,
+        onScrub = onScrub,
+        scrubM = scrubM,
+        gestureKey = profile,
+        drawChart = drawChart,
+        dotY = { d, plot -> yOf(profile.elevationAt(d), profile, plot) },
+    )
+}
 
+/** The chart's place when there is nothing to draw: [text] in the middle, [height] high. */
+@Composable
+internal fun NoChartData(text: String, tag: String, modifier: Modifier, height: Dp) {
+    Box(modifier.fillMaxWidth().height(height).testTag(tag), contentAlignment = Alignment.Center) {
+        Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/**
+ * What the elevation, speed and heart-rate charts share around their drawing ([drawChart], the plot above the
+ * [AXIS_HEIGHT] km axis, [totalM] wide): read out as [description], tagged [tag]; small with [onOpen] a button with
+ * [지도에 표시], big ([scrubbable]) reporting the finger's distance to [onScrub] and drawing the line at [scrubM] with a
+ * dot at [dotY] of it (no dot where that is null). [gestureKey] restarts the scrub gesture when the data changes.
+ */
+@Composable
+internal fun ChartFrame(
+    totalM: Double,
+    description: String,
+    tag: String,
+    modifier: Modifier,
+    height: Dp,
+    scrubbable: Boolean,
+    onOpen: (() -> Unit)?,
+    onScrub: (distanceM: Double) -> Unit,
+    scrubM: Double?,
+    gestureKey: Any,
+    drawChart: Modifier,
+    dotY: (distanceM: Double, plot: Size) -> Float?,
+) {
+    val currentOnScrub by rememberUpdatedState(onScrub)
+    val open = onOpen.takeUnless { scrubbable }
     BoxWithConstraints(
         modifier
             .fillMaxWidth()
@@ -151,11 +188,11 @@ fun ElevationChart(
             .then(if (open != null) Modifier.clickable(onClickLabel = ElevationText.SHOW_ON_MAP, role = Role.Button, onClick = open) else Modifier)
             .then(
                 if (scrubbable) {
-                    Modifier.pointerInput(profile) {
+                    Modifier.pointerInput(gestureKey) {
                         fun scrubAt(x: Float) {
                             val width = size.width.toFloat()
                             if (width <= 0f) return
-                            currentOnScrub((x / width).coerceIn(0f, 1f) * profile.totalM)
+                            currentOnScrub((x / width).coerceIn(0f, 1f) * totalM)
                         }
                         awaitEachGesture {
                             val down = awaitFirstDown()
@@ -175,16 +212,16 @@ fun ElevationChart(
                 },
             )
             .semantics { contentDescription = description }
-            .testTag(ElevationTags.CHART),
+            .testTag(tag),
     ) {
         val plotHeight = maxHeight - AXIS_HEIGHT
         Box(Modifier.fillMaxSize().clearAndSetSemantics {}.then(drawChart))
         if (scrubbable && scrubM != null) {
-            val d = scrubM.coerceIn(0.0, profile.totalM)
+            val d = scrubM.coerceIn(0.0, totalM)
             // The line first, the dot over it.
             Box(
                 Modifier
-                    .offset { IntOffset((d / profile.totalM * constraints.maxWidth).roundToInt() - 1.dp.roundToPx(), 0) }
+                    .offset { IntOffset((d / totalM * constraints.maxWidth).roundToInt() - 1.dp.roundToPx(), 0) }
                     .width(2.dp)
                     .height(plotHeight)
                     .background(Color.White)
@@ -192,7 +229,8 @@ fun ElevationChart(
             )
             Canvas(Modifier.fillMaxSize().clearAndSetSemantics {}) {
                 val plot = Size(size.width, size.height - AXIS_HEIGHT.toPx())
-                val at = Offset(xOf(d, profile, plot), yOf(profile.elevationAt(d), profile, plot))
+                val y = dotY(d, plot) ?: return@Canvas
+                val at = Offset(xOf(d, totalM, plot), y)
                 drawCircle(Color(0xFF424242), radius = 6.dp.toPx(), center = at)
                 drawCircle(Color.White, radius = 4.dp.toPx(), center = at)
             }
@@ -278,10 +316,10 @@ fun ElevationStrip(
 
 /** Compared by value, so the same theme gives an equal instance (and the chart's drawing cache is kept). */
 @Immutable
-private data class ChartColors(val line: Color, val axis: Color, val label: Color, val labelBackground: Color)
+internal data class ChartColors(val line: Color, val axis: Color, val label: Color, val labelBackground: Color)
 
 @Composable
-private fun chartColors(): ChartColors {
+internal fun chartColors(): ChartColors {
     val scheme = MaterialTheme.colorScheme
     return remember(scheme) {
         ChartColors(
@@ -294,7 +332,7 @@ private fun chartColors(): ChartColors {
 }
 
 /** The filled band areas (each its colour) and the profile line, sampled every [columnPx] across [plot]. */
-private class ProfileShapes(val areas: List<Pair<Path, Color>>, val line: Path)
+internal class ProfileShapes(val areas: List<Pair<Path, Color>>, val line: Path)
 
 private fun profileShapes(profile: ElevationProfile, plot: Size, columnPx: Float): ProfileShapes {
     val areas = ArrayList<Pair<Path, Color>>()
@@ -327,28 +365,28 @@ private fun profileShapes(profile: ElevationProfile, plot: Size, columnPx: Float
     return ProfileShapes(areas, line)
 }
 
-private fun DrawScope.drawProfile(shapes: ProfileShapes, lineColor: Color) {
+internal fun DrawScope.drawProfile(shapes: ProfileShapes, lineColor: Color) {
     shapes.areas.forEach { (path, color) -> drawPath(path, color) }
     drawPath(shapes.line, lineColor, style = Stroke(1.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
 }
 
-/** A short tick at the bottom of the plot at every segment / stop boundary. */
-private fun DrawScope.drawBoundaries(profile: ElevationProfile, plot: Size, color: Color) {
+/** A short tick at the bottom of the plot at every segment / stop boundary ([boundariesM] of [totalM]). */
+internal fun DrawScope.drawBoundaries(boundariesM: List<Double>, totalM: Double, plot: Size, color: Color) {
     val tick = 6.dp.toPx()
-    profile.boundariesM.forEach { d ->
-        val x = xOf(d, profile, plot)
+    boundariesM.forEach { d ->
+        val x = xOf(d, totalM, plot)
         drawLine(color, Offset(x, plot.height - tick), Offset(x, plot.height), strokeWidth = 1.5.dp.toPx())
     }
 }
 
-/** The base line and the km ticks ([kmTickStepKm]) with their labels under the plot. */
-private fun DrawScope.drawKmAxis(profile: ElevationProfile, plot: Size, measurer: TextMeasurer, style: TextStyle, color: Color) {
+/** The base line and the km ticks ([kmTickStepKm]) of [totalM] with their labels under the plot. */
+internal fun DrawScope.drawKmAxis(totalM: Double, plot: Size, measurer: TextMeasurer, style: TextStyle, color: Color) {
     drawLine(color, Offset(0f, plot.height), Offset(plot.width, plot.height), strokeWidth = 1.dp.toPx())
-    val stepKm = kmTickStepKm(profile.totalM)
-    val count = floor(profile.totalM / 1_000.0 / stepKm + 1e-9).toInt()
+    val stepKm = kmTickStepKm(totalM)
+    val count = floor(totalM / 1_000.0 / stepKm + 1e-9).toInt()
     for (k in 0..count) {
         val km = k * stepKm
-        val x = xOf(km * 1_000.0, profile, plot)
+        val x = xOf(km * 1_000.0, totalM, plot)
         drawLine(color, Offset(x, plot.height), Offset(x, plot.height + 3.dp.toPx()), strokeWidth = 1.dp.toPx())
         val text = measurer.measure(ElevationText.kmTick(km), style)
         val left = (x - text.size.width / 2f).coerceIn(0f, max(0f, size.width - text.size.width))
@@ -356,8 +394,8 @@ private fun DrawScope.drawKmAxis(profile: ElevationProfile, plot: Size, measurer
     }
 }
 
-/** The highest ([top]) or lowest height in the plot's top or bottom left corner, on a faint background. */
-private fun DrawScope.drawHeightLabel(
+/** The highest ([top]) or lowest value's [label] in the plot's top or bottom left corner, on a faint background. */
+internal fun DrawScope.drawEndLabel(
     measurer: TextMeasurer,
     label: String,
     style: TextStyle,
@@ -378,19 +416,23 @@ private fun DrawScope.drawHeightLabel(
     drawText(text, topLeft = Offset(left, topY))
 }
 
-private fun xOf(distanceM: Double, profile: ElevationProfile, plot: Size): Float =
-    if (profile.totalM <= 0.0) 0f else (distanceM / profile.totalM * plot.width).toFloat()
+internal fun xOf(distanceM: Double, totalM: Double, plot: Size): Float =
+    if (totalM <= 0.0) 0f else (distanceM / totalM * plot.width).toFloat()
+
+/** The plot's y of [elevationM]: [yIn] the profile's range, at least [MIN_SPAN_M] tall so a flat ride stays flat. */
+private fun yOf(elevationM: Double, profile: ElevationProfile, plot: Size): Float =
+    yIn(elevationM, profile.minElevationM, profile.maxElevationM, MIN_SPAN_M, plot)
 
 /**
- * The plot's y of [elevationM]: the profile's range with room above (for the top label) and below, at least
- * [MIN_SPAN_M] tall so a flat ride stays flat.
+ * The plot's y of [value] for values from [min] to [max]: that range, at least [minSpan] tall, with room above (for the
+ * top label) and below.
  */
-private fun yOf(elevationM: Double, profile: ElevationProfile, plot: Size): Float {
-    val span = max(profile.maxElevationM - profile.minElevationM, MIN_SPAN_M)
-    val mid = (profile.maxElevationM + profile.minElevationM) / 2
+internal fun yIn(value: Double, min: Double, max: Double, minSpan: Double, plot: Size): Float {
+    val span = max(max - min, minSpan)
+    val mid = (max + min) / 2
     val lo = mid - span * 0.65
     val hi = mid + span * 0.75
-    return ((hi - elevationM) / (hi - lo) * plot.height).toFloat()
+    return ((hi - value) / (hi - lo) * plot.height).toFloat()
 }
 
 private const val MIN_SPAN_M = 20.0

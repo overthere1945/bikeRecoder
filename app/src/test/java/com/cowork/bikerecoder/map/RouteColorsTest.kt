@@ -1,10 +1,12 @@
 package com.cowork.bikerecoder.map
 
 import com.cowork.bikerecoder.core.elevation.ElevationProfile
+import com.cowork.bikerecoder.core.elevation.TrackAxis
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.Route
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.model.RouteSummary
+import com.cowork.bikerecoder.core.recording.TrackPoint
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
@@ -72,5 +74,32 @@ class RouteColorsTest {
         assertEquals("#1E63D6", colors[0][0])
         // The second path starts at 1,000 m on the profile axis (no distance across the gap): its 10th point is at 1,500 m.
         assertEquals("#E53935", colors[1][10])
+    }
+
+    /** Two 1 km rides north in 100 m steps, the second 5 km further on: on the axis it starts at 1,000 m. */
+    private val axis: TrackAxis = run {
+        fun ride(startLat: Double, startMs: Long) = List(11) { i ->
+            TrackPoint(startMs + i * 20_000L, GeoPoint(startLat + i * 100.0 / 111_320.0, 127.0), null, 5f, 5f)
+        }
+        TrackAxis.of(listOf(ride(37.5, 0L), ride(37.5 + 6_000.0 / 111_320.0, 3_600_000L)))!!
+    }
+
+    @Test
+    fun metricColorsFollowAxis() {
+        val colors = pathColors(axis.paths, { d -> if (d < 1_450.0) "#111111" else "#222222" }, axis)
+
+        assertEquals(listOf(11, 11), colors.map { it.size })
+        assertEquals("#111111", colors[0][10])
+        // Nothing across the 5 km gap: the second path's 4th point is at 1,400 m, its 5th at 1,500 m.
+        assertEquals("#111111", colors[1][4])
+        assertEquals("#222222", colors[1][5])
+    }
+
+    @Test
+    fun nullColorIsGray() {
+        val colors = pathColors(axis.paths, { d -> if (d < 450.0) null else "#123456" }, axis)
+
+        assertEquals(listOf("#9E9E9E", "#9E9E9E", "#9E9E9E", "#9E9E9E", "#9E9E9E", "#123456"), colors[0].take(6))
+        assertEquals("#123456", colors[1][0])
     }
 }
