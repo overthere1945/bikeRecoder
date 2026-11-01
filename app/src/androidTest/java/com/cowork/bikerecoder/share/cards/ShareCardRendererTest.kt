@@ -165,10 +165,28 @@ class ShareCardRendererTest {
         assertEquals(1350, card.height)
         assertEquals(PHOTO_COLOR, card.getPixel(0, 0))
         val boxes = ShareCardLayout.photoCard(CardSize.FEED)
-        val bottom = card.meanLuminance(boxes.bottom)
-        Log.i(TAG, "photo card bottom band $bottom")
-        assertTrue("bottom $bottom", bottom < 0.45)
+        val band = boxes.bottom
+        val above = Box(0f, 0f, 1080f, band.y)
+        val bottom = card.meanLuminance(band)
+        val photoLuminance = card.meanLuminance(above)
+        Log.i(TAG, "photo card bottom band $bottom, photo $photoLuminance")
+        assertTrue("bottom $bottom, photo $photoLuminance", bottom < photoLuminance * 0.75)
+        // The band's top edge: the photo right above it, darker right inside it (left of the route square, no text).
+        assertEquals(PHOTO_COLOR, card.getPixel(2, band.y.toInt() - 1))
+        val inside = card.getPixel(2, band.y.toInt() + 2)
+        assertTrue(Integer.toHexString(inside), inside != PHOTO_COLOR)
         assertTrue("dot where the photo was taken", card.count(boxes.map) { near(it, bike, 8) } > 0)
+    }
+
+    /**
+     * Spec §2.3 (ruling): a photo taken 3 km north of the loop would put its dot over the photo above the band; it is
+     * left out, so the bike colour is nowhere on the card.
+     */
+    @Test
+    fun offRouteDotIsSkipped() {
+        val off = GeoPoint(36.4 + 3_000.0 / 111_195.0, 128.2)
+        val card = renderer().photoCard(inputs, facts, CardSize.FEED, solid(1200, 1600, PHOTO_COLOR), off)
+        assertEquals(0, count(card, 0, 0, 1080, 1350) { near(it, bike, 8) })
     }
 
     /** Spec §2.3: in a story, nothing in the top and bottom 14% but the photo itself. */

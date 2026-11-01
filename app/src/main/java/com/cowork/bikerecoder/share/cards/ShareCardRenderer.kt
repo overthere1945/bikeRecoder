@@ -106,8 +106,9 @@ class ShareCardRenderer(
     /**
      * The photo card (spec §2.3) of [size], [CardSize.FEED] or [CardSize.STORY]: [photo] (upright) cropped about its centre
      * to fill the card, and a black 45% band at the bottom with the whole route small and white on its left (no map), a
-     * dot in the activity's colour where the photo was taken ([takenAt]; null: none), and right of the route the title line
-     * without the badge, the date line and the three numbers; "bikeRecoder" at the bottom right.
+     * dot in the activity's colour where the photo was taken ([takenAt]; null or outside the route square: none), and
+     * right of the route the title line without the badge, the date line and the three numbers; "bikeRecoder" at the
+     * bottom right.
      */
     fun photoCard(inputs: VideoInputs, facts: CardFacts, size: CardSize, photo: Bitmap, takenAt: GeoPoint?): Bitmap {
         val boxes = ShareCardLayout.photoCard(size)
@@ -125,8 +126,13 @@ class ShareCardRenderer(
             canvas.drawRect(band.left, band.y, band.right, band.bottom, fill(Color.BLACK, PHOTO_BAND_ALPHA))
             canvas.drawPath(path(projected), stroke(Color.WHITE, MINI_ROUTE_WIDTH * unit))
             if (takenAt != null) {
-                val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ActivityStyle.color(facts.activity).toArgb() }
-                canvas.drawCircle(projected.extras[0], projected.extras[1], TAKEN_DOT * unit, dot)
+                val x = projected.extras[0]
+                val y = projected.extras[1]
+                // A photo geotagged off the route would put the dot over the photo: none then.
+                if (x in boxes.map.left..boxes.map.right && y in boxes.map.y..boxes.map.bottom) {
+                    val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ActivityStyle.color(facts.activity).toArgb() }
+                    canvas.drawCircle(x, y, TAKEN_DOT * unit, dot)
+                }
             }
             drawPhotoText(canvas, facts, band, boxes.map, unit)
             return image
