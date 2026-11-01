@@ -715,6 +715,26 @@ class ShareViewModelTest {
         assertEquals(listOf<ShareEvent>(ShareEvent.Notice("카드 1장을 갤러리에 저장했습니다")), events)
     }
 
+    /** A new press takes away the error line of an earlier one (it stays until then: no toast to miss). */
+    @Test
+    fun aNewPressClearsAStaleError() = runTest(dispatcher) {
+        cards.stickerFailure = NoSpaceException(IOException("ENOSPC"))
+        val vm = opened()
+        vm.press(ShareTarget.STICKER)
+        advanceUntilIdle()
+        assertEquals(ShareViewModel.MSG_NO_SPACE, sheet.error)
+
+        vm.press(ShareTarget.COPY)
+
+        assertNull(sheet.error)
+        assertEquals(listOf<ShareEvent>(ShareEvent.Copy(AUTO)), events)
+        // [다시 시도] would no longer press [스티커]: the line is gone with it.
+        cards.stickerFailure = null
+        vm.retryCards()
+        advanceUntilIdle()
+        assertTrue(gallery.pngs.isEmpty())
+    }
+
     @Test
     fun noSpaceMessage() = runTest(dispatcher) {
         val vm = opened()

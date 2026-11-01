@@ -5,25 +5,12 @@ import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
 import androidx.core.net.toUri
-import com.cowork.bikerecoder.video.mimeType
 
 /** Title of the system chooser behind [ShareTarget.MORE]. */
 private const val CHOOSER_TITLE = "활동 공유하기"
 
 /** The share intent of every button (spec §4.2). Only builds the intents; launching them is the caller's job. */
 object ShareIntents {
-
-    /** [file] sent by [target], with [text] where the app takes one. */
-    fun file(target: ShareTarget, file: ShareCandidate, text: String, apps: ShareApps): Intent {
-        val uri = file.uri.toUri()
-        val send = Intent(Intent.ACTION_SEND).apply {
-            type = file.kind.mimeType
-            putExtra(Intent.EXTRA_STREAM, uri)
-            clipData = ClipData.newRawUri(null, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        return aim(target, send, text, apps)
-    }
 
     /**
      * The [files] (never empty; text only goes through [textOnly]) sent by [target], with [text] where the app takes one

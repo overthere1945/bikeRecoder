@@ -5,8 +5,6 @@ import android.content.Intent
 import android.graphics.drawable.Drawable
 import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.cowork.bikerecoder.core.video.Aspect
-import com.cowork.bikerecoder.video.MediaKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -18,7 +16,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class ShareIntentsTest {
     private val uri = "content://media/external/video/media/42"
-    private val video = ShareCandidate(uri, MediaKind.VIDEO, Aspect.PORTRAIT, createdAt = 1L, sizeBytes = 1000L)
+    private val video = listOf(ShareFile(uri, "video/mp4", sizeBytes = 1000L))
     private val text = "첫 줄 제목\n둘째 줄\n#자전거"
     private val feed = ComponentName("com.instagram.android", "com.instagram.share.handleractivity.ShareHandlerActivity")
     private val story = ComponentName("com.instagram.android", "com.instagram.share.handleractivity.StoryShareHandlerActivity")
@@ -48,7 +46,7 @@ class ShareIntentsTest {
 
     @Test
     fun facebookTargetsPackage() {
-        val intent = ShareIntents.file(ShareTarget.FACEBOOK, video, text, FakeApps())
+        val intent = ShareIntents.files(ShareTarget.FACEBOOK, video, text, FakeApps())
 
         assertFileBasics(intent)
         assertEquals("com.facebook.katana", intent.`package`)
@@ -58,7 +56,7 @@ class ShareIntentsTest {
 
     @Test
     fun instagramUsesFeedComponent() {
-        val intent = ShareIntents.file(ShareTarget.INSTAGRAM, video, text, FakeApps(feed, story))
+        val intent = ShareIntents.files(ShareTarget.INSTAGRAM, video, text, FakeApps(feed, story))
 
         assertFileBasics(intent)
         assertEquals(feed, intent.component)
@@ -66,7 +64,7 @@ class ShareIntentsTest {
 
     @Test
     fun instagramFallsBackToInstagramPackage() {
-        val intent = ShareIntents.file(ShareTarget.INSTAGRAM, video, text, FakeApps())
+        val intent = ShareIntents.files(ShareTarget.INSTAGRAM, video, text, FakeApps())
 
         assertFileBasics(intent)
         assertNull(intent.component)
@@ -75,7 +73,7 @@ class ShareIntentsTest {
 
     @Test
     fun storyUsesStoryComponent() {
-        val intent = ShareIntents.file(ShareTarget.STORY, video, text, FakeApps(feed, story))
+        val intent = ShareIntents.files(ShareTarget.STORY, video, text, FakeApps(feed, story))
 
         assertFileBasics(intent)
         assertEquals(story, intent.component)
@@ -83,7 +81,7 @@ class ShareIntentsTest {
 
     @Test
     fun storyFallsBackToInstagramPackage() {
-        val intent = ShareIntents.file(ShareTarget.STORY, video, text, FakeApps(feed, null))
+        val intent = ShareIntents.files(ShareTarget.STORY, video, text, FakeApps(feed, null))
 
         assertFileBasics(intent)
         assertNull(intent.component)
@@ -92,7 +90,7 @@ class ShareIntentsTest {
 
     @Test
     fun emailHasSelectorSubjectText() {
-        val intent = ShareIntents.file(ShareTarget.EMAIL, video, text, FakeApps())
+        val intent = ShareIntents.files(ShareTarget.EMAIL, video, text, FakeApps())
 
         assertFileBasics(intent)
         assertEquals(Intent.ACTION_SENDTO, intent.selector!!.action)
@@ -103,7 +101,7 @@ class ShareIntentsTest {
 
     @Test
     fun moreIsChooserWithTitle() {
-        val intent = ShareIntents.file(ShareTarget.MORE, video, text, FakeApps())
+        val intent = ShareIntents.files(ShareTarget.MORE, video, text, FakeApps())
 
         assertEquals(Intent.ACTION_CHOOSER, intent.action)
         assertEquals("활동 공유하기", intent.getCharSequenceExtra(Intent.EXTRA_TITLE))

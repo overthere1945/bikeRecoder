@@ -221,12 +221,15 @@ class ShareViewModel(
      * A button (spec §1.3, §5): the text is saved, then [ShareTarget.COPY] copies it, [ShareTarget.STICKER] saves the
      * sticker, [ShareTarget.SAVE] the picked cards, and the others send what is picked once its cards are drawn. With
      * nothing picked, [ShareTarget.EMAIL] and [ShareTarget.MORE] send the text only and the dimmed buttons do nothing.
+     * A press takes away the error of an earlier one.
      */
     fun press(target: ShareTarget) {
         val session = session ?: return
         val s = _sheet.value ?: return
         if (s.waiting || !s.enabled(target)) return
+        // A new press: the error line of an earlier one (and its [다시 시도]) goes away.
         session.retry = null
+        if (s.error != null) _sheet.update { it?.copy(error = null) }
         when (target) {
             ShareTarget.COPY -> {
                 save(s)

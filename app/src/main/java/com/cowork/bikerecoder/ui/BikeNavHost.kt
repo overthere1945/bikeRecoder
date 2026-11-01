@@ -961,7 +961,7 @@ fun BikeNavHost(
         onConfirmCurrent = favoritesViewModel::confirmCurrent,
     )
     VideoHost(videoViewModel)
-    ShareHost(shareViewModel)
+    ShareHost(shareViewModel, container.photoThumbnails)
 }
 
 /** The made file's preview on top (a second one of the same file is not pushed). */
