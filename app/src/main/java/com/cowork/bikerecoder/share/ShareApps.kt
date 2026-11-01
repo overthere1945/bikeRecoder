@@ -19,8 +19,17 @@ interface ShareApps {
     /** Instagram's feed share activity, or null when it cannot be told apart. */
     fun instagramFeed(): ComponentName?
 
+    /**
+     * Instagram's feed share activity for several images at once (the same pick over the `ACTION_SEND_MULTIPLE`
+     * receivers), or null when it cannot be told apart.
+     */
+    fun instagramFeedMultiple(): ComponentName? = null
+
     /** Instagram's story share activity, or null when it cannot be told apart. */
     fun instagramStory(): ComponentName?
+
+    /** Whether Instagram's feed takes several images in one share (spec §5). */
+    fun instagramTakesMultiple(): Boolean
 
     /** The app icon for [ShareTarget.FACEBOOK], [ShareTarget.INSTAGRAM] and [ShareTarget.STORY]; null otherwise. */
     fun icon(target: ShareTarget): Drawable?
@@ -34,10 +43,15 @@ class PackageShareApps(private val context: Context) : ShareApps {
         ShareTarget.FACEBOOK -> receivers(FACEBOOK_PACKAGE).isNotEmpty()
         ShareTarget.INSTAGRAM, ShareTarget.STORY -> receivers(INSTAGRAM_PACKAGE).isNotEmpty()
         ShareTarget.EMAIL -> pm.queryIntentActivities(Intent(Intent.ACTION_SENDTO, "mailto:".toUri()), 0).isNotEmpty()
-        ShareTarget.COPY, ShareTarget.SAVE, ShareTarget.MORE -> true
+        ShareTarget.COPY, ShareTarget.SAVE, ShareTarget.MORE, ShareTarget.STICKER -> true
     }
 
     override fun instagramFeed(): ComponentName? = pickInstagramFeed(instagramReceivers())?.toComponent()
+
+    override fun instagramFeedMultiple(): ComponentName? =
+        pickInstagramFeed(instagramReceivers(multiple = true))?.toComponent()
+
+    override fun instagramTakesMultiple(): Boolean = instagramFeedMultiple() != null
 
     override fun instagramStory(): ComponentName? = pickInstagramStory(instagramReceivers())?.toComponent()
 
@@ -54,14 +68,18 @@ class PackageShareApps(private val context: Context) : ShareApps {
         }
     }
 
-    private fun receivers(packageName: String): List<ResolveInfo> =
+    private fun receivers(packageName: String, multiple: Boolean = false): List<ResolveInfo> =
         pm.queryIntentActivities(
-            Intent(Intent.ACTION_SEND).setType("image/png").setPackage(packageName),
+            if (multiple) {
+                Intent(Intent.ACTION_SEND_MULTIPLE).setType("image/jpeg").setPackage(packageName)
+            } else {
+                Intent(Intent.ACTION_SEND).setType("image/png").setPackage(packageName)
+            },
             0,
         )
 
-    private fun instagramReceivers(): List<InstagramReceiver> =
-        receivers(INSTAGRAM_PACKAGE).map {
+    private fun instagramReceivers(multiple: Boolean = false): List<InstagramReceiver> =
+        receivers(INSTAGRAM_PACKAGE, multiple).map {
             InstagramReceiver(it.activityInfo.packageName, it.activityInfo.name, it.activityInfo.exported)
         }
 

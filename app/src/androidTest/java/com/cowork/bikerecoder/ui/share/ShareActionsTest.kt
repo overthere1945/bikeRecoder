@@ -33,6 +33,7 @@ class ShareActionsTest {
         override fun available(target: ShareTarget) = true
         override fun instagramFeed() = null
         override fun instagramStory() = null
+        override fun instagramTakesMultiple() = false
         override fun icon(target: ShareTarget): Drawable? = null
     }
 

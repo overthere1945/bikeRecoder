@@ -20,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Email
@@ -259,6 +260,7 @@ private fun label(target: ShareTarget): String = when (target) {
     ShareTarget.COPY -> "복사"
     ShareTarget.SAVE -> "저장"
     ShareTarget.MORE -> "더 보기"
+    ShareTarget.STICKER -> "스티커"
 }
 
 /** The Material icons of spec §1.2; the app buttons fall back to the paper plane when their icon cannot be read. */
@@ -267,6 +269,7 @@ private fun materialIcon(target: ShareTarget): ImageVector = when (target) {
     ShareTarget.COPY -> Icons.Filled.ContentCopy
     ShareTarget.SAVE -> Icons.Filled.Download
     ShareTarget.MORE -> Icons.Filled.MoreHoriz
+    ShareTarget.STICKER -> Icons.Filled.AutoAwesome
     ShareTarget.FACEBOOK, ShareTarget.INSTAGRAM, ShareTarget.STORY -> Icons.Filled.Share
 }
 

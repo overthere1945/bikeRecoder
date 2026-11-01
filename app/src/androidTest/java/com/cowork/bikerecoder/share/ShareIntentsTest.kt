@@ -26,10 +26,13 @@ class ShareIntentsTest {
     private class FakeApps(
         private val feed: ComponentName? = null,
         private val story: ComponentName? = null,
+        private val feedMultiple: ComponentName? = null,
     ) : ShareApps {
         override fun available(target: ShareTarget) = true
         override fun instagramFeed() = feed
         override fun instagramStory() = story
+        override fun instagramFeedMultiple() = feedMultiple
+        override fun instagramTakesMultiple() = feedMultiple != null
         override fun icon(target: ShareTarget): Drawable? = null
     }
 
@@ -146,5 +149,76 @@ class ShareIntentsTest {
         assertEquals("text/plain", inner.type)
         assertEquals(text, inner.getStringExtra(Intent.EXTRA_TEXT))
         assertFalse(inner.hasExtra(Intent.EXTRA_STREAM))
+    }
+
+    private val cards = listOf(
+        ShareFile("content://com.cowork.bikerecoder.share/cards/a.jpg", "image/jpeg", 100L),
+        ShareFile("content://com.cowork.bikerecoder.share/cards/b.jpg", "image/jpeg", 200L),
+        ShareFile("content://com.cowork.bikerecoder.share/cards/c.jpg", "image/jpeg", 300L),
+    )
+
+    private fun Intent.streams(): List<Uri> =
+        @Suppress("DEPRECATION") getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)!!.toList()
+
+    @Test
+    fun oneFileIsSend() {
+        val intent = ShareIntents.files(ShareTarget.FACEBOOK, cards.take(1), text, FakeApps())
+
+        assertEquals(Intent.ACTION_SEND, intent.action)
+        assertEquals("image/jpeg", intent.type)
+        assertEquals(Uri.parse(cards[0].uri), intent.stream())
+        assertEquals(1, intent.clipData!!.itemCount)
+        assertTrue(intent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+        assertEquals("com.facebook.katana", intent.`package`)
+    }
+
+    @Test
+    fun manyFilesIsSendMultiple() {
+        val intent = ShareIntents.files(ShareTarget.FACEBOOK, cards, text, FakeApps())
+
+        assertEquals(Intent.ACTION_SEND_MULTIPLE, intent.action)
+        assertEquals("image/jpeg", intent.type)
+        assertEquals(cards.map { Uri.parse(it.uri) }, intent.streams())
+        assertEquals(3, intent.clipData!!.itemCount)
+        assertEquals(cards.map { Uri.parse(it.uri) }, (0 until 3).map { intent.clipData!!.getItemAt(it).uri })
+        assertTrue(intent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+        assertEquals("com.facebook.katana", intent.`package`)
+    }
+
+    @Test
+    fun instagramMultipleUsesFeedMultipleComponent() {
+        val multi = ComponentName("com.instagram.android", "com.instagram.share.handleractivity.ShareHandlerActivity")
+        val intent = ShareIntents.files(ShareTarget.INSTAGRAM, cards, text, FakeApps(feed, story, multi))
+
+        assertEquals(Intent.ACTION_SEND_MULTIPLE, intent.action)
+        assertEquals(multi, intent.component)
+    }
+
+    @Test
+    fun moreWrapsChooser() {
+        val intent = ShareIntents.files(ShareTarget.MORE, cards, text, FakeApps())
+
+        assertEquals(Intent.ACTION_CHOOSER, intent.action)
+        assertEquals("활동 공유하기", intent.getCharSequenceExtra(Intent.EXTRA_TITLE))
+        @Suppress("DEPRECATION")
+        val inner = intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)!!
+        assertEquals(Intent.ACTION_SEND_MULTIPLE, inner.action)
+        assertEquals(cards.map { Uri.parse(it.uri) }, inner.streams())
+        assertEquals(text, inner.getStringExtra(Intent.EXTRA_TEXT))
+        // The chooser itself carries the grant for every card.
+        assertEquals(3, intent.clipData!!.itemCount)
+        assertTrue(intent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+    }
+
+    @Test
+    fun emailHasSelector() {
+        val intent = ShareIntents.files(ShareTarget.EMAIL, cards, text, FakeApps())
+
+        assertEquals(Intent.ACTION_SEND_MULTIPLE, intent.action)
+        assertEquals(Intent.ACTION_SENDTO, intent.selector!!.action)
+        assertEquals("mailto:", intent.selector!!.data.toString())
+        assertEquals("첫 줄 제목", intent.getStringExtra(Intent.EXTRA_SUBJECT))
+        assertEquals(text, intent.getStringExtra(Intent.EXTRA_TEXT))
+        assertEquals(cards.map { Uri.parse(it.uri) }, intent.streams())
     }
 }

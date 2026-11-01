@@ -15,7 +15,7 @@ data class ShareCandidate(
 )
 
 /** The buttons of the share sheet. */
-enum class ShareTarget { FACEBOOK, INSTAGRAM, STORY, EMAIL, COPY, SAVE, MORE }
+enum class ShareTarget { FACEBOOK, INSTAGRAM, STORY, EMAIL, COPY, SAVE, MORE, STICKER }
 
 /** What a button sends: an existing file, or a portrait summary image made on the spot. */
 sealed interface SharePick {

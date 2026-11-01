@@ -51,6 +51,8 @@ data class ShareSheetState(
         ShareTarget.FACEBOOK, ShareTarget.INSTAGRAM, ShareTarget.STORY, ShareTarget.SAVE ->
             pick(target) is SharePick.File || canMakeImage
         ShareTarget.EMAIL, ShareTarget.COPY, ShareTarget.MORE -> true
+        // The sticker has no button in this sheet yet; the card sheet (spec §5) takes it over.
+        ShareTarget.STICKER -> false
     }
 }
 
