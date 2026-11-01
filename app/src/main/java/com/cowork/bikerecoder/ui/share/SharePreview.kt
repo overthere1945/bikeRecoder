@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.ui.share
 
+import android.os.Build
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -30,7 +32,9 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -44,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.cowork.bikerecoder.share.ShareItem
+import com.cowork.bikerecoder.share.ShareMode
 
 /**
  * The big preview of a strip item (share cards spec §1.2): a full-screen dialog with the item as it is sent — a card's
@@ -80,30 +85,67 @@ internal fun SharePreview(
     }
 }
 
-/** The item at the screen's width; a spinner while it is drawn or read, a warning when its card failed. */
+/**
+ * The item as it is sent, at the screen's width: a card's file, a photo as its slide (spec §2.4, [PhotoSlide]); a spinner
+ * while it is drawn or read (a picture of another key, such as the photo card before its background changed, counts as
+ * still reading), a warning when its card failed.
+ */
 @Composable
 private fun BigPicture(item: ShareItem, state: ShareSheetState, preview: suspend (ShareItem, ShareSheetState, Int) -> ImageBitmap?) {
     val widthPx = with(LocalDensity.current) { LocalConfiguration.current.screenWidthDp.dp.roundToPx() }
     val key = pictureKey(item, state)
     val current by rememberUpdatedState(state)
     val loaded by produceState<Loaded?>(null, key, widthPx) {
-        value = Loaded(key?.let { preview(item, current, widthPx) })
+        value = Loaded(key, key?.let { preview(item, current, widthPx) })
     }
     val status = state.cardOf(item)
-    val picture = loaded?.picture
+    val fresh = loaded?.takeIf { it.key == key }
+    val picture = fresh?.picture
     when {
         status is CardStatus.Failed -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(Icons.Filled.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
             Text(if (status.noSpace) ShareViewModel.MSG_NO_SPACE else ShareViewModel.MSG_CARD_FAILED)
         }
+        picture != null && item is ShareItem.Photo -> PhotoSlide(picture, state.mode, itemName(item))
         picture != null -> Image(
             picture,
             contentDescription = itemName(item),
             contentScale = ContentScale.Fit,
             modifier = Modifier.fillMaxWidth(),
         )
-        loaded == null || status == CardStatus.Rendering -> CircularProgressIndicator(color = Color.White)
+        fresh == null || status == CardStatus.Rendering -> CircularProgressIndicator(color = Color.White)
         else -> Icon(Icons.Filled.Image, contentDescription = null, modifier = Modifier.size(48.dp))
+    }
+}
+
+/**
+ * A photo the way its slide is drawn (spec §2.4) without drawing the slide (that waits for the press): a frame of the
+ * [mode]'s card shape; an upright photo fills it, a wide one sits whole over a blurred (API 31+) and darkened copy of
+ * itself filling the frame.
+ */
+@Composable
+private fun PhotoSlide(photo: ImageBitmap, mode: ShareMode, name: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(mode.size.width.toFloat() / mode.size.height)
+            .clipToBounds()
+            .testTag(ShareTags.PREVIEW_FRAME),
+    ) {
+        if (photo.height >= photo.width) {
+            Image(photo, contentDescription = name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        } else {
+            Image(
+                photo,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Modifier.blur(BACKDROP_BLUR) else Modifier),
+            )
+            Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = BACKDROP_DARKEN)))
+            Image(photo, contentDescription = name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+        }
     }
 }
 
@@ -135,7 +177,9 @@ private fun PhotoRow(state: ShareSheetState, pictures: SharePictureCache, onPhot
     }
 }
 
-/** A finished read of the big picture ([picture] null: there is none, or it could not be read). */
-private class Loaded(val picture: ImageBitmap?)
+/** A finished read of the big picture of [key] ([picture] null: there is none, or it could not be read). */
+private class Loaded(val key: String?, val picture: ImageBitmap?)
 
 private val PHOTO_SIZE = 64.dp
+private val BACKDROP_BLUR = 24.dp
+private const val BACKDROP_DARKEN = 0.4f

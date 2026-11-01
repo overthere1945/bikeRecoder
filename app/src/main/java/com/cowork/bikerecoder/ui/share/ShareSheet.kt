@@ -91,6 +91,9 @@ object ShareTags {
     const val MODE_STORY = "share-mode-story"
     const val PREVIEW = "share-preview"
 
+    /** The card-shaped frame of a photo's preview. */
+    const val PREVIEW_FRAME = "share-preview-frame"
+
     fun button(target: ShareTarget) = "share-button-${target.name}"
 
     /** The [i]th item (from 0) of the "보낼 것" strip. */

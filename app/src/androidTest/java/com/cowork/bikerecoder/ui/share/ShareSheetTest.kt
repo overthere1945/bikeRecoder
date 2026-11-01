@@ -18,6 +18,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
@@ -165,7 +166,12 @@ class ShareSheetTest {
                     },
                     preview = { item, _, _ ->
                         previewsAsked += item
-                        ImageBitmap(108, 135)
+                        // Photo 21 is wide, photo 22 upright; the cards are 4:5.
+                        when {
+                            item is ShareItem.Photo && item.mediaId == 21L -> ImageBitmap(160, 90)
+                            item is ShareItem.Photo -> ImageBitmap(90, 160)
+                            else -> ImageBitmap(108, 135)
+                        }
                     },
                     onEdit = { edits += it },
                     onReset = { resets++ },
@@ -272,6 +278,31 @@ class ShareSheetTest {
 
         assertEquals(listOf<ShareItem>(ShareItem.SatelliteCard, ShareItem.PhotoCard), previewsAsked)
         assertTrue(pressed.isEmpty())
+    }
+
+    /** Spec §1.2: a photo is previewed as it is sent, in a frame of the mode's card shape (wide or upright). */
+    @Test
+    fun photoPreviewHasTheModesShape() {
+        show()
+
+        item(2).performTouchInput { longClick() }
+        assertPreviewShape(1080f / 1350)
+        composeRule.onNodeWithContentDescription("사진 1").assertIsDisplayed()
+        composeRule.onNodeWithText("닫기").performClick()
+
+        composeRule.onNodeWithTag(ShareTags.MODE_STORY).performClick()
+        item(3).performTouchInput { longClick() }
+        assertPreviewShape(1080f / 1920)
+        composeRule.onNodeWithText("닫기").performClick()
+
+        // A card is shown as its file: no frame.
+        item(0).performTouchInput { longClick() }
+        composeRule.onNodeWithTag(ShareTags.PREVIEW_FRAME).assertDoesNotExist()
+    }
+
+    private fun assertPreviewShape(widthOverHeight: Float) {
+        val bounds = composeRule.onNodeWithTag(ShareTags.PREVIEW_FRAME).assertIsDisplayed().getUnclippedBoundsInRoot()
+        assertEquals(widthOverHeight, (bounds.right - bounds.left) / (bounds.bottom - bounds.top), 0.01f)
     }
 
     /** Spec §1.2: no photo card without photos; the video ends the strip. */

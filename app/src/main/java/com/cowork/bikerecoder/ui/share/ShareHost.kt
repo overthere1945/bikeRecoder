@@ -192,7 +192,8 @@ class ShareActions(
      * app opened; with no app it stays.
      */
     private fun send(event: ShareEvent.Send) {
-        val plan = planSend(event.target, event.files, apps.instagramTakesMultiple())
+        // Asking the package manager is for Instagram only (it runs on the main thread).
+        val plan = planSend(event.target, event.files, event.target == ShareTarget.INSTAGRAM && apps.instagramTakesMultiple())
         val paste = event.target in PASTE_TARGETS
         if (paste) clip(ClipData.newPlainText(CLIP_LABEL, event.text))
         val message = listOfNotNull(plan.notice, MSG_TEXT_COPIED_PASTE.takeIf { paste }).joinToString("\n")
