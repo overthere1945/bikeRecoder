@@ -312,7 +312,7 @@ abstract class PostDao {
             "(SELECT COUNT(*) FROM ride_photo p WHERE p.segmentId = s.id AND p.hidden = 0) AS photoCount, " +
             "CASE WHEN e.hrStatus = 'READY' THEN e.avgBpm END AS avgBpm, " +
             "CASE WHEN e.hrStatus = 'READY' THEN e.maxBpm END AS maxBpm, " +
-            "COALESCE(e.hrDetailed, 0) AS hrDetailed " +
+            "COALESCE(e.hrDetailed, 0) AS hrDetailed, s.activity AS activity " +
             "FROM ride_segment s " +
             "LEFT JOIN segment_route_simplified r ON r.segmentId = s.id " +
             "LEFT JOIN segment_extras e ON e.segmentId = s.id " +
@@ -331,6 +331,7 @@ data class SegmentCardRow(
     val avgBpm: Int?,
     val maxBpm: Int?,
     val hrDetailed: Boolean,
+    val activity: String,
 )
 
 @Dao

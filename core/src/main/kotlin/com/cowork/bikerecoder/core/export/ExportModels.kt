@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.core.export
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.post.HeartRateSample
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import java.time.LocalDate
@@ -28,8 +29,13 @@ object ExportLabels {
     /** 경로 파일의 이름. [destinationName]은 목적지 이름. */
     fun routeName(destinationName: String): String = ROUTE_PREFIX + destinationName
 
-    /** KML 구간 이름 `{yyyy-MM-dd} 주행`. */
-    fun rideName(date: LocalDate): String = "$date 주행"
+    /** KML 구간 이름 `{yyyy-MM-dd} {주행|걷기|달리기|등산}`(스펙 §2.3). 자전거는 "주행" 그대로. */
+    fun rideName(date: LocalDate, activity: ActivityType = ActivityType.BIKE): String = when (activity) {
+        ActivityType.BIKE -> "$date 주행"
+        ActivityType.WALK -> "$date 걷기"
+        ActivityType.RUN -> "$date 달리기"
+        ActivityType.HIKE -> "$date 등산"
+    }
 }
 
 /** 로케일과 상관없이 점(.)을 소수점으로 쓰는 숫자 글자 만들기. */

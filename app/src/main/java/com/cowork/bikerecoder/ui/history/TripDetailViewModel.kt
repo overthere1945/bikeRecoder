@@ -10,6 +10,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.activity.ActivityMix
 import com.cowork.bikerecoder.export.ExportFormat
 import com.cowork.bikerecoder.export.ExportResult
 import com.cowork.bikerecoder.export.ExportRunner
@@ -237,7 +238,9 @@ class TripDetailViewModel(
         byDate.values.flatten().filter { it.endedAt != null && it.totals.distanceM >= MIN_RIDE_DISTANCE_M }
 
     private fun shownTitle(label: TripLabel, rides: List<RideSegment>) =
-        RideTitle.shown(label, rides.minOf { it.startedAt }, rides.map { it.localDate }.distinct().size, zone)
+        RideTitle.shown(
+            label, rides.minOf { it.startedAt }, rides.map { it.localDate }.distinct().size, zone, ActivityMix.of(rides).dominant,
+        )
 
     private val _dialog = MutableStateFlow<HistoryDialog?>(null)
     val dialog: StateFlow<HistoryDialog?> = _dialog.asStateFlow()
@@ -448,7 +451,9 @@ class TripDetailViewModel(
     private fun fallbackTitle(): String {
         val listed = _segmentsByDate.value.values.flatten()
         if (listed.isEmpty()) return label.value.customTitle?.takeIf { it.isNotBlank() } ?: TripExporter.TRIP_PREFIX
-        return RideTitle.shown(label.value, listed.minOf { it.startedAt }, listed.map { it.localDate }.distinct().size, zone)
+        return RideTitle.shown(
+            label.value, listed.minOf { it.startedAt }, listed.map { it.localDate }.distinct().size, zone, ActivityMix.of(listed).dominant,
+        )
     }
 
     /** The export's outcome has been shown (dialog closed, Toast posted). */

@@ -46,6 +46,7 @@ object FeedTags {
     fun picture(tripId: Long) = "feed-picture-$tripId"
     fun photo(tripId: Long, index: Int) = "feed-photo-$tripId-$index"
     fun share(tripId: Long) = "feed-share-$tripId"
+    fun badges(tripId: Long) = "feed-badges-$tripId"
 }
 
 /**
@@ -78,7 +79,7 @@ fun WeekStrip(state: WeekStripState, onOpenStatsWeek: () -> Unit, onSetGoals: ()
             if (goal == null) {
                 FilledTonalButton(onClick = onSetGoals) { Text("목표 정하기") }
             } else {
-                GoalRing(state.distanceM, goal)
+                GoalRing(state.goalDistanceM, goal)
             }
         }
     }

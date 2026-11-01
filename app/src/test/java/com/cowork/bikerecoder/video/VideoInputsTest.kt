@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.video
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.post.HeartRateSample
@@ -55,8 +56,9 @@ class VideoInputsTest {
 
     /** A segment with [points]; closed unless [open]. */
     private suspend fun segment(date: LocalDate, points: List<TrackPoint>, distanceM: Double, open: Boolean = false,
-                                maxSpeed: Double = 6.0, ascent: Double = 10.0, startedAt: Long = points.first().timeMillis): Long {
-        val id = rides.openSegment(TRIP, startedAt, date)
+                                maxSpeed: Double = 6.0, ascent: Double = 10.0, startedAt: Long = points.first().timeMillis,
+                                activity: ActivityType = ActivityType.BIKE): Long {
+        val id = rides.openSegment(TRIP, startedAt, date, activity)
         val t = totals(distanceM, points.last().timeMillis - points.first().timeMillis, maxSpeed, ascent)
         rides.appendPoints(id, points, t)
         if (!open) rides.closeSegment(id, points.last().timeMillis, t)
@@ -181,6 +183,19 @@ class VideoInputsTest {
         segment(sunday, track(evening, 100), distanceM = 500.0)
 
         assertEquals("저녁 라이딩", loader.load(TRIP)!!.rideTitle)
+    }
+
+    /** V1.9.0 spec §2.3: the title's word follows the dominant activity; the picture's line colours know each segment's. */
+    @Test
+    fun rideTitleAndSegmentActivitiesFollowTheActivities() = runTest {
+        trip(TripType.SINGLE_DAY)
+        val morning = sunday.atTime(8, 0).atZone(seoul).toInstant().toEpochMilli()
+        segment(sunday, track(morning, 100), distanceM = 500.0, activity = ActivityType.HIKE)
+        segment(sunday, track(morning + 3_600_000, 400), distanceM = 900.0, activity = ActivityType.WALK)
+
+        val inputs = loader.load(TRIP)!!
+        assertEquals("아침 걷기", inputs.rideTitle)
+        assertEquals(listOf(ActivityType.HIKE, ActivityType.WALK), inputs.segmentActivities)
     }
 
     /** V1.4.0 §2.5: the trip's own title goes in as it is, flagged so the job adds no region. */

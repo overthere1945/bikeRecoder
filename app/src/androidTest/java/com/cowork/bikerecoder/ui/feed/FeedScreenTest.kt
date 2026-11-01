@@ -165,7 +165,7 @@ class FeedScreenTest {
 
         for (text in listOf(
             "2026년 10월 · 32.1 km · 1회", "저녁 라이딩 · 서울 강서구", "10월 25일 (일) 오후 6:12",
-            "32.1 km", "1시간 45분", "123 m", "평균 18.3 km/h · ♥ 132", "+2",
+            "32.1 km", "1시간 45분", "18.3 km/h", "평균 18.3 km/h · ♥ 132", "+2",
         )) {
             composeRule.onNodeWithText(text).assertIsDisplayed()
         }

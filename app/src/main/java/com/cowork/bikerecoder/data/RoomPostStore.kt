@@ -4,6 +4,7 @@ import android.database.sqlite.SQLiteConstraintException
 import androidx.room.withTransaction
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.CumulativeEntry
 import com.cowork.bikerecoder.core.post.HeartRateSample
@@ -197,6 +198,7 @@ internal fun SegmentCardRow.toModel(log: WarnLog) = SegmentCard(
     },
     photoCount = photoCount,
     heartRate = if (avgBpm != null && maxBpm != null) HeartRateStats(avgBpm, maxBpm, hrDetailed) else null,
+    activity = ActivityType.fromStored(activity),
 )
 
 internal fun SegmentRouteSimplifiedEntity.toModel() = CumulativeEntry(

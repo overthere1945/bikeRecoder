@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.core.video
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.trip.TripLabel
 import org.junit.jupiter.api.Test
 import java.time.LocalDateTime
@@ -91,5 +92,33 @@ class RideTitleTest {
         assertEquals(30, RideTitle.cleanCustom(bike.repeat(31))!!.let { it.codePointCount(0, it.length) })
         assertEquals("가".repeat(30), RideTitle.cleanCustom("가".repeat(40)))
         assertEquals(30, RideTitle.MAX_CUSTOM_CODE_POINTS)
+    }
+
+    @Test
+    fun morningRun() {
+        assertEquals("아침 달리기", RideTitle.base(millis(8, 0), 1, SEOUL, ActivityType.RUN))
+    }
+
+    @Test
+    fun morningHike() {
+        assertEquals("아침 등산", RideTitle.base(millis(9, 0), 1, SEOUL, ActivityType.HIKE))
+    }
+
+    @Test
+    fun walkAndBikeWords() {
+        assertEquals("저녁 걷기", RideTitle.base(millis(19, 0), 1, SEOUL, ActivityType.WALK))
+        assertEquals("저녁 라이딩", RideTitle.base(millis(19, 0), 1, SEOUL, ActivityType.BIKE))
+    }
+
+    @Test
+    fun multiDayUnchanged() {
+        for (a in ActivityType.entries) assertEquals("3일 여행", RideTitle.base(millis(9, 0), 3, SEOUL, a))
+    }
+
+    @Test
+    fun shownFollowsActivity() {
+        val evening = millis(19, 0)
+        assertEquals("저녁 달리기 · 서울 강서구", RideTitle.shown(TripLabel(null, "서울 강서구"), evening, 1, SEOUL, ActivityType.RUN))
+        assertEquals("한강 한 바퀴", RideTitle.shown(TripLabel("한강 한 바퀴", null), evening, 1, SEOUL, ActivityType.HIKE))
     }
 }

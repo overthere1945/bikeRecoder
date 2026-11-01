@@ -91,4 +91,32 @@ class ActivityTypeTest {
         val mix = ActivityMix.of(listOf(seg(1, 1_000, ActivityType.RUN, 10), seg(2, 2_000, ActivityType.RUN, 5)))
         assertEquals(ActivityMix(ActivityType.RUN, listOf(ActivityType.RUN)), mix)
     }
+
+    @Test
+    fun mixIgnoresEmptySegments() {
+        val emptyLong = seg(1, 1_000, ActivityType.HIKE, 90).let { it.copy(totals = it.totals.copy(distanceM = 0.0)) }
+        val real = seg(2, 2_000, ActivityType.RUN, 10)
+        val mix = ActivityMix.of(listOf(emptyLong, real))
+        assertEquals(ActivityMix(ActivityType.RUN, listOf(ActivityType.RUN)), mix) // 빈 구간(거리 0)은 대표·배지에 끼지 않는다
+    }
+
+    @Test
+    fun mixOfOnlyEmptySegmentsFallsBackToAll() {
+        val a = seg(1, 1_000, ActivityType.HIKE, 20).let { it.copy(totals = it.totals.copy(distanceM = 0.0)) }
+        val b = seg(2, 2_000, ActivityType.RUN, 10).let { it.copy(totals = it.totals.copy(distanceM = 0.0)) }
+        assertEquals(ActivityMix(ActivityType.HIKE, listOf(ActivityType.HIKE, ActivityType.RUN)), ActivityMix.of(listOf(a, b)))
+    }
+
+    @Test
+    fun mixOfPartsFollowsTheSameRules() {
+        assertEquals(ActivityMix(ActivityType.BIKE, listOf(ActivityType.BIKE)), ActivityMix.ofParts(emptyList()))
+        val mix = ActivityMix.ofParts(
+            listOf(
+                ActivityType.WALK to 20 * 60_000L,
+                ActivityType.WALK to 20 * 60_000L,
+                ActivityType.BIKE to 30 * 60_000L,
+            ),
+        )
+        assertEquals(ActivityMix(ActivityType.BIKE, listOf(ActivityType.BIKE, ActivityType.WALK)), mix)
+    }
 }

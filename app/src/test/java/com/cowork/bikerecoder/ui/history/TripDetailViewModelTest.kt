@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.ui.history
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.post.HeartRateSample
@@ -68,12 +69,12 @@ class TripDetailViewModelTest {
     @AfterEach
     fun tearDown() = Dispatchers.resetMain()
 
-    private suspend fun evening() {
+    private suspend fun evening(activity: ActivityType = ActivityType.BIKE) {
         trips.trips[TRIP] = Trip(TRIP, TripType.SINGLE_DAY, TripStatus.COMPLETED, RouteProfile.CYCLEWAY_FIRST, 0L, 0L, null)
         val day = LocalDate.of(2026, 10, 25)
         val startedAt = day.atTime(19, 0).atZone(SEOUL).toInstant().toEpochMilli()
         val totals = SegmentTotals.ZERO.copy(distanceM = 1_500.0, movingTimeMs = 60_000)
-        val id = rides.openSegment(TRIP, startedAt, day)
+        val id = rides.openSegment(TRIP, startedAt, day, activity)
         rides.appendPoints(id, listOf(TrackPoint(startedAt, FIRST_POINT, null, 5f, 5f)), totals)
         rides.closeSegment(id, startedAt + 60_000, totals)
     }
@@ -160,6 +161,17 @@ class TripDetailViewModelTest {
         assertNull(labels.label(TRIP).customTitle)
         assertNull(vm.customTitle.value)
         assertEquals("저녁 라이딩 · 서울 강서구", vm.title.value)
+    }
+
+    /** V1.9.0 spec §2.3: the automatic title takes the trip's dominant activity's word. */
+    @Test
+    fun autoTitleFollowsTheActivity() = runTest(dispatcher) {
+        evening(ActivityType.RUN)
+        val vm = detail()
+        advanceUntilIdle()
+
+        assertEquals("저녁 달리기 · 서울 강서구", vm.autoTitle.value)
+        assertEquals("저녁 달리기 · 서울 강서구", vm.title.value)
     }
 
     /** The dialog's hint is the automatic title, also while a custom title is shown. */

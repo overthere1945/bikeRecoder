@@ -32,14 +32,25 @@ data class ActivityMix(val dominant: ActivityType, val badges: List<ActivityType
     companion object {
         const val MAX_BADGES = 3
 
-        /** 구간이 없으면 `ActivityMix(BIKE, listOf(BIKE))`. */
+        /**
+         * 구간이 없으면 `ActivityMix(BIKE, listOf(BIKE))`. 빈 구간([RideSegment.isEmpty], 거리 0 이하)은 건너뛴다.
+         * 모든 구간이 비었으면 전부를 쓴다.
+         */
         fun of(segments: List<RideSegment>): ActivityMix {
-            if (segments.isEmpty()) return ActivityMix(ActivityType.BIKE, listOf(ActivityType.BIKE))
-            val byStart = segments.sortedBy { it.startedAt }
+            val counted = segments.filterNot { it.isEmpty }.ifEmpty { segments }
+            return ofParts(counted.sortedBy { it.startedAt }.map { it.activity to it.totals.movingTimeMs })
+        }
+
+        /**
+         * 구간을 (종류, 이동 시간 ms)로만 아는 곳(피드 카드)을 위한 [of]. [parts]는 이미 `startedAt` 순이고 빈 구간은 없다.
+         * 비어 있으면 `ActivityMix(BIKE, listOf(BIKE))`.
+         */
+        fun ofParts(parts: List<Pair<ActivityType, Long>>): ActivityMix {
+            if (parts.isEmpty()) return ActivityMix(ActivityType.BIKE, listOf(ActivityType.BIKE))
             // maxByOrNull은 같으면 앞의 것을 고른다.
-            val dominant = byStart.maxByOrNull { it.totals.movingTimeMs }!!.activity
+            val dominant = parts.maxByOrNull { it.second }!!.first
             val sums = LinkedHashMap<ActivityType, Long>()
-            for (s in byStart) sums[s.activity] = (sums[s.activity] ?: 0L) + s.totals.movingTimeMs
+            for ((type, movingMs) in parts) sums[type] = (sums[type] ?: 0L) + movingMs
             val others = sums.entries.filter { it.key != dominant }.sortedByDescending { it.value }.map { it.key }
             return ActivityMix(dominant, (listOf(dominant) + others).take(MAX_BADGES))
         }

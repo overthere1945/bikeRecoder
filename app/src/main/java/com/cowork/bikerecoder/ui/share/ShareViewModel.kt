@@ -8,6 +8,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.activity.ActivityMix
 import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStore
@@ -335,7 +336,9 @@ class ShareViewModel(
     }
 
     private fun facts(label: TripLabel, rides: List<RideSegment>, distanceM: Double) = ShareFacts(
-        title = RideTitle.shown(label, rides.first().startedAt, rides.map { it.localDate }.distinct().size, zone),
+        title = RideTitle.shown(
+            label, rides.first().startedAt, rides.map { it.localDate }.distinct().size, zone, ActivityMix.of(rides).dominant,
+        ),
         firstDate = rides.first().localDate,
         lastDate = rides.last().localDate,
         distanceM = distanceM,

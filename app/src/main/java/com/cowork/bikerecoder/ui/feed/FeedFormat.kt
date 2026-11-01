@@ -1,5 +1,8 @@
 package com.cowork.bikerecoder.ui.feed
 
+import com.cowork.bikerecoder.core.activity.ActivityFormat
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.ui.history.cardDateText
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -67,8 +70,21 @@ fun groupedInt(value: Int): String = String.format(java.util.Locale.US, "%,d", v
 
 /** "평균 15.5 km/h", with " · ♥ 132" when a heart rate is known. */
 fun averageLineText(avgSpeedMps: Double, avgBpm: Int?): String {
-    val speed = com.cowork.bikerecoder.core.format.RideFormat.speedKmh(avgSpeedMps)
+    val speed = RideFormat.speedKmh(avgSpeedMps)
     return "평균 $speed km/h" + (avgBpm?.let { " · ♥ $it" } ?: "")
+}
+
+/**
+ * The card's bottom line by the dominant [activity] (V1.9.0 spec §2.2): a bike's is [averageLineText] as it was; a run or
+ * a walk "평균 5'32"/km · ♥ 150"; a hike "상승 520 m · 평균 2.1 km/h", with " · ♥ 128" when a heart rate is known.
+ */
+fun averageLineText(activity: ActivityType, avgSpeedMps: Double, avgBpm: Int?, ascentM: Double): String {
+    val heart = avgBpm?.let { " · ♥ $it" } ?: ""
+    return when (activity) {
+        ActivityType.BIKE -> averageLineText(avgSpeedMps, avgBpm)
+        ActivityType.RUN, ActivityType.WALK -> "평균 ${ActivityFormat.pace(avgSpeedMps)}/km$heart"
+        ActivityType.HIKE -> "상승 ${meterText(ascentM)} · 평균 ${RideFormat.speedKmh(avgSpeedMps)} km/h$heart"
+    }
 }
 
 private val THOUSAND = BigDecimal(1_000)

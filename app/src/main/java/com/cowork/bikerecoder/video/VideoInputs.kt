@@ -1,5 +1,7 @@
 package com.cowork.bikerecoder.video
 
+import com.cowork.bikerecoder.core.activity.ActivityMix
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.post.HeartRateSample
 import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
 import com.cowork.bikerecoder.core.recording.RideStore
@@ -40,7 +42,8 @@ data class TripTotals(
  * (spec §3.8: "저녁 라이딩" from the first start, "N일 여행" over several days; the job may add the region — unless it is the trip's
  * custom title, [titleIsCustom], which is used as it is, V1.4.0 spec §2.5); [canColorByHeart] some target
  * segment has detailed heart rate (the [심박] option); [firstStartedAt] when the first target segment was started (the file
- * name, spec §3.5 — not its first GPS fix).
+ * name, spec §3.5 — not its first GPS fix). [segmentActivities] is the activity of each target segment by the timeline's
+ * `segmentIndex` (the feed picture's line colours; empty = all bike).
  */
 data class VideoInputs(
     val tripId: Long,
@@ -54,6 +57,7 @@ data class VideoInputs(
     val canColorByHeart: Boolean,
     val firstStartedAt: Long,
     val titleIsCustom: Boolean = false,
+    val segmentActivities: List<ActivityType> = emptyList(),
 )
 
 class VideoInputsLoader(
@@ -96,7 +100,7 @@ class VideoInputsLoader(
             heartRate = heartRate,
             dayStarts = timeline.dayStarts,
             title = titleOf(days.first(), days.last()),
-            rideTitle = custom ?: RideTitle.base(targets.first().startedAt, days.size, zone),
+            rideTitle = custom ?: RideTitle.base(targets.first().startedAt, days.size, zone, ActivityMix.of(targets).dominant),
             totals = TripTotals(
                 distanceM = totals.distanceM,
                 movingTimeMs = totals.movingTimeMs,
@@ -109,6 +113,7 @@ class VideoInputsLoader(
             canColorByHeart = hr.canColor,
             firstStartedAt = targets.first().startedAt,
             titleIsCustom = custom != null,
+            segmentActivities = targets.map { it.activity },
         )
     }
 

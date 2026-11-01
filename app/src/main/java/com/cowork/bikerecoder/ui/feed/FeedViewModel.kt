@@ -8,12 +8,13 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.activity.ActivityMix
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.feed.FeedThumbKey
 import com.cowork.bikerecoder.core.feed.ThumbSegment
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.HeartRateSummary
 import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
-import com.cowork.bikerecoder.core.post.RideColors
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.TripDeleteCondition
 import com.cowork.bikerecoder.core.recording.TripRideSummary
@@ -33,6 +34,7 @@ import com.cowork.bikerecoder.feed.FeedThumbnails
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.post.SegmentCard
+import com.cowork.bikerecoder.ui.activity.ActivityStyle
 import com.cowork.bikerecoder.ride.TripDeleter
 import com.cowork.bikerecoder.ui.history.HistoryDialog
 import com.cowork.bikerecoder.ui.history.MSG_ACTIVE_TRIP_NOT_DELETABLE
@@ -69,6 +71,8 @@ import java.time.ZoneId
 /**
  * The strip above the feed (V1.4.0 spec §2.1): this week (Monday to today) in [distanceM] and [rides], [diffM] against last
  * week up to the same weekday (null when neither week has a ride), the weekly goal in km if there is one, the running streak.
+ * [distanceM], [rides] and [diffM] count every activity; the goal is the bike's, so the goal ring shows [goalDistanceM], the
+ * week's bike distance (V1.9.0 plan P10; without a distinct value it is [distanceM]).
  */
 data class WeekStripState(
     val distanceM: Double,
@@ -76,6 +80,7 @@ data class WeekStripState(
     val diffM: Double?,
     val weeklyGoalKm: Int?,
     val streak: Streak,
+    val goalDistanceM: Double = distanceM,
 )
 
 /** A month of cards under "YYYY년 M월 · {거리} · {n}회" (spec §6.11 of V1.2; [feedMonthHeaderText]). */
@@ -90,6 +95,9 @@ data class FeedMonth(val header: String, val cards: List<FeedCardState>)
  * the colour of its place in the trip; segments without a route yet are left out). [regionKnown]: the label has a region.
  * [canShare]: the trip has a finished ride of 10 m or more, so the card offers [공유] (V1.5.0 spec §1.1).
  * [imported]: the trip came from a GPX file (V1.6.0 spec §4.2), so the date line ends in " · 가져옴".
+ * V1.9.0: [activities] are the badges in order (the [dominant] activity first, at most three); [routes] are coloured by each
+ * segment's activity ([ActivityStyle.hex]); [hikeElapsedMs] is the elapsed time of the hike segments and [maxAltitudeM] the
+ * highest altitude of the rides (null when none is known), the hike card's cells.
  */
 data class FeedCardState(
     val tripId: Long,
@@ -111,6 +119,10 @@ data class FeedCardState(
     val regionKnown: Boolean = true,
     val canShare: Boolean = false,
     val imported: Boolean = false,
+    val activities: List<ActivityType> = listOf(ActivityType.BIKE),
+    val dominant: ActivityType = ActivityType.BIKE,
+    val hikeElapsedMs: Long = 0L,
+    val maxAltitudeM: Double? = null,
 ) {
     val videoUri: String? get() = video?.uri
 }
@@ -530,11 +542,20 @@ class FeedViewModel(
         val thumbKey = if (facts.hasOpenSegment || rides.isEmpty()) {
             null
         } else {
-            FeedThumbKey.of(rides.map { ThumbSegment(it.segmentId, it.endedAt, it.distanceM) })
+            FeedThumbKey.of(rides.map { ThumbSegment(it.segmentId, it.endedAt, it.distanceM, it.activity) })
         }
+        // The finished rides when there are any (as the trip screen names it), else the listed segments (a trip still on its
+        // first, open segment).
+        val mix = ActivityMix.ofParts(
+            if (rides.isNotEmpty()) {
+                rides.map { it.activity to it.movingTimeMs }
+            } else {
+                facts.cards.map { it.activity to it.movingTimeMs }
+            },
+        )
         return FeedCardState(
             tripId = id,
-            title = RideTitle.shown(label, firstStartedAt, days.size, zone),
+            title = RideTitle.shown(label, firstStartedAt, days.size, zone, mix.dominant),
             dateLine = feedDateLine(days.first(), days.last(), firstStartedAt, zone),
             inProgress = facts.inProgress,
             distanceM = distance,
@@ -548,9 +569,13 @@ class FeedViewModel(
             trophy = trophy,
             thumbKey = thumbKey,
             thumbFile = thumbKey?.let { key -> file?.takeIf { it.name == feedThumbName(id, key) } },
-            routes = facts.cards.mapIndexedNotNull { index, s -> s.route?.let { it to RideColors.colorAt(index) } },
+            routes = facts.cards.mapNotNull { s -> s.route?.let { it to ActivityStyle.hex(s.activity) } },
             regionKnown = !label.regionName.isNullOrBlank(),
             canShare = rides.isNotEmpty(),
+            activities = mix.badges,
+            dominant = mix.dominant,
+            hikeElapsedMs = rides.filter { it.activity == ActivityType.HIKE }.sumOf { it.elapsedMs },
+            maxAltitudeM = rides.mapNotNull { it.maxAltitudeM }.maxOrNull(),
         )
     }
 
@@ -561,7 +586,11 @@ class FeedViewModel(
         val thisWeek = comparison.current
         val lastWeek = comparison.previous
         val diff = if (thisWeek.rides == 0 && lastWeek.rides == 0) null else thisWeek.distanceM - lastWeek.distanceM
-        return WeekStripState(thisWeek.distanceM, thisWeek.rides, diff, goalKm, RideRecords.streak(all, today))
+        // The weekly goal is the bike's: its bar counts the bike rides only (plan P10).
+        val bikeThisWeek = checkNotNull(StatsCalculator.comparison(rides.filter { it.activity == ActivityType.BIKE }, week, today)).current
+        return WeekStripState(
+            thisWeek.distanceM, thisWeek.rides, diff, goalKm, RideRecords.streak(all, today), goalDistanceM = bikeThisWeek.distanceM,
+        )
     }
 
     /** [block]'s result, or null when it failed (logged). */

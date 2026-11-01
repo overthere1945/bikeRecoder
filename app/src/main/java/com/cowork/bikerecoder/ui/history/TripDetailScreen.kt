@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -49,6 +50,7 @@ import com.cowork.bikerecoder.export.ExportState
 import com.cowork.bikerecoder.importing.importedFromText
 import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.post.PhotoThumbnails
+import com.cowork.bikerecoder.ui.activity.ActivityBadge
 import com.cowork.bikerecoder.ui.elevation.ChartTab
 import com.cowork.bikerecoder.ui.elevation.ChartText
 import com.cowork.bikerecoder.ui.elevation.ElevationChart
@@ -371,15 +373,20 @@ private fun TripDetailList(
                 }
             }
             items(segments, key = { it.id }) { segment ->
-                Text(
-                    segmentRowText(segment),
+                // The row's activity badge (V1.9.0 spec §2.1) starts the row; its text is what it was.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
                         .combinedClickable(
                             onClick = { onOpenSegment(segment.id) },
                             onLongClick = { onRequestDelete(segment.id) },
                         )
                         .padding(vertical = 12.dp),
-                )
+                ) {
+                    ActivityBadge(segment.activity, ROW_BADGE)
+                    Spacer(Modifier.width(12.dp))
+                    Text(segmentRowText(segment))
+                }
                 HorizontalDivider()
             }
         }
@@ -460,3 +467,6 @@ private fun TripTotal(total: SegmentTotals, heartRate: TripHeartRate, onRefetchH
         }
     }
 }
+
+/** The activity badge of a segment row (spec §2.1: 24 dp in list rows). */
+private val ROW_BADGE = 24.dp
