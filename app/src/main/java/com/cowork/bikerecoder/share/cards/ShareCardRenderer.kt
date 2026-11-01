@@ -5,8 +5,12 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.util.Log
+import androidx.compose.ui.graphics.toArgb
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.video.Box
 import com.cowork.bikerecoder.core.video.Camera
@@ -14,6 +18,7 @@ import com.cowork.bikerecoder.core.video.CameraPath
 import com.cowork.bikerecoder.core.video.CardSize
 import com.cowork.bikerecoder.core.video.ShareCardLayout
 import com.cowork.bikerecoder.map.TileSource
+import com.cowork.bikerecoder.ui.activity.ActivityStyle
 import com.cowork.bikerecoder.video.FeedThumbnailRenderer
 import com.cowork.bikerecoder.video.MapMarks
 import com.cowork.bikerecoder.video.MapSnapshots
@@ -27,6 +32,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.ln
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -41,7 +47,11 @@ import kotlin.math.tan
  * The map is the [satellite] source (null: no key, or the start check failed), then the [plain] map (null only in tests),
  * each given [MAP_TIMEOUT_MS]; a source whose snapshot falls back to a plain background ([MapSnapshots.Shot.fallback])
  * gives no map. Without either the card is a dark [NO_MAP] fill with the route alone and no attribution.
- * Returns a software ARGB_8888 bitmap (the route's glow is a blur mask filter) that the caller owns.
+ *
+ * [photoCard] draws a photo with the route small and white in its bottom band (spec §2.3), [photoSlide] a photo alone in
+ * the card's shape (spec §2.4), [sticker] the route and the numbers on a transparent square (spec §2.5); none of them
+ * uses a map. Each returns a software ARGB_8888 bitmap (blur mask filters and shadow layers need software) that the
+ * caller owns; the photos given must be software bitmaps too.
  */
 class ShareCardRenderer(
     private val context: Context,
@@ -86,6 +96,104 @@ class ShareCardRenderer(
             drawTitle(canvas, facts, boxes.top, unit)
             map?.second?.let { drawAttribution(canvas, it.attribution, boxes.top, unit) }
             drawNumbers(canvas, facts, boxes.bottom, size, unit)
+            return image
+        } catch (e: Throwable) {
+            image.recycle()
+            throw e
+        }
+    }
+
+    /**
+     * The photo card (spec §2.3) of [size], [CardSize.FEED] or [CardSize.STORY]: [photo] (upright) cropped about its centre
+     * to fill the card, and a black 45% band at the bottom with the whole route small and white on its left (no map), a
+     * dot in the activity's colour where the photo was taken ([takenAt]; null: none), and right of the route the title line
+     * without the badge, the date line and the three numbers; "bikeRecoder" at the bottom right.
+     */
+    fun photoCard(inputs: VideoInputs, facts: CardFacts, size: CardSize, photo: Bitmap, takenAt: GeoPoint?): Bitmap {
+        val boxes = ShareCardLayout.photoCard(size)
+        val w = size.width
+        val h = size.height
+        val unit = min(w, h) / 360f
+        val camera = CameraPath.overviewInBox(inputs.timeline.points.map { it.point }, w, h, boxes.map)
+        val projected = flat(inputs, camera, w, h, listOfNotNull(takenAt))
+
+        val image = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        try {
+            val canvas = Canvas(image)
+            cover(canvas, photo, w, h)
+            val band = boxes.bottom
+            canvas.drawRect(band.left, band.y, band.right, band.bottom, fill(Color.BLACK, PHOTO_BAND_ALPHA))
+            canvas.drawPath(path(projected), stroke(Color.WHITE, MINI_ROUTE_WIDTH * unit))
+            if (takenAt != null) {
+                val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ActivityStyle.color(facts.activity).toArgb() }
+                canvas.drawCircle(projected.extras[0], projected.extras[1], TAKEN_DOT * unit, dot)
+            }
+            drawPhotoText(canvas, facts, band, boxes.map, unit)
+            return image
+        } catch (e: Throwable) {
+            image.recycle()
+            throw e
+        }
+    }
+
+    /**
+     * A photo slide (spec §2.4) of [size]: a portrait [photo] (upright; height ≥ width) cropped about its centre to fill
+     * it; a landscape one across the whole width, in the middle, over a blurred fill of itself (cropped to fill, scaled
+     * down to 1/[BLUR_SCALE] and back up, both with filtering). No words, no marks.
+     */
+    fun photoSlide(photo: Bitmap, size: CardSize): Bitmap {
+        val w = size.width
+        val h = size.height
+        val image = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        try {
+            val canvas = Canvas(image)
+            if (photo.height >= photo.width) {
+                cover(canvas, photo, w, h)
+            } else {
+                val blurred = blurred(photo, w, h)
+                try {
+                    canvas.drawBitmap(blurred, null, RectF(0f, 0f, w.toFloat(), h.toFloat()), FILTER)
+                } finally {
+                    blurred.recycle()
+                }
+                val fit = ShareCardLayout.fitWidth(photo.width, photo.height, w, h)
+                canvas.drawBitmap(photo, null, RectF(fit.left, fit.y, fit.right, fit.bottom), FILTER)
+            }
+            return image
+        } catch (e: Throwable) {
+            image.recycle()
+            throw e
+        }
+    }
+
+    /**
+     * The sticker (spec §2.5): a transparent [CardSize.STICKER] square with the whole route in its top 60% (a white
+     * 4-unit line over a black 55% 7-unit one, no start or end point) and the three numbers below, white with two black
+     * shadows (3 and 6 units). Nothing else: no map, no title, no "bikeRecoder".
+     */
+    fun sticker(inputs: VideoInputs, facts: CardFacts): Bitmap {
+        val w = CardSize.STICKER.width
+        val h = CardSize.STICKER.height
+        val unit = min(w, h) / 360f
+        val inset = STICKER_INSET * unit
+        val routeBox = Box(inset, inset, w - 2 * inset, h * STICKER_ROUTE_SHARE - 2 * inset)
+        val camera = CameraPath.overviewInBox(inputs.timeline.points.map { it.point }, w, h, routeBox)
+        val route = path(flat(inputs, camera, w, h, emptyList()))
+
+        val image = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        try {
+            val canvas = Canvas(image)
+            canvas.drawPath(route, stroke(Color.BLACK, STICKER_CASING_WIDTH * unit).apply { alpha = (STICKER_CASING_ALPHA * 255).roundToInt() })
+            canvas.drawPath(route, stroke(Color.WHITE, STICKER_LINE_WIDTH * unit))
+            val left = PAD * unit
+            val column = (w - 2 * left) / COLUMNS
+            val top = h * STICKER_ROUTE_SHARE
+            facts.cells.forEachIndexed { i, it ->
+                cell(
+                    canvas, it, left + i * column, column, top, STICKER_LABEL, STICKER_VALUE, STICKER_VALUE_SIZE, unit,
+                    labelSize = STICKER_LABEL_SIZE, shadows = STICKER_SHADOWS,
+                )
+            }
             return image
         } catch (e: Throwable) {
             image.recycle()
@@ -158,7 +266,7 @@ class ShareCardRenderer(
         val lineCentre = band.y + band.h / 2 - TITLE_ABOVE_CENTRE * unit
         val badge = BADGE * unit
         TitleBadge.draw(canvas, facts.activity, left, lineCentre - badge / 2, badge, 1f)
-        val title = listOfNotNull(facts.title, facts.region).joinToString(" · ")
+        val title = titleLine(facts)
         val titleX = left + badge + BADGE_GAP * unit
         val titlePaint = text(unit, TITLE_SIZE, Color.WHITE, bold = true)
         fit(titlePaint, title, band.x + band.w - PAD * unit - titleX)
@@ -192,29 +300,110 @@ class ShareCardRenderer(
             cells.forEachIndexed { i, it -> cell(canvas, it, left + i * column, column, band.y, FEED_LABEL, FEED_VALUE, VALUE_SIZE, unit) }
         }
 
-        val baseline = band.y + band.h - LAST_ROW_ABOVE_BOTTOM * unit
-        val brand = text(unit, BRAND_SIZE, white(BRAND_ALPHA), align = Paint.Align.RIGHT)
-        val right = band.x + band.w - PAD * unit
-        canvas.drawText(BRAND, right, baseline, brand)
+        val brandWidth = drawBrand(canvas, band, unit)
         val small = if (size == CardSize.STORY) facts.heart else facts.smallLine
         small?.let { line ->
             val paint = text(unit, SMALL_SIZE, white(SMALL_ALPHA))
-            fit(paint, line, right - brand.measureText(BRAND) - BADGE_GAP * unit - left)
-            canvas.drawText(line, left, baseline, paint)
+            fit(paint, line, band.right - PAD * unit - brandWidth - BADGE_GAP * unit - left)
+            canvas.drawText(line, left, band.y + band.h - LAST_ROW_ABOVE_BOTTOM * unit, paint)
         }
     }
 
-    /** A cell: its label small, its value large and bold below, shrunk to [width] if need be; baselines in units from [top]. */
+    /**
+     * The photo card's band (spec §2.3), right of the [route] square: the title line (no badge) and the date line, the
+     * three numbers in a row below them, the block centred in [band]; "bikeRecoder" at the bottom right.
+     */
+    private fun drawPhotoText(canvas: Canvas, facts: CardFacts, band: Box, route: Box, unit: Float) {
+        val left = route.right + PAD * unit
+        val width = band.right - PAD * unit - left
+        val centre = band.y + band.h / 2
+        val title = titleLine(facts)
+        val titlePaint = text(unit, TITLE_SIZE, Color.WHITE, bold = true)
+        fit(titlePaint, title, width)
+        canvas.drawText(title, left, centre + PHOTO_TITLE * unit, titlePaint)
+        val datePaint = text(unit, DATE_SIZE, white(DATE_ALPHA))
+        fit(datePaint, facts.dateLine, width)
+        canvas.drawText(facts.dateLine, left, centre + PHOTO_DATE * unit, datePaint)
+        val column = width / COLUMNS
+        facts.cells.forEachIndexed { i, it -> cell(canvas, it, left + i * column, column, centre, PHOTO_LABEL, PHOTO_VALUE, VALUE_SIZE, unit) }
+        drawBrand(canvas, band, unit)
+    }
+
+    /** "bikeRecoder" at [band]'s bottom right; returns its width. */
+    private fun drawBrand(canvas: Canvas, band: Box, unit: Float): Float {
+        val brand = text(unit, BRAND_SIZE, white(BRAND_ALPHA), align = Paint.Align.RIGHT)
+        canvas.drawText(BRAND, band.right - PAD * unit, band.y + band.h - LAST_ROW_ABOVE_BOTTOM * unit, brand)
+        return brand.measureText(BRAND)
+    }
+
+    /** "title · region", or the title alone without a region. */
+    private fun titleLine(facts: CardFacts) = listOfNotNull(facts.title, facts.region).joinToString(" · ")
+
+    /**
+     * A cell: its label small, its value large and bold below, shrunk to [width] if need be; baselines in units from [top].
+     * With [shadows] (blur radii in units) each text is drawn once per black shadow, in that order.
+     */
     private fun cell(
         canvas: Canvas, cell: Pair<String, String>, x: Float, width: Float, top: Float,
         labelAt: Float, valueAt: Float, valueSize: Float, unit: Float,
+        labelSize: Float = LABEL_SIZE, shadows: List<Float> = emptyList(),
     ) {
-        val label = text(unit, LABEL_SIZE, white(LABEL_ALPHA))
+        val label = text(unit, labelSize, white(LABEL_ALPHA))
         fit(label, cell.first, width - CELL_GAP * unit)
-        canvas.drawText(cell.first, x, top + labelAt * unit, label)
+        shadowed(canvas, cell.first, x, top + labelAt * unit, label, shadows, unit)
         val value = text(unit, valueSize, Color.WHITE, bold = true)
         fit(value, cell.second, width - CELL_GAP * unit)
-        canvas.drawText(cell.second, x, top + valueAt * unit, value)
+        shadowed(canvas, cell.second, x, top + valueAt * unit, value, shadows, unit)
+    }
+
+    private fun shadowed(canvas: Canvas, text: String, x: Float, y: Float, paint: Paint, shadows: List<Float>, unit: Float) {
+        if (shadows.isEmpty()) return canvas.drawText(text, x, y, paint)
+        for (radius in shadows) {
+            paint.setShadowLayer(radius * unit, 0f, 0f, Color.BLACK)
+            canvas.drawText(text, x, y, paint)
+        }
+        paint.clearShadowLayer()
+    }
+
+    /** [photo] cropped about its centre ([ShareCardLayout.cover]) to fill a [w]×[h] [canvas]. */
+    private fun cover(canvas: Canvas, photo: Bitmap, w: Int, h: Int) {
+        val src = ShareCardLayout.cover(photo.width, photo.height, w, h)
+        val rect = Rect(src.left.roundToInt(), src.y.roundToInt(), src.right.roundToInt(), src.bottom.roundToInt())
+        canvas.drawBitmap(photo, rect, RectF(0f, 0f, w.toFloat(), h.toFloat()), FILTER)
+    }
+
+    /**
+     * [photo] cropped to fill [w]×[h], at 1/[BLUR_SCALE] of that size: halved step by step, so each step averages its
+     * pixels (one filtered jump would skip most of them and sparkle). Scaled back up with filtering it is the blur.
+     */
+    private fun blurred(photo: Bitmap, w: Int, h: Int): Bitmap {
+        var scale = 2
+        var current = Bitmap.createBitmap(max(1, w / scale), max(1, h / scale), Bitmap.Config.ARGB_8888)
+        cover(Canvas(current), photo, current.width, current.height)
+        while (scale < BLUR_SCALE) {
+            scale *= 2
+            val next = Bitmap.createBitmap(max(1, w / scale), max(1, h / scale), Bitmap.Config.ARGB_8888)
+            Canvas(next).drawBitmap(current, null, RectF(0f, 0f, next.width.toFloat(), next.height.toFloat()), FILTER)
+            current.recycle()
+            current = next
+        }
+        return current
+    }
+
+    /** [projected]'s runs as one path (one stroke: a translucent line does not darken where runs meet). */
+    private fun path(projected: RouteOverlay.Projected) = Path().apply {
+        for (run in projected.runs) {
+            moveTo(run.xy[0], run.xy[1])
+            for (i in 1 until run.xy.size / 2) lineTo(run.xy[2 * i], run.xy[2 * i + 1])
+        }
+    }
+
+    private fun stroke(color: Int, width: Float) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = width
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        this.color = color
     }
 
     /** Shrinks [paint]'s text size so [text] is at most [width] wide. */
@@ -293,6 +482,36 @@ class ShareCardRenderer(
         private const val SMALL_ALPHA = 0.85f
         private const val BRAND_SIZE = 10f
         private const val BRAND_ALPHA = 0.85f
+
+        /** Photo card (spec §2.3): the band's darkness, the route's width, the photo's dot radius. */
+        private const val PHOTO_BAND_ALPHA = 0.45f
+        private const val MINI_ROUTE_WIDTH = 2.4f
+        private const val TAKEN_DOT = 4f
+
+        /** The photo card's baselines from its band's centre: the title, the date, the cells' labels and values. */
+        private const val PHOTO_TITLE = -30f
+        private const val PHOTO_DATE = -14f
+        private const val PHOTO_LABEL = 6f
+        private const val PHOTO_VALUE = 26f
+
+        /** A landscape slide's blurred fill is the photo at this fraction of the slide's size, scaled back up (spec §2.4). */
+        private const val BLUR_SCALE = 16
+
+        /** Sticker (spec §2.5): the route's share of the height from the top and its room to that area's edges. */
+        private const val STICKER_ROUTE_SHARE = 0.6f
+        private const val STICKER_INSET = 16f
+        private const val STICKER_LINE_WIDTH = 4f
+        private const val STICKER_CASING_WIDTH = 7f
+        private const val STICKER_CASING_ALPHA = 0.55f
+        private val STICKER_SHADOWS = listOf(6f, 3f)
+
+        /** The sticker's cells: sizes, and baselines from the top of the area below the route. */
+        private const val STICKER_LABEL_SIZE = 13f
+        private const val STICKER_VALUE_SIZE = 28f
+        private const val STICKER_LABEL = 52f
+        private const val STICKER_VALUE = 86f
+
+        private val FILTER = Paint(Paint.FILTER_BITMAP_FLAG)
 
         private const val TILE_SIZE = 512.0
 

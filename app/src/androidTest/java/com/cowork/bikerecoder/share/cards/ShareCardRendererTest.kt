@@ -2,7 +2,12 @@ package com.cowork.bikerecoder.share.cards
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.Shader
 import android.util.Log
 import androidx.compose.ui.graphics.toArgb
 import androidx.test.core.app.ApplicationProvider
@@ -25,6 +30,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.time.LocalDate
@@ -36,8 +42,9 @@ import kotlin.math.pow
 import kotlin.math.sin
 
 /**
- * The satellite share card (spec §2.2) on a fixed trip: a 5 km bike loop near 36.4 N 128.2 E. The map is a style of one
- * plain colour (deterministic), a source whose style cannot be had (MapSnapshots falls back: no map), or none at all.
+ * The share cards (spec §2.2–§2.5) on a fixed trip: a 5 km bike loop near 36.4 N 128.2 E. The satellite card's map is a
+ * style of one plain colour (deterministic), a source whose style cannot be had (MapSnapshots falls back: no map), or none
+ * at all; the photo card and slides draw solid-colour test photos.
  */
 @RunWith(AndroidJUnit4::class)
 class ShareCardRendererTest {
@@ -149,6 +156,85 @@ class ShareCardRendererTest {
         assertTrue("route on the dark card", feed.count(map) { near(it, bike, 8) } > 0)
     }
 
+    /** Spec §2.3: the photo fills the card (no top band), the bottom band is dark, the photo's place a dot in the bike colour. */
+    @Test
+    fun photoCardSizeAndBand() {
+        val photo = solid(1200, 1600, PHOTO_COLOR)
+        val card = renderer().photoCard(inputs, facts, CardSize.FEED, photo, inputs.timeline.points.first().point)
+        assertEquals(1080, card.width)
+        assertEquals(1350, card.height)
+        assertEquals(PHOTO_COLOR, card.getPixel(0, 0))
+        val boxes = ShareCardLayout.photoCard(CardSize.FEED)
+        val bottom = card.meanLuminance(boxes.bottom)
+        Log.i(TAG, "photo card bottom band $bottom")
+        assertTrue("bottom $bottom", bottom < 0.45)
+        assertTrue("dot where the photo was taken", card.count(boxes.map) { near(it, bike, 8) } > 0)
+    }
+
+    /** Spec §2.3: in a story, nothing in the top and bottom 14% but the photo itself. */
+    @Test
+    fun photoCardStoryKeepsSafeZones() {
+        val card = renderer().photoCard(inputs, facts, CardSize.STORY, solid(1200, 1600, PHOTO_COLOR), null)
+        val other = { c: Int -> c != PHOTO_COLOR }
+        assertEquals(0, count(card, 0, 0, 1080, 268, other))
+        assertEquals(0, count(card, 0, 1652, 1080, 1920, other))
+    }
+
+    /** Spec §2.4: a portrait photo is cropped to fill the slide. */
+    @Test
+    fun photoSlidePortraitFills() {
+        val slide = renderer().photoSlide(solid(900, 1600, Color.RED), CardSize.FEED)
+        assertEquals(1080, slide.width)
+        assertEquals(1350, slide.height)
+        for ((x, y) in listOf(0 to 0, 1079 to 0, 0 to 1349, 1079 to 1349)) assertEquals("($x, $y)", Color.RED, slide.getPixel(x, y))
+    }
+
+    /**
+     * Spec §2.4: a landscape photo lies across the slide's width over a blurred fill of itself. The photo is blue on the
+     * left and green on the right, so both the fill (row 100, above the photo) and the photo (the centre row) change
+     * colour at x = 540: gradually in the blurred fill, at once in the photo.
+     */
+    @Test
+    fun photoSlideLandscapeBlurBehind() {
+        val photo = Bitmap.createBitmap(1600, 900, Bitmap.Config.ARGB_8888).apply {
+            Canvas(this).apply {
+                drawColor(Color.GREEN)
+                drawRect(0f, 0f, 800f, 900f, Paint().apply { color = Color.BLUE })
+            }
+        }
+        val slide = renderer().photoSlide(photo, CardSize.FEED)
+        assertEquals(1080, slide.width)
+        assertEquals(1350, slide.height)
+        val mixed = { c: Int -> !near(c, Color.BLUE, 24) && !near(c, Color.GREEN, 24) }
+        val blurred = count(slide, 0, 100, 1080, 101, mixed)
+        val sharp = count(slide, 0, 675, 1080, 676, mixed)
+        Log.i(TAG, "mixed pixels: row 100 $blurred, centre row $sharp")
+        assertTrue("row 100 ${Integer.toHexString(slide.getPixel(10, 100))}", near(slide.getPixel(10, 100), Color.BLUE, 8))
+        assertTrue("blurred row $blurred", blurred >= 8)
+        assertTrue("centre left", near(slide.getPixel(10, 675), Color.BLUE, 8))
+        assertTrue("centre right", near(slide.getPixel(1070, 675), Color.GREEN, 8))
+        assertTrue("sharp row $sharp", sharp <= 3)
+    }
+
+    /** Spec §2.5: transparent around the route and the numbers. */
+    @Test
+    fun stickerTransparentCorners() {
+        val sticker = renderer().sticker(inputs, facts)
+        assertEquals(1080, sticker.width)
+        assertEquals(1080, sticker.height)
+        for ((x, y) in listOf(0 to 0, 1079 to 0, 0 to 1079, 1079 to 1079)) assertEquals("($x, $y)", 0, Color.alpha(sticker.getPixel(x, y)))
+        val route = count(sticker, 0, 0, 1080, 648) { Color.alpha(it) == 255 }
+        Log.i(TAG, "opaque route pixels $route")
+        assertTrue("opaque route pixels $route", route > 0)
+    }
+
+    @Test
+    fun stickerPngKeepsAlpha() {
+        val bytes = ByteArrayOutputStream().also { renderer().sticker(inputs, facts).compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        assertEquals(0, Color.alpha(decoded.getPixel(0, 0)))
+    }
+
     /**
      * For looking at, only when asked: `-Pandroid.testInstrumentationRunnerArguments.screenshots=true`. The cards go to the
      * app's external files dir (`share-cards/`).
@@ -165,6 +251,25 @@ class ShareCardRendererTest {
         save("satellite-story-hike", runBlocking {
             val hike = inputs.copy(activity = ActivityType.HIKE, segmentActivities = listOf(ActivityType.HIKE))
             ShareCardRenderer(context, satellite = null, plain = mapped).satellite(hike, cardFacts(hike, "경북 상주시"), CardSize.STORY)
+        })
+        val photo = gradient(1200, 1600)
+        val taken = inputs.timeline.points[inputs.timeline.points.size / 3].point
+        save("photo-feed", renderer().photoCard(inputs, facts, CardSize.FEED, photo, taken))
+        save("photo-story", renderer().photoCard(inputs, facts, CardSize.STORY, photo, taken))
+        save("slide-portrait-feed", renderer().photoSlide(photo, CardSize.FEED))
+        save("slide-landscape-feed", renderer().photoSlide(gradient(1600, 900), CardSize.FEED))
+        save("slide-landscape-story", renderer().photoSlide(gradient(1600, 900), CardSize.STORY))
+        save("sticker", renderer().sticker(inputs, facts))
+    }
+
+    private fun renderer() = ShareCardRenderer(context, satellite = null, plain = null)
+
+    private fun solid(w: Int, h: Int, color: Int) = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply { eraseColor(color) }
+
+    /** A photo stand-in for the screenshots: sky blue at the top to green at the bottom. */
+    private fun gradient(w: Int, h: Int) = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply {
+        Canvas(this).drawPaint(Paint().apply {
+            shader = LinearGradient(0f, 0f, w / 3f, h.toFloat(), 0xFF7FB3E0.toInt(), 0xFF3E6B2F.toInt(), Shader.TileMode.CLAMP)
         })
     }
 
@@ -202,6 +307,7 @@ class ShareCardRendererTest {
     private companion object {
         const val TAG = "ShareCardRendererTest"
         const val MAP_COLOR = 0xFFF8F4F0.toInt()
+        const val PHOTO_COLOR = 0xFF6699CC.toInt()
 
         /** A 5 km circle near 36.4 N 128.2 E, one point every ~10 m at 5 m/s, one bike segment on 2026-11-03. */
         fun loop(): VideoInputs {
