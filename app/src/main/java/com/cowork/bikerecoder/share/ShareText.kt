@@ -94,12 +94,13 @@ fun normalizeHashtags(input: String): String =
     input.split(WHITESPACE).mapNotNull { cleanTag(it) }.distinct().joinToString(" ")
 
 /**
- * The auto share text (spec §3.1), up to four lines: title, date, numbers, hashtags (default, then place; repeats keep
- * the first). A bike's numbers leave out the ascent under 1 m and the average when there is no moving time; a run's or
+ * The auto share text (spec §3.1), up to four lines: title, date, numbers, hashtags (default, region, then place; repeats
+ * keep the first). A bike's numbers leave out the ascent under 1 m and the average when there is no moving time; a run's or
  * walk's are distance, time and average pace, a hike's the hike time, ascent and highest point ([ActivityText]). No
- * hashtags means no fourth line. The caller passes the [defaultTags] of the dominant activity.
+ * hashtags means no fourth line. The caller passes the [defaultTags] of the dominant activity and the [placeTags]
+ * already formed ("#낙동강자전거길", spec §4.5).
  */
-fun autoShareText(facts: ShareFacts, defaultTags: String): String {
+fun autoShareText(facts: ShareFacts, defaultTags: String, placeTags: List<String> = emptyList()): String {
     val numbers = when (facts.activity) {
         ActivityType.BIKE -> buildList {
             add(kmText(facts.distanceM))
@@ -115,7 +116,7 @@ fun autoShareText(facts: ShareFacts, defaultTags: String): String {
         )
         ActivityType.HIKE -> ActivityText.shareHikeNumbers(facts.elapsedMs, facts.ascentM, facts.maxAltitudeM)
     }
-    val tags = (normalizeHashtags(defaultTags).split(WHITESPACE).filter { it.isNotEmpty() } + regionTags(facts.regionName))
+    val tags = (normalizeHashtags(defaultTags).split(WHITESPACE).filter { it.isNotEmpty() } + regionTags(facts.regionName) + placeTags)
         .distinct()
         .joinToString(" ")
     return buildList {
@@ -146,15 +147,21 @@ enum class Mood(val emoji: String, val word: String) {
 }
 
 /** The chip is on while its hashtag stands as a word in [text]; "#상쾌함" is not "#상쾌". */
-fun moodOn(text: String, mood: Mood): Boolean = moodRegex(mood).containsMatchIn(text)
+fun moodOn(text: String, mood: Mood): Boolean = tagOn(text, mood.tag)
+
+/** Flips the chip: [toggleTag] of its hashtag. */
+fun toggleMood(text: String, mood: Mood): String = toggleTag(text, mood.tag)
+
+/** [tag] stands as a whole word in [text]; "#북한산둘레길" is not "#북한산". */
+fun tagOn(text: String, tag: String): Boolean = tagRegex(tag).containsMatchIn(text)
 
 /**
- * Flips the chip: off → appends " #상쾌" to the last line that starts with "#" (a new line at the end when there is none);
- * on → removes every such word and squeezes the spaces it leaves.
+ * Flips [tag]: off → appends " [tag]" to the last line that starts with "#" (a new line at the end when there is none);
+ * on → removes every such word and squeezes the spaces it leaves, dropping a line that ends up empty.
  */
-fun toggleMood(text: String, mood: Mood): String {
-    if (!moodOn(text, mood)) return withTag(text, mood.tag)
-    val regex = moodRegex(mood)
+fun toggleTag(text: String, tag: String): String {
+    if (!tagOn(text, tag)) return withTag(text, tag)
+    val regex = tagRegex(tag)
     val kept = text.split("\n").mapNotNull { line ->
         if (!regex.containsMatchIn(line)) return@mapNotNull line
         line.replace(regex, "").replace(SPACES, " ").trim().ifEmpty { null }
@@ -175,7 +182,7 @@ private fun withTag(text: String, tag: String): String {
     }
 }
 
-private fun moodRegex(mood: Mood) = Regex("(^|\\s)${Regex.escape(mood.tag)}(?=\\s|$)")
+private fun tagRegex(tag: String) = Regex("(^|\\s)${Regex.escape(tag)}(?=\\s|$)")
 
 /** The record the text was written against (spec §3.4): "finished rides:metres", e.g. "3:32140". */
 fun shareStamp(rides: Int, distanceM: Double): String = "$rides:${distanceM.roundToLong()}"
