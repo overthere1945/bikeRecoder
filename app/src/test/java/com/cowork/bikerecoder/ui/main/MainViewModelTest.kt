@@ -215,6 +215,22 @@ class MainViewModelTest {
     }
 
     @Test
+    fun aRecordingKeptForTomorrowBringsTheMultiDayBanner() = runTest(dispatcher) {
+        // [● 기록 시작] made a single-day trip; [정지] → [내일 이어서 하기] makes it multi-day before the summary shows.
+        val tripId = tripManager.startTrip(TripType.SINGLE_DAY, RouteProfile.CYCLEWAY_FIRST, emptyList()).id
+        ride.value = recording(tripId, distanceM = 5_000.0, movingMs = 900_000)
+        val vm = viewModel()
+        assertNull(vm.state.value.banner, "a single-day trip has no banner")
+
+        tripManager.continueTomorrow(tripId)
+        ride.value = RideUiState.Finished(segment(1, tripId), emptyList(), error = null)
+        runCurrent()
+
+        assertEquals(TripBanner(tripId, "주행 기록", 1, BannerAction.NEXT_DESTINATION), vm.state.value.banner)
+        assertEquals(vm.state.value.banner, vm.state.value.visibleBanner)
+    }
+
+    @Test
     fun interruptedRideIsOfferedOnlyWhenIdle() = runTest(dispatcher) {
         openSegment = segment(id = 4, tripId = 9)
         val vm = viewModel()

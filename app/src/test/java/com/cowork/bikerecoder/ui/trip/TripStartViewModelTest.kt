@@ -3,7 +3,9 @@ package com.cowork.bikerecoder.ui.trip
 import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.RouteProfile
+import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStore
+import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.trip.TripManager
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripType
@@ -92,19 +94,16 @@ class TripStartViewModelTest {
     }
 
     @Test
-    fun noActiveTripAsksTypeAndStartsTheChosenType() = runTest(dispatcher) {
+    fun noActiveTripStartsASingleDayTripAtOnce() = runTest(dispatcher) {
         val vm = viewModel()
 
         vm.onStartPressed(plan)
         runCurrent()
-        assertEquals(TripStartState.AskType, vm.state.value)
 
-        vm.chooseType(TripType.MULTI_DAY)
-        runCurrent()
-
+        // V1.9.1: no type question; whether it lasts several days is chosen when it ends.
         val ready = vm.state.value as TripStartState.Ready
         val trip = store.trips.getValue(ready.tripId)
-        assertEquals(TripType.MULTI_DAY, trip.type)
+        assertEquals(TripType.SINGLE_DAY, trip.type)
         assertEquals(RouteProfile.BALANCED, trip.profile)
         assertEquals(listOf("남산", "여의도"), store.stops(ready.tripId).map { it.name })
 
@@ -113,18 +112,16 @@ class TripStartViewModelTest {
     }
 
     @Test
-    fun activeSingleDayTripAsksTypeAndStartingCompletesIt() = runTest(dispatcher) {
+    fun anActiveSingleDayTripIsCompletedByTheNewStartWithoutAsking() = runTest(dispatcher) {
         val old = existingTrip(TripType.SINGLE_DAY)
         val vm = viewModel()
 
         vm.onStartPressed(plan)
         runCurrent()
-        assertEquals(TripStartState.AskType, vm.state.value)
-        vm.chooseType(TripType.SINGLE_DAY)
-        runCurrent()
 
         assertEquals(TripStatus.COMPLETED, store.trips.getValue(old).status)
         val ready = vm.state.value as TripStartState.Ready
+        assertNotEquals(old, ready.tripId)
         assertEquals(TripType.SINGLE_DAY, store.trips.getValue(ready.tripId).type)
     }
 
@@ -139,7 +136,68 @@ class TripStartViewModelTest {
         val ask = vm.state.value as TripStartState.AskContinue
         assertEquals(old, ask.trip.id)
         assertEquals("여의도", ask.destinationName)
-        assertEquals("여의도 여행을 이어서 진행할까요?", continueQuestion(ask.destinationName))
+        assertEquals(1, ask.day)
+        assertNull(ask.past, "nothing reads the records here")
+        val card = TripCards.continueTrip(ask)
+        assertEquals("여행 이어서 · 1일째", card.title)
+        assertEquals("여의도", card.subtitle)
+        assertTrue(card.recommended)
+    }
+
+    @Test
+    fun theContinueQuestionTellsTheDayAndWhatWasRecorded() = runTest(dispatcher) {
+        val old = existingTrip(TripType.MULTI_DAY)
+        // Began two days before today (the clock is 1 000 ms after the epoch, Asia/Seoul).
+        store.trips[old] = store.trips.getValue(old).copy(createdAt = 1_000L - 2 * 86_400_000L)
+        val asked = mutableListOf<Long>()
+        val vm = TripStartViewModel(
+            tripManager,
+            store,
+            pastRecords = { id ->
+                asked += id
+                PastRecords(days = 2, distanceM = 42_305.0)
+            },
+        ).also { runCurrent() }
+
+        vm.onRecordPressed()
+        runCurrent()
+
+        val ask = vm.state.value as TripStartState.AskContinue
+        assertEquals(listOf(old), asked)
+        assertEquals(3, ask.day)
+        assertEquals(PastRecords(2, 42_305.0), ask.past)
+        assertEquals("여행 이어서 · 3일째", TripCards.continueTrip(ask).title)
+        assertEquals("여의도 · 지난 기록 2일, 42.30km", TripCards.continueTrip(ask).subtitle)
+    }
+
+    @Test
+    fun recordsThatCannotBeReadOnlyShortenTheContinueQuestion() = runTest(dispatcher) {
+        existingTrip(TripType.MULTI_DAY)
+        val log = RecordingLog()
+        val vm = TripStartViewModel(tripManager, store, log, pastRecords = { throw IOException("disk") }).also { runCurrent() }
+
+        vm.onStartPressed(plan)
+        runCurrent()
+
+        val ask = vm.state.value as TripStartState.AskContinue
+        assertNull(ask.past)
+        assertEquals("여의도", TripCards.continueTrip(ask).subtitle)
+        assertEquals(1, log.messages.size)
+    }
+
+    @Test
+    fun pastRecordsCountTheDatesAndTheDistanceOfRealRides() {
+        val day1 = LocalDate.of(2026, 10, 30)
+        val day2 = LocalDate.of(2026, 10, 31)
+        fun segment(id: Long, date: LocalDate, m: Double) =
+            RideSegment(id, 1, 0, 1, date, SegmentTotals.ZERO.copy(distanceM = m))
+
+        val past = pastRecordsOf(
+            listOf(segment(1, day1, 10_000.0), segment(2, day1, 5_000.0), segment(3, day2, 0.0), segment(4, day2, 2_500.0)),
+        )
+
+        assertEquals(PastRecords(days = 2, distanceM = 17_500.0), past)
+        assertEquals(PastRecords(0, 0.0), pastRecordsOf(listOf(segment(5, day1, 0.0))), "an empty segment is no ride")
     }
 
     @Test
@@ -206,24 +264,25 @@ class TripStartViewModelTest {
     }
 
     @Test
-    fun startNewAsksTypeThenCompletesThePreviousTrip() = runTest(dispatcher) {
+    fun startNewStartsASingleDayTripAndCompletesThePreviousOne() = runTest(dispatcher) {
         val old = existingTrip(TripType.MULTI_DAY)
         val vm = viewModel()
 
         vm.onStartPressed(plan)
         runCurrent()
         vm.startNew()
-        assertEquals(TripStartState.AskType, vm.state.value)
-        vm.chooseType(TripType.SINGLE_DAY)
         runCurrent()
 
         assertEquals(TripStatus.COMPLETED, store.trips.getValue(old).status)
         val ready = vm.state.value as TripStartState.Ready
         assertTrue(ready.tripId != old)
+        assertEquals(TripType.SINGLE_DAY, store.trips.getValue(ready.tripId).type)
+        assertEquals(listOf("남산", "여의도"), store.stops(ready.tripId).map { it.name })
     }
 
     @Test
-    fun dismissingADialogStartsNothing() = runTest(dispatcher) {
+    fun dismissingTheQuestionStartsNothing() = runTest(dispatcher) {
+        val old = existingTrip(TripType.MULTI_DAY)
         val vm = viewModel()
 
         vm.onStartPressed(plan)
@@ -232,7 +291,8 @@ class TripStartViewModelTest {
         runCurrent()
 
         assertEquals(TripStartState.Idle, vm.state.value)
-        assertTrue(store.trips.isEmpty())
+        assertEquals(setOf(old), store.trips.keys)
+        assertEquals(TripStatus.ACTIVE, store.trips.getValue(old).status)
     }
 
     @Test
@@ -258,10 +318,8 @@ class TripStartViewModelTest {
 
         vm.onRecordPressed()
         runCurrent()
-        assertEquals(TripStartState.AskType, vm.state.value)
-        vm.chooseType(TripType.SINGLE_DAY)
-        runCurrent()
 
+        // No dialog at all: the record screen opens with a new single-day trip.
         val ready = vm.state.value as TripStartState.Ready
         val trip = store.trips.getValue(ready.tripId)
         assertEquals(TripType.SINGLE_DAY, trip.type)
@@ -274,8 +332,6 @@ class TripStartViewModelTest {
         val vm = TripStartViewModel(tripManager, store, defaultProfile = { RouteProfile.SHORTEST })
 
         vm.onRecordPressed()
-        runCurrent()
-        vm.chooseType(TripType.MULTI_DAY)
         runCurrent()
 
         val ready = vm.state.value as TripStartState.Ready
@@ -301,6 +357,7 @@ class TripStartViewModelTest {
 
     @Test
     fun aPlanStartAfterARecordStartUsesThePlanAgain() = runTest(dispatcher) {
+        existingTrip(TripType.MULTI_DAY)
         val vm = viewModel()
         vm.onRecordPressed()
         runCurrent()
@@ -308,7 +365,7 @@ class TripStartViewModelTest {
 
         vm.onStartPressed(plan)
         runCurrent()
-        vm.chooseType(TripType.SINGLE_DAY)
+        vm.startNew()
         runCurrent()
 
         val ready = vm.state.value as TripStartState.Ready
@@ -397,18 +454,18 @@ class TripStartViewModelTest {
     }
 
     @Test
-    fun guidingANewTripFirstEndsTheRunningRecordingAsASegmentWithoutSummary() = runTest(dispatcher) {
+    fun startNewOnARecordedMultiDayTripEndsItsRecordingFirstAsASegmentWithoutSummary() = runTest(dispatcher) {
         val r = Recording(this)
-        val old = existingTrip(TripType.SINGLE_DAY)
+        val old = existingTrip(TripType.MULTI_DAY)
         val vm = r.viewModel(old).also { runCurrent() }
 
         vm.onStartPressed(plan)
         runCurrent()
         // Started while the question is open: the safety net (ruling U2) ends it.
         r.record(old)
-        assertEquals(TripStartState.AskType, vm.state.value)
+        assertInstanceOf(TripStartState.AskContinue::class.java, vm.state.value)
         assertEquals(null, r.statusWhenEnded, "asking ends nothing")
-        vm.chooseType(TripType.SINGLE_DAY)
+        vm.startNew()
         runCurrent()
 
         val ready = vm.state.value as TripStartState.Ready
@@ -421,25 +478,20 @@ class TripStartViewModelTest {
     }
 
     @Test
-    fun startNewOnARecordedMultiDayTripEndsItsRecordingFirst() = runTest(dispatcher) {
+    fun recordPressedWhileARecordingRunsOpensThatRecording() = runTest(dispatcher) {
+        // The map's [● 기록 시작] had not caught up with a recording that just started: nothing is ended or started.
         val r = Recording(this)
-        val old = existingTrip(TripType.MULTI_DAY)
+        val old = existingTrip(TripType.SINGLE_DAY)
+        r.record(old)
         val vm = r.viewModel(old).also { runCurrent() }
 
-        vm.onStartPressed(plan)
-        runCurrent()
-        // Started while the question is open: the safety net (ruling U2) ends it.
-        r.record(old)
-        assertInstanceOf(TripStartState.AskContinue::class.java, vm.state.value)
-        vm.startNew()
-        vm.chooseType(TripType.MULTI_DAY)
+        vm.onRecordPressed()
         runCurrent()
 
-        assertInstanceOf(TripStartState.Ready::class.java, vm.state.value)
-        assertEquals(TripStatus.ACTIVE, r.statusWhenEnded)
-        assertNotNull(r.rideStore.segments(old).single().endedAt)
-        assertEquals(TripStatus.COMPLETED, store.trips.getValue(old).status)
-        assertEquals(RideUiState.Idle, r.controller.ui.value)
+        assertEquals(TripStartState.Ready(old), vm.state.value)
+        assertEquals(null, r.statusWhenEnded)
+        assertEquals(setOf(old), store.trips.keys)
+        assertInstanceOf(RideUiState.Active::class.java, r.controller.ui.value)
     }
 
     @Test
@@ -464,7 +516,7 @@ class TripStartViewModelTest {
     @Test
     fun aRecordingThatCouldNotBeSavedIsNoticedWithTheStart() = runTest(dispatcher) {
         val r = Recording(this)
-        val old = existingTrip(TripType.SINGLE_DAY)
+        val old = existingTrip(TripType.MULTI_DAY)
         val vm = r.viewModel(old).also { runCurrent() }
 
         vm.onStartPressed(plan)
@@ -472,7 +524,7 @@ class TripStartViewModelTest {
         // Started while the question is open: the safety net (ruling U2) ends it.
         r.record(old)
         r.rideStore.failAppend = true
-        vm.chooseType(TripType.SINGLE_DAY)
+        vm.startNew()
         runCurrent()
 
         val ready = vm.state.value as TripStartState.Ready
@@ -483,14 +535,14 @@ class TripStartViewModelTest {
     @Test
     fun aCleanStopHasNoNotice() = runTest(dispatcher) {
         val r = Recording(this)
-        val old = existingTrip(TripType.SINGLE_DAY)
+        val old = existingTrip(TripType.MULTI_DAY)
         val vm = r.viewModel(old).also { runCurrent() }
 
         vm.onStartPressed(plan)
         runCurrent()
         // Started while the question is open: the safety net (ruling U2) ends it.
         r.record(old)
-        vm.chooseType(TripType.SINGLE_DAY)
+        vm.startNew()
         runCurrent()
 
         assertNull((vm.state.value as TripStartState.Ready).recordNotice)
@@ -499,14 +551,14 @@ class TripStartViewModelTest {
     @Test
     fun withoutAutoStartTheEndedRecordingsSummaryStays() = runTest(dispatcher) {
         val r = Recording(this, AppSettings(autoStartRecordingWithNavigation = false))
-        val old = existingTrip(TripType.SINGLE_DAY)
+        val old = existingTrip(TripType.MULTI_DAY)
         val vm = r.viewModel(old).also { runCurrent() }
 
         vm.onStartPressed(plan)
         runCurrent()
         // Started while the question is open: the safety net (ruling U2) ends it.
         r.record(old)
-        vm.chooseType(TripType.SINGLE_DAY)
+        vm.startNew()
         runCurrent()
 
         assertInstanceOf(TripStartState.Ready::class.java, vm.state.value)
@@ -532,7 +584,7 @@ class TripStartViewModelTest {
         pending = false
         vm.onStartPressed(plan)
         runCurrent()
-        assertEquals(TripStartState.AskType, vm.state.value)
+        assertInstanceOf(TripStartState.Ready::class.java, vm.state.value)
     }
 
 
@@ -720,7 +772,7 @@ class TripStartViewModelTest {
     }
 
     @Test
-    fun answerAfterTheRecordingEndedFallsBackToTheUsualQuestions() = runTest(dispatcher) {
+    fun answerAfterTheRecordingEndedFallsBackToTheUsualStart() = runTest(dispatcher) {
         val r = Recording(this)
         val old = recordedTrip()
         r.record(old)
@@ -734,7 +786,10 @@ class TripStartViewModelTest {
         vm.keepRecording()
         runCurrent()
 
-        assertEquals(TripStartState.AskType, vm.state.value)
+        // No multi-day trip to continue: a new trip of the plan, without a question.
+        val ready = vm.state.value as TripStartState.Ready
+        assertNotEquals(old, ready.tripId)
+        assertEquals(listOf("남산", "여의도"), store.stops(ready.tripId).map { it.name })
         assertTrue(store.stops(old).isEmpty(), "nothing was attached")
     }
 

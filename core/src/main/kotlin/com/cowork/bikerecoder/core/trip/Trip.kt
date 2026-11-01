@@ -51,10 +51,13 @@ interface OfflineMapController {
     suspend fun downloadForTrip(tripId: Long, route: Route, fromDistanceAlongM: Double)
 }
 
-/** 여행 시작 시 사용자에게 물어야 할 질문. */
+/**
+ * 여행 시작 시 사용자에게 물어야 할 질문. 여행 종류는 묻지 않는다: 새 여행은 언제나 당일로 시작하고, 여러 날로 할지는
+ * 끝낼 때 정한다([TripManager.continueTomorrow]).
+ */
 sealed interface StartPrompt {
-    /** 이어갈 다일 여행이 없으므로 여행 종류(당일/다일)를 묻는다. */
-    data object AskType : StartPrompt
+    /** 이어갈 다일 여행이 없으므로 묻지 않고 새 당일 여행을 시작한다(ACTIVE 당일 여행이 있으면 시작할 때 완료된다). */
+    data object StartNew : StartPrompt
 
     /** 진행 중인 다일 여행이 있으므로 이어서 할지 묻는다. */
     data class AskContinue(val trip: Trip) : StartPrompt

@@ -33,6 +33,8 @@ sealed interface RideUiState {
         val activity: ActivityType = ActivityType.BIKE,
         /** Today's sunset at the hike's location (epoch ms): hikes only, once a location is known; else null. */
         val sunsetMillis: Long? = null,
+        /** Which day of its trip this is (1 = the day it began, [com.cowork.bikerecoder.core.trip.TripManager.dayNumber]). */
+        val tripDay: Int = 1,
     ) : RideUiState
 
     /** The start failed ("기록을 시작하지 못했습니다"); nothing records. */

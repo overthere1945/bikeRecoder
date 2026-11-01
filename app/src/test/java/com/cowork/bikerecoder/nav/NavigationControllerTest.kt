@@ -330,6 +330,55 @@ class NavigationControllerTest {
     }
 
     @Test
+    fun continueTomorrowKeepsASingleDayTripForTheNextDay() = runTest {
+        val h = harness("scenario_waypoint.gpx")
+        val single = h.trip(TripType.SINGLE_DAY, stop("도착", destination, isDestination = true))
+        h.controller.start(single)
+        h.awaitActive()
+        // A multi-day trip's stop-for-today does not apply to a single-day trip.
+        h.controller.stopToday()
+        runCurrent()
+        assertTrue(h.controller.ui.value is NavUiState.Active)
+
+        h.controller.continueTomorrow()
+
+        // Ended as "오늘은 여기까지" ends a multi-day trip, which it is now.
+        assertEquals(NavUiState.Finished(single, TripType.MULTI_DAY, FinishReason.STOPPED_TODAY), h.awaitFinished())
+        val trip = store.trips.getValue(single)
+        assertEquals(TripType.MULTI_DAY, trip.type)
+        assertEquals(TripStatus.ACTIVE, trip.status)
+        assertFalse(h.source.collecting, "location source stopped for today")
+        assertFalse(offline.deleted.contains(single), "the offline maps stay for tomorrow")
+    }
+
+    @Test
+    fun continueTomorrowIsOnlyForASingleDayTrip() = runTest {
+        val h = harness("scenario_waypoint.gpx")
+        val multi = h.trip(TripType.MULTI_DAY, stop("도착", destination, isDestination = true))
+        h.controller.start(multi)
+        h.awaitActive()
+
+        h.controller.continueTomorrow()
+        runCurrent()
+
+        assertTrue(h.controller.ui.value is NavUiState.Active)
+        h.controller.close()
+    }
+
+    @Test
+    fun theGuidanceKnowsWhichDayOfItsTripItIs() = runTest {
+        val h = harness("scenario_waypoint.gpx")
+        val multi = h.trip(TripType.MULTI_DAY, stop("도착", destination, isDestination = true))
+        // Began the calendar day before (Asia/Seoul).
+        store.trips[multi] = store.trips.getValue(multi).copy(createdAt = -86_400_000L)
+
+        h.controller.start(multi)
+
+        assertEquals(2, h.awaitActive().day)
+        h.controller.close()
+    }
+
+    @Test
     fun routeFailureShowsErrorWithoutSessionAndRetryStarts() = runTest {
         val h = harness("scenario_follow.gpx")
         h.router.failure = RouteResult.Failure(RouteFailure.NO_ROUTE, "none")

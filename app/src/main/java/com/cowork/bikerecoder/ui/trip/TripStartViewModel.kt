@@ -9,6 +9,7 @@ import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
 import com.cowork.bikerecoder.core.model.RouteProfile
+import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.trip.StartPrompt
 import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripManager
@@ -31,15 +32,24 @@ import kotlinx.coroutines.launch
 /** The plan being started: its profile and stops (last = destination). */
 data class StartPlan(val profile: RouteProfile, val stops: List<PlannedStop>)
 
+/** What a trip recorded so far: [days] different dates with a ride and [distanceM] in all (empty segments not counted). */
+data class PastRecords(val days: Int, val distanceM: Double)
+
 sealed interface TripStartState {
     data object Idle : TripStartState
     data object Working : TripStartState
 
-    /** "오늘 하루 일정인가요, 여러 날 일정인가요?" */
-    data object AskType : TripStartState
-
-    /** "{destinationName} 여행을 이어서 진행할까요?" */
-    data class AskContinue(val trip: Trip, val destinationName: String) : TripStartState
+    /**
+     * "어떻게 기록할까요?" [여행 이어서 · {day}일째] [새 기록 시작] [취소]: the active multi-day [trip], named [destinationName]
+     * ([RIDE_RECORD_NAME] without stops), on its [day]-th day ([TripManager.dayNumber]); [past] is what it recorded so far
+     * (null if that could not be read).
+     */
+    data class AskContinue(
+        val trip: Trip,
+        val destinationName: String,
+        val day: Int = 1,
+        val past: PastRecords? = null,
+    ) : TripStartState
 
     /** "기록을 어떻게 할까요?" [이어서 기록] [새 구간으로 나누기] [취소] */
     data object AskRecording : TripStartState
@@ -58,6 +68,12 @@ sealed interface TripStartState {
     data class Error(val message: String) : TripStartState
 }
 
+/** [PastRecords] of a trip's segments: the dates and the distance of the ones that went somewhere. */
+fun pastRecordsOf(segments: List<RideSegment>): PastRecords {
+    val rides = segments.filterNot { it.isEmpty }
+    return PastRecords(days = rides.map { it.localDate }.distinct().size, distanceM = rides.sumOf { it.totals.distanceM })
+}
+
 /** Planned stops as trip stops: order = index, the last one is the destination, none visited. */
 fun List<PlannedStop>.toTripStops(): List<TripStop> = mapIndexed { index, stop ->
     TripStop(
@@ -72,15 +88,18 @@ fun List<PlannedStop>.toTripStops(): List<TripStop> = mapIndexed { index, stop -
 }
 
 /**
- * [안내 시작] on the plan screen → which trip to guide (spec §5):
- * no active multi-day trip → ask the type ([당일] default / [여러 날]) and start a new trip (completing any
- * active one); an active multi-day trip → ask to continue it ([이어서]: its stops are replaced only if the
- * plan differs from its unvisited stops, and it takes the plan's profile) or [새로 시작] (→ ask the type).
+ * [안내 시작] on the plan screen → which trip to guide (spec §5, V1.9.1): no active multi-day trip → a new
+ * [TripType.SINGLE_DAY] trip starts at once, without a question (completing any active one; whether it becomes a
+ * multi-day trip is chosen when it ends, "내일 이어서 하기"); an active multi-day trip → "어떻게 기록할까요?":
+ * [여행 이어서] (its stops are replaced only if the plan differs from its unvisited stops, and it takes the plan's
+ * profile) or [새 기록 시작] (a new single-day trip, the active one is completed).
  *
- * [● 기록 시작] on the map main screen ([onRecordPressed]) asks the same questions for a recording without a plan:
- * a new trip has no stops and [defaultProfile]; [이어서] keeps the trip's stops and profile as they are.
+ * [● 기록 시작] on the map main screen ([onRecordPressed]) does the same for a recording without a plan: a new trip
+ * has no stops and [defaultProfile]; [여행 이어서] keeps the trip's stops and profile as they are. A press while a
+ * recording already runs (the button had not caught up) opens that recording ([TripStartState.Ready] of its trip)
+ * instead of ending it.
  *
- * [안내 시작] while a recording runs (spec §4.2) asks neither the type nor to continue: the plan joins the recorded
+ * [안내 시작] while a recording runs (spec §4.2) does not ask to continue another trip: the plan joins the recorded
  * trip ([attach]: a guidance of that trip is closed first, the trip takes the plan's profile and, if they differ, its
  * stops) and the recording goes on or is split into a new segment as [recordingMode] says (ASK:
  * [TripStartState.AskRecording]). A split is finished (the new segment records) before [TripStartState.Ready]: the
@@ -113,6 +132,8 @@ class TripStartViewModel(
     private val splitSegment: suspend () -> String? = { null },
     /** 그 여행을 안내하는 중이면 닫는다(begin이 같은 여행이면 아무것도 하지 않으므로 새 경유지가 반영되도록). */
     private val closeGuidanceOf: (tripId: Long) -> Unit = {},
+    /** What a trip recorded so far ([PastRecords]), for [TripStartState.AskContinue]; null if unknown. */
+    private val pastRecords: suspend (tripId: Long) -> PastRecords? = { null },
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<TripStartState>(TripStartState.Idle)
@@ -139,7 +160,7 @@ class TripStartViewModel(
             work { prompt() }
             return
         }
-        // The plan joins the trip being recorded: neither its type nor continuing it is asked.
+        // The plan joins the trip being recorded: continuing another trip is not asked.
         askedRecording = recording
         work {
             when (recordingMode()) {
@@ -161,7 +182,7 @@ class TripStartViewModel(
         val asked = askedRecording
         askedRecording = null
         work {
-            // The recording ended while asking: the usual questions instead.
+            // The recording ended while asking: the usual start instead.
             if (asked == null || recordingTrip() != asked) prompt() else attach(asked, split)
         }
     }
@@ -198,23 +219,39 @@ class TripStartViewModel(
         recordOnly = true
         work {
             plan = StartPlan(defaultProfile(), emptyList())
+            // Already recording (the button had not caught up): that recording is shown, never ended.
+            recordingTrip()?.let { return@work TripStartState.Ready(it) }
             prompt()
         }
     }
 
+    /** No multi-day trip to continue: a new single-day trip starts at once; otherwise continuing it is asked. */
     private suspend fun prompt(): TripStartState = when (val prompt = tripManager.startPrompt()) {
-        StartPrompt.AskType -> TripStartState.AskType
-        is StartPrompt.AskContinue -> TripStartState.AskContinue(prompt.trip, destinationName(prompt.trip.id))
+        StartPrompt.StartNew -> startNewTrip()
+        is StartPrompt.AskContinue -> askContinue(prompt.trip)
     }
 
-    fun chooseType(type: TripType) {
-        val p = plan ?: return
-        if (_state.value != TripStartState.AskType) return
-        work {
-            // A new trip: whatever is recorded belongs to another trip.
-            val notice = if (recordingTrip() != null) endRecording() else null
-            TripStartState.Ready(tripManager.startTrip(type, p.profile, p.stops.toTripStops()).id, notice)
+    private suspend fun askContinue(trip: Trip): TripStartState.AskContinue {
+        val past = try {
+            pastRecords(trip.id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Only the subtitle is shorter without it.
+            log.warn("Reading the records of trip ${trip.id} failed", e)
+            null
         }
+        return TripStartState.AskContinue(trip, destinationName(trip.id), tripManager.dayNumber(trip), past)
+    }
+
+    /**
+     * A new [TripType.SINGLE_DAY] trip of the plan (completing the active one). Whatever is recorded then belongs to
+     * another trip: it is ended first (ruling U2).
+     */
+    private suspend fun startNewTrip(): TripStartState {
+        val p = checkNotNull(plan)
+        val notice = if (recordingTrip() != null) endRecording() else null
+        return TripStartState.Ready(tripManager.startTrip(TripType.SINGLE_DAY, p.profile, p.stops.toTripStops()).id, notice)
     }
 
     fun continueTrip() {
@@ -230,14 +267,15 @@ class TripStartViewModel(
         }
     }
 
-    /** [새로 시작]: the new trip's type is asked next; the active trip is completed when it starts. */
+    /** [새 기록 시작]: a new single-day trip starts; the active multi-day trip is completed by that start. */
     fun startNew() {
-        if (_state.value is TripStartState.AskContinue) _state.value = TripStartState.AskType
+        if (plan == null || _state.value !is TripStartState.AskContinue) return
+        work { startNewTrip() }
     }
 
     fun dismiss() {
         when (_state.value) {
-            TripStartState.AskType, is TripStartState.AskContinue, TripStartState.AskRecording, is TripStartState.Error -> {
+            is TripStartState.AskContinue, TripStartState.AskRecording, is TripStartState.Error -> {
                 recordOnly = false
                 askedRecording = null
                 _state.value = TripStartState.Idle
@@ -299,6 +337,7 @@ class TripStartViewModel(
                     // Only called while a recording runs, so the ride controller exists.
                     splitSegment = { container.ride.splitSegment() },
                     closeGuidanceOf = { id -> if (container.navigationState.guidingTripId == id) container.navigation.close() },
+                    pastRecords = { id -> pastRecordsOf(container.rideStore.segments(id)) },
                 )
             }
         }

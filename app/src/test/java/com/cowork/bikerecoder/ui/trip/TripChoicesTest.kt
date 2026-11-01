@@ -10,42 +10,69 @@ import org.junit.jupiter.api.Test
 
 class TripChoicesTest {
 
+    /** (title, subtitle, action, recommended) of each card, in order. */
+    private fun table(choices: List<EndChoice>) =
+        choices.map { listOf(it.card.title, it.card.subtitle, it.action, it.card.recommended) }
+
     @Test
-    fun singleDayEndAsksToFinish() {
-        assertEquals(listOf(EndChoice("끝내기", EndAction.COMPLETE_TRIP)), endChoices(TripType.SINGLE_DAY))
+    fun singleDayEndFinishesTodayOrKeepsTheTripForTomorrow() {
+        assertEquals(
+            listOf(
+                listOf("오늘로 끝내기", "이 기록을 마치고 요약을 봅니다", EndAction.COMPLETE_TRIP, true),
+                listOf(
+                    "내일 이어서 하기", "여러 날 여행으로 남겨 두고, 다음에 기록을 시작하면 이어서 쌓입니다",
+                    EndAction.CONTINUE_TOMORROW, false,
+                ),
+            ),
+            table(endChoices(TripType.SINGLE_DAY)),
+        )
     }
 
     @Test
-    fun multiDayEndOffersStopTodayOrComplete() {
+    fun multiDayEndOffersStopTodayOnItsDayOrComplete() {
         assertEquals(
-            listOf(EndChoice("오늘은 여기까지", EndAction.STOP_TODAY), EndChoice("여행 완료", EndAction.COMPLETE_TRIP)),
-            endChoices(TripType.MULTI_DAY),
+            listOf(
+                listOf("오늘은 여기까지", "3일째 기록을 마치고 여행은 이어 갑니다", EndAction.STOP_TODAY, true),
+                listOf("여행 완료", "여러 날 여행을 끝내고 전체 요약을 봅니다", EndAction.COMPLETE_TRIP, false),
+            ),
+            table(endChoices(TripType.MULTI_DAY, day = 3)),
         )
     }
 
     @Test
     fun `end choices while recording`() {
+        val guidanceOnly = listOf("안내만 끝내기", "기록은 계속됩니다", EndAction.END_GUIDANCE_ONLY, false)
         assertEquals(
-            listOf(
-                EndChoice("안내만 끝내기 (기록 계속)", EndAction.END_GUIDANCE_ONLY),
-                EndChoice("모두 끝내기", EndAction.COMPLETE_TRIP),
-            ),
-            endChoices(TripType.SINGLE_DAY, recording = true),
+            listOf(guidanceOnly) + table(endChoices(TripType.SINGLE_DAY, recording = false)),
+            table(endChoices(TripType.SINGLE_DAY, recording = true)),
         )
         assertEquals(
-            listOf(
-                EndChoice("안내만 끝내기", EndAction.END_GUIDANCE_ONLY),
-                EndChoice("오늘은 여기까지", EndAction.STOP_TODAY),
-                EndChoice("여행 완료", EndAction.COMPLETE_TRIP),
-            ),
-            endChoices(TripType.MULTI_DAY, recording = true),
+            listOf(guidanceOnly) + table(endChoices(TripType.MULTI_DAY, recording = false, day = 2)),
+            table(endChoices(TripType.MULTI_DAY, recording = true, day = 2)),
         )
-        // Not recording: the V1.0.0 choices.
-        assertEquals(listOf(EndChoice("끝내기", EndAction.COMPLETE_TRIP)), endChoices(TripType.SINGLE_DAY, recording = false))
+        assertEquals(3, endChoices(TripType.SINGLE_DAY, recording = true).size)
+    }
+
+    @Test
+    fun everyCardHasItsOwnTestId() {
+        val ids = (endChoices(TripType.SINGLE_DAY, recording = true) + endChoices(TripType.MULTI_DAY, recording = true))
+            .map { it.card.id }
         assertEquals(
-            listOf(EndChoice("오늘은 여기까지", EndAction.STOP_TODAY), EndChoice("여행 완료", EndAction.COMPLETE_TRIP)),
-            endChoices(TripType.MULTI_DAY, recording = false),
+            listOf("guidance-only", "finish-today", "continue-tomorrow", "guidance-only", "stop-today", "complete-trip"),
+            ids,
         )
+    }
+
+    @Test
+    fun startSheetsCopy() {
+        assertEquals("어떻게 기록할까요?", TripChoiceText.CONTINUE_QUESTION)
+        assertEquals("새 기록 시작", TripCards.startNew().title)
+        assertEquals("지난 여행은 완료로 정리됩니다", TripCards.startNew().subtitle)
+        assertEquals("기록을 어떻게 할까요?", RECORDING_QUESTION)
+        assertEquals(listOf("이어서 기록", "새 구간으로 나누기"), listOf(TripCards.keepRecording(), TripCards.splitRecording()).map { it.title })
+        assertEquals("주행 기록 · 지난 기록 1일, 3.00km", TripChoiceText.continueNote(RIDE_RECORD_NAME, PastRecords(1, 3_009.9)))
+        assertEquals("남산", TripChoiceText.continueNote("남산", PastRecords(0, 0.0)), "nothing recorded yet")
+        assertEquals("남산", TripChoiceText.continueNote("남산", null))
     }
 
     @Test

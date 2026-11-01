@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -50,7 +49,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.recording.PauseKind
 import com.cowork.bikerecoder.core.recording.RecordingState
-import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.map.BikeMap
 import com.cowork.bikerecoder.map.CameraFit
 import com.cowork.bikerecoder.map.CameraMode
@@ -59,11 +57,13 @@ import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.nav.NavigationService
 import com.cowork.bikerecoder.ui.activity.ActivityBadge
 import com.cowork.bikerecoder.ui.activity.ActivityText
+import com.cowork.bikerecoder.ui.common.ChoiceSheet
 import com.cowork.bikerecoder.ui.common.KeepScreenOn
 import com.cowork.bikerecoder.ui.health.HeartRateGate
 import com.cowork.bikerecoder.ui.common.NoticeSnackbarHost
 import com.cowork.bikerecoder.ride.RecordingEnd
 import com.cowork.bikerecoder.ride.RideUiState
+import com.cowork.bikerecoder.ui.trip.TripChoiceText
 import kotlinx.coroutines.launch
 
 /** Test tags of the record screen. */
@@ -341,8 +341,8 @@ fun RecordContent(
     }
 
     if (askEnd) {
-        RecordEndDialog(
-            type = state.tripType,
+        RecordEndSheet(
+            ride = state,
             navigating = navigating,
             onChoose = { end ->
                 askEnd = false
@@ -387,7 +387,7 @@ internal fun PauseResumeButton(
     }
 }
 
-/** The red button that ends the recording ([정지], [기록 끝내기]); it asks first ([RecordEndDialog]). */
+/** The red button that ends the recording ([정지], [기록 끝내기]); it asks first ([RecordEndSheet]). */
 @Composable
 internal fun StopButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Button(
@@ -397,20 +397,27 @@ internal fun StopButton(label: String, onClick: () -> Unit, modifier: Modifier =
     ) { Text(label) }
 }
 
-/** "기록을 끝낼까요?" with [recordEndChoices] and [취소]. */
+/**
+ * "기록을 끝낼까요?" over the running [ride]: its activity badge with "{종류} · {거리} · {시간}" ([recordEndSummary]), the
+ * cards of [recordEndChoices] and [계속 기록하기] ([onDismiss]).
+ */
 @Composable
-internal fun RecordEndDialog(type: TripType, navigating: Boolean, onChoose: (RecordingEnd) -> Unit, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        text = { Text(RECORD_END_QUESTION) },
-        confirmButton = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                recordEndChoices(type, navigating).forEach { choice ->
-                    Button(onClick = { onChoose(choice.end) }, modifier = Modifier.fillMaxWidth()) { Text(choice.label) }
-                }
-                OutlinedButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("취소") }
-            }
-        },
+internal fun RecordEndSheet(
+    ride: RideUiState.Active,
+    navigating: Boolean,
+    onChoose: (RecordingEnd) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val choices = recordEndChoices(ride.tripType, navigating, ride.tripDay)
+    ChoiceSheet(
+        title = RECORD_END_QUESTION,
+        choices = choices.map { it.card },
+        onChoose = { card -> choices.first { it.card == card }.end.let(onChoose) },
+        dismissLabel = TripChoiceText.KEEP_GOING,
+        onDismiss = onDismiss,
+        summary = recordEndSummary(ride.stats, ride.activity),
+        // The summary names the activity already.
+        summaryLeading = { ActivityBadge(ride.activity, STATUS_BADGE, contentDescription = null) },
     )
 }
 

@@ -15,7 +15,7 @@ private const val STALE_THRESHOLD_MILLIS = 3L * 24 * 60 * 60 * 1000
  * ACTIVE 여행은 한 번에 하나만 존재한다고 가정한다. 새 여행을 시작하면 기존 ACTIVE 여행을
  * 먼저 완료 처리하며([complete]와 동일하게 오프라인 지도도 삭제한다).
  *
- * 여행 행을 읽고 고쳐 쓰는 변경(touch·경로 선호·오늘은 여기까지·완료·여러 날 전환)은 [edits] 잠금으로 하나씩
+ * 여행 행을 읽고 고쳐 쓰는 변경(touch·경로 선호·오늘은 여기까지·내일 이어서·완료·여러 날 전환)은 [edits] 잠금으로 하나씩
  * 실행한다. 안내와 기록이 같은 여행을 동시에 건드려도(예: 기록의 touch와 도착의 완료) 먼저 읽은 낡은 행을
  * 다시 써서 다른 변경을 되돌리지 않는다.
  */
@@ -27,13 +27,13 @@ class TripManager(
 ) {
     private val edits = Mutex()
 
-    /** 다일 여행이 ACTIVE일 때만 이어가기를 묻는다. 그 외(없음/당일 ACTIVE)는 종류를 묻는다. */
+    /** 다일 여행이 ACTIVE일 때만 이어가기를 묻는다. 그 외(없음/당일 ACTIVE)는 묻지 않고 새 당일 여행을 시작한다. */
     suspend fun startPrompt(): StartPrompt {
-        val active = store.activeTrip() ?: return StartPrompt.AskType
+        val active = store.activeTrip() ?: return StartPrompt.StartNew
         return if (active.type == TripType.MULTI_DAY) {
             StartPrompt.AskContinue(active)
         } else {
-            StartPrompt.AskType
+            StartPrompt.StartNew
         }
     }
 
@@ -82,6 +82,17 @@ class TripManager(
         edit(tripId) { trip ->
             check(trip.type == TripType.MULTI_DAY) { "endToday는 다일 여행에만 사용할 수 있습니다: $tripId" }
             trip.copy(lastActiveAt = clock())
+        }
+    }
+
+    /**
+     * "내일 이어서 하기": 진행 중인 여행을 다일 여행으로 바꿔 ACTIVE로 남긴다("오늘은 여기까지"를 한 뒤와 같다). 다음에
+     * 기록이나 안내를 시작하면 이어서 쌓인다. 끝난 여행은 되살리지 않는다(예외). 오프라인 지도는 그대로 둔다.
+     */
+    suspend fun continueTomorrow(tripId: Long) {
+        edit(tripId) { trip ->
+            check(trip.status == TripStatus.ACTIVE) { "continueTomorrow는 진행 중인 여행에만 사용할 수 있습니다: $tripId" }
+            trip.copy(type = TripType.MULTI_DAY, lastActiveAt = clock())
         }
     }
 

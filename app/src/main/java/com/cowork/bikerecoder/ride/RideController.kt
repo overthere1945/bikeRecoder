@@ -56,8 +56,11 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 
-/** How a recording ends: only this segment, today of a multi-day trip ("오늘은 여기까지"), or the whole trip. */
-enum class RecordingEnd { SEGMENT_ONLY, STOP_TODAY, COMPLETE_TRIP }
+/**
+ * How a recording ends: only this segment, today of a multi-day trip ("오늘은 여기까지"), the whole trip, or today of a
+ * trip kept for tomorrow ("내일 이어서 하기": the trip becomes multi-day and stays active, [TripManager.continueTomorrow]).
+ */
+enum class RecordingEnd { SEGMENT_ONLY, STOP_TODAY, COMPLETE_TRIP, CONTINUE_TOMORROW }
 
 /**
  * Runs one [RecordingSession] (one ride segment) at a time, outside any UI lifecycle — the recording counterpart of
@@ -727,6 +730,7 @@ class RideController(
         _ui.value = RideUiState.Active(
             tripId = r.tripId,
             tripType = r.trip.type,
+            tripDay = tripManager.dayNumber(r.trip),
             segmentId = r.segmentId,
             state = session.state,
             stats = session.stats,
@@ -803,6 +807,8 @@ class RideController(
             RecordingEnd.SEGMENT_ONLY -> true
             RecordingEnd.STOP_TODAY -> r.trip.type != TripType.MULTI_DAY ||
                 saving("end today of trip $tripId") { tripManager.endToday(tripId) } != null
+            RecordingEnd.CONTINUE_TOMORROW ->
+                saving("keep trip $tripId for tomorrow") { tripManager.continueTomorrow(tripId) } != null
             // complete() saves the trip first, then deletes the offline maps.
             RecordingEnd.COMPLETE_TRIP -> saving("complete trip $tripId") { tripManager.complete(tripId) } != null ||
                 saving("read trip $tripId") { tripStore.trip(tripId) }?.status == TripStatus.COMPLETED
