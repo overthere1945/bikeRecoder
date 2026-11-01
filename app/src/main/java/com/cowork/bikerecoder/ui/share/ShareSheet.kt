@@ -56,6 +56,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import com.cowork.bikerecoder.share.Mood
 import com.cowork.bikerecoder.share.ShareApps
+import com.cowork.bikerecoder.share.ShareItem
+import com.cowork.bikerecoder.share.ShareMode
 import com.cowork.bikerecoder.share.ShareTarget
 
 /** Test tags of the share sheet. */
@@ -68,10 +70,11 @@ object ShareTags {
 }
 
 /**
- * The "활동 공유하기" sheet (V1.5.0 spec §1.2) that opens fully: the mood chips, the text box with [처음 글로] and the stale
- * line, "보낼 것" (or why no image can be made, with [다시 시도]), and the seven buttons in two rows — those whose app is
- * missing ([ShareApps.available]) hidden, those that need an image that cannot be made dimmed
- * ([ShareSheetState.enabled]). While the image is made the buttons give way to "요약 이미지를 만드는 중…" and [취소].
+ * The "활동 공유하기" sheet (share cards spec §1; V1.5.0 spec §1.2) that opens fully: the mode, "보낼 것" (a plain row of
+ * chips until the strip of share cards spec §1.2 comes), the mood chips, the text box with [처음 글로] and the stale line,
+ * the "지나간 길" chips, the error with [다시 시도], and the buttons in two rows — those whose app is missing
+ * ([ShareApps.available]) hidden, the others dimmed per [ShareSheetState.enabled]. While a press waits for its cards the
+ * buttons give way to "카드를 만드는 중…" and [취소].
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -82,6 +85,9 @@ fun ShareSheet(
     onReset: () -> Unit,
     onMood: (Mood) -> Unit,
     onPress: (ShareTarget) -> Unit,
+    onMode: (ShareMode) -> Unit,
+    onTap: (ShareItem) -> Unit,
+    onPlace: (String) -> Unit,
     onCancelMaking: () -> Unit,
     onRetry: () -> Unit,
     onDismiss: () -> Unit,
@@ -101,10 +107,13 @@ fun ShareSheet(
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(horizontal = 24.dp),
             )
+            ModeRow(state.mode, onMode)
+            WhatIsSent(state, onTap)
             MoodChips(state.moods, onMood)
             TextBox(state, onEdit, onReset)
-            WhatIsSent(state, onRetry)
-            if (state.making) MakingRow(onCancelMaking) else ShareButtons(state, apps, onPress)
+            PlaceChips(state, onPlace)
+            ErrorLine(state.error, onRetry)
+            if (state.waiting) MakingRow(onCancelMaking) else ShareButtons(state, apps, onPress)
         }
     }
 }
@@ -153,23 +162,77 @@ private fun TextBox(state: ShareSheetState, onEdit: (String) -> Unit, onReset: (
     }
 }
 
-/** "보낼 것" lines (spec §2.3), or the reason no image can be made in the error colour with [다시 시도] (spec §2.5). */
+/** [게시물 4:5] [스토리 9:16] (share cards spec §1.1). */
 @Composable
-private fun WhatIsSent(state: ShareSheetState, onRetry: () -> Unit) {
-    Column(modifier = Modifier.padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        val blocked = state.blocked
-        if (blocked == null) {
-            state.fileLines.forEach { line ->
-                Text(line, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        } else {
-            Text(blocked, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
-        }
-        if (state.canRetry) TextButton(onClick = onRetry) { Text("다시 시도") }
+private fun ModeRow(mode: ShareMode, onMode: (ShareMode) -> Unit) {
+    Row(modifier = Modifier.padding(horizontal = 24.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(selected = mode == ShareMode.FEED, onClick = { onMode(ShareMode.FEED) }, label = { Text("게시물 4:5") })
+        FilterChip(selected = mode == ShareMode.STORY, onClick = { onMode(ShareMode.STORY) }, label = { Text("스토리 9:16") })
     }
 }
 
-/** In place of the buttons while the portrait image is made (spec §2.4). */
+/**
+ * "보낼 것" (share cards spec §1.2) as chips numbered in pick order; cards are dimmed on an unfinished trip, under
+ * "여행을 마치면 카드를 만들 수 있습니다".
+ */
+@Composable
+private fun WhatIsSent(state: ShareSheetState, onTap: (ShareItem) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("보낼 것", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(horizontal = 24.dp))
+        if (!state.tripFinished) {
+            Text(
+                ShareViewModel.MSG_UNFINISHED,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 24.dp),
+            )
+        }
+        LazyRow(contentPadding = PaddingValues(horizontal = 24.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(state.items) { item ->
+                val number = state.selection.chosen.indexOf(item) + 1
+                FilterChip(
+                    selected = number > 0,
+                    onClick = { onTap(item) },
+                    enabled = state.tripFinished || state.keyOf(item) == null,
+                    label = { Text(if (number > 0) "${itemName(item)} · $number" else itemName(item)) },
+                )
+            }
+        }
+    }
+}
+
+private fun itemName(item: ShareItem): String = when (item) {
+    ShareItem.SatelliteCard -> "위성 카드"
+    ShareItem.PhotoCard -> "사진 카드"
+    is ShareItem.Photo -> "사진 ${item.index}"
+    is ShareItem.Video -> "영상"
+}
+
+/** "지나간 길" chips (share cards spec §4.5); no row without place tags. */
+@Composable
+private fun PlaceChips(state: ShareSheetState, onPlace: (String) -> Unit) {
+    if (state.placeTags.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("지나간 길", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(horizontal = 24.dp))
+        LazyRow(contentPadding = PaddingValues(horizontal = 24.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(state.placeTags) { tag ->
+                FilterChip(selected = state.placeOn(tag), onClick = { onPlace(tag) }, label = { Text(tag) })
+            }
+        }
+    }
+}
+
+/** Why the last press did not send, in the error colour, with [다시 시도] (share cards spec §6). */
+@Composable
+private fun ErrorLine(error: String?, onRetry: () -> Unit) {
+    if (error == null) return
+    Row(modifier = Modifier.padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(error, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
+        TextButton(onClick = onRetry) { Text("다시 시도") }
+    }
+}
+
+/** In place of the buttons while a press waits for its cards (share cards spec §3.1). */
 @Composable
 private fun MakingRow(onCancel: () -> Unit) {
     Column(
@@ -177,13 +240,13 @@ private fun MakingRow(onCancel: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("요약 이미지를 만드는 중…", style = MaterialTheme.typography.titleSmall)
+        Text("카드를 만드는 중…", style = MaterialTheme.typography.titleSmall)
         LinearProgressIndicator(modifier = Modifier.fillMaxWidth().testTag(ShareTags.PROGRESS))
         TextButton(onClick = onCancel) { Text("취소") }
     }
 }
 
-/** [페이스북] [인스타그램] [스토리] [이메일] / [복사] [저장] [더 보기], in columns of four; hidden ones leave no gap. */
+/** The mode's two rows of share cards spec §1.3, in columns of four; hidden ones leave no gap. */
 @Composable
 private fun ShareButtons(state: ShareSheetState, apps: ShareApps, onPress: (ShareTarget) -> Unit) {
     // Looked up once per sheet: the package manager is asked, and the icons are drawn into bitmaps.
@@ -193,7 +256,7 @@ private fun ShareButtons(state: ShareSheetState, apps: ShareApps, onPress: (Shar
             .associateWith { target -> apps.icon(target)?.toBitmap(ICON_PX, ICON_PX)?.asImageBitmap() }
     }
     Column(modifier = Modifier.padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        for (row in ROWS) {
+        for (row in rowsOf(state.mode)) {
             val targets = row.filter { it in shown }
             if (targets.isEmpty()) continue
             Row(modifier = Modifier.fillMaxWidth()) {
@@ -273,9 +336,15 @@ private fun materialIcon(target: ShareTarget): ImageVector = when (target) {
     ShareTarget.FACEBOOK, ShareTarget.INSTAGRAM, ShareTarget.STORY -> Icons.Filled.Share
 }
 
-private val ROWS = listOf(
-    listOf(ShareTarget.FACEBOOK, ShareTarget.INSTAGRAM, ShareTarget.STORY, ShareTarget.EMAIL),
-    listOf(ShareTarget.COPY, ShareTarget.SAVE, ShareTarget.MORE),
+/** Feed: [페이스북] [인스타그램] [이메일] [더 보기]; story: [페이스북] [스토리] [이메일] [더 보기]; then [복사] [저장] [스티커]. */
+private fun rowsOf(mode: ShareMode) = listOf(
+    listOf(
+        ShareTarget.FACEBOOK,
+        if (mode == ShareMode.FEED) ShareTarget.INSTAGRAM else ShareTarget.STORY,
+        ShareTarget.EMAIL,
+        ShareTarget.MORE,
+    ),
+    listOf(ShareTarget.COPY, ShareTarget.SAVE, ShareTarget.STICKER),
 )
 private const val COLUMNS = 4
 private const val DIMMED = 0.38f

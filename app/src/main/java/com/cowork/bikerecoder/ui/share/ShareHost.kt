@@ -21,7 +21,7 @@ import com.cowork.bikerecoder.share.PackageShareApps
 import com.cowork.bikerecoder.share.ShareApps
 import com.cowork.bikerecoder.share.ShareIntents
 import com.cowork.bikerecoder.share.ShareTarget
-import com.cowork.bikerecoder.video.VideoNotifications
+import com.cowork.bikerecoder.share.planSend
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 
@@ -57,7 +57,6 @@ fun ShareHost(
             launch = { currentLaunch(it) },
             clip = { clip -> context.getSystemService(ClipboardManager::class.java).setPrimaryClip(clip) },
             tell = { currentTell(it) },
-            resultSeen = { VideoNotifications.cancelResult(context) },
             close = viewModel::close,
         )
         handleWhileStarted(lifecycle, viewModel.events, actions::handle)
@@ -70,16 +69,19 @@ fun ShareHost(
             onReset = viewModel::reset,
             onMood = viewModel::toggle,
             onPress = viewModel::press,
+            onMode = viewModel::setMode,
+            onTap = viewModel::tap,
+            onPlace = viewModel::togglePlace,
             onCancelMaking = viewModel::cancelMaking,
-            onRetry = viewModel::retry,
+            onRetry = viewModel::retryCards,
             onDismiss = viewModel::close,
         )
     }
 }
 
 /**
- * Hands [events] to [handle] only while [lifecycle] is at least started. One that comes while the app is away (an image
- * made meanwhile) waits in the view model's channel: Android would not let an app in the background open another, and
+ * Hands [events] to [handle] only while [lifecycle] is at least started. One that comes while the app is away (cards
+ * drawn meanwhile) waits in the view model's channel: Android would not let an app in the background open another, and
  * the sheet would close on a send that never happened.
  */
 internal suspend fun handleWhileStarted(lifecycle: Lifecycle, events: Flow<ShareEvent>, handle: (ShareEvent) -> Unit) {
@@ -87,15 +89,14 @@ internal suspend fun handleWhileStarted(lifecycle: Lifecycle, events: Flow<Share
 }
 
 /**
- * What the sheet's events do (spec §1.2, §3.6, §4.2), apart from the screen. [clip] puts text on the clipboard, [tell]
- * shows a short message, [resultSeen] takes "영상을 만들었습니다" away, [close] closes the sheet.
+ * What the sheet's events do (spec §1.2, §3.6, §4.2; share cards spec §5), apart from the screen. [clip] puts text on
+ * the clipboard, [tell] shows a short message, [close] closes the sheet.
  */
 class ShareActions(
     private val apps: ShareApps,
     private val launch: (Intent) -> Unit,
     private val clip: (ClipData) -> Unit,
     private val tell: (String) -> Unit,
-    private val resultSeen: () -> Unit,
     private val close: () -> Unit,
     private val sdk: Int = Build.VERSION.SDK_INT,
 ) {
@@ -112,18 +113,22 @@ class ShareActions(
     }
 
     /**
-     * The app of the button opens with the file (or the text only). Facebook and Instagram take no text with it: the text
-     * goes to the clipboard first, to be pasted there. The sheet closes once the app opened; with no app it stays.
+     * The app of the button opens with the files the button takes ([planSend]; its notice is told) or the text only.
+     * Facebook and Instagram take no text with them: the text goes to the clipboard first, to be pasted there. The sheet
+     * closes once the app opened; with no app it stays.
      */
     private fun send(event: ShareEvent.Send) {
-        // Made in the sheet and sent on now: the notification would only open it again.
-        if (event.made) resultSeen()
+        val plan = planSend(event.target, event.files, apps.instagramTakesMultiple())
+        plan.notice?.let(tell)
         if (event.target in PASTE_TARGETS) {
             clip(ClipData.newPlainText(CLIP_LABEL, event.text))
             tell(MSG_TEXT_COPIED_PASTE)
         }
-        val intent = event.file?.let { ShareIntents.file(event.target, it, event.text, apps) }
-            ?: ShareIntents.textOnly(event.target, event.text)
+        val intent = if (plan.files.isEmpty()) {
+            ShareIntents.textOnly(event.target, event.text)
+        } else {
+            ShareIntents.files(event.target, plan.files, event.text, apps)
+        }
         try {
             launch(intent)
         } catch (_: ActivityNotFoundException) {

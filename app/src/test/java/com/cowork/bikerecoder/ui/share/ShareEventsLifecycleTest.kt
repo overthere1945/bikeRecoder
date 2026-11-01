@@ -3,10 +3,8 @@ package com.cowork.bikerecoder.ui.share
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
-import com.cowork.bikerecoder.core.video.Aspect
-import com.cowork.bikerecoder.share.ShareCandidate
+import com.cowork.bikerecoder.share.ShareFile
 import com.cowork.bikerecoder.share.ShareTarget
-import com.cowork.bikerecoder.video.MediaKind
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
@@ -23,7 +21,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 /**
- * The sheet's events are taken only while the screen is started: a [ShareEvent.Send] of an image made while the app was
+ * The sheet's events are taken only while the screen is started: a [ShareEvent.Send] of cards drawn while the app was
  * away waits for it to come back (Android would not open the other app from the background).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -42,7 +40,7 @@ class ShareEventsLifecycleTest {
         override val lifecycle: Lifecycle get() = registry
     }
 
-    private val image = ShareCandidate("content://media/external/images/media/9", MediaKind.IMAGE, Aspect.PORTRAIT, 1L, null)
+    private val card = ShareFile("content://com.cowork.bikerecoder.share/share/7/feed-satellite.jpg", "image/jpeg", 500_000)
 
     @Test
     fun aSendWhileStoppedIsHandledOnceStarted() = runTest(dispatcher) {
@@ -53,9 +51,9 @@ class ShareEventsLifecycleTest {
         backgroundScope.launch { handleWhileStarted(owner.lifecycle, events.receiveAsFlow()) { handled += it } }
         runCurrent()
 
-        // Away: the image is made and its send comes.
+        // Away: the cards are drawn and their send comes.
         owner.registry.currentState = Lifecycle.State.CREATED
-        val send = ShareEvent.Send(ShareTarget.FACEBOOK, image, "글", made = true)
+        val send = ShareEvent.Send(ShareTarget.FACEBOOK, listOf(card), "글")
         events.send(send)
         runCurrent()
         assertEquals(emptyList<ShareEvent>(), handled)
