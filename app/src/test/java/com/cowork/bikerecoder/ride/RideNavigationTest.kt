@@ -137,7 +137,7 @@ class RideNavigationTest {
 
         assertInstanceOf(NavUiState.Active::class.java, h.navigation.ui.value)
         assertEquals(tripId, h.active.tripId)
-        assertEquals(1, voice.spoken.count { it == "자전거 기록을 시작합니다" }, voice.spoken.toString())
+        assertEquals(1, voice.spoken.count { it == "자전거 타기 기록을 시작합니다" }, voice.spoken.toString())
         assertNotNull(h.navigation.kmSource, "the recording supplies the km announcements")
         assertEquals(tripId, h.store.openSegments().single().tripId)
     }
@@ -153,7 +153,7 @@ class RideNavigationTest {
 
         assertInstanceOf(NavUiState.Active::class.java, h.navigation.ui.value)
         assertEquals(RideUiState.Idle, h.ride.ui.value)
-        assertTrue(voice.spoken.none { it == "자전거 기록을 시작합니다" }, voice.spoken.toString())
+        assertTrue(voice.spoken.none { it == "자전거 타기 기록을 시작합니다" }, voice.spoken.toString())
         assertNull(h.navigation.kmSource)
         assertTrue(h.store.openSegments().isEmpty())
     }
@@ -171,7 +171,7 @@ class RideNavigationTest {
 
         assertEquals(ActivityType.BIKE, h.active.activity)
         assertEquals(ActivityType.BIKE, h.store.openSegments().single().activity)
-        assertEquals(1, voice.spoken.count { it == "자전거 기록을 시작합니다" }, voice.spoken.toString())
+        assertEquals(1, voice.spoken.count { it == "자전거 타기 기록을 시작합니다" }, voice.spoken.toString())
         assertNotNull(h.navigation.kmSource, "the bike recording supplies the km announcements")
     }
 
@@ -275,7 +275,7 @@ class RideNavigationTest {
         assertEquals(listOf(1, 2), guidanceKms(), voice.spoken.toString())
         assertTrue(combinedKms().isEmpty(), voice.spoken.toString())
         assertTrue(recordingKms().isEmpty(), voice.spoken.toString())
-        assertEquals(1, voice.spoken.count { it == "자전거 기록을 시작합니다" }, "not restarted while the guidance goes on")
+        assertEquals(1, voice.spoken.count { it == "자전거 타기 기록을 시작합니다" }, "not restarted while the guidance goes on")
     }
 
     @Test
@@ -312,7 +312,7 @@ class RideNavigationTest {
 
         assertInstanceOf(NavUiState.Active::class.java, h.navigation.ui.value)
         assertEquals(tripId, h.active.tripId)
-        assertEquals(2, voice.spoken.count { it == "자전거 기록을 시작합니다" }, voice.spoken.toString())
+        assertEquals(2, voice.spoken.count { it == "자전거 타기 기록을 시작합니다" }, voice.spoken.toString())
         assertNotNull(h.navigation.kmSource)
         assertEquals(2, h.store.segments(tripId).size)
     }
@@ -330,7 +330,7 @@ class RideNavigationTest {
         play(10_000)
 
         assertEquals(tripId, h.active.tripId)
-        assertEquals(1, voice.spoken.count { it == "자전거 기록을 시작합니다" }, voice.spoken.toString())
+        assertEquals(1, voice.spoken.count { it == "자전거 타기 기록을 시작합니다" }, voice.spoken.toString())
         assertEquals(tripId, h.store.openSegments().single().tripId)
     }
 
@@ -346,7 +346,7 @@ class RideNavigationTest {
         assertInstanceOf(NavUiState.Failed::class.java, h.navigation.ui.value)
         assertEquals(RideUiState.Idle, h.ride.ui.value)
         assertTrue(h.store.openSegments().isEmpty())
-        assertTrue(voice.spoken.none { it == "자전거 기록을 시작합니다" }, voice.spoken.toString())
+        assertTrue(voice.spoken.none { it == "자전거 타기 기록을 시작합니다" }, voice.spoken.toString())
         assertNull(h.navigation.kmSource)
     }
 
@@ -384,7 +384,7 @@ class RideNavigationTest {
         h.ride.startRecording(tripId)!!.join()
 
         assertTrue(!voice.muted, "the shared voice is unmuted when the guidance finished")
-        assertEquals(listOf("자전거 기록을 시작합니다"), voice.spoken.toList())
+        assertEquals(listOf("자전거 타기 기록을 시작합니다"), voice.spoken.toList())
     }
     @Test
     fun recordingFirstThenGuidanceOfTheSameTripKeepsTheSegment() = runTest {
@@ -403,7 +403,7 @@ class RideNavigationTest {
         assertEquals(segmentId, segment.id)
         assertNull(segment.endedAt)
         assertEquals(segmentId, h.active.segmentId)
-        assertEquals(1, voice.spoken.count { it == "자전거 기록을 시작합니다" }, voice.spoken.toString())
+        assertEquals(1, voice.spoken.count { it == "자전거 타기 기록을 시작합니다" }, voice.spoken.toString())
         assertEquals(listOf(1), combinedKms(), voice.spoken.toString())
         assertTrue(guidanceKms().isEmpty(), voice.spoken.toString())
         assertTrue(recordingKms().isEmpty(), voice.spoken.toString())

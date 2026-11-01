@@ -154,7 +154,7 @@ class RideScenarioTest {
         s.replayed()
         val finished = s.stop()
 
-        assertEquals(voice.spoken.toString(), 1, voice.spoken.count { it == "자전거 기록을 시작합니다" })
+        assertEquals(voice.spoken.toString(), 1, voice.spoken.count { it == "자전거 타기 기록을 시작합니다" })
         assertEquals(voice.spoken.toString(), 3, recordedKms().size)
         val saved = store.segment(finished.segment.id)!!
         assertNotNull(saved.endedAt)

@@ -158,7 +158,7 @@ class RideControllerTest {
         assertTrue(h.pressure.collecting, "pressure is collected while recording")
         h.controller.stopRecording(RecordingEnd.COMPLETE_TRIP)
 
-        assertEquals(1, voice.spoken.count { it == "자전거 기록을 시작합니다" }, voice.spoken.toString())
+        assertEquals(1, voice.spoken.count { it == "자전거 타기 기록을 시작합니다" }, voice.spoken.toString())
         assertEquals(listOf(1, 2, 3), kmReports(), voice.spoken.toString())
         val saved = h.store.segments(tripId).single()
         assertEquals(3_010.0, saved.totals.distanceM, 1.0)
@@ -597,8 +597,8 @@ class RideControllerTest {
         h.controller.splitSegment()
         play(5_000)
 
-        assertEquals(1, voice.spoken.count { it == "자전거 기록을 시작합니다" }, voice.spoken.toString())
-        assertEquals("자전거 기록을 시작합니다", voice.spoken.first())
+        assertEquals(1, voice.spoken.count { it == "자전거 타기 기록을 시작합니다" }, voice.spoken.toString())
+        assertEquals("자전거 타기 기록을 시작합니다", voice.spoken.first())
         assertEquals(1, voice.spoken.count { it == "새 구간으로 기록을 시작합니다" }, voice.spoken.toString())
         assertEquals("새 구간으로 기록을 시작합니다", h.controller.notice.value?.text)
     }
@@ -885,7 +885,7 @@ class RideControllerTest {
             listOf("1킬로미터 이동. 평균 시속 18.0킬로미터, 이동 시간 3분입니다."),
             voice.spoken.filter { "킬로미터" in it },
         )
-        assertEquals("자전거 기록을 시작합니다", voice.spoken.first())
+        assertEquals("자전거 타기 기록을 시작합니다", voice.spoken.first())
     }
 
     @Test
