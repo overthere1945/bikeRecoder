@@ -129,7 +129,7 @@ class RideControllerTest {
         runCurrent()
     }
 
-    private fun kmReports() = voice.spoken.filter { "킬로미터 이동. 평균 속도" in it }.map { it.substringBefore("킬로미터").toInt() }
+    private fun kmReports() = voice.spoken.filter { "킬로미터 이동. 평균 시속" in it }.map { it.substringBefore("킬로미터").toInt() }
 
     @Test
     fun recordOnlyThreeKmAnnouncesStartAndEachKm() = runTest {

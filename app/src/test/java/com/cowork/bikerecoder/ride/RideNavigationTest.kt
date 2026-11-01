@@ -113,12 +113,12 @@ class RideNavigationTest {
 
     /** The combined sentence: the recording's day totals plus the guidance's remaining distance and ETA. */
     private fun combinedKms() = voice.spoken
-        .filter { "킬로미터 이동. 평균 속도" in it && "남은 거리" in it && "도착 예정" in it }
+        .filter { "킬로미터 이동. 평균 시속" in it && "남은 거리" in it && "도착 예정" in it }
         .map { it.substringBefore("킬로미터").toInt() }
 
     /** The recording-only sentence ("…이동 시간 {시간}입니다."). */
     private fun recordingKms() = voice.spoken
-        .filter { "킬로미터 이동. 평균 속도" in it && "남은 거리" !in it }
+        .filter { "킬로미터 이동. 평균 시속" in it && "남은 거리" !in it }
         .map { it.substringBefore("킬로미터").toInt() }
 
     /** The guidance-only sentence ("{n}킬로미터 이동. 남은 거리 …"). */

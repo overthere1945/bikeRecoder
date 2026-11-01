@@ -137,10 +137,10 @@ class RideScenarioTest {
         listOf(TripStop(0, 0, 0, "도착", destination, isDestination = true, visitedAt = null)),
     ).id
 
-    private fun recordedKms() = voice.spoken.filter { "킬로미터 이동. 평균 속도" in it && "남은 거리" !in it }
+    private fun recordedKms() = voice.spoken.filter { "킬로미터 이동. 평균 시속" in it && "남은 거리" !in it }
 
     private fun combinedKms() = voice.spoken
-        .filter { "킬로미터 이동. 평균 속도" in it && "남은 거리" in it && "도착 예정" in it }
+        .filter { "킬로미터 이동. 평균 시속" in it && "남은 거리" in it && "도착 예정" in it }
         .map { it.substringBefore("킬로미터").toInt() }
 
     private fun guidanceKms() = voice.spoken.filter { "킬로미터 이동. 남은 거리" in it }
