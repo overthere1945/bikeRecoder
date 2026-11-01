@@ -4,12 +4,16 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.activity.BestEffort
+import com.cowork.bikerecoder.core.activity.BestEffortDistance
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TripDeleteCondition
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.core.stats.RideStat
+import com.cowork.bikerecoder.core.stats.StoredBestEffort
 import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripStop
@@ -102,6 +106,178 @@ class RoomRideStoreTest {
         assertEquals(1_500.0, store.recentSegments(10)[1].totals.distanceM, 0.0)
     }
 
+    private suspend fun closedSegment(
+        tripId: Long,
+        startedAt: Long,
+        activity: ActivityType,
+        distanceM: Double = 2_000.0,
+        movingTimeMs: Long = 400_000L,
+        date: LocalDate = day1,
+    ): Long {
+        val id = store.openSegment(tripId, startedAt, date, activity)
+        store.closeSegment(id, startedAt + 500L, totals(distanceM, movingTimeMs))
+        return id
+    }
+
+    /** The raw best-effort rows of one segment as (distanceM, timeMs, startIndex), whether or not it has ended. */
+    private fun effortRows(segmentId: Long): List<Triple<Int, Long, Int>> =
+        db.openHelper.readableDatabase.query(
+            "SELECT distanceM, timeMs, startIndex FROM segment_best_effort WHERE segmentId = $segmentId ORDER BY distanceM",
+        ).use { c ->
+            buildList { while (c.moveToNext()) add(Triple(c.getInt(0), c.getLong(1), c.getInt(2))) }
+        }
+
+    private fun effort(distance: BestEffortDistance, timeMs: Long, startIndex: Int = 0) =
+        BestEffort(distance, timeMs, startIndex)
+
+    @Test
+    fun openSegmentStoresActivity() = runTest {
+        val tripId = newTrip()
+        val run = store.openSegment(tripId, 1_000L, day1, ActivityType.RUN)
+        val default = store.openSegment(tripId, 2_000L, day1)
+
+        assertEquals(ActivityType.RUN, store.segment(run)!!.activity)
+        assertEquals(ActivityType.BIKE, store.segment(default)!!.activity)
+        assertEquals(listOf(ActivityType.RUN, ActivityType.BIKE), store.segments(tripId).map { it.activity })
+        assertEquals(setOf(run, default), store.openSegments().map { it.id }.toSet())
+        assertEquals(ActivityType.RUN, store.openSegments().single { it.id == run }.activity)
+    }
+
+    @Test
+    fun dayTotalsCountOnlyBike() = runTest {
+        val tripId = newTrip()
+        closedSegment(tripId, 1_000L, ActivityType.BIKE, distanceM = 3_000.0, movingTimeMs = 600_000L)
+        closedSegment(tripId, 2_000L, ActivityType.WALK, distanceM = 5_000.0, movingTimeMs = 900_000L)
+        closedSegment(tripId, 3_000L, ActivityType.RUN, distanceM = 7_000.0, movingTimeMs = 800_000L)
+        closedSegment(tripId, 4_000L, ActivityType.HIKE, distanceM = 9_000.0, movingTimeMs = 700_000L)
+        closedSegment(tripId, 5_000L, ActivityType.BIKE, distanceM = 1_000.0, movingTimeMs = 100_000L)
+
+        val day = store.dayTotals(tripId, day1)
+        assertEquals(4_000.0, day.distanceM, 0.0)
+        assertEquals(700_000L, day.movingTimeMs)
+        assertEquals(0.0, store.dayTotals(tripId, day2).distanceM, 0.0)
+    }
+
+    @Test
+    fun recentSegmentsOnlyBike() = runTest {
+        val tripId = newTrip()
+        val bike = closedSegment(tripId, 1_000L, ActivityType.BIKE)
+        closedSegment(tripId, 2_000L, ActivityType.RUN)
+        closedSegment(tripId, 3_000L, ActivityType.WALK)
+        closedSegment(tripId, 4_000L, ActivityType.HIKE)
+        val bike2 = closedSegment(tripId, 5_000L, ActivityType.BIKE)
+
+        assertEquals(listOf(bike2, bike), store.recentSegments(10).map { it.id })
+    }
+
+    @Test
+    fun saveBestEffortsReplacesRows() = runTest {
+        val id = closedSegment(newTrip(), 1_000L, ActivityType.RUN)
+
+        store.saveBestEfforts(id, listOf(effort(BestEffortDistance.ONE_K, 250_000L, 3), effort(BestEffortDistance.FIVE_K, 1_400_000L, 7)))
+        assertEquals(listOf(Triple(1000, 250_000L, 3), Triple(5000, 1_400_000L, 7)), effortRows(id))
+
+        store.saveBestEfforts(id, listOf(effort(BestEffortDistance.ONE_K, 240_000L, 5)))
+        assertEquals(listOf(Triple(1000, 240_000L, 5)), effortRows(id))
+
+        store.saveBestEfforts(id, emptyList())
+        assertEquals(emptyList<Triple<Int, Long, Int>>(), effortRows(id))
+    }
+
+    @Test
+    fun bestEffortsReadsTheSegmentsRowsInDistanceOrder() = runTest {
+        val tripId = newTrip()
+        val id = closedSegment(tripId, 1_000L, ActivityType.RUN)
+        val other = closedSegment(tripId, 2_000L, ActivityType.RUN)
+        assertEquals(emptyList<BestEffort>(), store.bestEfforts(id))
+
+        store.saveBestEfforts(id, listOf(effort(BestEffortDistance.FIVE_K, 1_400_000L, 7), effort(BestEffortDistance.ONE_K, 250_000L, 3)))
+        store.saveBestEfforts(other, listOf(effort(BestEffortDistance.ONE_K, 240_000L, 1)))
+
+        assertEquals(
+            listOf(effort(BestEffortDistance.ONE_K, 250_000L, 3), effort(BestEffortDistance.FIVE_K, 1_400_000L, 7)),
+            store.bestEfforts(id),
+        )
+    }
+
+    @Test
+    fun changeActivityReplacesTotalsAndEfforts() = runTest {
+        val id = closedSegment(newTrip(), 1_000L, ActivityType.RUN, distanceM = 6_000.0)
+        store.saveBestEfforts(id, listOf(effort(BestEffortDistance.ONE_K, 250_000L)))
+        val recomputed = totals(5_500.0, movingTimeMs = 1_500_000L)
+
+        store.changeActivity(id, ActivityType.WALK, recomputed, emptyList())
+        val walk = store.segment(id)!!
+        assertEquals(ActivityType.WALK, walk.activity)
+        assertEquals(recomputed, walk.totals)
+        assertEquals(emptyList<Triple<Int, Long, Int>>(), effortRows(id))
+
+        val efforts = listOf(effort(BestEffortDistance.ONE_K, 230_000L, 2), effort(BestEffortDistance.FIVE_K, 1_300_000L, 4))
+        store.changeActivity(id, ActivityType.RUN, totals(6_000.0), efforts)
+        assertEquals(ActivityType.RUN, store.segment(id)!!.activity)
+        assertEquals(totals(6_000.0), store.segment(id)!!.totals)
+        assertEquals(listOf(Triple(1000, 230_000L, 2), Triple(5000, 1_300_000L, 4)), effortRows(id))
+    }
+
+    @Test
+    fun changeActivityNullTotalsKeepsTotals() = runTest {
+        val id = closedSegment(newTrip(), 1_000L, ActivityType.BIKE, distanceM = 6_000.0)
+        val before = store.segment(id)!!.totals
+
+        store.changeActivity(id, ActivityType.HIKE, null, emptyList())
+
+        val after = store.segment(id)!!
+        assertEquals(ActivityType.HIKE, after.activity)
+        assertEquals(before, after.totals)
+        assertEquals(1_500L, after.endedAt) // the closing time is untouched
+    }
+
+    @Test
+    fun deletingSegmentDeletesEfforts() = runTest {
+        val tripId = newTrip()
+        val gone = closedSegment(tripId, 1_000L, ActivityType.RUN)
+        val kept = closedSegment(tripId, 2_000L, ActivityType.RUN)
+        store.saveBestEfforts(gone, listOf(effort(BestEffortDistance.ONE_K, 250_000L)))
+        store.saveBestEfforts(kept, listOf(effort(BestEffortDistance.ONE_K, 260_000L)))
+
+        store.deleteSegment(gone)
+
+        assertEquals(emptyList<Triple<Int, Long, Int>>(), effortRows(gone))
+        assertEquals(listOf(Triple(1000, 260_000L, 0)), effortRows(kept))
+    }
+
+    @Test
+    fun observeBestEffortsEmitsEndedSegmentsAndSkipsUnknownDistances() = runTest {
+        val stats = RoomRideStatsSource(db)
+        val tripId = newTrip()
+        val ended = closedSegment(tripId, 1_000L, ActivityType.RUN)
+        val open = store.openSegment(tripId, 5_000L, day1, ActivityType.RUN)
+        store.saveBestEfforts(ended, listOf(effort(BestEffortDistance.ONE_K, 250_000L), effort(BestEffortDistance.HALF, 6_000_000L)))
+        store.saveBestEfforts(open, listOf(effort(BestEffortDistance.ONE_K, 240_000L)))
+        db.openHelper.writableDatabase.execSQL(
+            "INSERT INTO segment_best_effort (segmentId, distanceM, timeMs, startIndex) VALUES ($ended, 3000, 1, 0)",
+        )
+
+        assertEquals(
+            listOf(
+                StoredBestEffort(ended, BestEffortDistance.ONE_K, 250_000L),
+                StoredBestEffort(ended, BestEffortDistance.HALF, 6_000_000L),
+            ),
+            stats.observeBestEfforts().first(),
+        )
+    }
+
+    @Test
+    fun observeRidesCarriesActivity() = runTest {
+        val tripId = newTrip()
+        val id = closedSegment(tripId, 1_000L, ActivityType.HIKE)
+
+        val stat = RoomRideStatsSource(db).observeRides().first().single()
+        assertEquals(id, stat.segmentId)
+        assertEquals(ActivityType.HIKE, stat.activity)
+        assertEquals(20.0, stat.maxAltitudeM!!, 0.0)
+    }
+
     @Test
     fun appendUpdatesPointsAndTotalsTogether() = runTest {
         val segmentId = store.openSegment(newTrip(), startedAt = 10_000L, localDate = day2)
@@ -123,15 +299,15 @@ class RoomRideStoreTest {
         val open = store.openSegment(tripId, startedAt = 20_000L, localDate = day2)
 
         assertEquals(
-            listOf(RideStat(done, tripId, 10_000L, day1, 1_200.0, 60_000L, 4.0, endedAt = 11_000L)),
+            listOf(RideStat(done, tripId, 10_000L, day1, 1_200.0, 60_000L, 4.0, 11_000L, ActivityType.BIKE, 60_500L, 20.0)),
             stats.observeRides().first(),
         )
 
         store.closeSegment(open, 21_000L, totals(5.0, 2_000L)) // 짧은 구간도 거르지 않고 내보낸다
         assertEquals(
             listOf(
-                RideStat(done, tripId, 10_000L, day1, 1_200.0, 60_000L, 4.0, endedAt = 11_000L),
-                RideStat(open, tripId, 20_000L, day2, 5.0, 2_000L, 4.0, endedAt = 21_000L),
+                RideStat(done, tripId, 10_000L, day1, 1_200.0, 60_000L, 4.0, 11_000L, ActivityType.BIKE, 60_500L, 20.0),
+                RideStat(open, tripId, 20_000L, day2, 5.0, 2_000L, 4.0, 21_000L, ActivityType.BIKE, 2_500L, 20.0),
             ),
             stats.observeRides().first(),
         )

@@ -3,10 +3,12 @@ package com.cowork.bikerecoder.ui.feed
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.stats.RideStat
 import com.cowork.bikerecoder.core.stats.RideStatsSource
+import com.cowork.bikerecoder.core.stats.StoredBestEffort
 import com.cowork.bikerecoder.video.TripMedia
 import com.cowork.bikerecoder.video.TripMediaStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import java.io.File
 
@@ -16,9 +18,12 @@ class FakeRideStats(private val segments: suspend () -> List<RideSegment>) : Rid
 
     override fun observeRides(): Flow<List<RideStat>> = tick.map {
         segments().filter { it.endedAt != null }.map {
-            RideStat(it.id, it.tripId, it.startedAt, it.localDate, it.totals.distanceM, it.totals.movingTimeMs, it.totals.ascentM, it.endedAt!!)
+            RideStat(it.id, it.tripId, it.startedAt, it.localDate, it.totals.distanceM, it.totals.movingTimeMs, it.totals.ascentM, it.endedAt!!,
+                it.activity, it.totals.elapsedMs, it.totals.maxAltitudeM)
         }
     }
+
+    override fun observeBestEfforts(): Flow<List<StoredBestEffort>> = flowOf(emptyList())
 }
 
 /** Records what the feed asks of the picture queue. */

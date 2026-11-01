@@ -1,6 +1,6 @@
 package com.cowork.bikerecoder.importing
 
-import com.cowork.bikerecoder.core.importing.Activity
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.importing.GpxReader
 import com.cowork.bikerecoder.core.importing.GpxTrack
 import com.cowork.bikerecoder.core.importing.ImportLimits
@@ -53,10 +53,47 @@ class ImportScannerTest {
         assertEquals(gpxEnd(T0), first.endedAt)
         assertTrue(first.distanceM > 250.0, "distance ${first.distanceM}")
         assertTrue(first.movingTimeMs > 0)
-        assertEquals(Activity.CYCLING, first.activity)
+        assertEquals(ActivityType.BIKE, first.activity)
         assertEquals(RideStatus.New, first.status)
         assertTrue(first.preview.size >= 2)
         assertTrue(result.rows.all { it.status == RideStatus.New })
+    }
+
+    @Test
+    fun rowsCarryTheFileType() {
+        val uris = listOf(
+            reader.add("run.gpx", gpx(T0, type = "running")),
+            reader.add("walk.gpx", gpx(T0 + hour, type = "Walking")),
+            reader.add("hike.gpx", gpx(T0 + 2 * hour, type = "hiking")),
+            reader.add("none.gpx", gpx(T0 + 3 * hour)),
+            reader.add("nine.gpx", gpx(T0 + 4 * hour, type = "9")),
+        )
+
+        val byName = scan(uris).rows.associate { it.fileName to it.activity }
+
+        assertEquals(
+            mapOf(
+                "run.gpx" to ActivityType.RUN,
+                "walk.gpx" to ActivityType.WALK,
+                "hike.gpx" to ActivityType.HIKE,
+                "none.gpx" to ActivityType.BIKE,
+                "nine.gpx" to ActivityType.BIKE,
+            ),
+            byName,
+        )
+    }
+
+    @Test
+    fun scanReplaysWithTheFileType() {
+        // 0.6 m/s: a bike pauses on it, a walk does not.
+        val slow = { type: String -> gpx(T0, points = 200, stepM = 1.2, type = type) }
+        val walkRow = scan(listOf(reader.add("walk.gpx", slow("walking")))).rows.single()
+        val bikeRow = scan(listOf(reader.add("bike.gpx", slow("cycling")))).rows.single()
+
+        val fixes = GpxReader.read(slow("walking")).fixes
+        assertEquals(com.cowork.bikerecoder.core.importing.RideReplay.replay(fixes, activity = ActivityType.WALK)!!.totals.movingTimeMs, walkRow.movingTimeMs)
+        assertEquals(com.cowork.bikerecoder.core.importing.RideReplay.replay(fixes, activity = ActivityType.BIKE)!!.totals.movingTimeMs, bikeRow.movingTimeMs)
+        assertTrue(walkRow.movingTimeMs > bikeRow.movingTimeMs, "${walkRow.movingTimeMs} vs ${bikeRow.movingTimeMs}")
     }
 
     @Test
@@ -82,7 +119,7 @@ class ImportScannerTest {
         )
         val unreadable = rows.last()
         assertNull(unreadable.startedAt)
-        assertNull(unreadable.activity)
+        assertEquals(ActivityType.BIKE, unreadable.activity)
         assertTrue(unreadable.preview.isEmpty())
     }
 
@@ -102,7 +139,7 @@ class ImportScannerTest {
         assertEquals(RideStatus.OverlapsExisting, byName["existing.gpx"])
         assertEquals(RideStatus.New, byName["first.gpx"])
         assertEquals(RideStatus.DuplicateInList, byName["same.zip / copy.gpx"])
-        assertEquals(RideStatus.NotCycling, byName["run.gpx"])
+        assertEquals(RideStatus.New, byName["run.gpx"])
         assertEquals(RideStatus.New, byName["touch.gpx"])
     }
 

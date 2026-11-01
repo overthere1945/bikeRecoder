@@ -6,9 +6,11 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.data.AppSettings
 import com.cowork.bikerecoder.data.GuidanceRecording
+import com.cowork.bikerecoder.data.withHashtags
 import com.cowork.bikerecoder.importing.ImportJobState
 import com.cowork.bikerecoder.offline.OfflineMapStorage
 import com.cowork.bikerecoder.offline.SegmentInfo
@@ -112,8 +114,8 @@ class SettingsViewModel(
     /** "사진·심박 연결" (spec §5.1): false lets the heart-rate card show again ([허용]), true after a refusal. */
     fun setHeartRatePromptDismissed(dismissed: Boolean) = edit { it.copy(heartRatePromptDismissed = dismissed) }
 
-    /** "공유" (spec §3.5): the default hashtags, already normalized; "" = none. */
-    fun setShareHashtags(value: String) = edit { it.copy(shareHashtags = value) }
+    /** "공유" (spec §3.5, V1.9.0 §5.2): [type]'s default hashtags, already normalized; "" = none. */
+    fun setShareHashtags(type: ActivityType, value: String) = edit { it.withHashtags(type, value) }
 
     private fun edit(transform: (AppSettings) -> AppSettings) {
         viewModelScope.launch { updateSettings(transform) }

@@ -1,5 +1,8 @@
 package com.cowork.bikerecoder.video
 
+import com.cowork.bikerecoder.core.activity.ActivityMix
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.activity.BestEffortDistance
 import com.cowork.bikerecoder.core.post.HeartRateSample
 import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
 import com.cowork.bikerecoder.core.recording.RideStore
@@ -20,7 +23,10 @@ import java.time.ZoneId
 /**
  * The trip's numbers on the video's last card and the summary image (ruling V1): sums over the target segments,
  * average speed = distance / moving time, the highest speed, the ascent, and the heart rate average / calories when
- * known (spec §2.4).
+ * known (spec §2.4). The activity types add (V1.9.0 spec §5.1): [hikeElapsedMs] the hike segments' elapsed time (rests
+ * included), [maxAltitudeM] the highest point of the segments that know one, and [fastestKmMs] the fastest 1 km among the
+ * run segments' saved best efforts (null when none covered 1 km). [paceDistanceM] and [paceMovingTimeMs] are the sums of
+ * the dominant activity's segments only, the average pace of a run or walk (null: [distanceM] and [movingTimeMs]).
  */
 data class TripTotals(
     val distanceM: Double,
@@ -30,6 +36,11 @@ data class TripTotals(
     val ascentM: Double,
     val avgBpm: Int?,
     val calories: Double?,
+    val hikeElapsedMs: Long = 0L,
+    val maxAltitudeM: Double? = null,
+    val fastestKmMs: Long? = null,
+    val paceDistanceM: Double? = null,
+    val paceMovingTimeMs: Long? = null,
 )
 
 /**
@@ -40,7 +51,9 @@ data class TripTotals(
  * (spec §3.8: "저녁 라이딩" from the first start, "N일 여행" over several days; the job may add the region — unless it is the trip's
  * custom title, [titleIsCustom], which is used as it is, V1.4.0 spec §2.5); [canColorByHeart] some target
  * segment has detailed heart rate (the [심박] option); [firstStartedAt] when the first target segment was started (the file
- * name, spec §3.5 — not its first GPS fix).
+ * name, spec §3.5 — not its first GPS fix). [segmentActivities] is the activity of each target segment by the timeline's
+ * `segmentIndex` (the feed picture's line colours and the number band's per-frame numbers; empty = all bike);
+ * [activity] the trip's dominant activity (the closing card, the summary image and the title badge).
  */
 data class VideoInputs(
     val tripId: Long,
@@ -54,7 +67,16 @@ data class VideoInputs(
     val canColorByHeart: Boolean,
     val firstStartedAt: Long,
     val titleIsCustom: Boolean = false,
+    val segmentActivities: List<ActivityType> = emptyList(),
+    val activity: ActivityType = ActivityType.BIKE,
 )
+
+/**
+ * The activity of each target segment by the timeline's `segmentIndex`: [VideoInputs.segmentActivities], or, when the
+ * inputs carry none, the dominant [VideoInputs.activity] for every segment.
+ */
+fun VideoInputs.activitiesBySegment(): List<ActivityType> =
+    segmentActivities.ifEmpty { List((timeline.points.lastOrNull()?.segmentIndex ?: -1) + 1) { activity } }
 
 class VideoInputsLoader(
     private val rideStore: RideStore,
@@ -88,6 +110,12 @@ class VideoInputsLoader(
         val totals = tripTotals(targets)
         val days = targets.map { it.localDate }.distinct().sorted()
         val custom = labels.label(tripId).customTitle?.takeIf { it.isNotBlank() }
+        val activity = ActivityMix.of(targets).dominant
+        val paceOf = targets.filter { it.activity == activity }.takeIf { it.size < targets.size }
+        val fastestKmMs = targets.filter { it.activity == ActivityType.RUN }
+            .flatMap { rideStore.bestEfforts(it.id) }
+            .filter { it.distance == BestEffortDistance.ONE_K }
+            .minOfOrNull { it.timeMs }
 
         return VideoInputs(
             tripId = tripId,
@@ -96,7 +124,7 @@ class VideoInputsLoader(
             heartRate = heartRate,
             dayStarts = timeline.dayStarts,
             title = titleOf(days.first(), days.last()),
-            rideTitle = custom ?: RideTitle.base(targets.first().startedAt, days.size, zone),
+            rideTitle = custom ?: RideTitle.base(targets.first().startedAt, days.size, zone, activity),
             totals = TripTotals(
                 distanceM = totals.distanceM,
                 movingTimeMs = totals.movingTimeMs,
@@ -105,10 +133,18 @@ class VideoInputsLoader(
                 ascentM = totals.ascentM,
                 avgBpm = hr.avgBpm,
                 calories = hr.calories,
+                hikeElapsedMs = targets.filter { it.activity == ActivityType.HIKE }.sumOf { it.totals.elapsedMs },
+                maxAltitudeM = targets.mapNotNull { it.totals.maxAltitudeM }.maxOrNull(),
+                fastestKmMs = fastestKmMs,
+                // A run's or walk's average pace: the dominant activity's segments only (a one-activity trip: its totals).
+                paceDistanceM = paceOf?.sumOf { it.totals.distanceM },
+                paceMovingTimeMs = paceOf?.sumOf { it.totals.movingTimeMs },
             ),
             canColorByHeart = hr.canColor,
             firstStartedAt = targets.first().startedAt,
             titleIsCustom = custom != null,
+            segmentActivities = targets.map { it.activity },
+            activity = activity,
         )
     }
 

@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.ride
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.recording.SegmentTotals
@@ -113,12 +114,12 @@ class RideNavigationTest {
 
     /** The combined sentence: the recording's day totals plus the guidance's remaining distance and ETA. */
     private fun combinedKms() = voice.spoken
-        .filter { "킬로미터 이동. 평균 속도" in it && "남은 거리" in it && "도착 예정" in it }
+        .filter { "킬로미터 이동. 평균 시속" in it && "남은 거리" in it && "도착 예정" in it }
         .map { it.substringBefore("킬로미터").toInt() }
 
     /** The recording-only sentence ("…이동 시간 {시간}입니다."). */
     private fun recordingKms() = voice.spoken
-        .filter { "킬로미터 이동. 평균 속도" in it && "남은 거리" !in it }
+        .filter { "킬로미터 이동. 평균 시속" in it && "남은 거리" !in it }
         .map { it.substringBefore("킬로미터").toInt() }
 
     /** The guidance-only sentence ("{n}킬로미터 이동. 남은 거리 …"). */
@@ -155,6 +156,35 @@ class RideNavigationTest {
         assertTrue(voice.spoken.none { it == "기록을 시작합니다" }, voice.spoken.toString())
         assertNull(h.navigation.kmSource)
         assertTrue(h.store.openSegments().isEmpty())
+    }
+
+    @Test
+    fun guidedRecordingIsAlwaysBike() = runTest {
+        val h = Harness(this)
+        h.settings.value = AppSettings(autoStartRecordingWithNavigation = false)
+        val tripId = h.trip()
+        h.navigation.start(tripId)
+        play(10_000)
+        assertInstanceOf(NavUiState.Active::class.java, h.navigation.ui.value)
+
+        h.ride.startRecording(tripId, ActivityType.RUN)!!.join()
+
+        assertEquals(ActivityType.BIKE, h.active.activity)
+        assertEquals(ActivityType.BIKE, h.store.openSegments().single().activity)
+        assertEquals(1, voice.spoken.count { it == "기록을 시작합니다" }, voice.spoken.toString())
+        assertNotNull(h.navigation.kmSource, "the bike recording supplies the km announcements")
+    }
+
+    @Test
+    fun guidanceAutoStartRecordsBike() = runTest {
+        val h = Harness(this)
+        val tripId = h.trip()
+
+        h.navigation.start(tripId)
+        play(10_000)
+
+        assertEquals(ActivityType.BIKE, h.active.activity)
+        assertEquals(ActivityType.BIKE, h.store.openSegments().single().activity)
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.post
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.CumulativeEntry
 import com.cowork.bikerecoder.core.post.HeartRateSample
@@ -53,6 +54,8 @@ data class SegmentCard(
     val route: List<GeoPoint>?,
     val photoCount: Int,
     val heartRate: HeartRateStats?,
+    /** The segment's activity (V1.9.0): the colour of its line on the feed card. */
+    val activity: ActivityType = ActivityType.BIKE,
 )
 
 /** 쓰려는 구간이 이미 지워졌다(외래 키 위반). 후처리는 그 구간을 건너뛴다. */

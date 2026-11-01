@@ -1,8 +1,14 @@
 package com.cowork.bikerecoder.ride
 
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.activity.BestEffort
+import com.cowork.bikerecoder.core.activity.BestEffortDistance
+import com.cowork.bikerecoder.core.activity.BestEfforts
 import com.cowork.bikerecoder.core.model.GeoMath
+import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.model.RouteProfile
+import com.cowork.bikerecoder.core.recording.RecordingState
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.trip.TripManager
@@ -52,6 +58,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.IOException
 import java.time.LocalDate
+import java.time.ZoneId
 
 /**
  * The controller on JVM fakes with virtual time. Fixes come from [ScriptedLocationSource] at speedup 1, so a fix's
@@ -74,6 +81,9 @@ class RideControllerTest {
         val tripManager = TripManager(trips, offline, clock)
         val pressure = FakePressureSource()
         val settings = MutableStateFlow(AppSettings())
+        /** Every sunset computation the controller asked for, and what it answers ([sunsetAnswer]). */
+        val sunsetCalls = mutableListOf<SunsetCall>()
+        var sunsetAnswer: (LocalDate) -> Long? = { null }
         val navigation = NavigationController(
             router = AssetRouter(emptyList()),
             tripManager = tripManager,
@@ -99,6 +109,10 @@ class RideControllerTest {
             scope = scope,
             clock = clock,
             log = log,
+            sunsetOf = { lat, lon, date, zone ->
+                sunsetCalls += SunsetCall(lat, lon, date, zone)
+                sunsetAnswer(date)
+            },
         )
 
         val controller = newController()
@@ -106,13 +120,15 @@ class RideControllerTest {
         suspend fun trip(type: TripType = TripType.SINGLE_DAY): Long =
             tripManager.startTrip(type, RouteProfile.CYCLEWAY_FIRST, emptyList()).id
 
-        suspend fun start(tripId: Long, c: RideController = controller) {
-            assertNotNull(c.startRecording(tripId)?.also { it.join() }, "started")
+        suspend fun start(tripId: Long, c: RideController = controller, activity: ActivityType = ActivityType.BIKE) {
+            assertNotNull(c.startRecording(tripId, activity)?.also { it.join() }, "started")
             assertInstanceOf(RideUiState.Active::class.java, c.ui.value)
         }
 
         val active: RideUiState.Active get() = controller.ui.value as RideUiState.Active
     }
+
+    data class SunsetCall(val lat: Double, val lon: Double, val date: LocalDate, val zone: ZoneId)
 
     private fun TestScope.harness(fixes: List<LocationFix>) = Harness(this, ScriptedLocationSource(fixes, speedup = 1.0))
 
@@ -129,7 +145,7 @@ class RideControllerTest {
         runCurrent()
     }
 
-    private fun kmReports() = voice.spoken.filter { "킬로미터 이동. 평균 속도" in it }.map { it.substringBefore("킬로미터").toInt() }
+    private fun kmReports() = voice.spoken.filter { "킬로미터 이동. 평균 시속" in it }.map { it.substringBefore("킬로미터").toInt() }
 
     @Test
     fun recordOnlyThreeKmAnnouncesStartAndEachKm() = runTest {
@@ -772,5 +788,328 @@ class RideControllerTest {
 
         assertInstanceOf(RideUiState.Finished::class.java, h.controller.ui.value)
         assertNull(h.controller.notice.value)
+    }
+
+    // --- V1.9.0 activity types (Task 5) ---
+
+    @Test
+    fun startUsesChosenActivity() = runTest {
+        // 2.5 km/h: below the bike's 3 km/h auto-pause, above the run's 2 km/h.
+        val h = harness(straight(100.0, speedKmh = 2.5))
+        val tripId = h.trip()
+
+        h.start(tripId, activity = ActivityType.RUN)
+        play(60_000)
+
+        assertEquals(ActivityType.RUN, h.store.segments(tripId).single().activity)
+        assertEquals(ActivityType.RUN, h.active.activity)
+        assertEquals(RecordingState.Recording, h.active.state, "a run is not auto-paused at 2.5 km/h")
+        assertTrue(voice.spoken.none { it == "일시정지되었습니다" }, voice.spoken.toString())
+        assertEquals("달리기 기록을 시작합니다", voice.spoken.first())
+        assertNull(h.navigation.kmSource, "only a bike recording supplies the guidance's km")
+
+        h.controller.stopRecording(RecordingEnd.SEGMENT_ONLY)
+        assertEquals(ActivityType.RUN, (h.controller.ui.value as RideUiState.Finished).segment.activity)
+    }
+
+    @Test
+    fun theSameFixesPauseABikeRecording() = runTest {
+        val h = harness(straight(100.0, speedKmh = 2.5))
+        h.start(h.trip())
+
+        play(60_000)
+
+        assertEquals(ActivityType.BIKE, h.active.activity)
+        assertInstanceOf(RecordingState.Paused::class.java, h.active.state)
+    }
+
+    @Test
+    fun splitAlwaysOpensABikeSegment() = runTest {
+        // The split's only caller is the guidance start, and guidance is for bikes (P14).
+        val h = splitHarness()
+        val tripId = h.trip()
+        h.start(tripId, activity = ActivityType.WALK)
+        play(20_000)
+        assertNull(h.navigation.kmSource, "a walk is not the guidance's km source")
+
+        h.controller.splitSegment()
+
+        assertEquals(listOf(ActivityType.WALK, ActivityType.BIKE), h.store.segments(tripId).map { it.activity })
+        assertEquals(ActivityType.BIKE, h.active.activity)
+        assertEquals(RideUiState.Active::class, h.controller.ui.value::class)
+        assertNotNull(h.navigation.kmSource, "the bike segment supplies the guidance's km")
+
+        h.controller.stopRecording(RecordingEnd.SEGMENT_ONLY)
+        assertEquals(ActivityType.BIKE, (h.controller.ui.value as RideUiState.Finished).segment.activity)
+    }
+
+    @Test
+    fun runKmSpeaksPaceSentence() = runTest {
+        // 3 m/s: the first kilometre is reached at 1_002 m after 334 s.
+        val h = harness(straight(1_100.0, speedKmh = 10.8))
+        h.start(h.trip(), activity = ActivityType.RUN)
+
+        play(370_000)
+
+        assertEquals(
+            listOf("1킬로미터. 이번 1킬로미터 5분 34초, 평균 페이스 5분 33초입니다."),
+            voice.spoken.filter { "킬로미터" in it },
+        )
+    }
+
+    @Test
+    fun aFixJumpingOverSeveralKmSpeaksThePerKmLap() = runTest {
+        // 900 m at 3 m/s (t 0..300 s), then one fix 1.2 km further 300 s later (a GPS gap counted as moving).
+        val before = straight(900.0, speedKmh = 10.8)
+        val jump = before.last().copy(point = north(2_100.0), timeMillis = 600_000)
+        val h = harness(before + jump)
+        h.start(h.trip(), activity = ActivityType.RUN)
+
+        play(610_000)
+
+        // Lap: 600 s over 2 km = 5'00" per km, not "10분" for "이번 1킬로미터"; average 2_100 m / 600 s = 4'46".
+        assertEquals(
+            listOf("2킬로미터. 이번 1킬로미터 5분, 평균 페이스 4분 46초입니다."),
+            voice.spoken.filter { "킬로미터" in it },
+        )
+    }
+
+    @Test
+    fun bikeKmSentenceUnchangedButSiSok() = runTest {
+        val h = harness(straight(1_100.0))
+        h.start(h.trip())
+
+        play(225_000)
+
+        assertEquals(
+            listOf("1킬로미터 이동. 평균 시속 18.0킬로미터, 이동 시간 3분입니다."),
+            voice.spoken.filter { "킬로미터" in it },
+        )
+        assertEquals("기록을 시작합니다", voice.spoken.first())
+    }
+
+    @Test
+    fun hikeStartPhraseWithSunset() = runTest {
+        val h = harness(straight(200.0, speedKmh = 3.0))
+        h.sunsetAnswer = { 5_400_000L } // 1 h 30 min after the start
+        val tripId = h.trip()
+
+        h.start(tripId, activity = ActivityType.HIKE)
+        play(3_000)
+
+        assertEquals(listOf("등산 기록을 시작합니다 일몰까지 1시간 30분 남았습니다."), voice.spoken)
+        assertEquals(5_400_000L, h.active.sunsetMillis)
+        assertEquals(ActivityType.HIKE, h.store.segments(tripId).single().activity)
+        val call = h.sunsetCalls.single()
+        assertEquals(testDay, call.date)
+        assertEquals(ZoneId.of("Asia/Seoul"), call.zone)
+        assertEquals(RideFixtures.north(0.0).lat, call.lat, 1e-9)
+    }
+
+    @Test
+    fun hikeStartWithoutALocationSpeaksWithoutTheTail() = runTest {
+        val h = harness(emptyList())
+        h.sunsetAnswer = { 5_400_000L }
+        h.start(h.trip(), activity = ActivityType.HIKE)
+
+        play(1_000)
+        assertTrue(voice.spoken.isEmpty(), "waits a moment for the first location: ${voice.spoken}")
+        play(10_000)
+
+        assertEquals(listOf("등산 기록을 시작합니다"), voice.spoken)
+        assertNull(h.active.sunsetMillis, "unknown until a location is known")
+    }
+
+    @Test
+    fun hikeStartSentenceIsNeverSpokenAfterAPause() = runTest {
+        val h = harness(emptyList())
+        h.start(h.trip(), activity = ActivityType.HIKE)
+
+        h.controller.pause()
+
+        assertEquals(listOf("등산 기록을 시작합니다", "일시정지되었습니다"), voice.spoken)
+    }
+
+    @Test
+    fun hikeCuesComeOnTicksWhilePaused() = runTest {
+        val h = harness(straight(100.0, speedKmh = 3.0))
+        h.start(h.trip(), activity = ActivityType.HIKE)
+        h.controller.pause()
+
+        play(1_799_000)
+        assertTrue(voice.spoken.none { it.startsWith("산행") }, voice.spoken.toString())
+        play(1_000)
+
+        assertEquals(RecordingState.Paused(com.cowork.bikerecoder.core.recording.PauseKind.MANUAL), h.active.state)
+        val report = voice.spoken.single { it.startsWith("산행") }
+        assertTrue(report.startsWith("산행 30분. "), report)
+        assertTrue(report.endsWith("킬로미터입니다."), "no sunset tail without a sunset: $report")
+    }
+
+    @Test
+    fun hikeSunsetCuesAndThePeriodicReportTail() = runTest {
+        val h = harness(straight(100.0, speedKmh = 3.0))
+        h.sunsetAnswer = { 2_700_000L } // 45 min after the start: the 2 h and 1 h cues are already past
+        h.start(h.trip(), activity = ActivityType.HIKE)
+
+        play(1_801_000)
+
+        val hikeSpeech = voice.spoken.filter { "일몰" in it || it.startsWith("산행") }
+        assertEquals("등산 기록을 시작합니다 일몰까지 45분 남았습니다.", hikeSpeech[0])
+        assertEquals("일몰까지 30분 남았습니다. 서둘러 하산하세요.", hikeSpeech[1])
+        assertTrue(hikeSpeech[2].startsWith("산행 30분. "), hikeSpeech.toString())
+        assertTrue(hikeSpeech[2].endsWith(" 일몰까지 15분 남았습니다."), hikeSpeech.toString())
+        assertEquals(3, hikeSpeech.size, hikeSpeech.toString())
+    }
+
+    @Test
+    fun voiceOffSilencesHikeCues() = runTest {
+        val h = harness(straight(100.0, speedKmh = 3.0))
+        h.settings.value = AppSettings(voiceEnabled = false)
+        h.sunsetAnswer = { 2_400_000L }
+        h.start(h.trip(), activity = ActivityType.HIKE)
+
+        play(1_900_000)
+
+        assertTrue(voice.spoken.isEmpty(), voice.spoken.toString())
+        assertEquals(2_400_000L, h.active.sunsetMillis, "the screen still knows the sunset")
+    }
+
+    @Test
+    fun noSunsetForOtherActivities() = runTest {
+        val h = harness(straight(200.0, speedKmh = 6.0))
+        h.sunsetAnswer = { 5_400_000L }
+        h.start(h.trip(), activity = ActivityType.WALK)
+
+        play(60_000)
+
+        assertTrue(h.sunsetCalls.isEmpty())
+        assertNull(h.active.sunsetMillis)
+        assertEquals("걷기 기록을 시작합니다", voice.spoken.first())
+    }
+
+    @Test
+    fun finishSavesBestEffortsForRun() = runTest {
+        val h = harness(straight(1_100.0, speedKmh = 12.0))
+        h.start(h.trip(), activity = ActivityType.RUN)
+        play(340_000)
+        val segmentId = h.active.segmentId
+
+        h.controller.stopRecording(RecordingEnd.SEGMENT_ONLY)
+
+        val efforts = h.store.bestEfforts.getValue(segmentId)
+        assertEquals(listOf(BestEffortDistance.ONE_K), efforts.map { it.distance })
+        assertEquals(300_000.0, efforts.single().timeMs.toDouble(), 1_000.0)
+    }
+
+    /** A run left open by a crash or kill gets its best efforts when it is closed at its last save (as [finish] does). */
+    @Test
+    fun anInterruptedRunSavesItsBestEffortsWhenClosed() = runTest {
+        val h = harness(straight(1_100.0, speedKmh = 12.0))
+        val runTrip = h.trip(TripType.MULTI_DAY)
+        val aJob = Job(backgroundScope.coroutineContext.job)
+        val a = h.newController(CoroutineScope(backgroundScope.coroutineContext + aJob))
+        h.start(runTrip, a, ActivityType.RUN)
+        play(340_000)
+        aJob.cancel() // the process died without a stop
+        runCurrent()
+        val leftover = h.store.openSegments().single()
+        assertFalse(leftover.id in h.store.bestEfforts)
+
+        h.newController().closeInterrupted()
+
+        assertNotNull(h.store.segment(leftover.id)!!.endedAt)
+        val efforts = h.store.bestEfforts.getValue(leftover.id)
+        assertEquals(listOf(BestEffortDistance.ONE_K), efforts.map { it.distance })
+        assertEquals(BestEfforts.find(h.store.points(leftover.id)), efforts)
+    }
+
+    @Test
+    fun anInterruptedBikeSavesNoBestEfforts() = runTest {
+        val h = harness(emptyList())
+        val bike = h.store.openSegment(h.trip(TripType.MULTI_DAY), 0, testDay)
+        h.store.appendPoints(bike, emptyList(), SegmentTotals.ZERO.copy(elapsedMs = 30_000))
+
+        h.controller.closeInterrupted()
+
+        assertNotNull(h.store.segment(bike)!!.endedAt)
+        assertFalse(bike in h.store.bestEfforts)
+    }
+
+    @Test
+    fun finishSavesNothingForBike() = runTest {
+        val h = harness(straight(1_100.0, speedKmh = 12.0))
+        h.start(h.trip())
+        play(340_000)
+        val segmentId = h.active.segmentId
+
+        h.controller.stopRecording(RecordingEnd.SEGMENT_ONLY)
+
+        assertFalse(segmentId in h.store.bestEfforts)
+    }
+
+    @Test
+    fun aFailedBestEffortsSaveIsOnlyLogged() = runTest {
+        val h = harness(straight(1_100.0, speedKmh = 12.0))
+        val failing = object : RideStore by h.store {
+            override suspend fun saveBestEfforts(segmentId: Long, efforts: List<BestEffort>) =
+                throw IOException("disk full")
+        }
+        val c = h.newController(rideStore = failing)
+        h.start(h.trip(), c, ActivityType.RUN)
+        play(340_000)
+
+        c.stopRecording(RecordingEnd.SEGMENT_ONLY)
+
+        val finished = c.ui.value as RideUiState.Finished
+        assertNull(finished.error)
+        assertNotNull(h.store.segment(finished.segment.id)!!.endedAt)
+        assertTrue(log.messages.any { "best efforts" in it }, log.messages.toString())
+    }
+
+    @Test
+    fun sunsetComputedOnceWhileStayingClose() = runTest {
+        val h = harness(straight(900.0, speedKmh = 3.0))
+        h.sunsetAnswer = { 50_000_000L }
+        h.start(h.trip(), activity = ActivityType.HIKE)
+
+        play(1_100_000)
+
+        assertEquals(900.0, h.active.stats.distanceM, 1.0)
+        assertEquals(1, h.sunsetCalls.size, h.sunsetCalls.toString())
+    }
+
+    @Test
+    fun sunsetRecomputedAfterOneKm() = runTest {
+        // A point every 3 m: none lies on a 1 km boundary.
+        val h = harness(straight(2_500.0, speedKmh = 10.8))
+        h.sunsetAnswer = { 50_000_000L }
+        h.start(h.trip(), activity = ActivityType.HIKE)
+
+        play(850_000)
+
+        // At 0 m, then at the first point more than 1 km from it (1_002 m), then more than 1 km from that (2_004 m).
+        val distances = h.sunsetCalls.map { GeoMath.distanceM(north(0.0), GeoPoint(it.lat, it.lon)) }
+        assertEquals(3, distances.size, distances.toString())
+        assertEquals(0.0, distances[0], 0.5)
+        assertEquals(1_002.0, distances[1], 0.5)
+        assertEquals(2_004.0, distances[2], 0.5)
+    }
+
+    @Test
+    fun sunsetRecomputedWhenTheDateChanges() = runTest {
+        // Midnight in Seoul is 15:00 UTC: start 10 s before it.
+        val start = 54_000_000L - 10_000
+        play(start)
+        val h = harness(straight(30.0, speedKmh = 3.0, startMillis = start))
+        h.sunsetAnswer = { date -> if (date == testDay) 30_000_000L else 120_000_000L }
+        h.start(h.trip(), activity = ActivityType.HIKE)
+
+        play(9_000)
+        assertEquals(listOf(testDay), h.sunsetCalls.map { it.date })
+        play(2_000)
+
+        assertEquals(listOf(testDay, testDay.plusDays(1)), h.sunsetCalls.map { it.date })
+        assertEquals(120_000_000L, h.active.sunsetMillis)
     }
 }

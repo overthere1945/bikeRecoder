@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.share
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import java.time.DayOfWeek
 import java.time.LocalDate
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -79,6 +80,58 @@ class ShareTextTest {
     @Test
     fun noMovingTimeHasNoAverage() {
         assertFalse("평균" in auto(facts(movingTimeMs = 0)).lines()[2])
+    }
+
+    /** V1.9.0 spec §5.2: the numbers line follows the trip's dominant activity; the other lines stay. */
+    private fun numbersOf(f: ShareFacts, tags: String = DEFAULT_SHARE_HASHTAGS_RUN) = auto(f, tags).lines()[2]
+
+    @Test
+    fun runNumbersLine() {
+        // 5.0 km in 27 min 40 s: 5'32" a kilometre (the distance is written as the share text always has: one decimal).
+        val run = facts(distanceM = 5_000.0, movingTimeMs = 1_660_000, ascentM = 40.0).copy(activity = ActivityType.RUN)
+        assertEquals("5.0 km · 27분 · 평균 5'32\"/km", numbersOf(run))
+        assertEquals(
+            "저녁 라이딩 · 서울 강서구\n2026년 10월 25일 (일)\n5.0 km · 27분 · 평균 5'32\"/km\n#러닝 #달리기 #서울 #강서구",
+            auto(run, DEFAULT_SHARE_HASHTAGS_RUN),
+        )
+    }
+
+    @Test
+    fun mixedTripPaceIsTheDominantActivitysOnly() {
+        // RUN 5 km / 30 min (dominant) + BIKE 10 km / 20 min: distance and time are the trip's, the pace the run's.
+        val mixed = facts(distanceM = 15_000.0, movingTimeMs = 3_000_000)
+            .copy(activity = ActivityType.RUN, paceDistanceM = 5_000.0, paceMovingTimeMs = 1_800_000)
+        assertEquals("15.0 km · 50분 · 평균 6'00\"/km", numbersOf(mixed))
+    }
+
+    @Test
+    fun walkNumbersLineAndNoPaceWithoutMovingTime() {
+        val walk = facts(distanceM = 3_200.0, movingTimeMs = 2_400_000).copy(activity = ActivityType.WALK)
+        assertEquals("3.2 km · 40분 · 평균 12'30\"/km", numbersOf(walk))
+        assertEquals("0.0 km · 0분", numbersOf(facts(distanceM = 0.0, movingTimeMs = 0).copy(activity = ActivityType.WALK)))
+    }
+
+    @Test
+    fun hikeNumbersLine() {
+        val hike = facts(ascentM = 520.4, movingTimeMs = 9_000_000)
+            .copy(activity = ActivityType.HIKE, elapsedMs = 12_000_000, maxAltitudeM = 835.6)
+        assertEquals("산행 3시간 20분 · 상승 520 m · 최고 836 m", numbersOf(hike))
+        assertEquals("산행 3시간 20분 · 상승 520 m", numbersOf(hike.copy(maxAltitudeM = null)))
+    }
+
+    @Test
+    fun bikeLineUnchanged() {
+        val bike = facts()
+        assertEquals("32.1 km · 1시간 45분 · 상승 고도 123 m · 평균 18.4 km/h", numbersOf(bike))
+        assertEquals(auto(bike), auto(bike.copy(activity = ActivityType.BIKE, elapsedMs = 5, maxAltitudeM = 900.0)))
+    }
+
+    @Test
+    fun defaultHashtagsPerActivity() {
+        assertEquals("#자전거 #라이딩", defaultShareHashtags(ActivityType.BIKE))
+        assertEquals("#걷기 #산책", defaultShareHashtags(ActivityType.WALK))
+        assertEquals("#러닝 #달리기", defaultShareHashtags(ActivityType.RUN))
+        assertEquals("#등산 #하이킹", defaultShareHashtags(ActivityType.HIKE))
     }
 
     @Test

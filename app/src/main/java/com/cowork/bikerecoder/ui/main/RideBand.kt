@@ -11,22 +11,30 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.recording.RecordingState
 import com.cowork.bikerecoder.nav.NavUiState
 import com.cowork.bikerecoder.ride.RideUiState
+import com.cowork.bikerecoder.ui.activity.ActivityText
 import com.cowork.bikerecoder.ui.feed.kmText
 
 /**
  * The line above the tab bar while a ride runs (V1.4.0 spec §1.4): "● 기록 중 · 12.4 km · 48분" (distance and moving
  * time), "Ⅱ 일시정지 · …" while paused, "▲ 안내 중 · 남은 거리 3.2 km" for guidance without a recording; a recording wins
  * over guidance. Null while nothing runs (nor while one is only starting, ended or failed). The kilometres are the V1.4.0
- * km text ([kmText]) and the time the minutes of the record summaries ([RideFormat.duration]).
+ * km text ([kmText]) and the time the minutes of the record summaries ([RideFormat.duration]). Other activities than
+ * the bike name themselves ("● 등산 기록 중 · …", V1.9.0 spec §2.4); a hike's time is the hiking (elapsed) time.
  */
 fun rideBandText(ride: RideUiState, guidance: NavUiState): String? = when {
     ride is RideUiState.Active -> {
-        val head = if (ride.state is RecordingState.Paused) "Ⅱ 일시정지" else "● 기록 중"
-        "$head · ${kmText(ride.stats.distanceM)} · ${RideFormat.duration(ride.stats.movingTimeMs)}"
+        val head = when {
+            ride.state is RecordingState.Paused -> "Ⅱ 일시정지"
+            ride.activity == ActivityType.BIKE -> "● 기록 중"
+            else -> "● ${ActivityText.recordingHead(ride.activity)}"
+        }
+        val time = if (ride.activity == ActivityType.HIKE) ride.stats.elapsedMs else ride.stats.movingTimeMs
+        "$head · ${kmText(ride.stats.distanceM)} · ${RideFormat.duration(time)}"
     }
     guidance is NavUiState.Active -> "▲ 안내 중 · 남은 거리 ${kmText(guidance.state.progress.remainingM)}"
     else -> null

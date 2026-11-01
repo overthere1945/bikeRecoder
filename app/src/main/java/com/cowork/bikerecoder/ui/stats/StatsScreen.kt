@@ -43,11 +43,12 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.cowork.bikerecoder.core.format.RideFormat
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.post.PeriodFilter
 import com.cowork.bikerecoder.core.stats.PeriodKind
+import com.cowork.bikerecoder.ui.activity.ActivityFilterChips
+import com.cowork.bikerecoder.ui.activity.ActivityStyle
 import com.cowork.bikerecoder.ui.feed.kmText
-import com.cowork.bikerecoder.ui.feed.meterText
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
@@ -78,6 +79,8 @@ object StatsTags {
     const val CUMULATIVE_PLOT = "stats-cumulative-plot"
     const val CUMULATIVE_LEGEND = "stats-cumulative-legend"
     const val HELP_TEXT = "stats-help-text"
+    const val CHIPS = "stats-activity-chips"
+    const val RECORD_HEADING = "stats-record-heading"
 
     fun kind(kind: PeriodKind) = "stats-kind-${kind.name}"
     fun metric(metric: StatMetric) = "stats-metric-${metric.name}"
@@ -85,6 +88,16 @@ object StatsTags {
     fun barShort(index: Int) = "stats-bar-short-$index"
     fun record(index: Int) = "stats-record-$index"
     fun help(topic: String) = "stats-help-$topic"
+    fun goalRow(activity: ActivityType) = "stats-goal-row-${activity.name}"
+    fun goalRowBar(activity: ActivityType, weekly: Boolean) = "stats-goal-row-${activity.name}-${if (weekly) "weekly" else "yearly"}"
+    fun cell(kind: StatCellKind) = when (kind) {
+        StatCellKind.RIDES -> RIDES
+        StatCellKind.TIME -> TIME
+        StatCellKind.ASCENT -> ASCENT
+        StatCellKind.ELAPSED -> "stats-elapsed"
+        StatCellKind.PACE -> "stats-pace"
+    }
+    fun recordHeading(index: Int) = "stats-record-heading-$index"
 }
 
 const val STATS_RECORDS_TITLE = "개인 기록"
@@ -106,7 +119,7 @@ internal fun metricLabel(metric: StatMetric): String = when (metric) {
 fun cumulativeEntryText(rides: Int): String = "누적 지도 · 이 기간 ${rides}회 ›"
 
 /** Where the period block sits in the list: a record that points at a week or month scrolls up to it. */
-private const val PERIOD_ITEM = 2
+private const val PERIOD_ITEM = 3
 
 /**
  * The stats tab (V1.4.0 spec §3): the goal card, the streak, the statistics of a period (week, month, year or all) with
@@ -118,13 +131,15 @@ private const val PERIOD_ITEM = 2
 fun StatsScreen(
     viewModel: StatsViewModel,
     onOpenSegment: (Long) -> Unit,
-    onOpenCumulative: (PeriodFilter) -> Unit,
+    onOpenCumulative: (PeriodFilter, ActivityType?) -> Unit,
     scrollToTop: Int,
 ) {
     val loaded by viewModel.state.collectAsStateWithLifecycle()
     // A day may have passed (a new week or month).
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refresh() }
     var goalDialog by rememberSaveable { mutableStateOf(false) }
+    // The activity whose goals the window edits (its chips switch it); starts as the chip, a bike under [전체].
+    var goalActivity by rememberSaveable { mutableStateOf(ActivityType.BIKE) }
     // The topic of the "?" bubble that is open (one at a time). Plain remember: leaving the tab or turning the screen closes it.
     var openTip by remember { mutableStateOf<String?>(null) }
     // Nothing until the rides and the goals are read (review M2); so the goal window starts from the stored goals.
@@ -134,7 +149,11 @@ fun StatsScreen(
         scrollToTop = scrollToTop,
         openTip = openTip,
         onToggleTip = { topic -> openTip = if (openTip == topic) null else topic },
-        onEditGoals = { goalDialog = true },
+        onEditGoals = {
+            goalActivity = state.activity ?: state.goalRows.firstOrNull()?.activity ?: ActivityType.BIKE
+            goalDialog = true
+        },
+        onSelectActivity = viewModel::selectActivity,
         onSelectKind = viewModel::selectKind,
         onPrevious = viewModel::previous,
         onNext = viewModel::next,
@@ -142,17 +161,19 @@ fun StatsScreen(
         onSelectBar = viewModel::selectBar,
         onShowPeriod = viewModel::show,
         onOpenSegment = onOpenSegment,
-        onOpenCumulative = { onOpenCumulative(state.cumulativeFilter) },
+        onOpenCumulative = { onOpenCumulative(state.cumulativeFilter, state.cumulativeActivity) },
     )
     if (goalDialog) {
         GoalDialog(
-            weeklyKm = state.weeklyGoal?.goalKm,
-            yearlyKm = state.yearlyGoal?.goalKm,
+            weeklyKm = state.goals[goalActivity]?.weekly,
+            yearlyKm = state.goals[goalActivity]?.yearly,
             onSave = { weekly, yearly ->
-                viewModel.saveGoals(weekly, yearly)
+                viewModel.saveGoals(goalActivity, weekly, yearly)
                 goalDialog = false
             },
             onDismiss = { goalDialog = false },
+            header = { ActivityFilterChips(goalActivity, onSelect = { goalActivity = it ?: goalActivity }, includeAll = false) },
+            resetKey = goalActivity,
         )
     }
 }
@@ -164,6 +185,7 @@ internal fun StatsContent(
     openTip: String?,
     onToggleTip: (String) -> Unit,
     onEditGoals: () -> Unit,
+    onSelectActivity: (ActivityType?) -> Unit,
     onSelectKind: (PeriodKind) -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
@@ -185,8 +207,14 @@ internal fun StatsContent(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxSize().clearsBarOnOutsideTap { onSelectBar(null) }.testTag(StatsTags.LIST),
     ) {
+        item(key = "chips") {
+            ActivityFilterChips(state.activity, onSelectActivity, modifier = Modifier.testTag(StatsTags.CHIPS))
+        }
         item(key = "goals") {
-            GoalCard(state.weeklyGoal, state.yearlyGoal, state.projectionText, onEditGoals, openTip = openTip, onToggleTip = onToggleTip)
+            GoalCard(
+                state.weeklyGoal, state.yearlyGoal, state.projectionText, onEditGoals,
+                rows = state.goalRows, openTip = openTip, onToggleTip = onToggleTip,
+            )
         }
         item(key = "streak") {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -305,9 +333,7 @@ private fun PeriodBlock(
             HelpTip(StatsHelp.TOTALS_TOPIC, StatsHelp.TOTALS, openTip == StatsHelp.TOTALS_TOPIC, onToggle = { onToggleTip(StatsHelp.TOTALS_TOPIC) })
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TotalCell("주행", "${state.totals.rides}회", StatsTags.RIDES, Modifier.weight(1f))
-            TotalCell("이동 시간", RideFormat.duration(state.totals.movingTimeMs), StatsTags.TIME, Modifier.weight(1f))
-            TotalCell("상승 고도", meterText(state.totals.ascentM), StatsTags.ASCENT, Modifier.weight(1f))
+            for (cell in state.cells) TotalCell(cell.label, cell.value, StatsTags.cell(cell.kind), Modifier.weight(1f))
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             // The chips wrap onto a second line (at a big font) before they squeeze: the "?" keeps its 48 dp at the end of the row.
@@ -323,7 +349,9 @@ private fun PeriodBlock(
             }
             HelpTip(StatsHelp.CHART_TOPIC, StatsHelp.CHART, openTip == StatsHelp.CHART_TOPIC, onToggle = { onToggleTip(StatsHelp.CHART_TOPIC) })
         }
-        BarChart(state.bars, state.selectedBar, state.unitText, onSelectBar)
+        // A bike's bars keep the theme colour they always had; the other chips' plain bars take their activity's colour.
+        val tint = state.activity?.takeIf { it != ActivityType.BIKE }?.let(ActivityStyle::color)
+        BarChart(state.bars, state.selectedBar, state.unitText, onSelectBar, tint = tint)
         state.cumulative?.let { CumulativeChart(it, state.period.kind, state.metric, state.unitText) }
     }
 }
@@ -347,6 +375,22 @@ private fun TotalCell(label: String, value: String, tag: String, modifier: Modif
 @Composable
 private fun RecordLine(row: RecordRow, index: Int, onOpen: (RecordTarget) -> Unit) {
     val target = row.target
+    Column {
+        // The [전체] chip's subheading (an activity's name) above the first line of its group.
+        row.heading?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp, start = 4.dp).testTag(StatsTags.recordHeading(index)),
+            )
+        }
+        RecordCard(row, index, target, onOpen)
+    }
+}
+
+@Composable
+private fun RecordCard(row: RecordRow, index: Int, target: RecordTarget?, onOpen: (RecordTarget) -> Unit) {
     Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceVariant) {
         Row(
             verticalAlignment = Alignment.CenterVertically,

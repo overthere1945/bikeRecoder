@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.Button
@@ -28,6 +30,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -37,6 +42,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.importing.RideStatus
 import com.cowork.bikerecoder.core.post.RideColors
 import com.cowork.bikerecoder.importing.IMPORT_CLOSE
@@ -55,7 +61,9 @@ import com.cowork.bikerecoder.importing.readingText
 import com.cowork.bikerecoder.importing.resultText
 import com.cowork.bikerecoder.importing.rowDateText
 import com.cowork.bikerecoder.importing.statusLine
+import com.cowork.bikerecoder.ui.activity.ActivityBadge
 import com.cowork.bikerecoder.ui.common.GlyphIcon
+import com.cowork.bikerecoder.ui.history.ChangeActivityDialog
 import com.cowork.bikerecoder.ui.history.RouteDrawing
 
 /** Test tags of the GPX import: its screen and its rows in the settings. */
@@ -76,10 +84,16 @@ object ImportTags {
     const val SETTINGS_DELETE_ALL = "settings_imported_delete_all"
 
     fun row(key: RideKey) = "import_row_${key.sourceIndex}_${key.itemIndex}"
+
+    /** The activity badge of a row: a tap opens the picker. */
+    fun badge(key: RideKey) = "import_badge_${key.sourceIndex}_${key.itemIndex}"
 }
 
 private val PREVIEW_SIZE = 44.dp
 private const val DIMMED = 0.38f
+
+/** Spec V1.9.0 §2.1: 24 dp badges in list rows. */
+private val BADGE_SIZE = 24.dp
 
 /**
  * The "기록 가져오기" screen (V1.6.0 spec §1.2, §1.3) of [viewModel]. Back while reading stops the reading; back while
@@ -108,6 +122,7 @@ fun ImportScreen(
         onBack = back,
         onToggle = viewModel::toggle,
         onToggleAll = viewModel::toggleAll,
+        onSetActivity = viewModel::setActivity,
         onImport = viewModel::importChecked,
         onStop = viewModel::stop,
         onOpenSummary = {
@@ -125,6 +140,7 @@ internal fun ImportContent(
     onBack: () -> Unit,
     onToggle: (RideKey) -> Unit,
     onToggleAll: () -> Unit,
+    onSetActivity: (Int, ActivityType) -> Unit,
     onImport: () -> Unit,
     onStop: () -> Unit,
     onOpenSummary: () -> Unit,
@@ -139,7 +155,7 @@ internal fun ImportContent(
             }
             when (state) {
                 is ImportUiState.Reading -> Progress(readingText(state.done, state.total), state.done, state.total)
-                is ImportUiState.Review -> Review(state, onToggle, onToggleAll, onImport)
+                is ImportUiState.Review -> Review(state, onToggle, onToggleAll, onSetActivity, onImport)
                 is ImportUiState.Empty -> NothingFound(state, onPickAgain)
                 ImportUiState.Closed -> Unit
                 is ImportUiState.Job -> when (val job = state.state) {
@@ -229,8 +245,27 @@ private fun Review(
     state: ImportUiState.Review,
     onToggle: (RideKey) -> Unit,
     onToggleAll: () -> Unit,
+    onSetActivity: (Int, ActivityType) -> Unit,
     onImport: () -> Unit,
 ) {
+    // The row whose activity is being picked (an index of the list); kept over a rotation.
+    var editing by rememberSaveable { mutableStateOf<Int?>(null) }
+    editing?.let { index ->
+        val row = state.rows.getOrNull(index)
+        if (row == null) {
+            editing = null
+        } else {
+            ChangeActivityDialog(
+                current = row.activity,
+                onConfirm = {
+                    onSetActivity(index, it)
+                    editing = null
+                },
+                onDismiss = { editing = null },
+                note = null,
+            )
+        }
+    }
     Column(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             state.notices.forEach {
@@ -260,8 +295,14 @@ private fun Review(
         }
         HorizontalDivider()
         LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            items(state.rows, key = { "${it.key.sourceIndex}/${it.key.itemIndex}" }) { row ->
-                ReviewRow(row, checked = row.key in state.checked, selectable = row.key in selectable, onToggle = { onToggle(row.key) })
+            itemsIndexed(state.rows, key = { _, it -> "${it.key.sourceIndex}/${it.key.itemIndex}" }) { index, row ->
+                ReviewRow(
+                    row,
+                    checked = row.key in state.checked,
+                    selectable = row.key in selectable,
+                    onToggle = { onToggle(row.key) },
+                    onPickActivity = { editing = index },
+                )
             }
         }
         Box(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
@@ -277,11 +318,12 @@ private fun Review(
 
 /**
  * One ride (spec §1.2): checkbox, 44 dp route drawing, the start "2023년 5월 14일 (일) 오전 9:12" (the file name when it
- * cannot be read) and the status line. Rows that cannot be picked are dimmed; an unreadable one's reason is in the error
+ * cannot be read) and the status line, then the 24 dp activity badge of a readable row: on a row that can be picked a tap
+ * on it calls [onPickActivity]. Rows that cannot be picked are dimmed; an unreadable one's reason is in the error
  * colour, dimmed too.
  */
 @Composable
-private fun ReviewRow(row: ScanRow, checked: Boolean, selectable: Boolean, onToggle: () -> Unit) {
+private fun ReviewRow(row: ScanRow, checked: Boolean, selectable: Boolean, onToggle: () -> Unit, onPickActivity: () -> Unit) {
     val unreadable = row.status is RideStatus.Unreadable
     val dim = if (selectable) Modifier else Modifier.alpha(DIMMED)
     Row(
@@ -314,6 +356,20 @@ private fun ReviewRow(row: ScanRow, checked: Boolean, selectable: Boolean, onTog
                 color = if (unreadable) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = dim,
             )
+        }
+        if (!unreadable) {
+            val badge = Modifier.testTag(ImportTags.badge(row.key)).then(dim)
+            if (selectable) {
+                // A 48 dp touch target around the badge; it takes the tap before the row's check.
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.size(48.dp).clickable(role = Role.Button, onClick = onPickActivity).then(badge),
+                ) { ActivityBadge(row.activity, BADGE_SIZE) }
+            } else {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.size(48.dp).then(badge)) {
+                    ActivityBadge(row.activity, BADGE_SIZE)
+                }
+            }
         }
     }
 }

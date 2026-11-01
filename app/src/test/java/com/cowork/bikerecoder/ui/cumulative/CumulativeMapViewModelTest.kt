@@ -1,6 +1,7 @@
 package com.cowork.bikerecoder.ui.cumulative
 
 import androidx.lifecycle.SavedStateHandle
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.CumulativeEntry
 import com.cowork.bikerecoder.core.post.CumulativeTotals
@@ -24,6 +25,7 @@ import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.post.SegmentExtras
 import com.cowork.bikerecoder.ride.FakeRideStore
 import com.cowork.bikerecoder.ui.Routes
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -91,7 +93,12 @@ class CumulativeMapViewModelTest {
         postStore: PostStore = countingStore,
         initial: PeriodFilter = PeriodFilter(),
         today: LocalDate = TODAY,
-    ) = CumulativeMapViewModel(postStore, processor(), log, compute = dispatcher, today = { today }, initial = initial)
+        activity: ActivityType? = null,
+        activityOf: Map<Long, ActivityType> = emptyMap(),
+    ) = CumulativeMapViewModel(
+        postStore, processor(), log, compute = dispatcher, today = { today }, initial = initial,
+        activity = activity, activityOf = flowOf(activityOf),
+    )
 
     /** A simplified route of [id] on [date], two points at [lat]. */
     private fun entry(
@@ -752,6 +759,33 @@ class CumulativeMapViewModelTest {
         assertNull(vm.state.value.selected)
     }
 
+    /** V1.9.0 spec §4.1: the stats tab's chip filters the rides, and the lines take their activity's colour. */
+    @Test
+    fun chipFiltersTheRidesAndColoursTheLines() = runTest(dispatcher) {
+        entry(1, LocalDate.of(2026, 10, 24))
+        entry(2, LocalDate.of(2026, 10, 25))
+        entry(3, LocalDate.of(2026, 10, 20))
+        val kinds = mapOf(1L to ActivityType.BIKE, 2L to ActivityType.RUN, 3L to ActivityType.RUN)
+
+        val run = viewModel(activity = ActivityType.RUN, activityOf = kinds)
+        settle()
+        assertEquals(listOf(2L, 3L), run.state.value.rides.map { it.segmentId })
+        assertEquals(listOf(2L, 3L), run.state.value.lines.map { it.segmentId })
+        assertEquals(listOf("#D4537E", "#D4537E"), run.state.value.rides.map { it.color })
+        assertEquals(2, run.state.value.totals.rides)
+
+        val all = viewModel(activityOf = kinds)
+        settle()
+        assertEquals(listOf(2L, 1L, 3L), all.state.value.rides.map { it.segmentId })
+        assertEquals(listOf("#D4537E", "#D85A30", "#D4537E"), all.state.value.rides.map { it.color })
+
+        // A chip without a ride of its kind: nothing to show, as with no ride at all.
+        val hike = viewModel(activity = ActivityType.HIKE, activityOf = kinds)
+        settle()
+        assertTrue(hike.state.value.rides.isEmpty())
+        assertTrue(hike.state.value.years.isEmpty())
+    }
+
     @Test
     fun tapOnOverlapPicksTopRide() {
         // The highlighted ride is on top where rides overlap.
@@ -810,13 +844,14 @@ class CumulativeMapViewModelTest {
     @Test
     fun cumulativeRouteCarriesThePeriod() {
         val none = Long.MIN_VALUE
-        assertEquals("cumulative?year={year}&month={month}&weekStart={weekStart}", Routes.CUMULATIVE_PATTERN)
-        assertEquals("cumulative?year=-1&month=-1&weekStart=$none", Routes.cumulative(PeriodFilter()))
-        assertEquals("cumulative?year=2026&month=-1&weekStart=$none", Routes.cumulative(PeriodFilter(2026)))
-        assertEquals("cumulative?year=2026&month=1&weekStart=$none", Routes.cumulative(PeriodFilter(2026, 1)))
+        assertEquals("cumulative?year={year}&month={month}&weekStart={weekStart}&activity={activity}", Routes.CUMULATIVE_PATTERN)
+        assertEquals("cumulative?year=-1&month=-1&weekStart=$none&activity=", Routes.cumulative(PeriodFilter()))
+        assertEquals("cumulative?year=-1&month=-1&weekStart=$none&activity=RUN", Routes.cumulative(PeriodFilter(), ActivityType.RUN))
+        assertEquals("cumulative?year=2026&month=-1&weekStart=$none&activity=", Routes.cumulative(PeriodFilter(2026)))
+        assertEquals("cumulative?year=2026&month=1&weekStart=$none&activity=", Routes.cumulative(PeriodFilter(2026, 1)))
         val monday = LocalDate.of(2025, 12, 29)
         assertEquals(
-            "cumulative?year=-1&month=-1&weekStart=${monday.toEpochDay()}",
+            "cumulative?year=-1&month=-1&weekStart=${monday.toEpochDay()}&activity=",
             Routes.cumulative(PeriodFilter(weekStart = monday)),
         )
 
@@ -827,6 +862,14 @@ class CumulativeMapViewModelTest {
                 CumulativeMapViewModel.ARG_MONTH to month,
                 CumulativeMapViewModel.ARG_WEEK_START to weekStart,
             ),
+        )
+        // The stats tab's chip: the activity's name; empty, unknown or none = all.
+        assertEquals(null, CumulativeMapViewModel.initialActivity(SavedStateHandle()))
+        assertEquals(null, CumulativeMapViewModel.initialActivity(SavedStateHandle(mapOf(CumulativeMapViewModel.ARG_ACTIVITY to ""))))
+        assertEquals(null, CumulativeMapViewModel.initialActivity(SavedStateHandle(mapOf(CumulativeMapViewModel.ARG_ACTIVITY to "SWIM"))))
+        assertEquals(
+            ActivityType.HIKE,
+            CumulativeMapViewModel.initialActivity(SavedStateHandle(mapOf(CumulativeMapViewModel.ARG_ACTIVITY to "HIKE"))),
         )
         assertEquals(PeriodFilter(), CumulativeMapViewModel.initialFilter(SavedStateHandle()))
         assertEquals(PeriodFilter(), CumulativeMapViewModel.initialFilter(handle(-1, -1, none)))

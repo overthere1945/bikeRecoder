@@ -1,6 +1,7 @@
 package com.cowork.bikerecoder.ui.feed
 
 import androidx.lifecycle.viewModelScope
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.feed.FeedThumbKey
 import com.cowork.bikerecoder.core.feed.ThumbSegment
@@ -10,7 +11,6 @@ import com.cowork.bikerecoder.core.post.CumulativeEntry
 import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.post.PhotoPositionSource
 import com.cowork.bikerecoder.core.post.PlacedPhoto
-import com.cowork.bikerecoder.core.post.RideColors
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
@@ -36,6 +36,8 @@ import com.cowork.bikerecoder.post.SegmentExtras
 import com.cowork.bikerecoder.video.MediaKind
 import com.cowork.bikerecoder.video.TripMedia
 import com.cowork.bikerecoder.ride.FakeRideStore
+import com.cowork.bikerecoder.ui.activity.ActivityStyle
+import com.cowork.bikerecoder.ui.activity.ActivityText
 import com.cowork.bikerecoder.ui.history.CONFIRM_DELETE_TRIP
 import com.cowork.bikerecoder.ui.history.HistoryDialog
 import com.cowork.bikerecoder.ui.history.MSG_ACTIVE_TRIP_NOT_DELETABLE
@@ -99,8 +101,9 @@ class FeedViewModelTest {
         date: LocalDate = day2,
         open: Boolean = false,
         totals: SegmentTotals = SegmentTotals.ZERO.copy(distanceM = 1_000.0, movingTimeMs = 60_000),
+        activity: ActivityType = ActivityType.BIKE,
     ): Long {
-        val id = rides.openSegment(tripId, startedAt, date)
+        val id = rides.openSegment(tripId, startedAt, date, activity)
         if (!open) rides.closeSegment(id, startedAt + 1_000, totals)
         return id
     }
@@ -677,7 +680,7 @@ class FeedViewModelTest {
         processor.runOnce()
         advanceUntilIdle()
 
-        assertEquals(listOf(listOf(p, q) to RideColors.colorAt(0)), vm.card(1).routes)
+        assertEquals(listOf(listOf(p, q) to ActivityStyle.hex(ActivityType.BIKE)), vm.card(1).routes)
         assertEquals(listOf(1L), vm.card(1).photoMediaIds)
         assertEquals(137, vm.card(1).avgBpm)
     }
@@ -828,6 +831,142 @@ class FeedViewModelTest {
         assertEquals(0.0, vm.card(2).avgSpeedMps, 1e-9, "no moving time: 0")
     }
 
+    /** V1.9.0 spec §2.1/§2.3: a mixed trip's badges (dominant first) and its automatic title follow its activities. */
+    @Test
+    fun mixedTripBadgesAndDominant() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        trip(2, TripStatus.COMPLETED)
+        segment(1, startedAt = 100, totals = ride(1_000.0, movingMs = 10 * 60_000L), activity = ActivityType.BIKE)
+        segment(1, startedAt = 200, totals = ride(2_000.0, movingMs = 30 * 60_000L), activity = ActivityType.RUN)
+        segment(1, startedAt = 300, totals = ride(1_500.0, movingMs = 20 * 60_000L), activity = ActivityType.WALK)
+        segment(1, startedAt = 400, totals = ride(1_500.0, movingMs = 5 * 60_000L), activity = ActivityType.HIKE)
+        segment(2, startedAt = 500, totals = ride(1_000.0), activity = ActivityType.HIKE)
+        val vm = history()
+        advanceUntilIdle()
+
+        val mixed = vm.card(1)
+        assertEquals(ActivityType.RUN, mixed.dominant)
+        assertEquals(listOf(ActivityType.RUN, ActivityType.WALK, ActivityType.BIKE), mixed.activities)
+        assertEquals("아침 달리기", mixed.title)
+        assertEquals(ActivityType.HIKE, vm.card(2).dominant)
+        assertEquals(listOf(ActivityType.HIKE), vm.card(2).activities)
+        assertEquals("아침 등산", vm.card(2).title)
+    }
+
+    /**
+     * A mixed trip's pace (cell and bottom line) is the dominant activity's rides only: RUN 5 km in 30 min (the longest
+     * segment) + BIKE 10 km in 20 min → 6'00"/km, not 15 km in 50 min (3'20"). The distance cell stays the trip's.
+     */
+    @Test
+    fun mixedTripPaceCountsTheDominantActivityOnly() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        segment(1, startedAt = 100, totals = ride(5_000.0, movingMs = 30 * 60_000L), activity = ActivityType.RUN)
+        segment(1, startedAt = 200, totals = ride(10_000.0, movingMs = 20 * 60_000L), activity = ActivityType.BIKE)
+        val vm = history()
+        advanceUntilIdle()
+
+        val card = vm.card(1)
+        assertEquals(ActivityType.RUN, card.dominant)
+        assertEquals(5_000.0, card.paceDistanceM!!, 1e-9)
+        assertEquals(30 * 60_000L, card.paceMovingTimeMs)
+        assertEquals(
+            listOf("거리" to "15.0 km", "평균 페이스" to "6'00\"/km", "이동 시간" to "50분"),
+            ActivityText.cardCells(
+                card.dominant, card.distanceM, card.movingTimeMs, card.hikeElapsedMs, card.ascentM, card.maxAltitudeM,
+                paceDistanceM = card.paceDistanceM!!,
+                paceMovingTimeMs = card.paceMovingTimeMs!!,
+            ),
+        )
+        assertEquals(
+            "평균 6'00\"/km",
+            averageLineText(card.dominant, card.avgSpeedMps, card.avgBpm, card.ascentM, card.paceSpeedMps),
+        )
+    }
+
+    /** A trip of bike segments (the V1.8.0 data): one bike badge, the old title. */
+    @Test
+    fun bikeTripKeepsTheOldTitleAndOneBadge() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        segment(1, startedAt = 100)
+        val vm = history()
+        advanceUntilIdle()
+
+        assertEquals(listOf(ActivityType.BIKE), vm.card(1).activities)
+        assertEquals("아침 라이딩", vm.card(1).title)
+    }
+
+    /** Spec §2.2: a hike's cells are its elapsed time (hike segments only), the ascent and the highest altitude. */
+    @Test
+    fun hikeCardCells() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        segment(
+            1, startedAt = 100, activity = ActivityType.HIKE,
+            totals = ride(4_000.0, movingMs = 3_000_000L).copy(ascentM = 400.0, elapsedMs = 4_500_000L, maxAltitudeM = 820.0),
+        )
+        segment(
+            1, startedAt = 200, activity = ActivityType.HIKE,
+            totals = ride(2_000.0, movingMs = 1_200_000L).copy(ascentM = 120.0, elapsedMs = 1_800_000L, maxAltitudeM = 905.0),
+        )
+        trip(2, TripStatus.COMPLETED)
+        segment(2, startedAt = 300, activity = ActivityType.HIKE, totals = ride(1_000.0))
+        val vm = history()
+        advanceUntilIdle()
+
+        val card = vm.card(1)
+        assertEquals(ActivityType.HIKE, card.dominant)
+        assertEquals(6_300_000L, card.hikeElapsedMs)
+        assertEquals(520.0, card.ascentM, 1e-9)
+        assertEquals(905.0, card.maxAltitudeM!!, 1e-9)
+        assertEquals(
+            listOf("산행 시간" to "1시간 45분", "누적 상승" to "520 m", "최고 고도" to "905 m"),
+            ActivityText.cardCells(card.dominant, card.distanceM, card.movingTimeMs, card.hikeElapsedMs, card.ascentM, card.maxAltitudeM),
+        )
+        assertNull(vm.card(2).maxAltitudeM, "no altitude known")
+    }
+
+    /** Spec §2.2: the card's map draws each segment's route in its own activity's colour. */
+    @Test
+    fun routeColorsFollowSegmentActivity() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        val bike = segment(1, startedAt = 100, activity = ActivityType.BIKE)
+        val run = segment(1, startedAt = 200, activity = ActivityType.RUN)
+        val hike = segment(1, startedAt = 300, activity = ActivityType.HIKE)
+        val p = GeoPoint(37.5, 127.0)
+        val q = GeoPoint(37.51, 127.01)
+        route(bike, p, q)
+        route(run, q, p)
+        route(hike, p, q)
+        val vm = history()
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf(
+                listOf(p, q) to "#D85A30",
+                listOf(q, p) to "#D4537E",
+                listOf(p, q) to "#639922",
+            ),
+            vm.card(1).routes,
+        )
+    }
+
+    /** P10: the strip counts every activity's rides and distance; the goal bar is the bike's distance against the bike goal. */
+    @Test
+    fun weekGoalUsesBikeOnly() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        segment(1, 1, LocalDate.of(2026, 10, 26), totals = ride(10_000.0), activity = ActivityType.RUN)
+        segment(1, 2, LocalDate.of(2026, 10, 27), totals = ride(5_000.0), activity = ActivityType.BIKE)
+        segment(1, 3, LocalDate.of(2026, 10, 28), totals = ride(2_000.0), activity = ActivityType.HIKE)
+        weeklyGoal.value = 100
+        val vm = history()
+        advanceUntilIdle()
+
+        val strip = vm.weekStrip.value!!
+        assertEquals(17_000.0, strip.distanceM, 1e-9)
+        assertEquals(3, strip.rides)
+        assertEquals(5_000.0, strip.goalDistanceM, 1e-9)
+        assertEquals(100, strip.weeklyGoalKm)
+    }
+
     /** V1.5.0 spec §1.1: [공유] only for a trip with a finished ride of 10 m or more; an open one does not count yet. */
     @Test
     fun cardCanShareOnlyWithAFinishedRide() = runTest(dispatcher) {
@@ -887,9 +1026,9 @@ class FeedViewModelTest {
         val vm = history()
         advanceUntilIdle()
 
-        // Each segment keeps the colour of its place in the trip, also when one before it has no route yet.
+        // Each segment's line has its activity's colour, also when one before it has no route yet (V1.9.0: a bike's, here).
         assertEquals(
-            listOf(listOf(p, q) to RideColors.colorAt(0), listOf(q, p) to RideColors.colorAt(2)),
+            listOf(listOf(p, q) to ActivityStyle.hex(ActivityType.BIKE), listOf(q, p) to ActivityStyle.hex(ActivityType.BIKE)),
             vm.card(1).routes,
         )
         assertEquals(emptyList<Pair<List<GeoPoint>, String>>(), vm.card(2).routes)
@@ -978,6 +1117,21 @@ class FeedViewModelTest {
         advanceUntilIdle()
 
         assertEquals(listOf(true, false, false), listOf(1L, 2L, 3L).map { vm.card(it).trophy })
+    }
+
+    /** V1.9.0: a record of any activity gives the trophy, and a hike only competes with hikes. */
+    @Test
+    fun trophyForAnyActivitysRecord() = runTest(dispatcher) {
+        for (id in 1L..4L) trip(id, TripStatus.COMPLETED)
+        segment(1, startedAt = 100, totals = ride(50_000.0, movingMs = 9_000_000))
+        segment(2, startedAt = 200, totals = ride(3_000.0, movingMs = 600_000).copy(ascentM = 100.0, elapsedMs = 5_000_000), activity = ActivityType.HIKE)
+        segment(3, startedAt = 300, totals = ride(2_000.0, movingMs = 500_000).copy(ascentM = 400.0, elapsedMs = 4_000_000), activity = ActivityType.HIKE)
+        segment(4, startedAt = 400, totals = ride(1_000.0, movingMs = 100_000), activity = ActivityType.WALK)
+        val vm = history()
+        advanceUntilIdle()
+
+        // The only bike ride has no rival; trip 2 holds the longest hike, trip 3 the most ascent; the lone walk has none.
+        assertEquals(listOf(false, true, true, false), listOf(1L, 2L, 3L, 4L).map { vm.card(it).trophy })
     }
 
     @Test

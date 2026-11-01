@@ -3,7 +3,15 @@ package com.cowork.bikerecoder.ride
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.activity.ActivityFormat
+import com.cowork.bikerecoder.core.activity.ActivityProfile
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.activity.BestEfforts
+import com.cowork.bikerecoder.core.activity.HikeAnnouncer
+import com.cowork.bikerecoder.core.activity.HikeCue
+import com.cowork.bikerecoder.core.activity.SunTimes
 import com.cowork.bikerecoder.core.model.GeoMath
+import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.LocationFix
 import com.cowork.bikerecoder.core.navigation.KmAnnouncementSource
 import com.cowork.bikerecoder.core.recording.DayTotals
@@ -77,6 +85,15 @@ enum class RecordingEnd { SEGMENT_ONLY, STOP_TODAY, COMPLETE_TRIP }
  * guidance deferred (a turn was imminent) is not spoken if the guidance is closed before it comes due — the recording
  * already counted that km and does not repeat it.
  *
+ * Activity types (V1.9.0): each recording is one [ActivityType], recorded with its [ActivityProfile]; a trip being
+ * guided always records [ActivityType.BIKE] (P14), and only a bike recording is the guidance's km source. The km
+ * sentence follows the type (the bike's day-total sentence, the run's and walk's pace sentence on this segment). A hike
+ * has no km sentence: [HikeAnnouncer] cues (every 30 minutes and the sunset stages) are checked with every tick, also
+ * while paused; its sunset is computed with [sunsetOf] at the first accepted location and again only after moving more
+ * than [SUNSET_MOVE_M] from where it was last computed or when the date changes. The hike's start sentence waits up to
+ * [HIKE_START_WAIT_MS] for that first location (to tell the time left until sunset) and is never spoken after another
+ * sentence of the recording. A run's best efforts are saved when its segment is closed.
+ *
  * [splitSegment] closes the running segment and opens the next one of the same trip without passing through a summary
  * or Idle; [announce] and the split's start sentence also go to [notice] (shown once on screen, voice or not). Ruling
  * U1: a guidance started into this recording that arrives ends alone ([NavigationController.onArrivedKeepingRecording]);
@@ -102,6 +119,8 @@ class RideController(
     private val tickIntervalMs: Long = 1_000,
     private val saveIntervalMs: Long = 5_000,
     private val log: WarnLog = androidWarnLog(TAG),
+    /** Today's sunset (epoch ms) at a place, null if the sun does not set; replaceable to count the computations. */
+    private val sunsetOf: (lat: Double, lon: Double, date: LocalDate, zone: ZoneId) -> Long? = SunTimes::sunset,
 ) : RideControls {
     constructor(container: AppContainer, scope: CoroutineScope) : this(
         rideStore = container.rideStore,
@@ -140,6 +159,7 @@ class RideController(
      */
     private class Run(
         val tripId: Long,
+        val activity: ActivityType,
         val startPhrase: String? = null,
         var bridge: Bridge? = null,
         val autoPause: Boolean? = null,
@@ -176,6 +196,20 @@ class RideController(
         /** Fixes at or before this time were already taken (by this segment from the bridge, or by the one before). */
         var skipUpTo = Long.MIN_VALUE
 
+        /** The km of the last [RecordingEvent.KmReached] (0 before any): a fix jumping several km shares the lap. */
+        var lastKm = 0
+
+        /** Hikes only: the 30-minute and sunset cues. */
+        var hike: HikeAnnouncer? = null
+
+        /** Hikes only: the sunset computed at [sunsetFrom] for [sunsetDate] (null: no sunset that day, or not yet). */
+        var sunsetMillis: Long? = null
+        var sunsetFrom: GeoPoint? = null
+        var sunsetDate: LocalDate? = null
+
+        /** The hike's start sentence waits for the first location (see the class comment). */
+        var startSpeechPending = false
+
         /** The one stop of this recording; later [stopRecording] calls wait for it. */
         var finishJob: Job? = null
         val jobs = mutableListOf<Job>()
@@ -195,35 +229,37 @@ class RideController(
     }
 
     /**
-     * Starts recording [tripId] without waiting: the state is [RideUiState.Starting] when this returns. Returns null and
-     * does nothing while a recording is starting or running (of this trip or another).
+     * Starts recording [tripId] as [activity] without waiting: the state is [RideUiState.Starting] when this returns.
+     * A trip being guided records [ActivityType.BIKE] whatever [activity] says (guidance is for bikes, P14). Returns
+     * null and does nothing while a recording is starting or running (of this trip or another).
      */
-    fun startRecording(tripId: Long): Job? {
+    fun startRecording(tripId: Long, activity: ActivityType = ActivityType.BIKE): Job? {
         val state = _ui.value
         if (state is RideUiState.Starting || state is RideUiState.Active) {
             val current = if (state is RideUiState.Starting) state.tripId else (state as RideUiState.Active).tripId
             if (current != tripId) log.warn("Not recording trip $tripId: trip $current is being recorded", null)
             return null
         }
-        return launchRun(tripId)
+        return launchRun(tripId, if (isGuiding(tripId)) ActivityType.BIKE else activity)
     }
 
     /** Starts a new [Run] of [tripId] without waiting (the state is [RideUiState.Starting] when this returns). */
     private fun launchRun(
         tripId: Long,
+        activity: ActivityType,
         startPhrase: String? = null,
         bridge: Bridge? = null,
         autoPause: Boolean? = null,
     ): Job {
         run?.cancelJobs()
-        val r = Run(tripId, startPhrase, bridge, autoPause)
+        val r = Run(tripId, activity, startPhrase, bridge, autoPause)
         // Cancelled with the run if its start fails or it stops.
         bridge?.let {
             r.skipUpTo = it.takenUpTo
             r.jobs += it.job
         }
         run = r
-        _ui.value = RideUiState.Starting(tripId)
+        _ui.value = RideUiState.Starting(tripId, activity)
         val job = scope.launch {
             try {
                 prepare(r)
@@ -296,7 +332,8 @@ class RideController(
      * Meanwhile the state stays Active (old segment) → Starting → Active (new segment); the location stream stays
      * subscribed (a bridge collects the fixes in between for the new segment) and the day's km count goes on (the new
      * session starts from the day totals, which include the closed segment). The new segment keeps the closed one's
-     * auto-pause chip.
+     * auto-pause chip. Its only caller is the guidance start, and guidance is for bikes (P14): the new segment always
+     * records [ActivityType.BIKE] (profile, km source and cues of a bike), whatever the closed one was.
      */
     suspend fun splitSegment(): String? {
         val r = run ?: return null
@@ -318,7 +355,7 @@ class RideController(
             } else {
                 error = finished.error
                 bridge.takenUpTo = r.lastFix?.timeMillis ?: Long.MIN_VALUE
-                next = launchRun(r.tripId, phrases.newSegmentStarted, bridge, autoPause)
+                next = launchRun(r.tripId, ActivityType.BIKE, phrases.newSegmentStarted, bridge, autoPause)
             }
         }
         r.finishJob = job
@@ -416,8 +453,14 @@ class RideController(
         val date = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
         val today = rideStore.dayTotals(r.tripId, date)
         if (run !== r) return
-        val session = RecordingSession(now, r.autoPause ?: current.autoPauseEnabled, today, zone)
-        val segmentId = rideStore.openSegment(r.tripId, now, date)
+        val session = RecordingSession(
+            now,
+            r.autoPause ?: current.autoPauseEnabled,
+            today,
+            zone,
+            profile = ActivityProfile.of(r.activity),
+        )
+        val segmentId = rideStore.openSegment(r.tripId, now, date, r.activity)
         if (run !== r) return
         r.trip = trip
         r.voiceOn = current.voiceEnabled
@@ -425,8 +468,10 @@ class RideController(
         r.startedAt = now
         r.localDate = date
         r.session = session
+        if (r.activity == ActivityType.HIKE) r.hike = HikeAnnouncer(now)
         handle(r, session.start())
-        becomeKmSource(r, session)
+        // The combined guidance sentence is a bike sentence (day totals in km/h).
+        if (r.activity == ActivityType.BIKE) becomeKmSource(r, session)
         takeBridgedFixes(r, session)
 
         r.jobs += scope.launch { collectLocation(r, session) }
@@ -444,7 +489,10 @@ class RideController(
         r.jobs += scope.launch {
             while (true) {
                 delay(tickIntervalMs)
-                handle(r, session.onTick(clock()))
+                val now = clock()
+                handle(r, session.onTick(now))
+                // Ticks go on while paused: so do the hike's cues (the hiking time keeps running).
+                announceHike(r, session, now)
             }
         }
         r.jobs += scope.launch {
@@ -580,7 +628,16 @@ class RideController(
     /** Applies one session update: speech, the point to save, the map track and the state. Never suspends. */
     private fun handle(r: Run, update: RecordingUpdate) {
         if (run !== r || r.stopping) return
-        if (r.voiceOn) update.events.forEach { event -> speech(r, event)?.let(voice::speak) }
+        val now = clock()
+        if (r.activity == ActivityType.HIKE) updateSunset(r, update.point?.point, now)
+        if (r.startSpeechPending &&
+            (r.sunsetFrom != null || update.events.isNotEmpty() || now - r.startedAt >= HIKE_START_WAIT_MS)
+        ) {
+            r.startSpeechPending = false
+            if (r.voiceOn) voice.speak(phrases.recordingStarted(r.activity, sunsetIn(r, now)))
+        }
+        if (r.voiceOn) update.events.forEach { event -> speech(r, event, now)?.let(voice::speak) }
+        update.events.filterIsInstance<RecordingEvent.KmReached>().lastOrNull()?.let { r.lastKm = it.km }
         // On screen whatever the voice setting.
         r.startPhrase?.let { phrase -> if (RecordingEvent.Started in update.events) post(phrase) }
         update.point?.let { point ->
@@ -593,17 +650,75 @@ class RideController(
         publish(r)
     }
 
-    private fun speech(r: Run, event: RecordingEvent): String? = when (event) {
-        RecordingEvent.Started -> r.startPhrase ?: phrases.recordingStarted
+    private fun speech(r: Run, event: RecordingEvent, now: Long): String? = when (event) {
+        RecordingEvent.Started -> r.startPhrase ?: startSentence(r, now)
         is RecordingEvent.Paused -> phrases.recordingPaused
         RecordingEvent.Resumed -> phrases.recordingResumed
-        // While guiding, the navigation announces the combined sentence instead (Task 11).
-        is RecordingEvent.KmReached -> if (navigation.ui.value is NavUiState.Active) {
-            null
-        } else {
-            val day = DayTotals(event.dayDistanceM, event.dayMovingTimeMs)
-            phrases.rideKmReport(event.km, day.avgSpeedMps, event.dayMovingTimeMs)
+        // While guiding, the navigation announces the combined sentence (a bike recording) or its own one instead.
+        is RecordingEvent.KmReached -> if (navigation.ui.value is NavUiState.Active) null else kmSentence(r, event)
+    }
+
+    /** A hike's start waits for its first location, to tell the time left until sunset ([handle] speaks it). */
+    private fun startSentence(r: Run, now: Long): String? {
+        if (r.activity == ActivityType.HIKE && r.sunsetFrom == null) {
+            r.startSpeechPending = true
+            return null
         }
+        return phrases.recordingStarted(r.activity, sunsetIn(r, now))
+    }
+
+    /**
+     * The bike's day-total sentence, or the run's and walk's pace sentence. The lap is per km: a fix that jumps over
+     * several km shares the lap among them (never several km told as "이번 1킬로미터").
+     */
+    private fun kmSentence(r: Run, event: RecordingEvent.KmReached): String {
+        if (r.activity == ActivityType.BIKE) {
+            val day = DayTotals(event.distanceM, event.movingTimeMs)
+            return phrases.rideKmReport(event.km, day.avgSpeedMps, event.movingTimeMs)
+        }
+        val kms = maxOf(1, event.km - r.lastKm)
+        val lap = event.lapMovingTimeMs.takeIf { it > 0 }
+            ?.let { ActivityFormat.paceSeconds(kms * 1_000.0 / (it / 1_000.0)) }
+        val avg = event.movingTimeMs.takeIf { it > 0 }
+            ?.let { ActivityFormat.paceSeconds(event.distanceM / (it / 1_000.0)) }
+        return phrases.paceKmReport(event.km, lap, avg)
+    }
+
+    /**
+     * Hikes: computes the sunset at the first accepted location ([point]) and again only after moving more than
+     * [SUNSET_MOVE_M] from where it was last computed, or when the date changes (checked with every update).
+     */
+    private fun updateSunset(r: Run, point: GeoPoint?, now: Long) {
+        val at = point ?: r.sunsetFrom ?: return
+        val date = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+        val from = r.sunsetFrom
+        if (from != null && date == r.sunsetDate && GeoMath.distanceM(from, at) <= SUNSET_MOVE_M) return
+        r.sunsetFrom = at
+        r.sunsetDate = date
+        r.sunsetMillis = try {
+            sunsetOf(at.lat, at.lon, date, zone)
+        } catch (e: Exception) {
+            log.warn("Could not compute the sunset", e)
+            null
+        }
+        r.hike?.setSunset(r.sunsetMillis, now)
+    }
+
+    private fun sunsetIn(r: Run, now: Long): Long? = r.sunsetMillis?.let { it - now }
+
+    /** Hikes: speaks the cue due at [now] (if the voice is on; a cue due with the voice off is not kept for later). */
+    private fun announceHike(r: Run, session: RecordingSession, now: Long) {
+        if (run !== r || r.stopping) return
+        val cue = r.hike?.due(now) ?: return
+        if (!r.voiceOn) return
+        val text = when (cue) {
+            is HikeCue.Periodic -> {
+                val s = session.stats
+                phrases.hikeReport(s.elapsedMs, s.altitudeM, s.ascentM, s.distanceM, sunsetIn(r, now))
+            }
+            is HikeCue.Sunset -> phrases.sunsetCue(cue.stage)
+        }
+        voice.speak(text)
     }
 
     private fun publish(r: Run) {
@@ -620,6 +735,8 @@ class RideController(
             fix = r.lastFix,
             gpsWeak = r.gpsWeak,
             saveWarning = r.saveWarning,
+            activity = r.activity,
+            sunsetMillis = r.sunsetMillis,
         )
     }
 
@@ -675,6 +792,12 @@ class RideController(
         val totals = session.stats.toTotals()
         var ok = saved &&
             saving("close segment ${r.segmentId}") { rideStore.closeSegment(r.segmentId, now, totals) } != null
+        // A run's best efforts, from its saved points; a failure is only logged (the records miss this run).
+        if (ok && r.activity == ActivityType.RUN) {
+            saving("save the best efforts of segment ${r.segmentId}") {
+                rideStore.saveBestEfforts(r.segmentId, BestEfforts.find(rideStore.points(r.segmentId)))
+            }
+        }
         val tripId = r.tripId
         ok = when (end) {
             RecordingEnd.SEGMENT_ONLY -> true
@@ -685,7 +808,7 @@ class RideController(
                 saving("read trip $tripId") { tripStore.trip(tripId) }?.status == TripStatus.COMPLETED
         } && ok
         val finished = RideUiState.Finished(
-            segment = RideSegment(r.segmentId, tripId, r.startedAt, now, r.localDate, totals),
+            segment = RideSegment(r.segmentId, tripId, r.startedAt, now, r.localDate, totals, r.activity),
             track = r.track.snapshot(),
             error = if (ok) null else MSG_SAVE_PROBLEM,
         )
@@ -705,11 +828,19 @@ class RideController(
         _notice.value = ScreenNotice(++noticeIds, text)
     }
 
-    /** Closes every open segment at its last save (startedAt + saved elapsed time, saved totals); returns them. */
+    /**
+     * Closes every open segment at its last save (startedAt + saved elapsed time, saved totals); returns them. A run's
+     * best efforts are saved from its saved points as [finish] does (a failure is only logged).
+     */
     private suspend fun closeOpenSegments(): List<RideSegment> {
         val open = rideStore.openSegments()
         for (segment in open) {
             rideStore.closeSegment(segment.id, segment.startedAt + segment.totals.elapsedMs, segment.totals)
+            if (segment.activity == ActivityType.RUN) {
+                saving("save the best efforts of segment ${segment.id}") {
+                    rideStore.saveBestEfforts(segment.id, BestEfforts.find(rideStore.points(segment.id)))
+                }
+            }
         }
         return open
     }
@@ -753,6 +884,12 @@ class RideController(
 
         /** The trip is touched when the recording starts and with a successful save at most this often. */
         const val TOUCH_INTERVAL_MS = 60_000L
+
+        /** A hike's sunset is computed again only after moving more than this from where it was last computed. */
+        const val SUNSET_MOVE_M = 1_000.0
+
+        /** The longest a hike's start sentence waits for the first location (and so for the sunset). */
+        const val HIKE_START_WAIT_MS = 5_000L
 
         /** The map track keeps an accepted location only this far from the previous kept one. */
         private const val TRACK_SPACING_M = 10.0

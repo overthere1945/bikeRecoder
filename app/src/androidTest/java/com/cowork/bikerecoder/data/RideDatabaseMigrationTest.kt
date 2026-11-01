@@ -6,6 +6,9 @@ import androidx.room.testing.MigrationTestHelper
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.activity.BestEffort
+import com.cowork.bikerecoder.core.activity.BestEffortDistance
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.post.CumulativeEntry
@@ -31,7 +34,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.time.LocalDate
 
-/** 스펙 ⑥: 이전 버전 데이터가 마이그레이션 뒤에도 그대로이고, 새 테이블이 동작한다(1→2 … 7→8). */
+/** 스펙 ⑥: 이전 버전 데이터가 마이그레이션 뒤에도 그대로이고, 새 테이블이 동작한다(1→2 … 8→9). */
 @RunWith(AndroidJUnit4::class)
 class RideDatabaseMigrationTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
@@ -354,6 +357,91 @@ class RideDatabaseMigrationTest {
                 RoomTripLabelStore(db).observeLabels().first(),
             )
             assertEquals(emptyMap<Long, String>(), RoomImportStore(db).observeImported().first())
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun migrate8To9MakesEverySegmentBikeAndAddsEmptyBestEffortTable() = runBlocking {
+        helper.createDatabase(DB, 8).apply {
+            execSQL(
+                "INSERT INTO trip (id, type, status, profile, createdAt, lastActiveAt, completedAt) " +
+                    "VALUES (5, 'SINGLE_DAY', 'COMPLETED', 'BALANCED', 1000, 2000, 6000)",
+            )
+            execSQL(
+                "INSERT INTO ride_segment (id, tripId, startedAt, endedAt, localDate, distanceM, movingTimeMs, " +
+                    "elapsedMs, maxSpeedMps, ascentM, descentM, minAltitudeM, maxAltitudeM) " +
+                    "VALUES (21, 5, 3000, 4000, '2026-10-12', 1500.0, 60000, 90000, 8.5, 10.0, 4.0, 30.0, 44.5)",
+            )
+            execSQL(
+                "INSERT INTO ride_segment (id, tripId, startedAt, endedAt, localDate, distanceM, movingTimeMs, " +
+                    "elapsedMs, maxSpeedMps, ascentM, descentM, minAltitudeM, maxAltitudeM) " +
+                    "VALUES (22, 5, 5000, NULL, '2026-10-13', 20.0, 3000, 4000, 2.5, 0.0, 0.0, NULL, NULL)",
+            )
+            execSQL(
+                "INSERT INTO track_point (id, segmentId, timeMillis, lat, lon, altitudeM, speedMps, accuracyM) " +
+                    "VALUES (1, 21, 3100, 37.5, 127.0, 33.0, 5.0, 4.0)",
+            )
+            execSQL(
+                "INSERT INTO track_point (id, segmentId, timeMillis, lat, lon, altitudeM, speedMps, accuracyM) " +
+                    "VALUES (2, 21, 3200, 37.501, 127.001, NULL, NULL, 6.0)",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(DB, 9, true)
+        migrated.query("PRAGMA foreign_key_check").use { assertEquals(0, it.count) }
+        migrated.query("SELECT id, activity FROM ride_segment ORDER BY id").use {
+            assertEquals(2, it.count)
+            it.moveToFirst()
+            assertEquals(21L, it.getLong(0))
+            assertEquals("BIKE", it.getString(1))
+            it.moveToNext()
+            assertEquals(22L, it.getLong(0))
+            assertEquals("BIKE", it.getString(1))
+        }
+        migrated.query("SELECT COUNT(*) FROM segment_best_effort").use {
+            it.moveToFirst()
+            assertEquals(0, it.getInt(0))
+        }
+        migrated.close()
+
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, DB).build()
+        try {
+            val store = RoomRideStore(db)
+            val first = store.segment(21)!!
+            assertEquals(ActivityType.BIKE, first.activity)
+            assertEquals(5L, first.tripId)
+            assertEquals(3000L, first.startedAt)
+            assertEquals(4000L, first.endedAt)
+            assertEquals(LocalDate.of(2026, 10, 12), first.localDate)
+            assertEquals(1500.0, first.totals.distanceM, 0.0)
+            assertEquals(60000L, first.totals.movingTimeMs)
+            assertEquals(90000L, first.totals.elapsedMs)
+            assertEquals(8.5, first.totals.maxSpeedMps, 0.0)
+            assertEquals(10.0, first.totals.ascentM, 0.0)
+            assertEquals(4.0, first.totals.descentM, 0.0)
+            assertEquals(30.0, first.totals.minAltitudeM!!, 0.0)
+            assertEquals(44.5, first.totals.maxAltitudeM!!, 0.0)
+            val open = store.segment(22)!!
+            assertEquals(ActivityType.BIKE, open.activity)
+            assertNull(open.endedAt)
+            assertNull(open.totals.minAltitudeM)
+            assertEquals(
+                listOf(3100L, 3200L),
+                store.points(21).map { it.timeMillis },
+            )
+            assertEquals(33.0, store.points(21)[0].altitudeM!!, 0.0)
+            assertEquals(emptyList<Any>(), RoomRideStatsSource(db).observeBestEfforts().first())
+
+            // The new table works after the migration: efforts follow their segment.
+            store.saveBestEfforts(21, listOf(BestEffort(BestEffortDistance.ONE_K, 250_000L, 1)))
+            store.deleteSegment(21)
+            db.openHelper.readableDatabase.query("SELECT COUNT(*) FROM segment_best_effort").use {
+                it.moveToFirst()
+                assertEquals(0, it.getInt(0))
+            }
         } finally {
             db.close()
         }

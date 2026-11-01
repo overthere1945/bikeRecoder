@@ -1,6 +1,6 @@
 package com.cowork.bikerecoder.importing
 
-import com.cowork.bikerecoder.core.importing.Activity
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.importing.ImportProblem
 import com.cowork.bikerecoder.core.importing.RideStatus
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -9,7 +9,7 @@ import java.time.OffsetDateTime
 
 class ImportFormatTest {
 
-    private fun row(status: RideStatus, distanceM: Double = 32_100.0, movingMs: Long = 105 * 60_000L, activity: Activity? = Activity.CYCLING) =
+    private fun row(status: RideStatus, distanceM: Double = 32_100.0, movingMs: Long = 105 * 60_000L, activity: ActivityType = ActivityType.BIKE) =
         ScanRow(RideKey(0, 0), "a.gpx", T0, T0 + movingMs, distanceM, movingMs, activity, status, emptyList())
 
     @Test
@@ -25,13 +25,8 @@ class ImportFormatTest {
     fun statusLines() {
         assertEquals("32.1 km · 1시간 45분", statusLine(row(RideStatus.New)))
         assertEquals("12.0 km · 40분", statusLine(row(RideStatus.New, distanceM = 12_000.0, movingMs = 40 * 60_000L)))
-        assertEquals(
-            "달리기 · 6.2 km — 자전거가 아님",
-            statusLine(row(RideStatus.NotCycling, distanceM = 6_200.0, activity = Activity.RUNNING)),
-        )
-        assertEquals("걷기 · 1.0 km — 자전거가 아님", statusLine(row(RideStatus.NotCycling, 1_000.0, activity = Activity.WALKING)))
-        assertEquals("등산 · 1.0 km — 자전거가 아님", statusLine(row(RideStatus.NotCycling, 1_000.0, activity = Activity.HIKING)))
-        assertEquals("다른 활동 · 1.0 km — 자전거가 아님", statusLine(row(RideStatus.NotCycling, 1_000.0, activity = Activity.OTHER)))
+        // The numbers are the ones read from the file, whatever activity the row has been given.
+        assertEquals("6.2 km · 40분", statusLine(row(RideStatus.New, 6_200.0, 40 * 60_000L, ActivityType.RUN)))
         assertEquals("이미 있는 주행과 겹칩니다", statusLine(row(RideStatus.OverlapsExisting)))
         assertEquals("목록에 같은 주행이 있습니다", statusLine(row(RideStatus.DuplicateInList)))
         assertEquals("너무 짧은 기록입니다", statusLine(row(RideStatus.Unreadable(ImportProblem.TOO_SHORT))))

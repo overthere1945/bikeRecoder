@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.core.feed
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -42,12 +43,22 @@ class FeedThumbKeyTest {
         }
     }
 
-    /** 판정 I4: 그림이 PNG에서 WebP로 바뀌어 버전 2다. 같은 구간이라도 버전 1의 키와 다르다. */
+    /** 경로 선 색이 종류를 따르므로(V1.9.0) 구간의 종류가 바뀌면 키가 바뀐다. */
     @Test
-    fun versionTwoSinceWebp() {
-        assertEquals(2, FeedThumbKey.VERSION)
-        // SHA-256 of "1:1000:12345|v2"; with "|v1" it was "bf99aa2bfde8".
-        assertEquals("e591644d98a4", FeedThumbKey.of(listOf(a)))
+    fun changedActivityChangesKey() {
+        assertNotEquals(FeedThumbKey.of(listOf(a)), FeedThumbKey.of(listOf(a.copy(activity = ActivityType.RUN))))
+        assertNotEquals(
+            FeedThumbKey.of(listOf(a.copy(activity = ActivityType.WALK))),
+            FeedThumbKey.of(listOf(a.copy(activity = ActivityType.HIKE))),
+        )
+    }
+
+    /** 버전 3(V1.9.0): 경로 선이 주황에서 종류 색으로 바뀌어, 같은 구간이라도 버전 2의 키와 다르다. */
+    @Test
+    fun versionThreeSinceActivityColours() {
+        assertEquals(3, FeedThumbKey.VERSION)
+        // SHA-256 of "1:1000:12345:BIKE|v3".
+        assertEquals("83244f27f9dd", FeedThumbKey.of(listOf(a)))
     }
 
     @Test

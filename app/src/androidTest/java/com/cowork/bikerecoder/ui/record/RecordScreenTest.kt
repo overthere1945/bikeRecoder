@@ -27,6 +27,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.recording.PauseKind
 import com.cowork.bikerecoder.core.recording.RecordingState
@@ -70,6 +71,15 @@ class RecordScreenTest {
     )
 
     private var setDestinations = 0
+
+    /** Spec §1.4: the status line names the activity beside its badge; a run's map line leads with the pace. */
+    @Test
+    fun statusLineNamesTheActivity() {
+        show(active().copy(activity = ActivityType.RUN))
+
+        composeRule.onNodeWithTag(RecordTags.ACTIVITY).assertTextEquals("달리기")
+        composeRule.onNodeWithTag(RecordTags.SUMMARY).assertTextEquals("--'--\"/km · 3.01km · 0:10:00 · 평균 3'19\"/km")
+    }
 
     private fun show(
         state: RideUiState.Active,

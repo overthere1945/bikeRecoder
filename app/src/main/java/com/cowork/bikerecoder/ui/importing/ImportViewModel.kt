@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.importing.RideStatus
 import com.cowork.bikerecoder.importing.GpxImportJob
 import com.cowork.bikerecoder.importing.ImportHandoff
@@ -47,7 +48,7 @@ sealed interface ImportUiState {
         val header: String,
         val files: String,
     ) : ImportUiState {
-        /** The rows that can be picked: new rides and other activities. */
+        /** The rows that can be picked: the new rides. */
         val selectable: Set<RideKey> get() = rows.filter { it.isSelectable() }.mapTo(LinkedHashSet()) { it.key }
 
         /** [전체 선택] is on: every row that can be picked is. */
@@ -67,8 +68,8 @@ sealed interface ImportUiState {
     data class Job(val state: ImportJobState) : ImportUiState
 }
 
-/** A new ride or another activity can be picked; overlapping, duplicate and unreadable rows cannot. */
-fun ScanRow.isSelectable(): Boolean = status == RideStatus.New || status == RideStatus.NotCycling
+/** A new ride (of any activity) can be picked; overlapping, duplicate and unreadable rows cannot. */
+fun ScanRow.isSelectable(): Boolean = status == RideStatus.New
 
 /**
  * The review list of the picked files and the hand-over to the one import job (V1.6.0 spec §1.2, §1.3). It lives as
@@ -145,6 +146,18 @@ class ImportViewModel(
         val row = review.result.rows.firstOrNull { it.key == key }
         if (row == null || !row.isSelectable()) return@updateReview review
         review.copy(checked = if (key in review.checked) review.checked - key else review.checked + key)
+    }
+
+    /**
+     * The activity picked for the row at [index] of the review list (spec V1.9.0 §5.3). Only the type changes: the
+     * row's distance and time stay as read (the job replays with the chosen type). Rows that cannot be picked, and an
+     * [index] out of range, are left as they are. The list is in the phase, so the choice survives a rotation like the checks.
+     */
+    fun setActivity(index: Int, type: ActivityType) = updateReview { review ->
+        val rows = review.result.rows
+        val row = rows.getOrNull(index)
+        if (row == null || !row.isSelectable() || row.activity == type) return@updateReview review
+        review.copy(result = review.result.copy(rows = rows.toMutableList().also { it[index] = row.copy(activity = type) }))
     }
 
     /** [전체 선택]: all rows that can be picked on, or off when they all are. */

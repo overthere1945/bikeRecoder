@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.ui.history
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.recording.RideSegment
@@ -62,5 +63,18 @@ class HistoryFormatTest {
 
         assertEquals(listOf(a to false, c to true), stops.map { it.point to it.isDestination })
         assertEquals(emptyList<Any>(), startEndStops(emptyList()))
+    }
+
+    /** V1.9.0: the list row only gains a badge; its text is the same for every activity. */
+    @Test
+    fun `segment row text does not depend on the activity`() {
+        val startedAt = ZonedDateTime.of(2026, 10, 12, 7, 5, 0, 0, ZoneId.of("UTC")).toInstant().toEpochMilli()
+        for (activity in ActivityType.entries) {
+            val segment = RideSegment(
+                1, 1, startedAt, startedAt + 1, LocalDate.of(2026, 10, 12),
+                SegmentTotals.ZERO.copy(distanceM = 12_345.0, movingTimeMs = 3_000_000), activity,
+            )
+            assertEquals("16:05 · 12.34km · 50분", segmentRowText(segment))
+        }
     }
 }

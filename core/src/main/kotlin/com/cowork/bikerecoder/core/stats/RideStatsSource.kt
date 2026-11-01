@@ -5,4 +5,7 @@ import kotlinx.coroutines.flow.Flow
 interface RideStatsSource {
     /** 끝난 구간(`endedAt`이 있는 것) 전부, 거르지 않고. 구간이 바뀌면 다시 나온다. */
     fun observeRides(): Flow<List<RideStat>>
+
+    /** 끝난 구간의 저장된 달리기 최고 기록 전부. 같은 목록은 다시 보내지 않는다. */
+    fun observeBestEfforts(): Flow<List<StoredBestEffort>>
 }

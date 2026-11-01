@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.core.video
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.trip.TripLabel
 import java.time.Instant
 import java.time.ZoneId
@@ -29,8 +30,16 @@ object RideTitle {
         "제주특별자치도" to "제주",
     )
 
-    /** 첫 출발 시각([zone] 시각)의 시간대 + "라이딩", 둘 이상의 날을 탔으면 "N일 여행". */
-    fun base(firstStartedAt: Long, rideDays: Int, zone: ZoneId): String {
+    /** 종류 낱말(스펙 §2.3): 자전거 "라이딩", 걷기 "걷기", 달리기 "달리기", 등산 "등산". */
+    private fun word(activity: ActivityType): String = when (activity) {
+        ActivityType.BIKE -> "라이딩"
+        ActivityType.WALK -> "걷기"
+        ActivityType.RUN -> "달리기"
+        ActivityType.HIKE -> "등산"
+    }
+
+    /** 첫 출발 시각([zone] 시각)의 시간대 + [activity]의 종류 낱말(기본 "라이딩"), 둘 이상의 날이면 "N일 여행". */
+    fun base(firstStartedAt: Long, rideDays: Int, zone: ZoneId, activity: ActivityType = ActivityType.BIKE): String {
         if (rideDays >= 2) return "${rideDays}일 여행"
         val name = when (Instant.ofEpochMilli(firstStartedAt).atZone(zone).hour) {
             in 4..6 -> "새벽"
@@ -40,7 +49,7 @@ object RideTitle {
             in 18..20 -> "저녁"
             else -> "밤"
         }
-        return "$name 라이딩"
+        return "$name ${word(activity)}"
     }
 
     /** 시·도 이름을 줄여 2단계 이름을 붙인다. 2단계가 비면 시·도만, 둘 다 비면 null. */
@@ -69,6 +78,13 @@ object RideTitle {
         if (text.codePointCount(0, text.length) <= max) text else text.substring(0, text.offsetByCodePoints(0, max))
 
     /** 보이는 제목: 직접 붙인 제목, 없으면 자동 제목에 지역을 붙인 것(스펙 §2.5). */
-    fun shown(label: TripLabel, firstStartedAt: Long, rideDays: Int, zone: ZoneId): String =
-        label.customTitle?.takeIf { it.isNotBlank() } ?: withRegion(base(firstStartedAt, rideDays, zone), label.regionName)
+    fun shown(
+        label: TripLabel,
+        firstStartedAt: Long,
+        rideDays: Int,
+        zone: ZoneId,
+        activity: ActivityType = ActivityType.BIKE,
+    ): String =
+        label.customTitle?.takeIf { it.isNotBlank() }
+            ?: withRegion(base(firstStartedAt, rideDays, zone, activity), label.regionName)
 }

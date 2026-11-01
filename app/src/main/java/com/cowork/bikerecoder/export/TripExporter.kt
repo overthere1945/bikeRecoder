@@ -71,7 +71,8 @@ class TripExporter(
 
     /**
      * The trip [tripId] as one file titled [title] (the title the trip screen shows): one track segment per listed
-     * segment (empty ones are left out, as on the screen) in start order, named after the first one's start. A trip with
+     * segment (empty ones are left out, as on the screen) in start order, named after the first one's start. Each
+     * segment carries its activity: GPX starts a new track where it changes, KML names the line after it. A trip with
      * an open segment is [ExportResult.Recording]; one without any ride is [ExportResult.Failed].
      */
     suspend fun exportTrip(tripId: Long, format: ExportFormat, title: String): ExportResult = guarded("trip $tripId") {
@@ -86,6 +87,7 @@ class TripExporter(
                 points = rideStore.points(segment.id),
                 // KML carries no heart rate.
                 heartRate = if (format == ExportFormat.GPX) heartRate(segment.id) else emptyList(),
+                activity = segment.activity,
             )
         }
         val content = when (format) {

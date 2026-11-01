@@ -391,6 +391,7 @@ class VideoJob(
             val h = sink.height
             val cameras = CameraPath.cameras(
                 plans, inputs.timeline, FrameRenderer.introCamera(inputs, w, h), FrameRenderer.outroCamera(inputs, w, h), heightPx = h,
+                segmentActivities = inputs.activitiesBySegment(),
             )
             sink.addAudio(music) // before the first frame (ruling V7)
 

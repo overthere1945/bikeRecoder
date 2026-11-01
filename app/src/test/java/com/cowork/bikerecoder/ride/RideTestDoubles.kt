@@ -1,5 +1,7 @@
 package com.cowork.bikerecoder.ride
 
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.activity.BestEffort
 import com.cowork.bikerecoder.core.elevation.UsualSpeed
 import com.cowork.bikerecoder.core.recording.DayTotals
 import com.cowork.bikerecoder.core.recording.RideSegment
@@ -31,6 +33,9 @@ class FakeRideStore(private val trips: FakeTripStore, private val clock: () -> L
     private val pointsBySegment = mutableMapOf<Long, MutableList<TrackPoint>>()
     private var nextId = 1L
 
+    /** The saved best efforts per segment, like the `segment_best_effort` rows. */
+    val bestEfforts = mutableMapOf<Long, List<BestEffort>>()
+
     /** While true every [appendPoints] throws (nothing is stored) and is counted in [failedAppends]. */
     var failAppend = false
     var failedAppends = 0
@@ -56,10 +61,10 @@ class FakeRideStore(private val trips: FakeTripStore, private val clock: () -> L
     /** While true [deleteSegment] throws (nothing is deleted). */
     var failDeleteSegment = false
 
-    override suspend fun openSegment(tripId: Long, startedAt: Long, localDate: LocalDate): Long {
+    override suspend fun openSegment(tripId: Long, startedAt: Long, localDate: LocalDate, activity: ActivityType): Long {
         openGate?.await()
         val id = nextId++
-        segmentsById[id] = RideSegment(id, tripId, startedAt, endedAt = null, localDate, SegmentTotals.ZERO)
+        segmentsById[id] = RideSegment(id, tripId, startedAt, endedAt = null, localDate, SegmentTotals.ZERO, activity)
         return id
     }
 
@@ -85,7 +90,7 @@ class FakeRideStore(private val trips: FakeTripStore, private val clock: () -> L
 
     override suspend fun recentSegments(limit: Int): List<RideSegment> =
         segmentsById.values
-            .filter { it.endedAt != null && it.totals.distanceM >= UsualSpeed.MIN_DISTANCE_M && it.totals.movingTimeMs > 0 }
+            .filter { it.activity == ActivityType.BIKE && it.endedAt != null && it.totals.distanceM >= UsualSpeed.MIN_DISTANCE_M && it.totals.movingTimeMs > 0 }
             .sortedWith(compareByDescending<RideSegment> { it.startedAt }.thenByDescending { it.id })
             .take(limit)
 
@@ -98,7 +103,7 @@ class FakeRideStore(private val trips: FakeTripStore, private val clock: () -> L
         pointsBySegment[segmentId].orEmpty().sortedBy { it.timeMillis }
 
     override suspend fun dayTotals(tripId: Long, localDate: LocalDate): DayTotals {
-        val day = segmentsById.values.filter { it.tripId == tripId && it.localDate == localDate }
+        val day = segmentsById.values.filter { it.tripId == tripId && it.localDate == localDate && it.activity == ActivityType.BIKE }
         return DayTotals(day.sumOf { it.totals.distanceM }, day.sumOf { it.totals.movingTimeMs })
     }
 
@@ -117,11 +122,29 @@ class FakeRideStore(private val trips: FakeTripStore, private val clock: () -> L
             }
             .sortedWith(compareByDescending<TripRideSummary> { it.lastStartedAt }.thenByDescending { it.trip.id })
 
+    override suspend fun saveBestEfforts(segmentId: Long, efforts: List<BestEffort>) {
+        bestEfforts[segmentId] = efforts
+    }
+
+    override suspend fun bestEfforts(segmentId: Long): List<BestEffort> = bestEfforts[segmentId].orEmpty()
+
+    override suspend fun changeActivity(
+        segmentId: Long,
+        activity: ActivityType,
+        totals: SegmentTotals?,
+        efforts: List<BestEffort>,
+    ) {
+        val segment = segmentsById.getValue(segmentId)
+        segmentsById[segmentId] = segment.copy(activity = activity, totals = totals ?: segment.totals)
+        bestEfforts[segmentId] = efforts
+    }
+
     override suspend fun deleteSegment(id: Long) {
         deleteSegmentGate?.await()
         if (failDeleteSegment) throw IOException("disk full")
         segmentsById.remove(id)
         pointsBySegment.remove(id)
+        bestEfforts.remove(id)
         deletedSegments += id
     }
 

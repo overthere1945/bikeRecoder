@@ -10,6 +10,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.CumulativeEntry
@@ -22,6 +23,7 @@ import com.cowork.bikerecoder.map.CameraFit
 import com.cowork.bikerecoder.map.RideLine
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.PostStore
+import com.cowork.bikerecoder.ui.activity.ActivityStyle
 import com.cowork.bikerecoder.ui.history.cardDateText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -33,8 +35,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -105,6 +112,10 @@ data class CumulativeMapState(
  * ([onMapMoved]) or highlights a ride ([select], which frames that ride) — after that the camera is theirs.
  * [today] dates [이번 주] and [이번 달]. [initial] is the period it opens on (the stats tab's period, V1.4.0 spec §3.5;
  * [전체] without one); a week given by its Monday alone is shown as a week of a month ([shownAsWeekOfMonth]).
+ *
+ * [activity] is the stats tab's chip (V1.9.0 spec §4.1; null = [전체]): only the rides of that activity are shown, counted and
+ * listed. [activityOf] says each segment's activity (a segment it does not know is a bike); a ride it knows is drawn in its
+ * activity's colour, one it does not in the ride palette.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class CumulativeMapViewModel(
@@ -114,6 +125,8 @@ class CumulativeMapViewModel(
     private val compute: CoroutineDispatcher = Dispatchers.Default,
     private val today: () -> LocalDate = LocalDate::now,
     initial: PeriodFilter = PeriodFilter(),
+    private val activity: ActivityType? = null,
+    activityOf: Flow<Map<Long, ActivityType>> = flowOf(emptyMap()),
 ) : ViewModel() {
 
     /** Every ride ([CumulativeSummary.rides], newest first) and whether no pass ran or waited when read; null until read. */
@@ -121,14 +134,16 @@ class CumulativeMapViewModel(
     private val choice = MutableStateFlow(Choice(shownAsWeekOfMonth(initial, today()), null))
     private val selection = MutableStateFlow<Long?>(null)
 
-    val state: StateFlow<CumulativeMapState> = combine(read, choice, selection) { read, choice, selected ->
-        Triple(read, choice, selected)
+    val state: StateFlow<CumulativeMapState> = combine(read, choice, selection, activityOf) { read, choice, selected, activities ->
+        Inputs(read, choice, selected, activities)
     }
-        .mapLatest { (read, choice, selected) ->
+        .mapLatest { (read, choice, selected, activities) ->
             if (read == null) {
                 CumulativeMapState(period = choice.period, quick = choice.quick)
             } else {
-                withContext(compute) { cumulativeStateOf(read.rides, read.idle, choice.period, choice.quick, selected) }
+                withContext(compute) {
+                    cumulativeStateOf(read.rides, read.idle, choice.period, choice.quick, selected, activity, activities)
+                }
             }
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, CumulativeMapState())
@@ -252,6 +267,9 @@ class CumulativeMapViewModel(
         const val ARG_MONTH = "month"
         const val ARG_WEEK_START = "weekStart"
 
+        /** The stats tab's activity chip as the activity's name; empty (or unknown) means all activities. */
+        const val ARG_ACTIVITY = "activity"
+
         /**
          * The period the route asked for ([com.cowork.bikerecoder.ui.Routes.cumulative]): [ARG_YEAR] and [ARG_MONTH] −1
          * and [ARG_WEEK_START] (an epoch day) [Long.MIN_VALUE] mean none; no arguments at all is [전체].
@@ -262,13 +280,23 @@ class CumulativeMapViewModel(
             weekStart = handle.get<Long>(ARG_WEEK_START)?.takeIf { it != Long.MIN_VALUE }?.let(LocalDate::ofEpochDay),
         )
 
+        /** The activity chip the route asked for ([ARG_ACTIVITY]); null = all. */
+        fun initialActivity(handle: SavedStateHandle): ActivityType? =
+            handle.get<String>(ARG_ACTIVITY)?.let { name -> ActivityType.entries.firstOrNull { it.name == name } }
+
         fun factory(container: AppContainer): ViewModelProvider.Factory = viewModelFactory {
             initializer {
+                val handle = createSavedStateHandle()
                 CumulativeMapViewModel(
                     container.postStore,
                     container.postProcessor,
                     androidWarnLog("CumulativeMap"),
-                    initial = initialFilter(createSavedStateHandle()),
+                    initial = initialFilter(handle),
+                    activity = initialActivity(handle),
+                    activityOf = container.rideStats.observeRides()
+                        .map { rides -> rides.associate { it.segmentId to it.activity } }
+                        .distinctUntilChanged()
+                        .catch { emit(emptyMap()) },
                 )
             }
         }
@@ -288,21 +316,28 @@ internal fun shownAsWeekOfMonth(period: PeriodFilter, today: LocalDate): PeriodF
 
 private class Read(val rides: List<CumulativeEntry>, val idle: Boolean)
 
+private data class Inputs(val read: Read?, val choice: Choice, val selected: Long?, val activities: Map<Long, ActivityType>)
+
 private data class Choice(val period: PeriodFilter, val quick: QuickPeriod?)
 
 /**
- * The screen for [rides] (already [CumulativeSummary.rides]: at least the minimum distance, newest first, worked out
- * once per read) in [period]. [selected] is kept only if it is a ride of the period.
+ * The screen for [allRides] (already [CumulativeSummary.rides]: at least the minimum distance, newest first, worked out
+ * once per read) in [period]. [selected] is kept only if it is a ride of the period. With a [chip] only that activity's rides
+ * are looked at at all (the years, months and weeks too), and each ride of a known activity ([activities]) is drawn and listed
+ * in its colour (V1.9.0 spec §4.1).
  */
 internal fun cumulativeStateOf(
-    rides: List<CumulativeEntry>,
+    allRides: List<CumulativeEntry>,
     idle: Boolean,
     period: PeriodFilter,
     quick: QuickPeriod?,
     selected: Long?,
+    chip: ActivityType? = null,
+    activities: Map<Long, ActivityType> = emptyMap(),
 ): CumulativeMapState {
+    val rides = if (chip == null) allRides else allRides.filter { (activities[it.segmentId] ?: ActivityType.BIKE) == chip }
     val entries = CumulativeSummary.filter(rides, period)
-    val colors = entries.indices.map(RideColors::colorAt)
+    val colors = entries.mapIndexed { i, e -> activities[e.segmentId]?.let(ActivityStyle::hex) ?: RideColors.colorAt(i) }
     val year = period.year
     val month = period.month
     return CumulativeMapState(

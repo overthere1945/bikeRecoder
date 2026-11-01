@@ -9,6 +9,7 @@ import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.video.Aspect
 import com.cowork.bikerecoder.core.video.Box
 import com.cowork.bikerecoder.core.video.CameraPath
@@ -154,12 +155,16 @@ class SummaryImageRenderer(private val context: Context, private val tileSource:
     companion object {
         /**
          * Distance, moving time, average speed / top speed, ascent, and the average heart rate or "주행 N회" (spec §4 ③,
-         * unchanged by §3.9), N = the target segments; the same cells as the video's closing card.
+         * unchanged by §3.9), N = the target segments; the same cells as the video's closing card. For a run, walk or hike
+         * the first four follow the trip's dominant activity (V1.9.0 spec §5.1, [FrameRenderer.rideCells]).
          */
         internal fun stats(inputs: VideoInputs): List<Pair<String, String>> {
             val t = inputs.totals
-            return FrameRenderer.rideCells(t) + FrameRenderer.ascentCell(t) +
-                FrameRenderer.heartRateOrRides(t, FrameRenderer.segmentCount(inputs))
+            val activity = inputs.activity
+            // A hike's cells have the ascent already: five cells, the sixth stays empty.
+            val ascent = if (activity == ActivityType.HIKE) emptyList() else listOf(FrameRenderer.ascentCell(t))
+            return FrameRenderer.rideCells(t, activity) + ascent +
+                FrameRenderer.heartRateOrRides(t, FrameRenderer.segmentCount(inputs), activity)
         }
 
         private const val BRAND = "bikeRecoder"

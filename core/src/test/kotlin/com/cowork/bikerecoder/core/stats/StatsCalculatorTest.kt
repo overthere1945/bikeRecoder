@@ -367,4 +367,19 @@ class StatsCalculatorTest {
         val rides = listOf(ride(d(2026, 1, 1)))
         assertNull(StatsCalculator.cumulative(rides, StatsCalculator.periodOf(PeriodKind.ALL, today, rides, today), today))
     }
+
+    @Test
+    fun elapsedSummed() {
+        val rides = listOf(
+            RideStat(1, 1, 1_000, d(2026, 10, 3), 10_000.0, 1_000, 0.0, elapsedMs = 5_000),
+            RideStat(2, 1, 2_000, d(2026, 10, 3), 10_000.0, 2_000, 0.0, elapsedMs = 7_000),
+            RideStat(3, 1, 3_000, d(2026, 10, 20), 10_000.0, 3_000, 0.0, elapsedMs = 11_000),
+        )
+        assertEquals(12_000L, StatsCalculator.totals(rides, d(2026, 10, 1), d(2026, 10, 10)).elapsedMs)
+        val month = StatsCalculator.periodOf(PeriodKind.MONTH, d(2026, 10, 15), rides, d(2026, 10, 31))
+        val buckets = StatsCalculator.buckets(rides, month, d(2026, 10, 31))
+        assertEquals(23_000L, buckets.sumOf { it.totals.elapsedMs })
+        val series = StatsCalculator.cumulative(rides, month, d(2026, 10, 31))!!
+        assertEquals(23_000L, series.current.last().elapsedMs)
+    }
 }

@@ -7,13 +7,18 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
+import androidx.compose.ui.graphics.toArgb
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.video.CameraPath
+import com.cowork.bikerecoder.core.video.RideTimeline
 import com.cowork.bikerecoder.map.TileSource
+import com.cowork.bikerecoder.ui.activity.ActivityStyle
 
 /**
  * The satellite picture of a trip card in the feed (V1.4.0 spec §2.4): the whole route in one 1280×720 snapshot of the
- * VWorld satellite map fitted with a [MARGIN] px margin, drawn as on the summary image — the route glowing orange (always
- * orange, ruling D2), the green start and black end points — with the map's attribution in one line at the bottom right.
+ * VWorld satellite map fitted with a [MARGIN] px margin, drawn as on the summary image — the route glowing in each segment's
+ * activity colour (V1.9.0 spec §2.2; the video and the summary image stay orange, ruling D2), the green start and black end
+ * points — with the map's attribution in one line at the bottom right.
  * The sequence is [SummaryImageRenderer]'s map: [CameraPath], [MapSnapshots], [RouteOverlay], [MapMarks].
  *
  * Only on the satellite map: when the start check ([VideoBackend.probeSatellite]) is not [SatelliteCheck.OK] (no key, no
@@ -37,7 +42,7 @@ class FeedThumbnailRenderer internal constructor(
         if (backend.probeSatellite(points.first().point) != SatelliteCheck.OK) return null
 
         val camera = CameraPath.overviewInset(points.map { it.point }, WIDTH, HEIGHT, MARGIN)
-        val overlay = RouteOverlay(timeline, IntArray(points.size) { FrameStyle.ROUTE_ORANGE })
+        val overlay = RouteOverlay(timeline, lineColors(timeline, inputs.segmentActivities))
         val maps = MapSnapshots(context, satellite(plainTiles, satelliteKey), WIDTH, HEIGHT)
         val shot = try {
             maps.take(camera)
@@ -83,6 +88,15 @@ class FeedThumbnailRenderer internal constructor(
     }
 
     companion object {
+        /**
+         * One colour per timeline point (the stretch from it to the next): its segment's [ActivityStyle.color]; a segment
+         * [activities] does not know is a bike's.
+         */
+        internal fun lineColors(timeline: RideTimeline, activities: List<ActivityType>): IntArray =
+            IntArray(timeline.points.size) { i ->
+                ActivityStyle.color(activities.getOrElse(timeline.points[i].segmentIndex) { ActivityType.BIKE }).toArgb()
+            }
+
         const val WIDTH = 1280
         const val HEIGHT = 720
 

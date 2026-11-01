@@ -1,7 +1,9 @@
 package com.cowork.bikerecoder.share
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.video.RideTitle
+import com.cowork.bikerecoder.ui.activity.ActivityText
 import com.cowork.bikerecoder.ui.feed.kmText
 import com.cowork.bikerecoder.ui.feed.meterText
 import java.math.BigDecimal
@@ -15,6 +17,19 @@ import kotlin.math.roundToLong
 /** Hashtags used when the setting has never been saved (spec §3.5). An empty saved value means "none". */
 const val DEFAULT_SHARE_HASHTAGS = "#자전거 #라이딩"
 
+/** The first values of the other activities' default hashtags (V1.9.0 spec §5.2); the bike's is [DEFAULT_SHARE_HASHTAGS]. */
+const val DEFAULT_SHARE_HASHTAGS_WALK = "#걷기 #산책"
+const val DEFAULT_SHARE_HASHTAGS_RUN = "#러닝 #달리기"
+const val DEFAULT_SHARE_HASHTAGS_HIKE = "#등산 #하이킹"
+
+/** The default hashtags of [type] while its setting has never been saved. */
+fun defaultShareHashtags(type: ActivityType): String = when (type) {
+    ActivityType.BIKE -> DEFAULT_SHARE_HASHTAGS
+    ActivityType.WALK -> DEFAULT_SHARE_HASHTAGS_WALK
+    ActivityType.RUN -> DEFAULT_SHARE_HASHTAGS_RUN
+    ActivityType.HIKE -> DEFAULT_SHARE_HASHTAGS_HIKE
+}
+
 /** The longest share text the sheet's box accepts. */
 const val MAX_SHARE_TEXT = 2000
 
@@ -26,7 +41,10 @@ const val MAX_SUBJECT = 80
 
 /**
  * What the auto share text is built from (spec §3.1): the trip's shown title, first and last riding day (Asia/Seoul),
- * and the sums of its finished rides (10 m or longer, same as the cards).
+ * and the sums of its finished rides (10 m or longer, same as the cards). [activity] is the trip's dominant activity,
+ * which picks the numbers line (V1.9.0 spec §5.2); [elapsedMs] is the hike segments' elapsed time and [maxAltitudeM] the
+ * highest point (a hike's line). [paceDistanceM] and [paceMovingTimeMs] are the sums of the [activity]'s rides only, the
+ * pace of a run's or walk's line (a mixed trip's other rides do not move it); null: [distanceM] and [movingTimeMs].
  */
 data class ShareFacts(
     val title: String,
@@ -36,6 +54,11 @@ data class ShareFacts(
     val movingTimeMs: Long,
     val ascentM: Double,
     val regionName: String?,
+    val activity: ActivityType = ActivityType.BIKE,
+    val elapsedMs: Long = 0L,
+    val maxAltitudeM: Double? = null,
+    val paceDistanceM: Double? = null,
+    val paceMovingTimeMs: Long? = null,
 )
 
 /**
@@ -72,16 +95,26 @@ fun normalizeHashtags(input: String): String =
 
 /**
  * The auto share text (spec §3.1), up to four lines: title, date, numbers, hashtags (default, then place; repeats keep
- * the first). The numbers leave out the ascent under 1 m and the average when there is no moving time. No hashtags
- * means no fourth line.
+ * the first). A bike's numbers leave out the ascent under 1 m and the average when there is no moving time; a run's or
+ * walk's are distance, time and average pace, a hike's the hike time, ascent and highest point ([ActivityText]). No
+ * hashtags means no fourth line. The caller passes the [defaultTags] of the dominant activity.
  */
 fun autoShareText(facts: ShareFacts, defaultTags: String): String {
-    val numbers = buildList {
-        add(kmText(facts.distanceM))
-        add(RideFormat.duration(facts.movingTimeMs))
-        if (facts.ascentM >= 1.0) add("상승 고도 ${meterText(facts.ascentM)}")
-        if (facts.movingTimeMs > 0) add("평균 ${averageKmh(facts.distanceM, facts.movingTimeMs)} km/h")
-    }.joinToString(" · ")
+    val numbers = when (facts.activity) {
+        ActivityType.BIKE -> buildList {
+            add(kmText(facts.distanceM))
+            add(RideFormat.duration(facts.movingTimeMs))
+            if (facts.ascentM >= 1.0) add("상승 고도 ${meterText(facts.ascentM)}")
+            if (facts.movingTimeMs > 0) add("평균 ${averageKmh(facts.distanceM, facts.movingTimeMs)} km/h")
+        }.joinToString(" · ")
+        ActivityType.RUN, ActivityType.WALK -> ActivityText.shareRunWalkNumbers(
+            facts.distanceM,
+            facts.movingTimeMs,
+            facts.paceDistanceM ?: facts.distanceM,
+            facts.paceMovingTimeMs ?: facts.movingTimeMs,
+        )
+        ActivityType.HIKE -> ActivityText.shareHikeNumbers(facts.elapsedMs, facts.ascentM, facts.maxAltitudeM)
+    }
     val tags = (normalizeHashtags(defaultTags).split(WHITESPACE).filter { it.isNotEmpty() } + regionTags(facts.regionName))
         .distinct()
         .joinToString(" ")

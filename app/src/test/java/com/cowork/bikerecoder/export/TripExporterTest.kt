@@ -1,6 +1,7 @@
 package com.cowork.bikerecoder.export
 
 import com.cowork.bikerecoder.WarnLog
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.export.ExportLabels
 import com.cowork.bikerecoder.core.export.ExportSegment
 import com.cowork.bikerecoder.core.export.GpxWriter
@@ -45,9 +46,15 @@ class TripExporterTest {
         TrackPoint(startedAt + i * 2_000L, GeoPoint(startLat + i * 10.0 / 111_320.0, 127.0), 50.0 + i, 5f, 5f)
     }
 
-    private suspend fun ride(startedAt: Long, day: LocalDate, points: List<TrackPoint>, distanceM: Double = 1_000.0): Long {
+    private suspend fun ride(
+        startedAt: Long,
+        day: LocalDate,
+        points: List<TrackPoint>,
+        distanceM: Double = 1_000.0,
+        activity: ActivityType = ActivityType.BIKE,
+    ): Long {
         val totals = SegmentTotals.ZERO.copy(distanceM = distanceM, movingTimeMs = 60_000)
-        val id = rides.openSegment(TRIP, startedAt, day)
+        val id = rides.openSegment(TRIP, startedAt, day, activity)
         rides.appendPoints(id, points, totals)
         rides.closeSegment(id, points.last().timeMillis, totals)
         return id
@@ -93,6 +100,26 @@ class TripExporterTest {
         assertEquals(pointsBefore, segmentsBefore.map { rides.points(it.id) })
         assertEquals(hr1, post.samples(id1))
         assertTrue(warnings.isEmpty())
+    }
+
+    @Test
+    fun segmentActivitiesGoToTheFiles() = runBlocking {
+        val day = LocalDate.of(2026, 10, 24)
+        val start = day.atTime(7, 0).atZone(SEOUL).toInstant().toEpochMilli()
+        val bike = track(start, 37.5, 3)
+        val run = track(start + 3_600_000L, 37.6, 3)
+        ride(start, day, bike)
+        ride(start + 3_600_000L, day, run, activity = ActivityType.RUN)
+
+        exporter().exportTrip(TRIP, ExportFormat.GPX, TITLE)
+        exporter().exportTrip(TRIP, ExportFormat.KML, TITLE)
+
+        val (_, _, gpx) = sink.saved[0]
+        val (_, _, kml) = sink.saved[1]
+        assertEquals(listOf("cycling", "running"), Regex("<type>([a-z]+)</type>").findAll(gpx).map { it.groupValues[1] }.toList())
+        assertEquals(2, Regex("<trk>").findAll(gpx).count())
+        assertTrue("<name>2026-10-24 주행</name>" in kml)
+        assertTrue("<name>2026-10-24 달리기</name>" in kml)
     }
 
     @Test

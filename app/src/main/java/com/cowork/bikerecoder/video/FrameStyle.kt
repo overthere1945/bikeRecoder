@@ -67,6 +67,10 @@ internal object FrameStyle {
     const val TITLE_DATE_SIZE = 34f
     const val TITLE_NAME_SIZE = 18f
     const val TITLE_NAME = 0xFFE6EBF5.toInt()
+
+    /** The activity badge left of the ride's name on the title card: its side and its gap to the name (units). */
+    const val TITLE_BADGE_SIZE = 26f
+    const val TITLE_BADGE_GAP = 8f
     const val TITLE_DISTANCE_SIZE = 24f
 
     /** The title fades over the first frames of the descent (§2.2). */

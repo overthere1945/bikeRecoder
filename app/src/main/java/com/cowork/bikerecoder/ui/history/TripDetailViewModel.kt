@@ -10,6 +10,8 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.activity.ActivityMix
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.export.ExportFormat
 import com.cowork.bikerecoder.export.ExportResult
 import com.cowork.bikerecoder.export.ExportRunner
@@ -38,7 +40,9 @@ import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.post.RidePhoto
 import com.cowork.bikerecoder.post.SegmentExtras
+import com.cowork.bikerecoder.ui.activity.ActivityText
 import com.cowork.bikerecoder.ui.elevation.ChartText
+import com.cowork.bikerecoder.ui.elevation.SpeedChartStyle
 import com.cowork.bikerecoder.ui.health.TrackColorMode
 import com.cowork.bikerecoder.ui.photo.RidePhotos
 import com.cowork.bikerecoder.ui.photo.observeRidePhotos
@@ -76,8 +80,13 @@ import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.ZoneId
 
-/** The track axis of a trip's non-empty segments in start order, their points ([tracks]) and ids, in that order. */
-private class ChartInput(val axis: TrackAxis, val tracks: List<List<TrackPoint>>, val segmentIds: List<Long>)
+/** The track axis of a trip's non-empty segments in start order, their points ([tracks]), ids and activities, in that order. */
+private class ChartInput(
+    val axis: TrackAxis,
+    val tracks: List<List<TrackPoint>>,
+    val segmentIds: List<Long>,
+    val activities: List<ActivityType>,
+)
 
 /** A heart-rate [series] (null: nothing to draw) and the [samples] it was made from (the read-out falls back to them). */
 private class HeartChart(val series: MetricSeries?, val samples: List<HeartRateSample>)
@@ -133,8 +142,8 @@ class TripDetailViewModel(
     private val exportTrip: (suspend (tripId: Long, format: ExportFormat, title: String) -> ExportResult)? = null,
     /** Builds the elevation profile from the segments' points in start order; a seam for tests. */
     private val profileOf: (List<List<TrackPoint>>) -> ElevationProfile? = ElevationProfile.Companion::fromSegments,
-    /** Builds the speed series on the axis of the segments' points in start order; a seam for tests. */
-    private val speedOf: (TrackAxis, List<List<TrackPoint>>) -> MetricSeries? = MetricSeries.Companion::speed,
+    /** Builds the speed series on the axis of the segments' points and activities in start order; a seam for tests. */
+    private val speedOf: (TrackAxis, List<List<TrackPoint>>, List<ActivityType>) -> MetricSeries? = MetricSeries.Companion::speed,
 ) : ViewModel() {
 
     private val _segmentsByDate = MutableStateFlow<Map<LocalDate, List<RideSegment>>>(emptyMap())
@@ -161,8 +170,25 @@ class TripDetailViewModel(
     /** The trip's speed chart (V1.8.0 spec §2.2); null while it is computed, without speed, or when computing it failed. */
     val speedSeries: StateFlow<MetricSeries?> = _speedSeries.asStateFlow()
 
+    private val _speedStyle = MutableStateFlow(SpeedChartStyle.BIKE)
+
+    /**
+     * How the speed chart is named and read (V1.9.0 spec §3.5, plan P7): 페이스 only when every segment on the chart is a
+     * run or every one a walk; a trip of several activities shows 속도 in km/h, each segment in its own activity's colours.
+     */
+    val speedStyle: StateFlow<SpeedChartStyle> = _speedStyle.asStateFlow()
+
     /** What the heart-rate series is built on, set with [speedSeries]; null until then or when there is no axis. */
     private val chartInput = MutableStateFlow<ChartInput?>(null)
+
+    /**
+     * The rows of the totals table (V1.9.0 spec §3.2) as (label, value) cells: the rows of the activity every listed
+     * segment has, a bike's when they differ.
+     */
+    val totalRows: StateFlow<List<List<Pair<String, String>>>> = combine(_segmentsByDate, _total) { byDate, total ->
+        val activities = byDate.values.flatten().map { it.activity }.distinct()
+        ActivityText.tripTotalRows(activities.singleOrNull() ?: ActivityType.BIKE, total)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, ActivityText.tripTotalRows(ActivityType.BIKE, SegmentTotals.ZERO))
 
     private val _canMakeMedia = MutableStateFlow(false)
 
@@ -237,7 +263,9 @@ class TripDetailViewModel(
         byDate.values.flatten().filter { it.endedAt != null && it.totals.distanceM >= MIN_RIDE_DISTANCE_M }
 
     private fun shownTitle(label: TripLabel, rides: List<RideSegment>) =
-        RideTitle.shown(label, rides.minOf { it.startedAt }, rides.map { it.localDate }.distinct().size, zone)
+        RideTitle.shown(
+            label, rides.minOf { it.startedAt }, rides.map { it.localDate }.distinct().size, zone, ActivityMix.of(rides).dominant,
+        )
 
     private val _dialog = MutableStateFlow<HistoryDialog?>(null)
     val dialog: StateFlow<HistoryDialog?> = _dialog.asStateFlow()
@@ -448,7 +476,9 @@ class TripDetailViewModel(
     private fun fallbackTitle(): String {
         val listed = _segmentsByDate.value.values.flatten()
         if (listed.isEmpty()) return label.value.customTitle?.takeIf { it.isNotBlank() } ?: TripExporter.TRIP_PREFIX
-        return RideTitle.shown(label.value, listed.minOf { it.startedAt }, listed.map { it.localDate }.distinct().size, zone)
+        return RideTitle.shown(
+            label.value, listed.minOf { it.startedAt }, listed.map { it.localDate }.distinct().size, zone, ActivityMix.of(listed).dominant,
+        )
     }
 
     /** The export's outcome has been shown (dialog closed, Toast posted). */
@@ -497,14 +527,17 @@ class TripDetailViewModel(
                 }
                 val input = guarded("Could not build the track axis of trip $tripId") {
                     withContext(compute) {
-                        TrackAxis.of(byStart)?.let { ChartInput(it, byStart, startOrder.map { i -> ordered[i].id }) }
+                        TrackAxis.of(byStart)?.let {
+                            ChartInput(it, byStart, startOrder.map { i -> ordered[i].id }, startOrder.map { i -> ordered[i].activity })
+                        }
                     }
                 }
                 _speedSeries.value = input?.let {
                     guarded("Could not compute the speed series of trip $tripId") {
-                        withContext(compute) { speedOf(it.axis, it.tracks) }
+                        withContext(compute) { speedOf(it.axis, it.tracks, it.activities) }
                     }
                 }
+                _speedStyle.value = SpeedChartStyle.of(input?.activities.orEmpty())
                 // The heart-rate series follows ([heartChart]), also when the speed series failed; without an axis there is none.
                 chartInput.value = input
                 _profileLoaded.value = true

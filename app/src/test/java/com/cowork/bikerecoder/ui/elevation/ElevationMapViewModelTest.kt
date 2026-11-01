@@ -1,6 +1,7 @@
 package com.cowork.bikerecoder.ui.elevation
 
 import androidx.lifecycle.SavedStateHandle
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.HeartRateSample
@@ -8,6 +9,8 @@ import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
+import com.cowork.bikerecoder.core.series.MetricKind
+import com.cowork.bikerecoder.core.series.SpeedBand
 import com.cowork.bikerecoder.map.pathColors
 import com.cowork.bikerecoder.nav.FakeTripStore
 import com.cowork.bikerecoder.post.FakePostStore
@@ -65,6 +68,7 @@ class ElevationMapViewModelTest {
         bpm: Int? = null,
         samplesEvery: Int = 1,
         detailed: Boolean = true,
+        activity: ActivityType = ActivityType.BIKE,
     ): Long {
         val day = LocalDate.of(2026, 10, 25)
         val step = 20.0 / 111_320.0
@@ -72,7 +76,7 @@ class ElevationMapViewModelTest {
             TrackPoint(startedAt + i * 1_000L, GeoPoint(startLat + i * step, 127.0), if (altitude) 30.0 + i else null, 5f, 5f)
         }
         val totals = SegmentTotals.ZERO.copy(distanceM = (count - 1) * 20.0, movingTimeMs = count * 1_000L)
-        val id = rides.openSegment(TRIP, startedAt, day)
+        val id = rides.openSegment(TRIP, startedAt, day, activity)
         rides.appendPoints(id, points, totals)
         rides.closeSegment(id, startedAt + count * 1_000L, totals)
         if (bpm != null) {
@@ -137,6 +141,63 @@ class ElevationMapViewModelTest {
         assertEquals(listOf(path), ready.paths)
         assertEquals(30, ready.colors.single().size)
         assertEquals(ElevationMapUiState.Closed, second.uiState.value)
+    }
+
+    /** V1.9.0 §3.5: 달리기만 있는 여행의 속도 탭은 페이스 이름·페이스 범례·달리기 색 기준이다. */
+    @Test
+    fun speedTabLegendForRun() = runTest(dispatcher) {
+        segment(startedAt = 1_000_000L, startLat = 37.50, activity = ActivityType.RUN)
+        segment(startedAt = 10_000_000L, startLat = 37.60, activity = ActivityType.RUN)
+
+        val vm = viewModel(ElevationSource.Trip(TRIP), ChartTab.SPEED)
+        advanceUntilIdle()
+
+        val ready = vm.uiState.value as ElevationMapUiState.Ready
+        assertEquals(SpeedChartStyle(ActivityType.RUN), ready.speedStyle)
+        assertEquals("페이스", ChartTab.SPEED.titleFor(ready.speedStyle))
+        assertEquals("고도", ChartTab.ELEVATION.titleFor(ready.speedStyle))
+        assertEquals(
+            listOf("7'00\" 넘게", "6'~7'", "5'~6'", "4'~5'", "4'00\" 미만"),
+            metricLegend(MetricKind.SPEED, ready.speedStyle).map { it.first },
+        )
+        assertEquals(SpeedBand.entries.map { it.hex }, metricLegend(MetricKind.SPEED, ready.speedStyle).map { it.second })
+        assertEquals(null, ChartText.legendNote(ready.speedStyle))
+        // 18 km/h is faster than 15: the run scale's top colour on every point.
+        assertEquals(setOf(SpeedBand.SPRINT.hex), ready.colors.flatten().toSet())
+        assertTrue(ready.speedDescription.startsWith("페이스 그래프, 평균 "))
+    }
+
+    /** 섞인 여행은 속도(km/h)이고, 범례 자리에 안내가 오며, 선 색은 구간마다 자기 종류의 기준이다. */
+    @Test
+    fun mixedLegendNote() = runTest(dispatcher) {
+        segment(startedAt = 1_000_000L, startLat = 37.50, activity = ActivityType.BIKE)
+        segment(startedAt = 10_000_000L, startLat = 37.60, activity = ActivityType.RUN)
+
+        val vm = viewModel(ElevationSource.Trip(TRIP), ChartTab.SPEED)
+        advanceUntilIdle()
+
+        val ready = vm.uiState.value as ElevationMapUiState.Ready
+        assertTrue(ready.speedStyle.mixed)
+        assertEquals("속도", ChartTab.SPEED.titleFor(ready.speedStyle))
+        assertEquals("종류마다 색 기준이 다릅니다", ChartText.legendNote(ready.speedStyle))
+        assertEquals(emptyList<Pair<String, String>>(), metricLegend(MetricKind.SPEED, ready.speedStyle))
+        assertTrue(ready.speedDescription.startsWith("속도 그래프, 평균 "))
+        // 18 km/h: a bike's 15~20, a run's 15 and up.
+        assertEquals(setOf(SpeedBand.STEADY.hex), ready.colors[0].toSet())
+        assertEquals(setOf(SpeedBand.SPRINT.hex), ready.colors[1].toSet())
+    }
+
+    @Test
+    fun segmentSourceUsesItsOwnActivity() = runTest(dispatcher) {
+        segment(startedAt = 1_000_000L, startLat = 37.50, activity = ActivityType.BIKE)
+        val walk = segment(startedAt = 10_000_000L, startLat = 37.60, activity = ActivityType.WALK)
+
+        val vm = viewModel(ElevationSource.Segment(walk), ChartTab.SPEED)
+        advanceUntilIdle()
+
+        val ready = vm.uiState.value as ElevationMapUiState.Ready
+        assertEquals(SpeedChartStyle(ActivityType.WALK), ready.speedStyle)
+        assertEquals(setOf(SpeedBand.SPRINT.hex), ready.colors.flatten().toSet(), "18 km/h is a walk's fastest band")
     }
 
     @Test

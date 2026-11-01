@@ -1,5 +1,8 @@
 package com.cowork.bikerecoder.video
 
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.activity.BestEffort
+import com.cowork.bikerecoder.core.activity.BestEffortDistance
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.post.HeartRateSample
@@ -55,8 +58,9 @@ class VideoInputsTest {
 
     /** A segment with [points]; closed unless [open]. */
     private suspend fun segment(date: LocalDate, points: List<TrackPoint>, distanceM: Double, open: Boolean = false,
-                                maxSpeed: Double = 6.0, ascent: Double = 10.0, startedAt: Long = points.first().timeMillis): Long {
-        val id = rides.openSegment(TRIP, startedAt, date)
+                                maxSpeed: Double = 6.0, ascent: Double = 10.0, startedAt: Long = points.first().timeMillis,
+                                activity: ActivityType = ActivityType.BIKE): Long {
+        val id = rides.openSegment(TRIP, startedAt, date, activity)
         val t = totals(distanceM, points.last().timeMillis - points.first().timeMillis, maxSpeed, ascent)
         rides.appendPoints(id, points, t)
         if (!open) rides.closeSegment(id, points.last().timeMillis, t)
@@ -75,7 +79,8 @@ class VideoInputsTest {
         assertEquals(101, inputs.timeline.points.size)
         assertTrue(inputs.timeline.points.all { it.segmentIndex == 0 })
         assertEquals(100_000L, inputs.timeline.totalMoveMs)
-        assertEquals(TripTotals(500.0, 100_000L, 5.0, 7.0, 12.0, avgBpm = null, calories = null), inputs.totals)
+        assertEquals(TripTotals(500.0, 100_000L, 5.0, 7.0, 12.0, avgBpm = null, calories = null, maxAltitudeM = 40.0), inputs.totals)
+        assertEquals(ActivityType.BIKE, inputs.activity)
         assertEquals(TRIP, inputs.tripId)
         assertEquals(ride, rides.segments(TRIP).first().id)
     }
@@ -181,6 +186,72 @@ class VideoInputsTest {
         segment(sunday, track(evening, 100), distanceM = 500.0)
 
         assertEquals("저녁 라이딩", loader.load(TRIP)!!.rideTitle)
+    }
+
+    /** V1.9.0 spec §2.3: the title's word follows the dominant activity; the picture's line colours know each segment's. */
+    @Test
+    fun rideTitleAndSegmentActivitiesFollowTheActivities() = runTest {
+        trip(TripType.SINGLE_DAY)
+        val morning = sunday.atTime(8, 0).atZone(seoul).toInstant().toEpochMilli()
+        segment(sunday, track(morning, 100), distanceM = 500.0, activity = ActivityType.HIKE)
+        segment(sunday, track(morning + 3_600_000, 400), distanceM = 900.0, activity = ActivityType.WALK)
+
+        val inputs = loader.load(TRIP)!!
+        assertEquals("아침 걷기", inputs.rideTitle)
+        assertEquals(listOf(ActivityType.HIKE, ActivityType.WALK), inputs.segmentActivities)
+    }
+
+    /** V1.9.0 spec §5.1: the closing card and the share image use the dominant activity's numbers. */
+    @Test
+    fun activityIsTheDominantOneAndHikeNumbersCoverTheHikeSegments() = runTest {
+        trip(TripType.SINGLE_DAY)
+        val morning = sunday.atTime(8, 0).atZone(seoul).toInstant().toEpochMilli()
+        segment(sunday, track(morning, 100), distanceM = 500.0, activity = ActivityType.WALK)
+        segment(sunday, track(morning + 3_600_000, 400), distanceM = 900.0, activity = ActivityType.HIKE)
+        segment(sunday, track(morning + 7_200_000, 200), distanceM = 700.0, activity = ActivityType.HIKE)
+
+        val inputs = loader.load(TRIP)!!
+
+        assertEquals(ActivityType.HIKE, inputs.activity)
+        // The hike segments only: 400 s + 200 s; the walk's 100 s is not a hike time.
+        assertEquals(600_000L, inputs.totals.hikeElapsedMs)
+        assertEquals(40.0, inputs.totals.maxAltitudeM)
+        assertNull(inputs.totals.fastestKmMs)
+    }
+
+    @Test
+    fun fastestKmIsTheBestOneKmOfTheRunSegments() = runTest {
+        trip(TripType.SINGLE_DAY)
+        val morning = sunday.atTime(8, 0).atZone(seoul).toInstant().toEpochMilli()
+        val first = segment(sunday, track(morning, 600), distanceM = 3_000.0, activity = ActivityType.RUN)
+        val second = segment(sunday, track(morning + 3_600_000, 600), distanceM = 3_000.0, activity = ActivityType.RUN)
+        rides.saveBestEfforts(first, listOf(BestEffort(BestEffortDistance.ONE_K, 300_000L, 0), BestEffort(BestEffortDistance.FIVE_K, 1_600_000L, 0)))
+        rides.saveBestEfforts(second, listOf(BestEffort(BestEffortDistance.ONE_K, 280_000L, 4)))
+
+        assertEquals(280_000L, loader.load(TRIP)!!.totals.fastestKmMs)
+
+        // A run that never covered 1 km has no row: no value.
+        rides.saveBestEfforts(first, emptyList())
+        rides.saveBestEfforts(second, listOf(BestEffort(BestEffortDistance.FIVE_K, 1_500_000L, 0)))
+        assertNull(loader.load(TRIP)!!.totals.fastestKmMs)
+    }
+
+    /** A mixed trip: the pace sums are the dominant activity's segments only (RUN 5 km / 30 min, BIKE 10 km / 20 min). */
+    @Test
+    fun paceSumsAreTheDominantActivitysSegments() = runTest {
+        trip(TripType.SINGLE_DAY)
+        val morning = sunday.atTime(8, 0).atZone(seoul).toInstant().toEpochMilli()
+        segment(sunday, track(morning, 1_800), distanceM = 5_000.0, activity = ActivityType.RUN)
+        segment(sunday, track(morning + 3_600_000, 1_200), distanceM = 10_000.0, activity = ActivityType.BIKE)
+
+        val inputs = loader.load(TRIP)!!
+
+        assertEquals(ActivityType.RUN, inputs.activity)
+        assertEquals(15_000.0, inputs.totals.distanceM, 1e-9)
+        assertEquals(5_000.0, inputs.totals.paceDistanceM!!, 1e-9)
+        assertEquals(1_800_000L, inputs.totals.paceMovingTimeMs)
+        val pace = FrameRenderer.rideCells(inputs.totals, inputs.activity).toMap()["평균 페이스"]
+        assertEquals("6'00\"/km", pace)
     }
 
     /** V1.4.0 §2.5: the trip's own title goes in as it is, flagged so the job adds no region. */

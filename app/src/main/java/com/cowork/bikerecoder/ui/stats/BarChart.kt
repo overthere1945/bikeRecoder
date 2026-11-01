@@ -18,7 +18,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -30,12 +34,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.max
+import com.cowork.bikerecoder.ui.activity.ActivityStyle
 
 /**
  * The bar chart of the stats tab (V1.4.0 spec §3.3), drawn on a [Canvas]: one bar per entry of [bars], as tall as its
  * `value` against the largest. A bar that has not come yet is left empty (its label stays). [selected] is the bar
  * whose `valueText` is shown above the chart; a tap on a bar calls [onSelect] with its index. [unitText] stands in the
- * top left corner, and each bar's `shortText` right above it ([valueLabelIndices] says which are written).
+ * top left corner, and each bar's `shortText` right above it ([valueLabelIndices] says which are written). A bar with `parts`
+ * is stacked from the bottom in its activities' colours; the others are [tint] (primary by default).
  */
 @Composable
 fun BarChart(
@@ -44,9 +50,11 @@ fun BarChart(
     unitText: String,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    /** The colour of a plain bar; null = the theme's primary (the bike's, as it always was). Stacked bars use their activities'. */
+    tint: Color? = null,
 ) {
     val largest = bars.maxOfOrNull { it.value }?.takeIf { it > 0.0 } ?: 1.0
-    val primary = MaterialTheme.colorScheme.primary
+    val primary = tint ?: MaterialTheme.colorScheme.primary
     val dimmed = primary.copy(alpha = 0.4f)
     val ground = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f)
     val labelStyle = MaterialTheme.typography.labelSmall
@@ -103,12 +111,37 @@ fun BarChart(
                                 drawRect(ground, Offset(0f, size.height - groundHeight), Size(size.width, groundHeight))
                                 if (barHeight > 0.dp) {
                                     val barWidth = size.width * 0.6f
-                                    drawRoundRect(
-                                        color = if (selected == null || selected == index) primary else dimmed,
-                                        topLeft = Offset((size.width - barWidth) / 2, size.height - groundHeight - barHeight.toPx()),
-                                        size = Size(barWidth, barHeight.toPx()),
-                                        cornerRadius = CornerRadius(3.dp.toPx()),
-                                    )
+                                    val left = (size.width - barWidth) / 2
+                                    val top = size.height - groundHeight - barHeight.toPx()
+                                    val corner = CornerRadius(3.dp.toPx())
+                                    val faded = selected != null && selected != index
+                                    if (bar.parts.isEmpty()) {
+                                        drawRoundRect(
+                                            color = if (faded) dimmed else primary,
+                                            topLeft = Offset(left, top),
+                                            size = Size(barWidth, barHeight.toPx()),
+                                            cornerRadius = corner,
+                                        )
+                                    } else {
+                                        // Stacked: the activities from the bottom up, inside one rounded bar.
+                                        val shape = Path().apply {
+                                            addRoundRect(RoundRect(left, top, left + barWidth, top + barHeight.toPx(), corner))
+                                        }
+                                        clipPath(shape) {
+                                            var bottom = top + barHeight.toPx()
+                                            val total = bar.parts.sumOf { it.value }
+                                            for (part in bar.parts) {
+                                                val partHeight = (barHeight.toPx() * (part.value / total)).toFloat()
+                                                val colour = ActivityStyle.color(part.activity)
+                                                drawRect(
+                                                    color = if (faded) colour.copy(alpha = 0.4f) else colour,
+                                                    topLeft = Offset(left, bottom - partHeight),
+                                                    size = Size(barWidth, partHeight),
+                                                )
+                                                bottom -= partHeight
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             if (index in written) {

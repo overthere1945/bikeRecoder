@@ -1,5 +1,7 @@
 package com.cowork.bikerecoder.ui.elevation
 
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.series.MetricKind
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
@@ -43,5 +45,64 @@ class ChartTextTest {
         assertEquals("속도", ChartText.TITLE_SPEED)
         assertEquals("심박", ChartText.TITLE_HEART)
         assertEquals("속도 정보가 없습니다", ChartText.NO_SPEED)
+    }
+
+    /** V1.9.0 §3.5: 훑는 줄은 페이스로 보인다. 값은 속도(km/h)다. */
+    @Test
+    fun paceScrubLine() {
+        val kmh = 3.6 * 1000 / 332 // 5'32" per km
+        assertEquals("1.1km · 5'32\"/km", ChartText.scrubLine(MetricKind.SPEED, 1_100.0, kmh, pace = true))
+        assertEquals("850m · --'--\"/km", ChartText.scrubLine(MetricKind.SPEED, 850.0, null, pace = true))
+        assertEquals("850m · --'--\"/km", ChartText.scrubLine(MetricKind.SPEED, 850.0, 0.4, pace = true), "under 1 km/h is a stop")
+        // Not asked for a pace: as before.
+        assertEquals("1.1km · 11km/h", ChartText.scrubLine(MetricKind.SPEED, 1_100.0, kmh))
+    }
+
+    @Test
+    fun paceAnnouncement() {
+        // 5 km in 27 min 40 s = 5'32"/km on average; the fastest moment 4'48"/km.
+        val totals = SegmentTotals.ZERO.copy(distanceM = 5_000.0, movingTimeMs = 1_660_000L, maxSpeedMps = 1000.0 / 288)
+        val run = SpeedChartStyle(ActivityType.RUN)
+        assertEquals("페이스 그래프, 평균 5'32\", 최고 4'48\"", ChartText.speedDescription(totals, run))
+        assertEquals("페이스 그래프, 평균 5'32\", 최고 4'48\"", ChartText.speedDescription(totals, SpeedChartStyle(ActivityType.WALK)))
+        // A bike, a hike and a mixed trip keep the speed read-out.
+        assertEquals("속도 그래프, 평균 11km/h, 최고 13km/h", ChartText.speedDescription(totals, SpeedChartStyle.BIKE))
+        assertEquals(ChartText.speedDescription(totals), ChartText.speedDescription(totals, SpeedChartStyle(ActivityType.HIKE)))
+        assertEquals(ChartText.speedDescription(totals), ChartText.speedDescription(totals, SpeedChartStyle(null)))
+    }
+
+    /** 위·아래 끝 글은 빠른 쪽이 위다: 값이 속도라 가장 빠른 값이 위에 오고, 페이스로 읽힌다. */
+    @Test
+    fun paceEndLabelsKeepTheFasterOnTop() {
+        assertEquals("4'48\"/km", ChartText.valueLabel(MetricKind.SPEED, 3.6 * 1000 / 288, pace = true))
+        assertEquals("6'10\"/km", ChartText.valueLabel(MetricKind.SPEED, 3.6 * 1000 / 370, pace = true))
+        assertEquals("--'--\"/km", ChartText.valueLabel(MetricKind.SPEED, 0.0, pace = true))
+        assertEquals("12km/h", ChartText.valueLabel(MetricKind.SPEED, 12.4))
+    }
+
+    @Test
+    fun titlesAndLegendsFollowTheStyle() {
+        assertEquals("페이스", ChartText.TITLE_PACE)
+        assertEquals("페이스", ChartText.title(SpeedChartStyle(ActivityType.RUN)))
+        assertEquals("페이스", ChartText.title(SpeedChartStyle(ActivityType.WALK)))
+        assertEquals("속도", ChartText.title(SpeedChartStyle(ActivityType.BIKE)))
+        assertEquals("속도", ChartText.title(SpeedChartStyle(ActivityType.HIKE)))
+        assertEquals("속도", ChartText.title(SpeedChartStyle(null)))
+        assertEquals(listOf("10 미만", "10~15", "15~20", "20~25", "25 이상"), ChartText.speedLegend(SpeedChartStyle.BIKE))
+        assertEquals(listOf("1 미만", "1~2", "2~3", "3~4", "4 이상"), ChartText.speedLegend(SpeedChartStyle(ActivityType.HIKE)))
+        assertEquals(emptyList<String>(), ChartText.speedLegend(SpeedChartStyle(null)))
+        assertEquals(null, ChartText.legendNote(SpeedChartStyle.BIKE))
+        assertEquals("종류마다 색 기준이 다릅니다", ChartText.legendNote(SpeedChartStyle(null)))
+    }
+
+    @Test
+    fun styleOfSegmentActivities() {
+        val run = ActivityType.RUN
+        val walk = ActivityType.WALK
+        assertEquals(SpeedChartStyle(run), SpeedChartStyle.of(listOf(run, run)))
+        assertEquals(SpeedChartStyle(walk), SpeedChartStyle.of(listOf(walk)))
+        assertEquals(SpeedChartStyle(null), SpeedChartStyle.of(listOf(run, walk)), "a run and a walk are not one activity")
+        assertEquals(SpeedChartStyle(null), SpeedChartStyle.of(listOf(ActivityType.BIKE, run, run)))
+        assertEquals(SpeedChartStyle.BIKE, SpeedChartStyle.of(emptyList()))
     }
 }

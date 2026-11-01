@@ -2,6 +2,7 @@ package com.cowork.bikerecoder
 
 import android.content.Context
 import android.util.Log
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.routing.Router
 import com.cowork.bikerecoder.core.importing.ImportStore
 import com.cowork.bikerecoder.core.recording.RideStore
@@ -185,6 +186,15 @@ class AppContainer(context: Context) {
             emit(null)
         }
         .stateIn(appScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /**
+     * The map screen's activity chip (setting `last_activity`), read from app start on so a recording can start with it
+     * at once ([com.cowork.bikerecoder.ui.record.RecordViewModel.start]). A failed read leaves the last value.
+     */
+    val lastActivity: StateFlow<ActivityType> = settings.settings
+        .map { it.lastActivity }
+        .catch { e -> Log.w(TAG, "Could not read the activity chip", e) }
+        .stateIn(appScope, SharingStarted.Eagerly, ActivityType.BIKE)
 
     /**
      * Guidance and recording run here, outside any UI lifecycle, on the main thread: [NavigationController],

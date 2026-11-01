@@ -8,18 +8,20 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.activity.ActivityMix
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.feed.FeedThumbKey
 import com.cowork.bikerecoder.core.feed.ThumbSegment
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.HeartRateSummary
 import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
-import com.cowork.bikerecoder.core.post.RideColors
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.TripDeleteCondition
 import com.cowork.bikerecoder.core.recording.TripRideSummary
 import com.cowork.bikerecoder.core.stats.PeriodKind
 import com.cowork.bikerecoder.core.stats.RideRecords
 import com.cowork.bikerecoder.core.stats.RideStat
+import com.cowork.bikerecoder.core.stats.StoredBestEffort
 import com.cowork.bikerecoder.core.stats.RideStatsSource
 import com.cowork.bikerecoder.core.stats.StatsCalculator
 import com.cowork.bikerecoder.core.stats.Streak
@@ -33,6 +35,7 @@ import com.cowork.bikerecoder.feed.FeedThumbnails
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.post.SegmentCard
+import com.cowork.bikerecoder.ui.activity.ActivityStyle
 import com.cowork.bikerecoder.ride.TripDeleter
 import com.cowork.bikerecoder.ui.history.HistoryDialog
 import com.cowork.bikerecoder.ui.history.MSG_ACTIVE_TRIP_NOT_DELETABLE
@@ -69,6 +72,8 @@ import java.time.ZoneId
 /**
  * The strip above the feed (V1.4.0 spec §2.1): this week (Monday to today) in [distanceM] and [rides], [diffM] against last
  * week up to the same weekday (null when neither week has a ride), the weekly goal in km if there is one, the running streak.
+ * [distanceM], [rides] and [diffM] count every activity; the goal is the bike's, so the goal ring shows [goalDistanceM], the
+ * week's bike distance (V1.9.0 plan P10; without a distinct value it is [distanceM]).
  */
 data class WeekStripState(
     val distanceM: Double,
@@ -76,6 +81,7 @@ data class WeekStripState(
     val diffM: Double?,
     val weeklyGoalKm: Int?,
     val streak: Streak,
+    val goalDistanceM: Double = distanceM,
 )
 
 /** A month of cards under "YYYY년 M월 · {거리} · {n}회" (spec §6.11 of V1.2; [feedMonthHeaderText]). */
@@ -90,6 +96,13 @@ data class FeedMonth(val header: String, val cards: List<FeedCardState>)
  * the colour of its place in the trip; segments without a route yet are left out). [regionKnown]: the label has a region.
  * [canShare]: the trip has a finished ride of 10 m or more, so the card offers [공유] (V1.5.0 spec §1.1).
  * [imported]: the trip came from a GPX file (V1.6.0 spec §4.2), so the date line ends in " · 가져옴".
+ * V1.9.0: [activities] are the badges in order (the [dominant] activity first, at most three); [routes] are coloured by each
+ * segment's activity ([ActivityStyle.hex]); [hikeElapsedMs] is the elapsed time of the hike segments and [maxAltitudeM] the
+ * highest altitude of the rides (null when none is known), the hike card's cells. [paceDistanceM] and [paceMovingTimeMs]
+ * are the sums of the [dominant] activity's rides only (null: the card's own [distanceM] and [movingTimeMs]): a run's or
+ * walk's pace (cell and bottom line) is theirs, so the other activities of a mixed trip do not move it (the distance and
+ * moving-time cells stay the trip's). Null rather than defaulting to the totals, so a copy with new totals cannot keep a
+ * stale pace.
  */
 data class FeedCardState(
     val tripId: Long,
@@ -111,8 +124,21 @@ data class FeedCardState(
     val regionKnown: Boolean = true,
     val canShare: Boolean = false,
     val imported: Boolean = false,
+    val activities: List<ActivityType> = listOf(ActivityType.BIKE),
+    val dominant: ActivityType = ActivityType.BIKE,
+    val hikeElapsedMs: Long = 0L,
+    val maxAltitudeM: Double? = null,
+    val paceDistanceM: Double? = null,
+    val paceMovingTimeMs: Long? = null,
 ) {
     val videoUri: String? get() = video?.uri
+
+    /** The average speed of the [dominant] activity's rides, the run's or walk's pace on the bottom line. */
+    val paceSpeedMps: Double
+        get() {
+            val time = paceMovingTimeMs ?: movingTimeMs
+            return if (time > 0) (paceDistanceM ?: distanceM) / (time / 1000.0) else 0.0
+        }
 }
 
 /** The satellite pictures as the feed uses them ([FeedThumbnails] in the app). */
@@ -197,9 +223,14 @@ class FeedViewModel(
         allRides,
         labels.observeLabels().safely(emptyMap(), "trip labels"),
         tripMedia.observeVideos().safely(emptyList(), "made videos"),
-        combine(pictures.files.safely(emptyMap(), "feed pictures"), imported.safely(emptyMap(), "imported trips"), ::Pair),
-    ) { loaded, rides, labelMap, videos, (files, importedIds) ->
-        buildFeed(loaded, rides, labelMap, videos, files, importedIds.keys)
+        combine(
+            pictures.files.safely(emptyMap(), "feed pictures"),
+            imported.safely(emptyMap(), "imported trips"),
+            rideStats.observeBestEfforts().safely(emptyList(), "best efforts"),
+            ::Triple,
+        ),
+    ) { loaded, rides, labelMap, videos, (files, importedIds, efforts) ->
+        buildFeed(loaded, rides, efforts, labelMap, videos, files, importedIds.keys)
     }.flowOn(compute).stateIn(viewModelScope, SharingStarted.Eagerly, FeedData.EMPTY)
 
     /** The listed trips' cards by month of their first date, newest month first; the cards by first start, newest first. */
@@ -479,12 +510,14 @@ class FeedViewModel(
     private fun buildFeed(
         loaded: Loaded,
         rides: List<RideStat>,
+        efforts: List<StoredBestEffort>,
         labels: Map<Long, TripLabel>,
         videos: List<TripMedia>,
         files: Map<Long, File>,
         imported: Set<Long>,
     ): FeedData {
-        val trophies = RideRecords.recordHolderTrips(rides)
+        // A trip that holds a record of any activity wears the trophy.
+        val trophies = RideRecords.recordHolderTrips(rides, efforts)
         val ridesOf = StatsCalculator.rides(rides).groupBy { it.tripId }
         val videoOf = videos.filter { it.kind == MediaKind.VIDEO }.groupBy { it.tripId }
             .mapValues { (_, list) -> list.maxWith(compareBy({ it.createdAt }, { it.id })) }
@@ -530,11 +563,22 @@ class FeedViewModel(
         val thumbKey = if (facts.hasOpenSegment || rides.isEmpty()) {
             null
         } else {
-            FeedThumbKey.of(rides.map { ThumbSegment(it.segmentId, it.endedAt, it.distanceM) })
+            FeedThumbKey.of(rides.map { ThumbSegment(it.segmentId, it.endedAt, it.distanceM, it.activity) })
         }
+        // The finished rides when there are any (as the trip screen names it), else the listed segments (a trip still on its
+        // first, open segment).
+        val mix = ActivityMix.ofParts(
+            if (rides.isNotEmpty()) {
+                rides.map { it.activity to it.movingTimeMs }
+            } else {
+                facts.cards.map { it.activity to it.movingTimeMs }
+            },
+        )
+        // A run's or walk's pace counts the dominant activity's rides only (a mixed trip's other rides do not move it).
+        val paceRides = rides.filter { it.activity == mix.dominant }.takeIf { it.size < rides.size }
         return FeedCardState(
             tripId = id,
-            title = RideTitle.shown(label, firstStartedAt, days.size, zone),
+            title = RideTitle.shown(label, firstStartedAt, days.size, zone, mix.dominant),
             dateLine = feedDateLine(days.first(), days.last(), firstStartedAt, zone),
             inProgress = facts.inProgress,
             distanceM = distance,
@@ -548,9 +592,15 @@ class FeedViewModel(
             trophy = trophy,
             thumbKey = thumbKey,
             thumbFile = thumbKey?.let { key -> file?.takeIf { it.name == feedThumbName(id, key) } },
-            routes = facts.cards.mapIndexedNotNull { index, s -> s.route?.let { it to RideColors.colorAt(index) } },
+            routes = facts.cards.mapNotNull { s -> s.route?.let { it to ActivityStyle.hex(s.activity) } },
             regionKnown = !label.regionName.isNullOrBlank(),
             canShare = rides.isNotEmpty(),
+            activities = mix.badges,
+            dominant = mix.dominant,
+            hikeElapsedMs = rides.filter { it.activity == ActivityType.HIKE }.sumOf { it.elapsedMs },
+            maxAltitudeM = rides.mapNotNull { it.maxAltitudeM }.maxOrNull(),
+            paceDistanceM = paceRides?.sumOf { it.distanceM },
+            paceMovingTimeMs = paceRides?.sumOf { it.movingTimeMs },
         )
     }
 
@@ -561,7 +611,11 @@ class FeedViewModel(
         val thisWeek = comparison.current
         val lastWeek = comparison.previous
         val diff = if (thisWeek.rides == 0 && lastWeek.rides == 0) null else thisWeek.distanceM - lastWeek.distanceM
-        return WeekStripState(thisWeek.distanceM, thisWeek.rides, diff, goalKm, RideRecords.streak(all, today))
+        // The weekly goal is the bike's: its bar counts the bike rides only (plan P10).
+        val bikeThisWeek = checkNotNull(StatsCalculator.comparison(rides.filter { it.activity == ActivityType.BIKE }, week, today)).current
+        return WeekStripState(
+            thisWeek.distanceM, thisWeek.rides, diff, goalKm, RideRecords.streak(all, today), goalDistanceM = bikeThisWeek.distanceM,
+        )
     }
 
     /** [block]'s result, or null when it failed (logged). */

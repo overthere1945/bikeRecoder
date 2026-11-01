@@ -1,5 +1,7 @@
 package com.cowork.bikerecoder.core.video
 
+import com.cowork.bikerecoder.core.activity.ActivityProfile
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.GeoMath
 import com.cowork.bikerecoder.core.model.GeoPoint
 import kotlin.math.PI
@@ -70,9 +72,12 @@ object CameraPath {
     /** 앞을 보는 점까지 직선거리가 이보다 짧으면(경로 끝·멈춰 선 곳의 GPS 흔들림) 방향을 바꾸지 않는다. */
     private const val MIN_LOOK_M = 25.0
 
-    /** 속도(km/h)에 맞는 주행 확대(스펙 §2.1). */
-    fun zoomForSpeed(kmh: Double): Double {
-        val t = ((kmh - SLOW_KMH) / (FAST_KMH - SLOW_KMH)).coerceIn(0.0, 1.0)
+    /**
+     * 속도(km/h)에 맞는 주행 확대(스펙 §2.1). [slowKmh] 이하면 가장 가깝게, [fastKmh] 이상이면 가장 멀리 본다.
+     * 기본값은 자전거 기준이고, 다른 종류는 [ActivityProfile.cameraSlowKmh]·[ActivityProfile.cameraFastKmh](스펙 V1.9.0 §5.1)를 넘긴다.
+     */
+    fun zoomForSpeed(kmh: Double, slowKmh: Double = SLOW_KMH, fastKmh: Double = FAST_KMH): Double {
+        val t = ((kmh - slowKmh) / (fastKmh - slowKmh)).coerceIn(0.0, 1.0)
         return ZOOM_SLOW + (ZOOM_FAST - ZOOM_SLOW) * t
     }
 
@@ -95,6 +100,8 @@ object CameraPath {
      *   흔들기(±8°, 영상 시간 = 지금까지의 주행 프레임 수 / 24초, 16초 주기)를 더한다. 확대는 최근 8초 속도의 [zoomForSpeed]를 초당 0.25까지만
      *   따라간다. 앞 주행 프레임과의 직선거리가 경로로 지나온 거리보다 500 m 넘게 길면(구간 사이를 건너뜀, 판정 J2) 방향·확대를
      *   바로 목표값으로 둔다. 중심은 [markerLeadM]만큼 진행 방향 앞.
+     *   확대 기준(느림·빠름)은 그 프레임 위치가 속한 구간 종류의 [ActivityProfile]을 따른다([segmentActivities]는 타임라인의 `segmentIndex` 순서,
+     *   비었거나 모자라면 자전거: 10·30 km/h).
      * - INTRO_OVERVIEW: [overview] 중심, 확대 − 1, 기울기 0, 정북 그대로(규칙 F4: 제목 카드가 떠 있는 동안 돌지 않는다).
      * - INTRO_DESCENT: 그 카메라에서 첫 주행 카메라로 smoothstep 보간. 방향은 정북에서 첫 주행 방향까지 짧은 쪽(|돌기| ≤ 180°).
      * - PHOTO: 그 이동 시각의 주행 카메라를 (사진 시작 방향 + 40° × 진행)으로, 확대·기울기는 직전 장 그대로. 끝나면 그 방향에서 다시 따라간다.
@@ -107,8 +114,15 @@ object CameraPath {
         overview: Camera,
         outro: Camera = overview,
         heightPx: Int,
+        segmentActivities: List<ActivityType> = emptyList(),
     ): List<Camera> {
         val route = timeline.routeDistance
+        val profiles = HashMap<ActivityType, ActivityProfile>()
+        fun zoomAt(located: Located, kmh: Double): Double {
+            val type = segmentActivities.getOrElse(located.segmentIndex) { ActivityType.BIKE }
+            val profile = profiles.getOrPut(type) { ActivityProfile.of(type) }
+            return zoomForSpeed(kmh, profile.cameraSlowKmh, profile.cameraFastKmh)
+        }
         val segmentEnd = segmentEnds(timeline)
         val maxTurn = MAX_TURN_DEG_PER_S / FPS
         val maxZoomStep = ZOOM_RATE_PER_S / FPS
@@ -132,7 +146,7 @@ object CameraPath {
         val firstRideMs = plans.firstOrNull { it.kind == SceneKind.RIDE }?.moveMs ?: 0L
         val firstLocated = timeline.at(firstRideMs)
         val firstBearing = lookBearing(firstLocated, overview.bearing)
-        val firstRide = riding(firstLocated.point, zoomForSpeed(speedKmh(firstRideMs)), firstBearing)
+        val firstRide = riding(firstLocated.point, zoomAt(firstLocated, speedKmh(firstRideMs)), firstBearing)
         val high = Camera(overview.center, (overview.zoom - 1).coerceAtLeast(0.0), bearing = 0.0, tilt = 0.0)
 
         val out = ArrayList<Camera>(plans.size)
@@ -168,7 +182,7 @@ object CameraPath {
                     val wanted = lookBearing(located, current ?: firstBearing)
                     val next = if (current == null || jumped) wanted
                     else normalize(current + (signedDelta(current, wanted) * SMOOTHING).coerceIn(-maxTurn, maxTurn))
-                    val wantedZoom = zoomForSpeed(speedKmh(plan.moveMs))
+                    val wantedZoom = zoomAt(located, speedKmh(plan.moveMs))
                     zoom = if (previous == null || jumped) wantedZoom else zoom + (wantedZoom - zoom).coerceIn(-maxZoomStep, maxZoomStep)
                     heading = next
                     lastRidePoint = located.point

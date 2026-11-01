@@ -128,9 +128,9 @@ private fun ElevationMapLayout(
             Column(Modifier.navigationBarsPadding().padding(start = 16.dp, end = 4.dp, bottom = 8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (state.tabs.size > 1) {
-                        ChartTabs(state.tabs, state.tab, onSelectTab, Modifier.weight(1f))
+                        ChartTabs(state.tabs, state.tab, state.speedStyle, onSelectTab, Modifier.weight(1f))
                     } else {
-                        Text(state.tab.title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                        Text(state.tab.titleFor(state.speedStyle), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                     }
                     IconButton(onClick = onClose, modifier = Modifier.testTag(ElevationTags.CLOSE)) {
                         Icon(Icons.Filled.Close, contentDescription = ElevationText.CLOSE)
@@ -143,7 +143,7 @@ private fun ElevationMapLayout(
                     if (d == null) {
                         when (state.tab) {
                             ChartTab.ELEVATION -> Legend()
-                            ChartTab.SPEED -> MetricLegend(MetricKind.SPEED)
+                            ChartTab.SPEED -> SpeedLegend(state.speedStyle)
                             ChartTab.HEART_RATE -> MetricLegend(MetricKind.HEART_RATE)
                         }
                     } else {
@@ -161,7 +161,13 @@ private fun ElevationMapLayout(
 
 /** The [tabs] as one row of segmented buttons, [selected] marked; picking one calls [onSelect]. */
 @Composable
-private fun ChartTabs(tabs: List<ChartTab>, selected: ChartTab, onSelect: (ChartTab) -> Unit, modifier: Modifier) {
+private fun ChartTabs(
+    tabs: List<ChartTab>,
+    selected: ChartTab,
+    speedStyle: SpeedChartStyle,
+    onSelect: (ChartTab) -> Unit,
+    modifier: Modifier,
+) {
     SingleChoiceSegmentedButtonRow(modifier.padding(end = 8.dp).testTag(ChartTab.ROW_TAG)) {
         tabs.forEachIndexed { i, tab ->
             SegmentedButton(
@@ -170,7 +176,7 @@ private fun ChartTabs(tabs: List<ChartTab>, selected: ChartTab, onSelect: (Chart
                 shape = SegmentedButtonDefaults.itemShape(index = i, count = tabs.size),
                 modifier = Modifier.testTag(tab.tag),
             ) {
-                Text(tab.title)
+                Text(tab.titleFor(speedStyle))
             }
         }
     }
@@ -184,7 +190,7 @@ private fun TabChart(state: ElevationMapUiState.Ready, onScrub: (Double) -> Unit
             ElevationChart(state.profile, height = CHART_HEIGHT, scrubbable = true, onScrub = onScrub, scrubM = state.scrubM)
         ChartTab.SPEED -> MetricChart(
             state.speed, MetricKind.SPEED, state.speedDescription,
-            height = CHART_HEIGHT, scrubbable = true, onScrub = onScrub, scrubM = state.scrubM,
+            height = CHART_HEIGHT, scrubbable = true, onScrub = onScrub, scrubM = state.scrubM, pace = state.speedStyle.pace,
         )
         ChartTab.HEART_RATE -> MetricChart(
             state.heartRate, MetricKind.HEART_RATE, state.heartDescription,
@@ -199,7 +205,7 @@ private fun scrubText(state: ElevationMapUiState.Ready, d: Double): String = whe
         val profile = requireNotNull(state.profile)
         ElevationText.scrubLine(d, profile.elevationAt(d), profile.gradeAt(d))
     }
-    ChartTab.SPEED -> ChartText.scrubLine(MetricKind.SPEED, d, state.speed?.valueAt(d))
+    ChartTab.SPEED -> ChartText.scrubLine(MetricKind.SPEED, d, state.speed?.valueAt(d), state.speedStyle.pace)
     ChartTab.HEART_RATE -> ChartText.scrubLine(MetricKind.HEART_RATE, d, state.heartRate?.valueAt(d))
 }
 
@@ -213,10 +219,29 @@ private fun Legend() {
     }
 }
 
+/**
+ * The speed chart's legend (V1.9.0 spec §3.5): the 5 bands of the trip's activity, or for a trip of several activities
+ * (whose colour scales differ) [ActivityText.MIXED_COLOR_NOTE] in their place.
+ */
+@Composable
+private fun SpeedLegend(style: SpeedChartStyle) {
+    val note = ChartText.legendNote(style)
+    if (note != null) {
+        Text(
+            note,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.testTag(ElevationTags.LEGEND_NOTE),
+        )
+    } else {
+        MetricLegend(MetricKind.SPEED, style)
+    }
+}
+
 /** The 5 speed or heart-rate bands' colours and legend texts ([metricLegend]), evenly spread. */
 @Composable
-private fun MetricLegend(kind: MetricKind) {
-    val cells = remember(kind) { metricLegend(kind).map { (text, hex) -> text to colorOf(hex) } }
+private fun MetricLegend(kind: MetricKind, style: SpeedChartStyle = SpeedChartStyle.BIKE) {
+    val cells = remember(kind, style) { metricLegend(kind, style).map { (text, hex) -> text to colorOf(hex) } }
     Row(Modifier.fillMaxWidth()) {
         cells.forEach { (text, color) -> LegendCell(color, text, Modifier.weight(1f)) }
     }

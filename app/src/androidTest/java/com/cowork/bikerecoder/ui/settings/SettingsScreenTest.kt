@@ -24,6 +24,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ApplicationProvider
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.data.AppSettings
 import com.cowork.bikerecoder.data.GuidanceRecording
@@ -127,7 +128,7 @@ class SettingsScreenTest {
     @Test
     fun showsVersionAndTogglesVoice() {
         show()
-        composeRule.onNodeWithText("V1.8.0").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("V1.9.0").performScrollTo().assertIsDisplayed()
 
         composeRule.onNodeWithTag(SettingsTags.VOICE).performScrollTo().assertIsOn()
         composeRule.onNodeWithTag(SettingsTags.VOICE).performClick()
@@ -200,6 +201,32 @@ class SettingsScreenTest {
         composeRule.onNodeWithText("공유").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("기본 해시태그").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("#자전거 #라이딩").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun shareHashtagsHasOneRowPerActivity() {
+        show()
+        composeRule.onNodeWithText("기본 해시태그").performScrollTo().assertIsDisplayed()
+        ActivityType.entries.forEach { type ->
+            composeRule.onNodeWithTag(SettingsTags.shareHashtags(type)).performScrollTo().assertIsDisplayed()
+        }
+        composeRule.onNodeWithText("#걷기 #산책").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("#러닝 #달리기").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("#등산 #하이킹").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun runHashtagsDialogSavesToTheRunRowOnly() {
+        show()
+        composeRule.onNodeWithTag(SettingsTags.shareHashtags(ActivityType.RUN)).performScrollTo().performClick()
+        composeRule.onNodeWithText("기본 해시태그 · 달리기").assertIsDisplayed()
+        composeRule.onNodeWithTag(SettingsTags.SHARE_HASHTAGS_INPUT).performTextReplacement("마라톤 10k")
+        composeRule.onNodeWithTag(SettingsTags.CONFIRM).performClick()
+
+        composeRule.waitUntil(5_000) { settings.value.shareHashtagsRun == "#마라톤 #10k" }
+        assertEquals(null, settings.value.shareHashtags)
+        assertEquals(null, settings.value.shareHashtagsWalk)
+        composeRule.onNodeWithText("#마라톤 #10k").performScrollTo().assertIsDisplayed()
     }
 
     @Test

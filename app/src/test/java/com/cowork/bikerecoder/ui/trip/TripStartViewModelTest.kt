@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.ui.trip
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.recording.RideStore
@@ -347,9 +348,9 @@ class TripStartViewModelTest {
         )
         val controller = RideController(
             rideStore = object : RideStore by rideStore {
-                override suspend fun openSegment(tripId: Long, startedAt: Long, localDate: LocalDate): Long {
+                override suspend fun openSegment(tripId: Long, startedAt: Long, localDate: LocalDate, activity: ActivityType): Long {
                     if (failOpen) throw IOException("disk full")
-                    return rideStore.openSegment(tripId, startedAt, localDate)
+                    return rideStore.openSegment(tripId, startedAt, localDate, activity)
                 }
             },
             tripStore = store,

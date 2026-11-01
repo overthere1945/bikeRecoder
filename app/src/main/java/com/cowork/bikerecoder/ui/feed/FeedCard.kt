@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.TextAutoSize
@@ -44,8 +45,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.importing.IMPORT_CARD_SUFFIX
+import com.cowork.bikerecoder.ui.activity.ActivityBadges
+import com.cowork.bikerecoder.ui.activity.ActivityText
 import com.cowork.bikerecoder.ui.history.RouteDrawing
 import com.cowork.bikerecoder.video.TripMedia
 import kotlinx.coroutines.CancellationException
@@ -85,37 +87,50 @@ fun FeedCard(
             .combinedClickable(role = Role.Button, onClick = onClick, onLongClick = onLongClick)
             .testTag(FeedTags.card(card.tripId)),
     ) {
-        Column(modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 8.dp)) {
-            Text(
-                card.title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                // An imported trip is always finished, so never both.
-                card.dateLine + when {
-                    card.inProgress -> " · 진행 중"
-                    card.imported -> IMPORT_CARD_SUFFIX
-                    else -> ""
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        // The activity badge(s) at the top left beside the title (V1.9.0 spec §2.2).
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 8.dp),
+        ) {
+            ActivityBadges(card.activities, CARD_BADGE, Modifier.testTag(FeedTags.badges(card.tripId)))
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    card.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    // An imported trip is always finished, so never both.
+                    card.dateLine + when {
+                        card.inProgress -> " · 진행 중"
+                        card.imported -> IMPORT_CARD_SUFFIX
+                        else -> ""
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         CardPicture(card, onOpenVideo)
-        // Golden-ratio columns, φ² : φ² : φ : 1 (거리, 이동 시간, 상승, 공유): the two long values start at an even
-        // step, then each column is 1/φ of the one before it, down to the share icon.
+        // Golden-ratio columns, φ² : φ² : φ : 1 (the activity's three cells, then 공유): the two long values start at an
+        // even step, then each column is 1/φ of the one before it, down to the share icon.
+        val cells = ActivityText.cardCells(
+            card.dominant, card.distanceM, card.movingTimeMs, card.hikeElapsedMs, card.ascentM, card.maxAltitudeM,
+            paceDistanceM = card.paceDistanceM ?: card.distanceM,
+            paceMovingTimeMs = card.paceMovingTimeMs ?: card.movingTimeMs,
+        )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = 16.dp, end = if (card.canShare) 4.dp else 16.dp, top = 12.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            BigNumber("거리", kmText(card.distanceM), Modifier.weight(GOLDEN * GOLDEN))
-            BigNumber("이동 시간", RideFormat.duration(card.movingTimeMs), Modifier.weight(GOLDEN * GOLDEN))
-            BigNumber("상승", meterText(card.ascentM), Modifier.weight(GOLDEN))
+            BigNumber(cells[0].first, cells[0].second, Modifier.weight(GOLDEN * GOLDEN))
+            BigNumber(cells[1].first, cells[1].second, Modifier.weight(GOLDEN * GOLDEN))
+            BigNumber(cells[2].first, cells[2].second, Modifier.weight(GOLDEN))
             if (card.canShare) {
                 Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
                     IconButton(onClick = onShare, modifier = Modifier.size(48.dp).testTag(FeedTags.share(card.tripId))) {
@@ -129,7 +144,7 @@ fun FeedCard(
             }
         }
         Text(
-            averageLineText(card.avgSpeedMps, card.avgBpm),
+            averageLineText(card.dominant, card.avgSpeedMps, card.avgBpm, card.ascentM, card.paceSpeedMps),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 12.dp),
@@ -155,6 +170,9 @@ private fun BigNumber(label: String, value: String, modifier: Modifier = Modifie
         )
     }
 }
+
+/** The activity badge's size on a card (spec §2.1). */
+private val CARD_BADGE = 34.dp
 
 /** φ, the golden ratio of the card's number columns. */
 private const val GOLDEN = 1.618f

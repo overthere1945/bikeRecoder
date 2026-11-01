@@ -4,6 +4,9 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.activity.BestEffort
+import com.cowork.bikerecoder.core.activity.BestEffortDistance
 import com.cowork.bikerecoder.core.importing.ImportedRide
 import com.cowork.bikerecoder.core.importing.ReplayedRide
 import com.cowork.bikerecoder.core.importing.TimeSpan
@@ -60,11 +63,13 @@ class RoomImportStoreTest {
         startedAt: Long = 1_000_000,
         points: List<TrackPoint> = listOf(point(1_000_000), point(1_100_000, 37.51)),
         fileName: String = "Relive_0514.gpx",
+        activity: ActivityType = ActivityType.BIKE,
     ) = ImportedRide(
         ride = ReplayedRide(startedAt, startedAt + 360_000, day, points, totals),
         profile = RouteProfile.BALANCED,
         fileName = fileName,
         importedAt = 5_000_000,
+        activity = activity,
     )
 
     private suspend fun countOf(table: String): Int =
@@ -94,6 +99,31 @@ class RoomImportStoreTest {
         assertEquals(5_000_000L, db.openHelper.readableDatabase.query("SELECT importedAt FROM trip_import").use {
             it.moveToFirst(); it.getLong(0)
         })
+    }
+
+    @Test
+    fun savesActivity() = runTest {
+        val bike = store.saveImported(imported(startedAt = 2_000_000, fileName = "bike.gpx"))
+        val hike = store.saveImported(imported(startedAt = 3_000_000, fileName = "hike.gpx", activity = ActivityType.HIKE))
+        val run = store.saveImported(imported(startedAt = 4_000_000, fileName = "run.gpx", activity = ActivityType.RUN))
+
+        assertEquals(ActivityType.BIKE, rides.segments(bike).single().activity)
+        assertEquals(ActivityType.HIKE, rides.segments(hike).single().activity)
+        assertEquals(ActivityType.RUN, rides.segments(run).single().activity)
+    }
+
+    @Test
+    fun savesBestEffortsOfTheTripsSegment() = runTest {
+        val tripId = store.saveImported(imported(activity = ActivityType.RUN))
+        val efforts = listOf(BestEffort(BestEffortDistance.ONE_K, 300_000, 3), BestEffort(BestEffortDistance.FIVE_K, 1_700_000, 0))
+
+        store.saveBestEfforts(tripId, efforts)
+
+        val segment = rides.segments(tripId).single()
+        assertEquals(efforts, rides.bestEfforts(segment.id))
+        // Saving again replaces the rows.
+        store.saveBestEfforts(tripId, efforts.take(1))
+        assertEquals(efforts.take(1), rides.bestEfforts(segment.id))
     }
 
     @Test

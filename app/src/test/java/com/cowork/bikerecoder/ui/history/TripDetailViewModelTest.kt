@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.ui.history
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.post.HeartRateSample
@@ -13,6 +14,7 @@ import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripLabel
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripType
+import com.cowork.bikerecoder.core.series.SpeedBand
 import com.cowork.bikerecoder.export.ExportFormat
 import com.cowork.bikerecoder.export.ExportResult
 import com.cowork.bikerecoder.export.ExportState
@@ -25,7 +27,10 @@ import com.cowork.bikerecoder.post.FakePostStore
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.post.SegmentExtras
+import com.cowork.bikerecoder.ui.elevation.ChartText
+import com.cowork.bikerecoder.ui.elevation.SpeedChartStyle
 import com.cowork.bikerecoder.ride.FakeRideStore
+import com.cowork.bikerecoder.ui.activity.ActivityText
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -39,8 +44,10 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.time.LocalDate
@@ -68,12 +75,12 @@ class TripDetailViewModelTest {
     @AfterEach
     fun tearDown() = Dispatchers.resetMain()
 
-    private suspend fun evening() {
+    private suspend fun evening(activity: ActivityType = ActivityType.BIKE) {
         trips.trips[TRIP] = Trip(TRIP, TripType.SINGLE_DAY, TripStatus.COMPLETED, RouteProfile.CYCLEWAY_FIRST, 0L, 0L, null)
         val day = LocalDate.of(2026, 10, 25)
         val startedAt = day.atTime(19, 0).atZone(SEOUL).toInstant().toEpochMilli()
         val totals = SegmentTotals.ZERO.copy(distanceM = 1_500.0, movingTimeMs = 60_000)
-        val id = rides.openSegment(TRIP, startedAt, day)
+        val id = rides.openSegment(TRIP, startedAt, day, activity)
         rides.appendPoints(id, listOf(TrackPoint(startedAt, FIRST_POINT, null, 5f, 5f)), totals)
         rides.closeSegment(id, startedAt + 60_000, totals)
     }
@@ -85,7 +92,7 @@ class TripDetailViewModelTest {
     private fun TestScope.detail(
         imported: Flow<Map<Long, String>> = flowOf(emptyMap()),
         profileOf: (List<List<TrackPoint>>) -> ElevationProfile? = ElevationProfile.Companion::fromSegments,
-        speedOf: (TrackAxis, List<List<TrackPoint>>) -> MetricSeries? = MetricSeries.Companion::speed,
+        speedOf: (TrackAxis, List<List<TrackPoint>>, List<ActivityType>) -> MetricSeries? = MetricSeries.Companion::speed,
         postStore: PostStore = store,
     ) = TripDetailViewModel(
         rides, TRIP, postStore,
@@ -162,6 +169,17 @@ class TripDetailViewModelTest {
         assertEquals("저녁 라이딩 · 서울 강서구", vm.title.value)
     }
 
+    /** V1.9.0 spec §2.3: the automatic title takes the trip's dominant activity's word. */
+    @Test
+    fun autoTitleFollowsTheActivity() = runTest(dispatcher) {
+        evening(ActivityType.RUN)
+        val vm = detail()
+        advanceUntilIdle()
+
+        assertEquals("저녁 달리기 · 서울 강서구", vm.autoTitle.value)
+        assertEquals("저녁 달리기 · 서울 강서구", vm.title.value)
+    }
+
     /** The dialog's hint is the automatic title, also while a custom title is shown. */
     @Test
     fun autoTitleStaysAutomaticWhileACustomTitleIsSet() = runTest(dispatcher) {
@@ -197,8 +215,14 @@ class TripDetailViewModelTest {
         }
 
     /** 한 구간을 [points]·[totals]로 저장하고 닫는다. 구간 id를 돌려준다. */
-    private suspend fun ride(startedAt: Long, day: LocalDate, points: List<TrackPoint>, totals: SegmentTotals): Long {
-        val id = rides.openSegment(TRIP, startedAt, day)
+    private suspend fun ride(
+        startedAt: Long,
+        day: LocalDate,
+        points: List<TrackPoint>,
+        totals: SegmentTotals,
+        activity: ActivityType = ActivityType.BIKE,
+    ): Long {
+        val id = rides.openSegment(TRIP, startedAt, day, activity)
         rides.appendPoints(id, points, totals)
         rides.closeSegment(id, points.last().timeMillis, totals)
         return id
@@ -315,6 +339,108 @@ class TripDetailViewModelTest {
         assertEquals(true, vm.profileLoaded.value)
     }
 
+    /** Two rides of [first] then [second] activity (18 km/h on both), the later one saved first. */
+    private suspend fun twoRides(first: ActivityType, second: ActivityType) {
+        openTrip()
+        val t = SegmentTotals.ZERO.copy(distanceM = 300.0, movingTimeMs = 60_000, elapsedMs = 3_725_000)
+        ride(90_000_000L, LocalDate.of(2026, 10, 25), track(90_000_000L, 37.6, 31) { null }, t, second)
+        ride(1_000_000L, LocalDate.of(2026, 10, 24), track(1_000_000L, 37.5, 31) { null }, t, first)
+    }
+
+    /** V1.9.0 §3.5, P7: 달리기만(걷기만) 있는 여행의 속도 그래프는 페이스이고, 그 종류의 색 기준으로 칠한다. */
+    @Test
+    fun allRunTripShowsPaceChart() = runTest(dispatcher) {
+        twoRides(ActivityType.RUN, ActivityType.RUN)
+        val vm = detail()
+        advanceUntilIdle()
+
+        val style = vm.speedStyle.value
+        assertEquals(SpeedChartStyle(ActivityType.RUN), style)
+        assertTrue(style.pace)
+        assertEquals("페이스", ChartText.title(style))
+        val series = vm.speedSeries.value!!
+        assertEquals(listOf(ActivityType.RUN, ActivityType.RUN), series.segmentActivities)
+        // 18 km/h is a run's fastest band (15 km/h and up), a bike's third.
+        assertEquals(SpeedBand.SPRINT.hex, series.colorHexAt(series.totalM / 4))
+        assertEquals(SpeedBand.SPRINT.hex, series.colorHexAt(series.totalM * 3 / 4))
+    }
+
+    @Test
+    fun allWalkTripShowsPaceChartButAllHikeDoesNot() = runTest(dispatcher) {
+        twoRides(ActivityType.WALK, ActivityType.WALK)
+        val walk = detail()
+        advanceUntilIdle()
+        assertEquals("페이스", ChartText.title(walk.speedStyle.value))
+        rides.segments(TRIP).forEach { rides.changeActivity(it.id, ActivityType.HIKE, null, emptyList()) }
+        walk.refresh()
+        advanceUntilIdle()
+
+        assertEquals(SpeedChartStyle(ActivityType.HIKE), walk.speedStyle.value)
+        assertEquals("속도", ChartText.title(walk.speedStyle.value))
+    }
+
+    /** P7: 두 종류 이상이 섞이면 속도(km/h)이고 범례 자리에 안내가 오며, 색은 점마다 자기 구간의 종류를 따른다. */
+    @Test
+    fun mixedTripShowsSpeedWithNote() = runTest(dispatcher) {
+        twoRides(ActivityType.BIKE, ActivityType.RUN)
+        val vm = detail()
+        advanceUntilIdle()
+
+        val style = vm.speedStyle.value
+        assertTrue(style.mixed)
+        assertFalse(style.pace)
+        assertEquals("속도", ChartText.title(style))
+        assertEquals("종류마다 색 기준이 다릅니다", ChartText.legendNote(style))
+        assertEquals(emptyList<String>(), ChartText.speedLegend(style))
+        val series = vm.speedSeries.value!!
+        assertEquals(listOf(ActivityType.BIKE, ActivityType.RUN), series.segmentActivities)
+        assertEquals(SpeedBand.STEADY.hex, series.colorHexAt(series.totalM / 4), "the bike half: 18 km/h is 15~20")
+        assertEquals(SpeedBand.SPRINT.hex, series.colorHexAt(series.totalM * 3 / 4), "the run half: 18 km/h is 15 and up")
+    }
+
+    @Test
+    fun singleActivityTotalsUseItsRows() = runTest(dispatcher) {
+        twoRides(ActivityType.RUN, ActivityType.RUN)
+        val vm = detail()
+        advanceUntilIdle()
+
+        val labels = vm.totalRows.value.map { row -> row.map { it.first } }
+        assertEquals(
+            listOf(listOf("거리", "이동 시간"), listOf("평균 페이스", "평균 속도"), listOf("누적 상승", "누적 하강", "최고 고도")),
+            labels,
+        )
+        // 600 m in 120 s: 3'20" per km, 18 km/h.
+        assertEquals(listOf("평균 페이스" to "3'20\"/km", "평균 속도" to "18.0km/h"), vm.totalRows.value[1])
+    }
+
+    /** §3.2: 종류가 섞인 여행의 합계는 자전거 줄(km/h)을 쓴다. */
+    @Test
+    fun mixedTotalsUseBikeRows() = runTest(dispatcher) {
+        twoRides(ActivityType.RUN, ActivityType.WALK)
+        val vm = detail()
+        advanceUntilIdle()
+
+        val labels = vm.totalRows.value.map { row -> row.map { it.first } }
+        assertEquals(
+            listOf(listOf("거리", "이동 시간"), listOf("평균/최고"), listOf("누적 상승", "누적 하강", "최고 고도")),
+            labels,
+        )
+        assertEquals(ActivityText.tripTotalRows(ActivityType.BIKE, vm.total.value), vm.totalRows.value)
+    }
+
+    /** §3.2: 등산 여행의 합계는 산행 시간(경과 시간의 합)이 첫 줄이다. */
+    @Test
+    fun hikeTotalsStartWithElapsed() = runTest(dispatcher) {
+        twoRides(ActivityType.HIKE, ActivityType.HIKE)
+        val vm = detail()
+        advanceUntilIdle()
+
+        // 2 × 3,725 s = 7,450 s = 2시간 4분.
+        assertEquals(listOf("산행 시간" to "2시간 4분"), vm.totalRows.value.first())
+        assertEquals(listOf("거리", "이동 시간"), vm.totalRows.value[1].map { it.first })
+        assertEquals(listOf("평균/최고"), vm.totalRows.value[2].map { it.first })
+    }
+
     /** 심박 표본이 없으면(저장된 평균만 있어도) 심박 계열은 null이고, 속도 계열은 그대로 있다. */
     @Test
     fun noHeartRateGivesNullSeries() = runTest(dispatcher) {
@@ -403,7 +529,7 @@ class TripDetailViewModelTest {
         val points = track(1_000_000L, 37.5, 61) { 100.0 + it }
         val id = ride(1_000_000L, LocalDate.of(2026, 10, 24), points, t)
         heart(id, points, { 140 }, avg = 140, max = 140)
-        val vm = detail(speedOf = { _, _ -> error("boom") })
+        val vm = detail(speedOf = { _, _, _ -> error("boom") })
         advanceUntilIdle()
 
         assertEquals(true, vm.profileLoaded.value)

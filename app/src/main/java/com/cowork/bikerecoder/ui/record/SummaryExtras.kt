@@ -20,17 +20,21 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleStartEffect
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.stats.Goals
 import com.cowork.bikerecoder.core.stats.RideRecordKind
 import com.cowork.bikerecoder.core.stats.RideRecords
 import com.cowork.bikerecoder.core.stats.RideStat
+import com.cowork.bikerecoder.core.stats.StoredBestEffort
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.post.SegmentExtras
 import com.cowork.bikerecoder.ride.ShortRides
+import com.cowork.bikerecoder.ui.activity.ActivityText
 import com.cowork.bikerecoder.ui.health.HeartRateGate
 import com.cowork.bikerecoder.ui.health.HeartRateSection
+import com.cowork.bikerecoder.ui.stats.GoalKm
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -111,8 +115,10 @@ class SummaryExtras(
     private val scope: CoroutineScope,
     /** The finished segments of every trip ([com.cowork.bikerecoder.core.stats.RideStatsSource.observeRides]). */
     private val rideStats: Flow<List<RideStat>> = emptyFlow(),
-    /** The weekly and the yearly goal in km (null = none). */
-    private val goals: Flow<Pair<Int?, Int?>> = flowOf(null to null),
+    /** The weekly and the yearly goal in km of each activity that has one (a finished segment is held to its own activity's). */
+    private val goals: Flow<Map<ActivityType, GoalKm>> = flowOf(emptyMap()),
+    /** The saved running best efforts ([com.cowork.bikerecoder.core.stats.RideStatsSource.observeBestEfforts]). */
+    private val bestEfforts: Flow<List<StoredBestEffort>> = flowOf(emptyList()),
     /** Where the lines are worked out (they go through every ride). */
     private val computeContext: CoroutineContext = Dispatchers.Default,
     private val shareTrip: suspend (segmentId: Long) -> Long? = { null },
@@ -213,7 +219,7 @@ class SummaryExtras(
      * until the first one is in (and for good when [rideStats] never gives any).
      */
     private fun achievements(id: Long): Flow<List<String>> =
-        combine(rideStats, goals) { rides, (weekly, yearly) -> achievementLines(rides, id, weekly, yearly) }
+        combine(rideStats, bestEfforts, goals) { rides, efforts, goalMap -> achievementLines(rides, efforts, id, goalMap) }
             .flowOn(computeContext)
             .catch { emit(emptyList()) }
             .onStart { emit(emptyList()) }
@@ -256,21 +262,26 @@ class SummaryExtras(
 
         /**
          * Weekly goal, yearly goal, then the new records ([RideRecordKind] order) that finishing segment [id] brought.
-         * Nothing for a segment that is not among [rides] or is under 10 m (the core functions leave those out).
+         * Only the segment's own activity counts (P16): its goal in [goalMap], its distances, its records. Nothing for a
+         * segment that is not among [rides] or is under 10 m (the core functions leave those out).
          */
-        internal fun achievementLines(rides: List<RideStat>, id: Long, weeklyKm: Int?, yearlyKm: Int?): List<String> {
+        internal fun achievementLines(
+            rides: List<RideStat>,
+            efforts: List<StoredBestEffort>,
+            id: Long,
+            goalMap: Map<ActivityType, GoalKm>,
+        ): List<String> {
+            val activity = rides.firstOrNull { it.segmentId == id }?.activity ?: return emptyList()
+            val goal = goalMap[activity]
+            val own = rides.filter { it.activity == activity }
             val lines = ArrayList<String>(2 + RideRecordKind.entries.size)
-            val (weekBefore, weekAfter) = Goals.weekBeforeAfter(rides, id)
-            if (Goals.crossed(weeklyKm, weekBefore, weekAfter)) lines += "이번 주 목표 ${grouped(weeklyKm!!)} km 달성"
-            val (yearBefore, yearAfter) = Goals.yearBeforeAfter(rides, id)
-            if (Goals.crossed(yearlyKm, yearBefore, yearAfter)) lines += "올해 목표 ${grouped(yearlyKm!!)} km 달성"
-            RideRecords.newRecords(rides, id).mapTo(lines) { kind ->
-                when (kind) {
-                    RideRecordKind.LONGEST_DISTANCE -> "🏆 가장 긴 주행 신기록"
-                    RideRecordKind.LONGEST_TIME -> "🏆 가장 오래 탄 주행 신기록"
-                    RideRecordKind.MOST_ASCENT -> "🏆 가장 많이 오른 주행 신기록"
-                    RideRecordKind.FASTEST_AVG -> "🏆 가장 빠른 평균 속도 신기록"
-                }
+            val (weekBefore, weekAfter) = Goals.weekBeforeAfter(own, id)
+            if (Goals.crossed(goal?.weekly, weekBefore, weekAfter)) lines += "이번 주 목표 ${grouped(goal!!.weekly!!)} km 달성"
+            val (yearBefore, yearAfter) = Goals.yearBeforeAfter(own, id)
+            if (Goals.crossed(goal?.yearly, yearBefore, yearAfter)) lines += "올해 목표 ${grouped(goal!!.yearly!!)} km 달성"
+            RideRecords.newRecords(rides, efforts, id).mapTo(lines) { kind ->
+                val effortMs = kind.effort?.let { distance -> efforts.firstOrNull { it.segmentId == id && it.distance == distance }?.timeMs }
+                ActivityText.newRecordLine(kind, effortMs)
             }
             return lines
         }

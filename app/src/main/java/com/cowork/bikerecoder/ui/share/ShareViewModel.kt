@@ -8,6 +8,8 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.activity.ActivityMix
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStore
@@ -16,7 +18,7 @@ import com.cowork.bikerecoder.core.trip.TripLabelStore
 import com.cowork.bikerecoder.core.trip.TripStore
 import com.cowork.bikerecoder.core.video.Aspect
 import com.cowork.bikerecoder.core.video.RideTitle
-import com.cowork.bikerecoder.share.DEFAULT_SHARE_HASHTAGS
+import com.cowork.bikerecoder.data.hashtagsFor
 import com.cowork.bikerecoder.share.MAX_SHARE_TEXT
 import com.cowork.bikerecoder.share.Mood
 import com.cowork.bikerecoder.share.ShareCandidate
@@ -24,6 +26,7 @@ import com.cowork.bikerecoder.share.ShareFacts
 import com.cowork.bikerecoder.share.SharePick
 import com.cowork.bikerecoder.share.ShareTarget
 import com.cowork.bikerecoder.share.autoShareText
+import com.cowork.bikerecoder.share.defaultShareHashtags
 import com.cowork.bikerecoder.share.fileLines
 import com.cowork.bikerecoder.share.moodOn
 import com.cowork.bikerecoder.share.pickFile
@@ -69,8 +72,11 @@ class ShareViewModel(
     private val rideStore: RideStore,
     private val tripLabels: TripLabelStore,
     private val tripMedia: TripMediaStore,
-    /** The default-hashtags setting: null = never saved ([DEFAULT_SHARE_HASHTAGS]), "" = none. */
-    private val defaultHashtags: suspend () -> String?,
+    /**
+     * The default-hashtags setting of an activity (the trip's dominant one): null = never saved ([defaultShareHashtags]),
+     * "" = none.
+     */
+    private val defaultHashtags: suspend (ActivityType) -> String?,
     /** The made files whose gallery item still exists ([com.cowork.bikerecoder.share.ShareCandidates.of]). */
     private val candidates: suspend (List<TripMedia>) -> List<ShareCandidate>,
     private val job: VideoJobControl,
@@ -297,12 +303,13 @@ class ShareViewModel(
         val trip = withContext(io) { tripStore.trip(tripId) } ?: return null
         val segments = withContext(io) { rideStore.segments(tripId) }
         val label = withContext(io) { tripLabels.label(tripId) }
-        val tags = guarded("Could not read the default hashtags") { defaultHashtags() } ?: DEFAULT_SHARE_HASHTAGS
         val files = readCandidates(tripId).orEmpty()
         return withContext(compute) {
             val rides = segments.filter { it.endedAt != null && it.totals.distanceM >= MIN_RIDE_DISTANCE_M }
                 .sortedBy { it.startedAt }
             if (rides.isEmpty()) return@withContext null
+            val dominant = ActivityMix.of(rides).dominant
+            val tags = guarded("Could not read the default hashtags") { defaultHashtags(dominant) } ?: defaultShareHashtags(dominant)
             val distanceM = rides.sumOf { it.totals.distanceM }
             val record = Record(
                 stamp = shareStamp(rides.size, distanceM),
@@ -310,7 +317,7 @@ class ShareViewModel(
                 savedText = label.shareText,
                 savedStamp = label.shareText?.let { label.shareStamp },
             )
-            val autoText = autoShareText(facts(label, rides, distanceM), tags)
+            val autoText = autoShareText(facts(label, rides, distanceM, dominant), tags)
             val finished = canMakeMedia(trip, segments)
             val picks = Picks.of(files, record.lastEndedAt)
             val needsImage = picks.general == SharePick.MakeImage || picks.story == SharePick.MakeImage ||
@@ -334,15 +341,24 @@ class ShareViewModel(
         }
     }
 
-    private fun facts(label: TripLabel, rides: List<RideSegment>, distanceM: Double) = ShareFacts(
-        title = RideTitle.shown(label, rides.first().startedAt, rides.map { it.localDate }.distinct().size, zone),
-        firstDate = rides.first().localDate,
-        lastDate = rides.last().localDate,
-        distanceM = distanceM,
-        movingTimeMs = rides.sumOf { it.totals.movingTimeMs },
-        ascentM = rides.sumOf { it.totals.ascentM },
-        regionName = label.regionName,
-    )
+    private fun facts(label: TripLabel, rides: List<RideSegment>, distanceM: Double, activity: ActivityType): ShareFacts {
+        // A run's or walk's pace: the dominant activity's rides only (a one-activity trip: its totals).
+        val paceOf = rides.filter { it.activity == activity }.takeIf { it.size < rides.size }
+        return ShareFacts(
+            title = RideTitle.shown(label, rides.first().startedAt, rides.map { it.localDate }.distinct().size, zone, activity),
+            firstDate = rides.first().localDate,
+            lastDate = rides.last().localDate,
+            distanceM = distanceM,
+            movingTimeMs = rides.sumOf { it.totals.movingTimeMs },
+            ascentM = rides.sumOf { it.totals.ascentM },
+            regionName = label.regionName,
+            activity = activity,
+            elapsedMs = rides.filter { it.activity == ActivityType.HIKE }.sumOf { it.totals.elapsedMs },
+            maxAltitudeM = rides.mapNotNull { it.totals.maxAltitudeM }.maxOrNull(),
+            paceDistanceM = paceOf?.sumOf { it.totals.distanceM },
+            paceMovingTimeMs = paceOf?.sumOf { it.totals.movingTimeMs },
+        )
+    }
 
     /** The trip's usable gallery files; null (logged) when they cannot be read. */
     private suspend fun readCandidates(tripId: Long): List<ShareCandidate>? = guarded("Could not read the files of trip $tripId") {
@@ -461,7 +477,7 @@ class ShareViewModel(
                     rideStore = container.rideStore,
                     tripLabels = container.tripLabels,
                     tripMedia = container.tripMedia,
-                    defaultHashtags = { container.settings.settings.first().shareHashtags },
+                    defaultHashtags = { type -> container.settings.settings.first().hashtagsFor(type) },
                     candidates = container.shareCandidates::of,
                     job = container.videoJob,
                     log = androidWarnLog("ShareViewModel"),

@@ -126,6 +126,43 @@ abstract class RideDao {
         maxAltitudeM: Double?,
     )
 
+    @Query("UPDATE ride_segment SET activity = :activity WHERE id = :id")
+    abstract suspend fun setActivity(id: Long, activity: String)
+
+    @Query("DELETE FROM segment_best_effort WHERE segmentId = :segmentId")
+    abstract suspend fun deleteBestEfforts(segmentId: Long)
+
+    @Query("SELECT * FROM segment_best_effort WHERE segmentId = :segmentId ORDER BY distanceM")
+    abstract suspend fun bestEfforts(segmentId: Long): List<SegmentBestEffortEntity>
+
+    @Insert
+    abstract suspend fun insertBestEfforts(efforts: List<SegmentBestEffortEntity>)
+
+    /** Replaces all of the segment's best-effort rows. */
+    @Transaction
+    open suspend fun replaceBestEfforts(segmentId: Long, efforts: List<SegmentBestEffortEntity>) {
+        deleteBestEfforts(segmentId)
+        insertBestEfforts(efforts)
+    }
+
+    /** Sets the activity, the totals (when given) and the best efforts in one transaction. */
+    @Transaction
+    open suspend fun changeActivity(
+        segmentId: Long,
+        activity: String,
+        totals: SegmentTotals?,
+        efforts: List<SegmentBestEffortEntity>,
+    ) {
+        setActivity(segmentId, activity)
+        if (totals != null) {
+            updateTotals(
+                segmentId, totals.distanceM, totals.movingTimeMs, totals.elapsedMs, totals.maxSpeedMps,
+                totals.ascentM, totals.descentM, totals.minAltitudeM, totals.maxAltitudeM,
+            )
+        }
+        replaceBestEfforts(segmentId, efforts)
+    }
+
     @Query("UPDATE ride_segment SET endedAt = :endedAt WHERE id = :id")
     abstract suspend fun setEndedAt(id: Long, endedAt: Long)
 
@@ -153,7 +190,7 @@ abstract class RideDao {
 
     @Query(
         "SELECT * FROM ride_segment WHERE endedAt IS NOT NULL AND distanceM >= :minDistanceM AND movingTimeMs > 0 " +
-            "ORDER BY startedAt DESC, id DESC LIMIT :limit",
+            "AND activity = 'BIKE' ORDER BY startedAt DESC, id DESC LIMIT :limit",
     )
     abstract suspend fun recentSegments(minDistanceM: Double, limit: Int): List<RideSegmentEntity>
 
@@ -168,7 +205,7 @@ abstract class RideDao {
 
     @Query(
         "SELECT COALESCE(SUM(distanceM), 0.0) AS distanceM, COALESCE(SUM(movingTimeMs), 0) AS movingTimeMs " +
-            "FROM ride_segment WHERE tripId = :tripId AND localDate = :localDate",
+            "FROM ride_segment WHERE tripId = :tripId AND localDate = :localDate AND activity = 'BIKE'",
     )
     abstract suspend fun dayTotals(tripId: Long, localDate: String): DayTotalsRow
 
@@ -278,7 +315,7 @@ abstract class PostDao {
             "(SELECT COUNT(*) FROM ride_photo p WHERE p.segmentId = s.id AND p.hidden = 0) AS photoCount, " +
             "CASE WHEN e.hrStatus = 'READY' THEN e.avgBpm END AS avgBpm, " +
             "CASE WHEN e.hrStatus = 'READY' THEN e.maxBpm END AS maxBpm, " +
-            "COALESCE(e.hrDetailed, 0) AS hrDetailed " +
+            "COALESCE(e.hrDetailed, 0) AS hrDetailed, s.activity AS activity " +
             "FROM ride_segment s " +
             "LEFT JOIN segment_route_simplified r ON r.segmentId = s.id " +
             "LEFT JOIN segment_extras e ON e.segmentId = s.id " +
@@ -297,6 +334,7 @@ data class SegmentCardRow(
     val avgBpm: Int?,
     val maxBpm: Int?,
     val hrDetailed: Boolean,
+    val activity: String,
 )
 
 @Dao
@@ -350,10 +388,19 @@ abstract class TripLabelDao {
 @Dao
 interface RideStatsDao {
     @Query(
-        "SELECT id AS segmentId, tripId, startedAt, localDate, distanceM, movingTimeMs, ascentM, endedAt " +
+        "SELECT id AS segmentId, tripId, startedAt, localDate, distanceM, movingTimeMs, ascentM, endedAt, " +
+            "activity, elapsedMs, maxAltitudeM " +
             "FROM ride_segment WHERE endedAt IS NOT NULL ORDER BY startedAt, id",
     )
     fun observeEnded(): Flow<List<RideStatRow>>
+
+    /** The best-effort rows of ended segments only (an open segment has none worth showing). */
+    @Query(
+        "SELECT b.segmentId, b.distanceM, b.timeMs FROM segment_best_effort b " +
+            "JOIN ride_segment s ON s.id = b.segmentId WHERE s.endedAt IS NOT NULL " +
+            "ORDER BY b.segmentId, b.distanceM",
+    )
+    fun observeBestEfforts(): Flow<List<BestEffortRow>>
 }
 
 data class RideStatRow(
@@ -365,7 +412,12 @@ data class RideStatRow(
     val movingTimeMs: Long,
     val ascentM: Double,
     val endedAt: Long,
+    val activity: String,
+    val elapsedMs: Long,
+    val maxAltitudeM: Double?,
 )
+
+data class BestEffortRow(val segmentId: Long, val distanceM: Int, val timeMs: Long)
 
 data class ImportedNameRow(val tripId: Long, val fileName: String)
 

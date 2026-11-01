@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.ui.main
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.recording.RecordingState
@@ -46,6 +47,10 @@ class MainViewModelTest {
     private var openSegment: RideSegment? = null
     private var closeCalls = 0
 
+    /** The saved `last_activity` setting. */
+    private val lastActivity = MutableStateFlow(ActivityType.BIKE)
+    private val savedActivities = mutableListOf<ActivityType>()
+
     private val noSearch = object : PlaceSearch {
         override suspend fun keyword(query: String, near: GeoPoint?): SearchResult<List<Place>> = SearchResult.Ok(emptyList())
         override suspend fun addressOf(point: GeoPoint): SearchResult<String?> = SearchResult.Ok(null)
@@ -67,19 +72,31 @@ class MainViewModelTest {
             closeCalls++
             openSegment = null
         },
+        lastActivity = lastActivity,
+        saveActivity = {
+            savedActivities += it
+            lastActivity.value = it
+        },
     ).also { runCurrent() }
 
-    private fun recording(tripId: Long, distanceM: Double, movingMs: Long) = RideUiState.Active(
+    private fun recording(
+        tripId: Long,
+        distanceM: Double,
+        movingMs: Long,
+        activity: ActivityType = ActivityType.BIKE,
+        elapsedMs: Long = movingMs,
+    ) = RideUiState.Active(
         tripId = tripId,
         tripType = TripType.SINGLE_DAY,
         segmentId = 1,
         state = RecordingState.Recording,
-        stats = RideStats.ZERO.copy(distanceM = distanceM, movingTimeMs = movingMs, elapsedMs = movingMs),
+        stats = RideStats.ZERO.copy(distanceM = distanceM, movingTimeMs = movingMs, elapsedMs = elapsedMs),
         autoPause = true,
         track = emptyList(),
         fix = null,
         gpsWeak = false,
         saveWarning = null,
+        activity = activity,
     )
 
     private fun segment(id: Long, tripId: Long) =
@@ -300,5 +317,52 @@ class MainViewModelTest {
         runCurrent()
 
         assertNull(vm.state.value.staleTrip, "[완료] must not complete the trip being recorded")
+    }
+
+    @Test
+    fun chipRemembersLastActivity() = runTest(dispatcher) {
+        lastActivity.value = ActivityType.RUN
+        val vm = viewModel()
+        assertEquals(ActivityType.RUN, vm.state.value.activity, "the saved choice")
+
+        vm.chooseActivity(ActivityType.HIKE)
+        assertEquals(ActivityType.HIKE, vm.state.value.activity, "at once")
+        runCurrent()
+
+        assertEquals(listOf(ActivityType.HIKE), savedActivities)
+        assertEquals(ActivityType.HIKE, viewModel().state.value.activity, "a new screen shows it again")
+    }
+
+    @Test
+    fun theChipStartsAsBike() = runTest(dispatcher) {
+        assertEquals(ActivityType.BIKE, viewModel().state.value.activity)
+    }
+
+    @Test
+    fun bannerSaysActivityForNonBike() = runTest(dispatcher) {
+        val vm = viewModel()
+
+        ride.value = recording(4, 2_340.0, movingMs = 1_800_000, activity = ActivityType.HIKE, elapsedMs = 3_725_000)
+        runCurrent()
+        // The hiking (elapsed) time, not the moving time.
+        assertEquals("● 등산 기록 중 · 2.34km · 1:02:05", vm.state.value.riding?.text)
+
+        ride.value = recording(4, 2_340.0, movingMs = 1_800_000, activity = ActivityType.RUN, elapsedMs = 3_725_000)
+        runCurrent()
+        assertEquals("● 달리기 기록 중 · 2.34km · 0:30:00", vm.state.value.riding?.text)
+
+        ride.value = RideUiState.Starting(4, ActivityType.WALK)
+        runCurrent()
+        assertEquals("● 걷기 기록 중 · 0.00km · 0:00:00", vm.state.value.riding?.text)
+    }
+
+    @Test
+    fun bikeBannerUnchanged() = runTest(dispatcher) {
+        val vm = viewModel()
+
+        ride.value = recording(4, 2_340.0, movingMs = 1_800_000, elapsedMs = 3_725_000)
+        runCurrent()
+
+        assertEquals("● 주행 중 · 2.34km · 0:30:00", vm.state.value.riding?.text)
     }
 }

@@ -1,5 +1,7 @@
 package com.cowork.bikerecoder.ui.history
 
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.activity.BestEffort
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.recording.DayTotals
 import com.cowork.bikerecoder.core.recording.RideSegment
@@ -33,7 +35,15 @@ internal class ReadOnlyRides(
     override suspend fun recentSegments(limit: Int) =
         segments.filter { it.endedAt != null && it.totals.distanceM >= 1_000.0 && it.totals.movingTimeMs > 0 }
             .sortedByDescending { it.startedAt }.take(limit)
-    override suspend fun openSegment(tripId: Long, startedAt: Long, localDate: LocalDate): Long = error("read only")
+    override suspend fun openSegment(tripId: Long, startedAt: Long, localDate: LocalDate, activity: ActivityType): Long = error("read only")
+    override suspend fun saveBestEfforts(segmentId: Long, efforts: List<BestEffort>) = error("read only")
+    override suspend fun bestEfforts(segmentId: Long): List<BestEffort> = emptyList()
+    override suspend fun changeActivity(
+        segmentId: Long,
+        activity: ActivityType,
+        totals: SegmentTotals?,
+        efforts: List<BestEffort>,
+    ) = error("read only")
     override suspend fun appendPoints(segmentId: Long, points: List<TrackPoint>, totals: SegmentTotals) = error("read only")
     override suspend fun closeSegment(segmentId: Long, endedAt: Long, totals: SegmentTotals) = error("read only")
     override suspend fun dayTotals(tripId: Long, localDate: LocalDate): DayTotals = error("read only")

@@ -1,7 +1,10 @@
 package com.cowork.bikerecoder.data
 
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.activity.BestEffortDistance
 import com.cowork.bikerecoder.core.stats.RideStat
 import com.cowork.bikerecoder.core.stats.RideStatsSource
+import com.cowork.bikerecoder.core.stats.StoredBestEffort
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -25,7 +28,18 @@ class RoomRideStatsSource(db: AppDatabase) : RideStatsSource {
                 movingTimeMs = it.movingTimeMs,
                 ascentM = it.ascentM,
                 endedAt = it.endedAt,
+                activity = ActivityType.fromStored(it.activity),
+                elapsedMs = it.elapsedMs,
+                maxAltitudeM = it.maxAltitudeM,
             )
+        }
+    }.distinctUntilChanged()
+
+    /** The saved running best efforts of ended segments; a row whose distance key is unknown is skipped. */
+    override fun observeBestEfforts(): Flow<List<StoredBestEffort>> = dao.observeBestEfforts().map { rows ->
+        rows.mapNotNull { row ->
+            val distance = BestEffortDistance.ofKey(row.distanceM) ?: return@mapNotNull null
+            StoredBestEffort(row.segmentId, distance, row.timeMs)
         }
     }.distinctUntilChanged()
 }

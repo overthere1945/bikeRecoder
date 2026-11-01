@@ -16,6 +16,8 @@ import android.graphics.Shader
 import android.graphics.Typeface
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.activity.ActivityFormat
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.post.HeartRateColor
 import com.cowork.bikerecoder.core.recording.TrackPoint
@@ -34,6 +36,7 @@ import com.cowork.bikerecoder.core.video.SceneKind
 import com.cowork.bikerecoder.core.video.VideoOptions
 import com.cowork.bikerecoder.core.video.VideoTimeline
 import com.cowork.bikerecoder.map.TileSource
+import com.cowork.bikerecoder.ui.activity.ActivityText
 import kotlinx.coroutines.CancellationException
 import java.time.Instant
 import java.time.ZoneId
@@ -74,11 +77,18 @@ class FrameRenderer(
     private val overlay = RouteOverlay(timeline, pointColors())
     private val ends = listOf(timeline.points.first().point, timeline.points.last().point)
     private val elevation = ElevationGraph.of(timeline)
-    private val cells = summaryCells(inputs.totals, segmentCount(inputs))
+    private val cells = summaryCells(inputs.totals, segmentCount(inputs), inputs.activity)
+
+    /** The activity of each target segment by the timeline's `segmentIndex` (the number band follows the frame's segment). */
+    private val activities = inputs.activitiesBySegment()
+    private val hasAltitude = timeline.points.any { it.altitudeM != null }
     private val date = longDate(inputs.title)
 
-    /** The most number cells a frame of this video shows: distance and speed, and altitude and heart rate when known. */
-    private val maxCells = 2 + (if (timeline.points.any { it.altitudeM != null }) 1 else 0) + (if (inputs.heartRate.isNotEmpty()) 1 else 0)
+    /**
+     * The most number cells a frame of this video shows: distance and speed, and altitude and heart rate when known. A hike
+     * band (time, altitude, ascent) never has more.
+     */
+    private val maxCells = 2 + (if (hasAltitude) 1 else 0) + (if (inputs.heartRate.isNotEmpty()) 1 else 0)
     private val hudLayout = FrameLayout.hud(width, height, maxCells)
     private val graphPath: Path? = elevation?.let { graphPath(it, hudLayout.graph) }
 
@@ -155,7 +165,7 @@ class FrameRenderer(
         if (photoAlpha > 0f) canvas.drawColor(Color.argb((90 * photoAlpha).roundToInt(), 0, 0, 0))
         // The closing card carries the attribution in its footer instead.
         if (plan.kind != SceneKind.OUTRO) drawAttribution(canvas)
-        if (hudShown(plan)) drawHud(canvas, Hud.at(plan.moveMs, timeline, inputs.heartRate), located)
+        if (hudShown(plan)) drawHud(canvas, Hud.at(plan.moveMs, timeline, inputs.heartRate), located, activities.getOrElse(located.segmentIndex) { inputs.activity })
         plan.caption?.let { drawCaption(canvas, it) }
         if (title > 0f) drawTitle(canvas, title)
         if (cue != null && picture != null) drawPhoto(canvas, picture, cue.takenAt, plan, hudShown(plan))
@@ -279,10 +289,10 @@ class FrameRenderer(
 
     /**
      * The number band (spec §3.4): a dark gradient over the bottom, the elevation graph (when the route has heights)
-     * with the stretch ridden in orange, and the distance, speed, altitude and heart rate; a cell without a value is
-     * left out.
+     * with the stretch ridden in orange, and the numbers of the [activity] of the segment the frame is in
+     * ([hudCells]); a cell without a value is left out.
      */
-    private fun drawHud(canvas: Canvas, values: HudValues, located: Located) {
+    private fun drawHud(canvas: Canvas, values: HudValues, located: Located, activity: ActivityType) {
         val band = hudLayout.bandTop
         canvas.drawRect(0f, band, width.toFloat(), height.toFloat(), Paint().apply {
             shader = LinearGradient(
@@ -292,12 +302,7 @@ class FrameRenderer(
         })
         if (elevation != null && graphPath != null) drawGraph(canvas, graphPath, elevation.doneFraction(located, timeline).toFloat())
 
-        val cells = buildList {
-            add(Triple("거리", RideFormat.distance(values.distanceKm * 1000).removeSuffix("km"), "km"))
-            add(Triple("속도", RideFormat.speedKmh(values.speedKmh / 3.6), "km/h"))
-            values.altitudeM?.let { add(Triple("고도", RideFormat.altitude(it).removeSuffix("m"), "m")) }
-            values.heartBpm?.let { add(Triple("심박", "$it", "bpm")) }
-        }
+        val cells = hudCells(values, activity, hasAltitude)
         val layout = FrameLayout.hud(width, height, cells.size, sizedFor = maxCells)
         val label = text(FrameStyle.HUD_LABEL_SIZE, FrameStyle.HUD_LABEL)
         // Tabular digits: a number does not shift sideways as its digits change from frame to frame.
@@ -308,10 +313,8 @@ class FrameRenderer(
         val small = text(FrameStyle.HUD_UNIT_SIZE, Color.argb(220, 255, 255, 255), align = Paint.Align.LEFT)
         val gap = 2 * unit
         // One size for every value: the largest that lets each number and its unit fit its cell.
-        val shrink = cells.indices.minOf { i ->
-            val wide = number.measureText(cells[i].second) + gap + small.measureText(cells[i].third)
-            min(1f, layout.values[i].w / wide)
-        }
+        fun withUnit(value: String, unitText: String) = number.measureText(value) + if (unitText.isEmpty()) 0f else gap + small.measureText(unitText)
+        val shrink = cells.indices.minOf { i -> min(1f, layout.values[i].w / withUnit(cells[i].second, cells[i].third)) }
         number.textSize *= shrink
         small.textSize *= shrink
         cells.forEachIndexed { i, (name, value, unitText) ->
@@ -319,10 +322,10 @@ class FrameRenderer(
             val cx = box.x + box.w / 2
             canvas.drawText(name, cx, FrameLayout.baseline(layout.labels[i]), label)
             val numberW = number.measureText(value)
-            val left = cx - (numberW + gap + small.measureText(unitText)) / 2
+            val left = cx - withUnit(value, unitText) / 2
             val baseline = FrameLayout.baseline(box)
             canvas.drawText(value, left, baseline, number)
-            canvas.drawText(unitText, left + numberW + gap, baseline, small)
+            if (unitText.isNotEmpty()) canvas.drawText(unitText, left + numberW + gap, baseline, small)
         }
     }
 
@@ -370,8 +373,17 @@ class FrameRenderer(
             )
         })
         canvas.drawText(date, cx, top, fitted(text(FrameStyle.TITLE_DATE_SIZE, bold = true), date, room).shadowed(alpha).apply { this.alpha = a })
-        canvas.drawText(inputs.rideTitle, cx, layout.nameBaseline,
-            fitted(text(FrameStyle.TITLE_NAME_SIZE, FrameStyle.TITLE_NAME), inputs.rideTitle, room).shadowed(alpha).apply { this.alpha = a })
+        // The activity's badge left of the name (spec §5.1): a rounded square of the name's size with the activity's icon.
+        val badge = FrameStyle.TITLE_BADGE_SIZE * unit
+        val badgeGap = FrameStyle.TITLE_BADGE_GAP * unit
+        val name = fitted(text(FrameStyle.TITLE_NAME_SIZE, FrameStyle.TITLE_NAME), inputs.rideTitle, room - badge - badgeGap)
+            .shadowed(alpha).apply { this.alpha = a }
+        val nameW = name.measureText(inputs.rideTitle)
+        val left = cx - (badge + badgeGap + nameW) / 2
+        // The badge is centred on the name's lowercase middle: ASCENT/2 of the text size above the baseline.
+        val badgeTop = layout.nameBaseline - FrameLayout.ASCENT * name.textSize / 2 - badge / 2
+        TitleBadge.draw(canvas, inputs.activity, left, badgeTop, badge, alpha)
+        canvas.drawText(inputs.rideTitle, left + badge + badgeGap + nameW / 2, layout.nameBaseline, name)
         canvas.drawText(distance, cx, layout.distanceBaseline,
             fitted(text(FrameStyle.TITLE_DISTANCE_SIZE, FrameStyle.ROUTE_ORANGE, bold = true), distance, room).shadowed(alpha).apply { this.alpha = a })
     }
@@ -546,29 +558,90 @@ class FrameRenderer(
 
         /** Where the closing card is drawn on a [width]×[height] frame. */
         fun outroCard(inputs: VideoInputs, width: Int, height: Int): Box =
-            OutroCardLayout.card(width, height, summaryCells(inputs.totals, segmentCount(inputs)).size)
+            OutroCardLayout.card(width, height, summaryCells(inputs.totals, segmentCount(inputs), inputs.activity).size)
 
         /**
-         * The closing card's six numbers (spec §3.7): distance, moving time, average / top speed, the average heart rate
-         * (or "주행 N회", N = [segmentCount]) and the calories (or the ascent).
+         * The closing card's numbers (spec §3.7, V1.9.0 §5.1): the activity's [rideCells], the average heart rate (or "주행 N회",
+         * N = [segmentCount]) and the calories (or the ascent; a hike has the ascent among its [rideCells] already, so
+         * without calories it has no sixth cell). The bike's six are as they were.
          */
-        internal fun summaryCells(totals: TripTotals, segmentCount: Int): List<Pair<String, String>> =
-            rideCells(totals) + heartRateOrRides(totals, segmentCount) +
-                (totals.calories?.let { "칼로리" to "${it.roundToInt()}kcal" } ?: ascentCell(totals))
+        internal fun summaryCells(totals: TripTotals, segmentCount: Int, activity: ActivityType = ActivityType.BIKE): List<Pair<String, String>> =
+            rideCells(totals, activity) + heartRateOrRides(totals, segmentCount, activity) + caloriesOrAscent(totals, activity)
 
-        /** Distance, moving time, average and top speed: the first four numbers of the closing card and the summary image. */
-        internal fun rideCells(totals: TripTotals): List<Pair<String, String>> = listOf(
-            "거리" to RideFormat.distance(totals.distanceM),
-            "이동 시간" to RideFormat.duration(totals.movingTimeMs),
-            "평균 속도" to "${RideFormat.speedKmh(totals.avgSpeedMps)}km/h",
-            "최고 속도" to "${RideFormat.speedKmh(totals.maxSpeedMps)}km/h",
-        )
+        /** The calories when known, else the ascent — unless the [activity]'s [rideCells] have it (a hike), then nothing. */
+        internal fun caloriesOrAscent(totals: TripTotals, activity: ActivityType): List<Pair<String, String>> =
+            totals.calories?.let { listOf("칼로리" to "${it.roundToInt()}kcal") }
+                ?: if (activity == ActivityType.HIKE) emptyList() else listOf(ascentCell(totals))
+
+        /**
+         * The first numbers of the closing card and the summary image for the trip's dominant [activity] (spec §5.1).
+         * A bike: distance, moving time, average and top speed. A run: distance, moving time, average pace and the fastest
+         * 1 km's pace (left out when no 1 km was run). A walk: distance, moving time, average pace and average speed. A hike:
+         * the hike time, ascent, highest point and distance. The average pace is of [TripTotals.paceDistanceM] in
+         * [TripTotals.paceMovingTimeMs] (a mixed trip: the dominant activity's segments only).
+         */
+        internal fun rideCells(totals: TripTotals, activity: ActivityType): List<Pair<String, String>> {
+            val distance = "거리" to RideFormat.distance(totals.distanceM)
+            val moving = "이동 시간" to RideFormat.duration(totals.movingTimeMs)
+            val pace = ActivityFormat.paceOf(totals.paceDistanceM ?: totals.distanceM, totals.paceMovingTimeMs ?: totals.movingTimeMs)
+            val avgPace = ActivityText.LABEL_AVG_PACE to "$pace/km"
+            return when (activity) {
+                ActivityType.BIKE -> listOf(
+                    distance,
+                    moving,
+                    "평균 속도" to "${RideFormat.speedKmh(totals.avgSpeedMps)}km/h",
+                    "최고 속도" to "${RideFormat.speedKmh(totals.maxSpeedMps)}km/h",
+                )
+                ActivityType.RUN -> listOf(distance, moving, avgPace) +
+                    listOfNotNull(totals.fastestKmMs?.let { ActivityText.LABEL_FASTEST_KM to "${ActivityFormat.paceOf(1_000.0, it)}/km" })
+                ActivityType.WALK -> listOf(distance, moving, avgPace, "평균 속도" to "${RideFormat.speedKmh(totals.avgSpeedMps)}km/h")
+                ActivityType.HIKE -> listOf(
+                    ActivityText.LABEL_HIKE_TIME to RideFormat.duration(totals.hikeElapsedMs),
+                    ActivityText.LABEL_TOTAL_ASCENT to RideFormat.altitude(totals.ascentM),
+                    ActivityText.LABEL_MAX_ALTITUDE to RideFormat.altitude(totals.maxAltitudeM),
+                    distance,
+                )
+            }
+        }
 
         internal fun ascentCell(totals: TripTotals): Pair<String, String> = "상승 고도" to RideFormat.altitude(totals.ascentM)
 
-        /** The average heart rate, or without one "주행 N회" with N = [segmentCount] ([segmentCount] of the inputs). */
-        internal fun heartRateOrRides(totals: TripTotals, segmentCount: Int): Pair<String, String> =
-            totals.avgBpm?.let { "평균 심박" to "${it}bpm" } ?: ("주행" to "${segmentCount}회")
+        /**
+         * The average heart rate, or without one "주행 N회" with N = [segmentCount] ([segmentCount] of the inputs). For the
+         * other activities the count says "활동 N회" (the trip may hold segments of another activity too).
+         */
+        internal fun heartRateOrRides(totals: TripTotals, segmentCount: Int, activity: ActivityType = ActivityType.BIKE): Pair<String, String> =
+            totals.avgBpm?.let { "평균 심박" to "${it}bpm" }
+                ?: ((if (activity == ActivityType.BIKE) "주행" else ActivityText.statsRidesWord(null)) to "${segmentCount}회")
+
+        /**
+         * The number band's cells of one frame as (label, number, unit) for the [activity] of the segment it is in
+         * (spec §5.1). A bike: distance, speed, altitude, heart rate (as they were). A run or walk: the speed becomes the
+         * pace ("5'32\"" per km). A hike: the hike time (H:MM:SS), altitude, ascent (these two only when the route has
+         * heights, [hasAltitude]) and heart rate. A cell without a value is left out.
+         */
+        internal fun hudCells(values: HudValues, activity: ActivityType, hasAltitude: Boolean = true): List<Triple<String, String, String>> =
+            buildList {
+                val altitude = values.altitudeM?.let { Triple("고도", RideFormat.altitude(it).removeSuffix("m"), "m") }
+                when (activity) {
+                    ActivityType.BIKE -> {
+                        add(Triple("거리", RideFormat.distance(values.distanceKm * 1000).removeSuffix("km"), "km"))
+                        add(Triple("속도", RideFormat.speedKmh(values.speedKmh / 3.6), "km/h"))
+                        altitude?.let(::add)
+                    }
+                    ActivityType.RUN, ActivityType.WALK -> {
+                        add(Triple("거리", RideFormat.distance(values.distanceKm * 1000).removeSuffix("km"), "km"))
+                        add(Triple(ActivityText.LABEL_PACE, ActivityFormat.pace(values.speedKmh / 3.6), "/km"))
+                        altitude?.let(::add)
+                    }
+                    ActivityType.HIKE -> {
+                        add(Triple(ActivityText.LABEL_HIKE_TIME, RideFormat.clock(values.elapsedMs), ""))
+                        altitude?.let(::add)
+                        if (hasAltitude) add(Triple(ActivityText.LABEL_TOTAL_ASCENT, RideFormat.altitude(values.ascentM).removeSuffix("m"), "m"))
+                    }
+                }
+                values.heartBpm?.let { add(Triple("심박", "$it", "bpm")) }
+            }
 
         /** The trip's target segments (the timeline numbers them 0…N−1). */
         internal fun segmentCount(inputs: VideoInputs): Int = (inputs.timeline.points.lastOrNull()?.segmentIndex ?: -1) + 1
@@ -610,10 +683,10 @@ class FrameRenderer(
         private const val ATTRIBUTION_PILL_ALPHA = 200 / 255f
 
         /** Units written smaller after a card value; durations ("1시간 0분") stay whole. Longest first. */
-        private val CARD_UNITS = listOf("km/h", "kcal", "bpm", "km", "m", "회")
-        private val NUMBER = Regex("""[\d.,]+""")
+        private val CARD_UNITS = listOf("km/h", "kcal", "bpm", "/km", "km", "m", "회")
+        private val NUMBER = Regex("""[\d.,]+|\d+'\d\d"|--'--"""")
 
-        /** "18.0km/h" → ("18.0", "km/h"); a value without a known unit after a plain number stays whole. */
+        /** "18.0km/h" → ("18.0", "km/h"), "5'32\"/km" → ("5'32\"", "/km"); a value without a known unit after a plain number stays whole. */
         internal fun splitUnit(value: String): Pair<String, String> {
             val unitText = CARD_UNITS.firstOrNull { value.endsWith(it) && NUMBER.matches(value.removeSuffix(it)) } ?: return value to ""
             return value.removeSuffix(unitText) to unitText

@@ -1,6 +1,6 @@
 package com.cowork.bikerecoder.importing
 
-import com.cowork.bikerecoder.core.importing.Activity
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.importing.GpxReadException
 import com.cowork.bikerecoder.core.importing.GpxReader
 import com.cowork.bikerecoder.core.importing.GpxTrack
@@ -25,7 +25,7 @@ data class RideKey(val sourceIndex: Int, val itemIndex: Int)
 
 /**
  * One row of the review list (spec §1.2), a summary only (spec §3.3): the job reads the file again to save it.
- * An unreadable row has no times, no distance, no activity and no preview; its [fileName] is the first line.
+ * An unreadable row has no times, no distance and no preview (its [activity] is the unused default [ActivityType.BIKE]); its [fileName] is the first line.
  */
 data class ScanRow(
     val key: RideKey,
@@ -34,7 +34,8 @@ data class ScanRow(
     val endedAt: Long?,
     val distanceM: Double,
     val movingTimeMs: Long,
-    val activity: Activity?,
+    /** The file's type (spec V1.9.0 §5.3), or the one picked in the list: the job replays with it. */
+    val activity: ActivityType,
     val status: RideStatus,
     val preview: List<GeoPoint>,
 )
@@ -95,7 +96,7 @@ class ImportScanner(
         }
 
         val existing = store.segmentSpans(clock())
-        val statuses = ImportRules.statuses(read.map { it.span }, read.map { it.row.activity }, existing)
+        val statuses = ImportRules.statuses(read.map { it.span }, existing)
         val rows = read.mapIndexed { i, s ->
             // statuses() leaves a placeholder for unreadable rows: the row keeps its own reason.
             if (s.span == null) s.row else s.row.copy(status = statuses[i])
@@ -133,8 +134,9 @@ class ImportScanner(
         } catch (_: StackOverflowError) {
             return unreadable(key, item.name, ImportProblem.UNREADABLE)
         }
+        val activity = ImportRules.activityOf(track.type)
         val ride = try {
-            RideReplay.replay(track.fixes)
+            RideReplay.replay(track.fixes, activity = activity)
         } catch (_: OutOfMemoryError) {
             return unreadable(key, item.name, ImportProblem.TOO_LARGE)
         } catch (_: StackOverflowError) {
@@ -147,7 +149,7 @@ class ImportScanner(
             endedAt = ride.endedAt,
             distanceM = ride.totals.distanceM,
             movingTimeMs = ride.totals.movingTimeMs,
-            activity = ImportRules.activityOf(track.type),
+            activity = activity,
             status = RideStatus.New,
             preview = ImportRules.previewPoints(ride.points),
         )
@@ -155,7 +157,7 @@ class ImportScanner(
     }
 
     private fun unreadable(key: RideKey, name: String, problem: ImportProblem) = Summary(
-        ScanRow(key, name, null, null, 0.0, 0L, null, RideStatus.Unreadable(problem), emptyList()),
+        ScanRow(key, name, null, null, 0.0, 0L, ActivityType.BIKE, RideStatus.Unreadable(problem), emptyList()),
         span = null,
     )
 }

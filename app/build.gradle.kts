@@ -7,7 +7,7 @@ plugins {
 }
 
 val verMajor = 1
-val verMinor = 8
+val verMinor = 9
 val verPatch = 0
 
 val secretsFile = rootProject.file("secrets.json")

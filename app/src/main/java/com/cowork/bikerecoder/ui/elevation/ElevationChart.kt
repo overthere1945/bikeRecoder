@@ -74,6 +74,9 @@ object ElevationTags {
     const val STRIP = "elevation_strip"
     const val STRIP_FLAG = "elevation_strip_flag"
     const val LEGEND_CELL = "elevation_legend_cell"
+
+    /** The mixed trip's note standing where the speed legend would. */
+    const val LEGEND_NOTE = "elevation_legend_note"
     const val SCRUB_TEXT = "elevation_scrub_text"
     const val CLOSE = "elevation_close"
     const val MAP = "elevation_map"

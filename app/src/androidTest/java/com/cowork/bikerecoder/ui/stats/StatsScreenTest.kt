@@ -42,15 +42,18 @@ import android.view.InputDevice
 import android.view.MotionEvent
 import androidx.test.platform.app.InstrumentationRegistry
 import com.cowork.bikerecoder.WarnLog
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.post.PeriodFilter
 import com.cowork.bikerecoder.core.stats.PeriodKind
 import com.cowork.bikerecoder.core.stats.RideStat
 import com.cowork.bikerecoder.core.stats.RideStatsSource
+import com.cowork.bikerecoder.core.stats.StoredBestEffort
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -65,15 +68,27 @@ class StatsScreenTest {
     private class FakeRides(rides: List<RideStat>) : RideStatsSource {
         val flow = MutableStateFlow(rides)
         override fun observeRides(): Flow<List<RideStat>> = flow
+        override fun observeBestEfforts(): Flow<List<StoredBestEffort>> = flowOf(emptyList())
     }
 
     private class FakeGoals(weekly: Int?, yearly: Int?) : GoalSettings {
-        val flow = MutableStateFlow(GoalKm(weekly, yearly))
+        val flow = MutableStateFlow<Map<ActivityType, GoalKm>>(
+            if (weekly == null && yearly == null) emptyMap() else mapOf(ActivityType.BIKE to GoalKm(weekly, yearly)),
+        )
         val saved = mutableListOf<GoalKm>()
-        override val goals: Flow<GoalKm> = flow
-        override suspend fun setGoals(weeklyKm: Int?, yearlyKm: Int?) {
+        override val goals: Flow<Map<ActivityType, GoalKm>> = flow
+        override suspend fun setGoals(activity: ActivityType, weeklyKm: Int?, yearlyKm: Int?) {
             saved += GoalKm(weeklyKm, yearlyKm)
-            flow.value = GoalKm(weeklyKm, yearlyKm)
+            flow.value = if (weeklyKm == null && yearlyKm == null) flow.value - activity else flow.value + (activity to GoalKm(weeklyKm, yearlyKm))
+        }
+    }
+
+    /** The tests of V1.4.0 are about bike rides: the bike chip shows what the tab always showed. */
+    private class BikeChip : StatsChipSettings {
+        private val chip = MutableStateFlow<ActivityType?>(ActivityType.BIKE)
+        override val activity: Flow<ActivityType?> = chip
+        override suspend fun setActivity(type: ActivityType?) {
+            chip.value = type
         }
     }
 
@@ -118,14 +133,14 @@ class StatsScreenTest {
         scrollToTop: Int = 0,
         fontScale: Float? = null,
     ) {
-        viewModel = StatsViewModel(FakeRides(rides), goals, { LocalDate.of(2026, 10, 28) }, WarnLog { _, _ -> }, Dispatchers.Main)
+        viewModel = StatsViewModel(FakeRides(rides), goals, { LocalDate.of(2026, 10, 28) }, WarnLog { _, _ -> }, Dispatchers.Main, BikeChip())
         composeRule.setContent {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides if (fontScale == null) density else Density(density.density, fontScale)) {
                 MaterialTheme {
                     // The tab sits in the app's scaffold; here the system bars are kept off it by hand.
                     Surface(modifier = Modifier.systemBarsPadding()) {
-                        StatsScreen(viewModel, onOpenSegment = { opened += it }, onOpenCumulative = { cumulative += it }, scrollToTop = scrollToTop)
+                        StatsScreen(viewModel, onOpenSegment = { opened += it }, onOpenCumulative = { filter, _ -> cumulative += filter }, scrollToTop = scrollToTop)
                     }
                 }
             }
@@ -171,15 +186,24 @@ class StatsScreenTest {
         composeRule.waitForIdle()
     }
 
+    /**
+     * Taps bar [index] after scrolling it into view: since V1.9.0 the activity chips sit above the goal card, and on a phone
+     * the month's and week's bars start below the list's bottom (a tap there never reaches them).
+     */
+    private fun tapBar(index: Int) {
+        scrollTo(StatsTags.bar(index))
+        composeRule.onNodeWithTag(StatsTags.bar(index)).performClick()
+    }
+
     /** Review M2: before the goals have been read the tab shows nothing: no "no goal" card, no zeros. */
     @Test
     fun nothingShowsBeforeTheGoalsAreRead() {
         val unread = object : GoalSettings {
-            override val goals: Flow<GoalKm> = flow { awaitCancellation() }
-            override suspend fun setGoals(weeklyKm: Int?, yearlyKm: Int?) = Unit
+            override val goals: Flow<Map<ActivityType, GoalKm>> = flow { awaitCancellation() }
+            override suspend fun setGoals(activity: ActivityType, weeklyKm: Int?, yearlyKm: Int?) = Unit
         }
-        viewModel = StatsViewModel(FakeRides(rides), unread, { LocalDate.of(2026, 10, 28) }, WarnLog { _, _ -> }, Dispatchers.Main)
-        composeRule.setContent { MaterialTheme { StatsScreen(viewModel, onOpenSegment = {}, onOpenCumulative = {}, scrollToTop = 0) } }
+        viewModel = StatsViewModel(FakeRides(rides), unread, { LocalDate.of(2026, 10, 28) }, WarnLog { _, _ -> }, Dispatchers.Main, BikeChip())
+        composeRule.setContent { MaterialTheme { StatsScreen(viewModel, onOpenSegment = {}, onOpenCumulative = { _, _ -> }, scrollToTop = 0) } }
         composeRule.waitForIdle()
 
         composeRule.onNodeWithTag(StatsTags.LIST).assertDoesNotExist()
@@ -240,38 +264,38 @@ class StatsScreenTest {
         show()
 
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals(" ")
-        composeRule.onNodeWithTag(StatsTags.bar(3)).performClick() // 4주: 10/19~10/25
+        tapBar(3) // 4주: 10/19~10/25
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals("10월 4주 · 61.8 km")
 
-        composeRule.onNodeWithTag(StatsTags.bar(3)).performClick()
+        tapBar(3)
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals(" ")
 
-        composeRule.onNodeWithTag(StatsTags.bar(4)).performClick()
+        tapBar(4)
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals("10월 5주 · 64.3 km")
         composeRule.onNodeWithTag(StatsTags.metric(StatMetric.TIME)).performClick()
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals(" ")
-        composeRule.onNodeWithTag(StatsTags.bar(4)).performClick()
+        tapBar(4)
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals("10월 5주 · 3시간 30분")
     }
 
     @Test
     fun tappingElsewhereHidesTheBarValue() {
         show()
-        composeRule.onNodeWithTag(StatsTags.bar(3)).performClick()
+        tapBar(3)
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals("10월 4주 · 61.8 km")
 
         composeRule.onNodeWithTag(StatsTags.TITLE).performClick() // text on the background
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals(" ")
 
-        composeRule.onNodeWithTag(StatsTags.bar(3)).performClick()
+        tapBar(3)
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals("10월 4주 · 61.8 km")
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).performClick() // the value line itself
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals(" ")
 
         // A tap on the bar still toggles: on, then off (not on again).
-        composeRule.onNodeWithTag(StatsTags.bar(4)).performClick()
+        tapBar(4)
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals("10월 5주 · 64.3 km")
-        composeRule.onNodeWithTag(StatsTags.bar(4)).performClick()
+        tapBar(4)
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals(" ")
     }
 
@@ -282,7 +306,8 @@ class StatsScreenTest {
 
         // Thursday 10/29 to Sunday 11/1 are still to come.
         composeRule.onNodeWithTag(StatsTags.bar(3)).assertIsNotEnabled()
-        composeRule.onNodeWithTag(StatsTags.bar(2)).assertIsEnabled().performClick() // Wed 10/28
+        composeRule.onNodeWithTag(StatsTags.bar(2)).assertIsEnabled()
+        tapBar(2) // Wed 10/28
         composeRule.onNodeWithTag(StatsTags.BAR_VALUE).assertTextEquals("10월 28일 (수) · 0.0 km")
     }
 
@@ -414,11 +439,11 @@ class StatsScreenTest {
     @Test
     fun scrollToTopBringsTheListBackUp() {
         var tick = 0
-        viewModel = StatsViewModel(FakeRides(rides), goals, { LocalDate.of(2026, 10, 28) }, WarnLog { _, _ -> }, Dispatchers.Main)
+        viewModel = StatsViewModel(FakeRides(rides), goals, { LocalDate.of(2026, 10, 28) }, WarnLog { _, _ -> }, Dispatchers.Main, BikeChip())
         val counter = androidx.compose.runtime.mutableIntStateOf(0)
         composeRule.setContent {
             MaterialTheme {
-                StatsScreen(viewModel, onOpenSegment = {}, onOpenCumulative = {}, scrollToTop = counter.intValue)
+                StatsScreen(viewModel, onOpenSegment = {}, onOpenCumulative = { _, _ -> }, scrollToTop = counter.intValue)
             }
         }
         scrollTo(StatsTags.CUMULATIVE)

@@ -14,22 +14,24 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import com.cowork.bikerecoder.share.MAX_HASHTAGS_INPUT
 import com.cowork.bikerecoder.share.normalizeHashtags
+import com.cowork.bikerecoder.ui.activity.ActivityText
 
 /**
- * "기본 해시태그" (spec §3.5). The one-line field starts with [current] (the value in effect) and grows to at most
+ * "기본 해시태그" (spec §3.5), [title] telling which activity's (V1.9.0 spec §5.2). The one-line field starts with [current] (the value in effect) and grows to at most
  * [MAX_HASHTAGS_INPUT] characters (a longer [current] is kept whole and can only be cut down). [onSave] gets [normalizeHashtags] of the input (an empty result means "none");
  * [onDismiss] is [취소].
  */
 @Composable
 fun ShareHashtagsDialog(
     current: String,
+    title: String = ActivityText.HASHTAGS_ROW,
     onSave: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var text by remember { mutableStateOf(current) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("기본 해시태그") },
+        title = { Text(title) },
         text = {
             OutlinedTextField(
                 value = text,

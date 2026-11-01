@@ -118,6 +118,7 @@ class FakePostStore(private val segments: suspend () -> List<RideSegment>) : Pos
                     route = simplified[s.id]?.points,
                     photoCount = shown[s.id] ?: 0,
                     heartRate = if (avg != null && max != null) HeartRateStats(avg, max, e.hrDetailed) else null,
+                    activity = s.activity,
                 )
             }
     }

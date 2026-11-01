@@ -46,6 +46,14 @@ class KmlWriterTest {
     }
 
     @Test
+    fun lineNameFollowsSegmentActivity() {
+        val run = day2.copy(activity = com.cowork.bikerecoder.core.activity.ActivityType.RUN)
+        val xml = KmlWriter.trip("t", listOf(day1, run))
+        assertTrue(xml.contains("<name>2026-10-06 주행</name>"))
+        assertTrue(xml.contains("<name>2026-10-07 달리기</name>"))
+    }
+
+    @Test
     fun routeLineAndStopPoints() {
         val route = Route(
             points = listOf(GeoPoint(37.5, 127.0), GeoPoint(37.6, 127.1)),

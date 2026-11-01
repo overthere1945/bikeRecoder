@@ -165,7 +165,7 @@ class FeedScreenTest {
 
         for (text in listOf(
             "2026년 10월 · 32.1 km · 1회", "저녁 라이딩 · 서울 강서구", "10월 25일 (일) 오후 6:12",
-            "32.1 km", "1시간 45분", "123 m", "평균 18.3 km/h · ♥ 132", "+2",
+            "32.1 km", "1시간 45분", "18.3 km/h", "평균 18.3 km/h · ♥ 132", "+2",
         )) {
             composeRule.onNodeWithText(text).assertIsDisplayed()
         }
@@ -352,7 +352,8 @@ class FeedScreenTest {
 
     @Test
     fun reachedGoalSaysAchieved() {
-        show(strip = strip.copy(distanceM = 100_500.0))
+        // The ring is the bike's distance (plan P10): copy() keeps the old goalDistanceM unless it is given too.
+        show(strip = strip.copy(distanceM = 100_500.0, goalDistanceM = 100_500.0))
 
         composeRule.onNodeWithContentDescription("100 / 100 km 달성", useUnmergedTree = true).assertIsDisplayed()
     }
@@ -367,7 +368,11 @@ class FeedScreenTest {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale = 2f)) {
                 MaterialTheme {
-                    WeekStrip(strip.copy(distanceM = 10_234_900.0, weeklyGoalKm = 10_000), onOpenStatsWeek = {}, onSetGoals = {})
+                    WeekStrip(
+                        strip.copy(distanceM = 10_234_900.0, goalDistanceM = 10_234_900.0, weeklyGoalKm = 10_000),
+                        onOpenStatsWeek = {},
+                        onSetGoals = {},
+                    )
                 }
             }
         }

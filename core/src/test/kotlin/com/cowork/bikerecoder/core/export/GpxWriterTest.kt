@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.core.export
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.Route
 import com.cowork.bikerecoder.core.model.RouteProfile
@@ -26,8 +27,12 @@ class GpxWriterTest {
     private fun tp(offsetMs: Long, lat: Double = 37.1234567, lon: Double = 127.7654321, alt: Double? = 12.34) =
         TrackPoint(timeMillis = t0 + offsetMs, point = GeoPoint(lat, lon), altitudeM = alt, speedMps = 5f, accuracyM = 5f)
 
-    private fun seg(points: List<TrackPoint>, hr: List<HeartRateSample> = emptyList(), date: LocalDate = LocalDate.of(2026, 10, 6)) =
-        ExportSegment(startedAt = points.first().timeMillis, localDate = date, points = points, heartRate = hr)
+    private fun seg(
+        points: List<TrackPoint>,
+        hr: List<HeartRateSample> = emptyList(),
+        date: LocalDate = LocalDate.of(2026, 10, 6),
+        activity: ActivityType = ActivityType.BIKE,
+    ) = ExportSegment(startedAt = points.first().timeMillis, localDate = date, points = points, heartRate = hr, activity = activity)
 
     private fun assertWellFormed(xml: String) {
         DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
@@ -52,6 +57,71 @@ class GpxWriterTest {
         assertEquals(2, Regex("<trkseg>").findAll(xml).count())
         assertEquals(1, Regex("<trk>").findAll(xml).count())
         assertEquals(4, Regex("<trkpt ").findAll(xml).count())
+    }
+
+    /** The output of V1.8.0 for a bike-only trip of two segments, written out by hand: it must not change. */
+    @Test
+    fun bikeOnlyTripUnchanged() {
+        val day1 = seg(listOf(tp(0), tp(1_000, alt = null)), hr = listOf(HeartRateSample(t0 + 1_000, 150)))
+        val day2 = seg(listOf(tp(86_400_000, lat = 37.2)), date = LocalDate.of(2026, 10, 7))
+        val xml = GpxWriter.trip("이틀 & 라이딩", listOf(day1, day2), "bikeRecoder 1.8.0", exportedAt)
+        val expected = """<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="bikeRecoder 1.8.0" xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1">
+<metadata><name>이틀 &amp; 라이딩</name><time>2026-10-31T09:00:00Z</time></metadata>
+<trk><name>이틀 &amp; 라이딩</name><type>cycling</type>
+<trkseg>
+<trkpt lat="37.1234567" lon="127.7654321"><ele>12.3</ele><time>2026-10-06T01:02:03Z</time><extensions><gpxtpx:TrackPointExtension><gpxtpx:hr>150</gpxtpx:hr></gpxtpx:TrackPointExtension></extensions></trkpt>
+<trkpt lat="37.1234567" lon="127.7654321"><time>2026-10-06T01:02:04Z</time><extensions><gpxtpx:TrackPointExtension><gpxtpx:hr>150</gpxtpx:hr></gpxtpx:TrackPointExtension></extensions></trkpt>
+</trkseg>
+<trkseg>
+<trkpt lat="37.2000000" lon="127.7654321"><ele>12.3</ele><time>2026-10-07T01:02:03Z</time></trkpt>
+</trkseg>
+</trk>
+</gpx>
+"""
+        assertEquals(expected, xml)
+    }
+
+    @Test
+    fun typeChangesStartNewTrk() {
+        val bike1 = seg(listOf(tp(0), tp(1_000)))
+        val bike2 = seg(listOf(tp(2_000), tp(3_000)))
+        val walk = seg(listOf(tp(4_000), tp(5_000)), activity = ActivityType.WALK)
+        val xml = GpxWriter.trip("섞인 여행", listOf(bike1, bike2, walk), "c", exportedAt)
+        assertWellFormed(xml)
+        assertEquals(2, Regex("<trk>").findAll(xml).count())
+        assertEquals(3, Regex("<trkseg>").findAll(xml).count())
+        assertEquals(
+            listOf("cycling", "walking"),
+            Regex("<type>([a-z]+)</type>").findAll(xml).map { it.groupValues[1] }.toList(),
+        )
+        // 같은 제목이 두 <trk>에 모두 들어간다.
+        assertEquals(2, Regex("<trk><name>섞인 여행</name>").findAll(xml).count())
+        // 종류가 바뀌는 곳에서 <trk>가 닫히고 열린다.
+        assertTrue(xml.contains("</trkseg>\n</trk>\n<trk><name>섞인 여행</name><type>walking</type>\n<trkseg>"), xml)
+    }
+
+    @Test
+    fun returningToAnActivityStartsAnotherTrk() {
+        val xml = GpxWriter.trip(
+            "t",
+            listOf(
+                seg(listOf(tp(0))),
+                seg(listOf(tp(1_000)), activity = ActivityType.RUN),
+                seg(listOf(tp(2_000))),
+            ),
+            "c",
+            exportedAt,
+        )
+        assertEquals(listOf("cycling", "running", "cycling"), Regex("<type>([a-z]+)</type>").findAll(xml).map { it.groupValues[1] }.toList())
+    }
+
+    @Test
+    fun hikeAndRunWriteTheirGpxType() {
+        val run = GpxWriter.trip("t", listOf(seg(listOf(tp(0)), activity = ActivityType.RUN)), "c", exportedAt)
+        val hike = GpxWriter.trip("t", listOf(seg(listOf(tp(0)), activity = ActivityType.HIKE)), "c", exportedAt)
+        assertTrue(run.contains("<type>running</type>"))
+        assertTrue(hike.contains("<type>hiking</type>"))
     }
 
     @Test

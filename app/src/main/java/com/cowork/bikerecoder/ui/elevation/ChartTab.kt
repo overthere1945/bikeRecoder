@@ -19,6 +19,9 @@ enum class ChartTab(val arg: String) {
             HEART_RATE -> ChartText.TITLE_HEART
         }
 
+    /** The tab's text for the speed chart's [style]: the speed tab of a run or walk alone reads 페이스. */
+    fun titleFor(style: SpeedChartStyle): String = if (this == SPEED) ChartText.title(style) else title
+
     /** The test tag of the tab's button. */
     val tag: String get() = "chart_tab_$arg"
 
@@ -33,9 +36,10 @@ enum class ChartTab(val arg: String) {
 
 /**
  * The speed or heart-rate legend (V1.8.0 spec §3): each band's text with its "#RRGGBB", slowest / lowest first. Heart
- * rate pairs [ChartText.HEART_LEGEND] with [HrBand] BLUE to RED (NONE, no sample, has no cell).
+ * rate pairs [ChartText.HEART_LEGEND] with [HrBand] BLUE to RED (NONE, no sample, has no cell). The speed legend follows
+ * the activity of [style] (V1.9.0 spec §3.5); a mixed trip has none.
  */
-internal fun metricLegend(kind: MetricKind): List<Pair<String, String>> = when (kind) {
-    MetricKind.SPEED -> ChartText.SPEED_LEGEND.zip(SpeedBand.entries.map { it.hex })
+internal fun metricLegend(kind: MetricKind, style: SpeedChartStyle = SpeedChartStyle.BIKE): List<Pair<String, String>> = when (kind) {
+    MetricKind.SPEED -> ChartText.speedLegend(style).zip(SpeedBand.entries.map { it.hex })
     MetricKind.HEART_RATE -> ChartText.HEART_LEGEND.zip(HrBand.entries.filter { it != HrBand.NONE }.map { it.colorHex })
 }

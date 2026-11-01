@@ -1,5 +1,7 @@
 package com.cowork.bikerecoder.core.stats
 
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.activity.BestEffortDistance
 import org.junit.jupiter.api.Test
 import java.time.LocalDate
 import kotlin.test.assertEquals
@@ -20,9 +22,15 @@ class RideRecordsTest {
         ascentM: Double = 0.0,
         startedAt: Long = nextId * 1_000,
         tripId: Long = 1L,
+        activity: ActivityType = ActivityType.BIKE,
+        elapsedMs: Long = 0L,
+        maxAltitudeM: Double? = null,
     ): RideStat {
         val id = nextId++
-        return RideStat(id, tripId, startedAt, date, distanceM, movingMs, ascentM)
+        return RideStat(
+            id, tripId, startedAt, date, distanceM, movingMs, ascentM,
+            activity = activity, elapsedMs = elapsedMs, maxAltitudeM = maxAltitudeM,
+        )
     }
 
     // 2026-10-31(토)이 든 주는 10-26(월)~11-01(일)
@@ -248,5 +256,115 @@ class RideRecordsTest {
         val third = ride(d(2026, 10, 3), distanceM = 5_000.0, movingMs = 1_000L, ascentM = 3.0)
         val result = RideRecords.newRecords(listOf(first, second, third), third.segmentId)
         assertTrue(RideRecordKind.LONGEST_TIME in result && RideRecordKind.MOST_ASCENT in result)
+    }
+
+    // ---- V1.9.0: 종류별 기록 ----
+
+    @Test
+    fun bikeRecordsUnchangedWithOtherTypes() {
+        val a = ride(d(2026, 10, 1), distanceM = 20_000.0, movingMs = 3_000_000, ascentM = 100.0)
+        val b = ride(d(2026, 10, 2), distanceM = 30_000.0, movingMs = 4_000_000, ascentM = 200.0)
+        val before = RideRecords.rideRecords(listOf(a, b))
+        val longerWalk = ride(d(2026, 10, 3), distanceM = 99_000.0, movingMs = 90_000_000, ascentM = 900.0, activity = ActivityType.WALK)
+        val longerWalk2 = ride(d(2026, 10, 4), distanceM = 98_000.0, movingMs = 80_000_000, ascentM = 800.0, activity = ActivityType.WALK)
+        val after = RideRecords.rideRecords(listOf(a, b, longerWalk, longerWalk2))
+        assertEquals(before, after)
+        assertEquals(4, after.size)
+        assertTrue(after.all { it.kind.activity == ActivityType.BIKE })
+        assertEquals(setOf(a.tripId), RideRecords.recordHolderTrips(listOf(a, b)))
+    }
+
+    @Test
+    fun otherActivitiesNeedTwoRidesOfTheirOwn() {
+        val bike1 = ride(d(2026, 10, 1)); val bike2 = ride(d(2026, 10, 2))
+        val run = ride(d(2026, 10, 3), activity = ActivityType.RUN)
+        assertTrue(RideRecords.rideRecords(listOf(bike1, bike2, run), emptyList(), ActivityType.RUN).isEmpty())
+    }
+
+    @Test
+    fun runBestEffortRecord() {
+        val r1 = ride(d(2026, 10, 1), distanceM = 6_000.0, activity = ActivityType.RUN)
+        val r2 = ride(d(2026, 10, 2), distanceM = 12_000.0, activity = ActivityType.RUN)
+        val efforts = listOf(
+            StoredBestEffort(r1.segmentId, BestEffortDistance.FIVE_K, 1_600_000),
+            StoredBestEffort(r2.segmentId, BestEffortDistance.FIVE_K, 1_500_000),
+            StoredBestEffort(r2.segmentId, BestEffortDistance.TEN_K, 3_300_000),
+        )
+        val records = RideRecords.rideRecords(listOf(r1, r2), efforts, ActivityType.RUN).associateBy { it.kind }
+        assertEquals(r2, records.getValue(RideRecordKind.RUN_LONGEST_DISTANCE).ride)
+        assertEquals(r2, records.getValue(RideRecordKind.RUN_BEST_5K).ride)
+        assertEquals(1_500_000.0, records.getValue(RideRecordKind.RUN_BEST_5K).value)
+        assertEquals(r2, records.getValue(RideRecordKind.RUN_BEST_10K).ride)
+        assertNull(records[RideRecordKind.RUN_BEST_1K])
+        assertNull(records[RideRecordKind.RUN_BEST_HALF])
+    }
+
+    @Test
+    fun bestEffortLowerIsBetter() {
+        assertTrue(RideRecordKind.RUN_BEST_5K.lowerIsBetter)
+        assertTrue(!RideRecordKind.RUN_LONGEST_DISTANCE.lowerIsBetter)
+        val r1 = ride(d(2026, 10, 1), activity = ActivityType.RUN)
+        val r2 = ride(d(2026, 10, 2), activity = ActivityType.RUN)
+        val r3 = ride(d(2026, 10, 3), activity = ActivityType.RUN)
+        val efforts = listOf(
+            StoredBestEffort(r1.segmentId, BestEffortDistance.FIVE_K, 1_500_000),
+            StoredBestEffort(r2.segmentId, BestEffortDistance.FIVE_K, 1_600_000),
+            StoredBestEffort(r3.segmentId, BestEffortDistance.FIVE_K, 1_400_000),
+        )
+        val all = listOf(r1, r2, r3)
+        // 느린 두 번째는 신기록이 아니고, 더 빠른 세 번째는 신기록이다.
+        assertTrue(RideRecordKind.RUN_BEST_5K !in RideRecords.newRecords(all, efforts, r2.segmentId))
+        assertTrue(RideRecordKind.RUN_BEST_5K in RideRecords.newRecords(all, efforts, r3.segmentId))
+        // 같은 시간이면 먼저 세운 구간이 기록을 갖고 신기록은 아니다.
+        val tie = efforts.filter { it.segmentId != r3.segmentId } + StoredBestEffort(r3.segmentId, BestEffortDistance.FIVE_K, 1_500_000)
+        assertTrue(RideRecordKind.RUN_BEST_5K !in RideRecords.newRecords(all, tie, r3.segmentId))
+        assertEquals(r1, RideRecords.rideRecords(all, tie, ActivityType.RUN).single { it.kind == RideRecordKind.RUN_BEST_5K }.ride)
+    }
+
+    @Test
+    fun hikeRecords() {
+        val a = ride(d(2026, 10, 1), ascentM = 400.0, elapsedMs = 5_000_000, maxAltitudeM = 800.0, activity = ActivityType.HIKE)
+        val b = ride(d(2026, 10, 2), ascentM = 900.0, elapsedMs = 4_000_000, maxAltitudeM = 700.0, activity = ActivityType.HIKE)
+        val c = ride(d(2026, 10, 3), ascentM = 100.0, elapsedMs = 9_000_000, maxAltitudeM = null, activity = ActivityType.HIKE)
+        val records = RideRecords.rideRecords(listOf(a, b, c), emptyList(), ActivityType.HIKE).associateBy { it.kind }
+        assertEquals(b, records.getValue(RideRecordKind.HIKE_MOST_ASCENT).ride)
+        assertEquals(a, records.getValue(RideRecordKind.HIKE_HIGHEST).ride)
+        assertEquals(800.0, records.getValue(RideRecordKind.HIKE_HIGHEST).value)
+        assertEquals(c, records.getValue(RideRecordKind.HIKE_LONGEST_ELAPSED).ride)
+        assertEquals(3, records.size)
+    }
+
+    @Test
+    fun walkRecords() {
+        val a = ride(d(2026, 10, 1), distanceM = 3_000.0, movingMs = 2_000_000, activity = ActivityType.WALK)
+        val b = ride(d(2026, 10, 2), distanceM = 2_000.0, movingMs = 3_000_000, activity = ActivityType.WALK)
+        val records = RideRecords.rideRecords(listOf(a, b), emptyList(), ActivityType.WALK).associateBy { it.kind }
+        assertEquals(a, records.getValue(RideRecordKind.WALK_LONGEST_DISTANCE).ride)
+        assertEquals(b, records.getValue(RideRecordKind.WALK_LONGEST_TIME).ride)
+    }
+
+    @Test
+    fun newRecordComparesSameTypeOnly() {
+        val bike = ride(d(2026, 10, 1), distanceM = 50_000.0)
+        val walk1 = ride(d(2026, 10, 2), distanceM = 3_000.0, activity = ActivityType.WALK)
+        val walk2 = ride(d(2026, 10, 3), distanceM = 4_000.0, activity = ActivityType.WALK)
+        val all = listOf(bike, walk1, walk2)
+        // 자전거 50 km가 있어도 걷기 4 km는 걷기끼리 비교해 신기록이다. 자전거 항목은 나오지 않는다.
+        val kinds = RideRecords.newRecords(all, emptyList(), walk2.segmentId)
+        assertTrue(RideRecordKind.WALK_LONGEST_DISTANCE in kinds)
+        assertTrue(kinds.all { it.activity == ActivityType.WALK })
+        // 걷기가 처음이면(자전거만 앞서 있으면) 신기록 줄은 없다.
+        assertTrue(RideRecords.newRecords(all, emptyList(), walk1.segmentId).isEmpty())
+        // 두 인자 형태는 efforts가 없는 같은 계산이다.
+        assertEquals(kinds, RideRecords.newRecords(all, walk2.segmentId))
+    }
+
+    @Test
+    fun recordHolderTripsCountAnyActivity() {
+        val r1 = ride(d(2026, 10, 1), distanceM = 6_000.0, activity = ActivityType.RUN, tripId = 5)
+        val r2 = ride(d(2026, 10, 2), distanceM = 7_000.0, activity = ActivityType.RUN, tripId = 6)
+        val efforts = listOf(StoredBestEffort(r1.segmentId, BestEffortDistance.FIVE_K, 1_500_000))
+        assertEquals(setOf(5L, 6L), RideRecords.recordHolderTrips(listOf(r1, r2), efforts))
+        assertEquals(setOf(6L), RideRecords.recordHolderTrips(listOf(r1, r2)))
     }
 }

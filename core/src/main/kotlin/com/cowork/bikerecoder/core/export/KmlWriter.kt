@@ -16,7 +16,7 @@ object KmlWriter {
     private const val LINE_COLOR = "ffff0000"
     private const val LINE_WIDTH = 4
 
-    /** 여행 KML. 구간마다 `{yyyy-MM-dd} 주행` 선, 첫 구간 시작점 `출발`, 마지막 구간 끝점 `도착`. */
+    /** 여행 KML. 구간마다 `{yyyy-MM-dd} {주행|걷기|달리기|등산}` 선, 첫 구간 시작점 `출발`, 마지막 구간 끝점 `도착`. */
     fun trip(title: String, segments: List<ExportSegment>): String {
         val sb = StringBuilder(1024)
         header(sb, title)
@@ -25,7 +25,7 @@ object KmlWriter {
         }
         for ((segment, points) in lines) {
             if (points.size < 2) continue
-            line(sb, ExportLabels.rideName(segment.localDate), points.map { it.point to it.altitudeM })
+            line(sb, ExportLabels.rideName(segment.localDate, segment.activity), points.map { it.point to it.altitudeM })
         }
         val first = lines.firstOrNull { it.second.isNotEmpty() }?.second?.first()
         val last = lines.lastOrNull { it.second.isNotEmpty() }?.second?.last()

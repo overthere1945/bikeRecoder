@@ -1,5 +1,7 @@
 package com.cowork.bikerecoder.ui.record
 
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.activity.BestEffortDistance
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.post.HeartRateSample
@@ -8,6 +10,7 @@ import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.core.stats.RideStat
+import com.cowork.bikerecoder.core.stats.StoredBestEffort
 import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripType
@@ -20,6 +23,7 @@ import com.cowork.bikerecoder.post.FakePostStore
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.ride.FakeRideStore
 import com.cowork.bikerecoder.ride.ShortRides
+import com.cowork.bikerecoder.ui.stats.GoalKm
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.TestScope
@@ -479,13 +483,25 @@ class SummaryExtrasTest {
     // --- 구간 요약의 목표 달성·신기록 줄 (spec §3.1, §3.4) ---
 
     private val stats = MutableStateFlow<List<RideStat>>(emptyList())
-    private val goals = MutableStateFlow<Pair<Int?, Int?>>(null to null)
+    private val goalMap = MutableStateFlow<Map<ActivityType, GoalKm>>(emptyMap())
+    private val efforts = MutableStateFlow<List<StoredBestEffort>>(emptyList())
+
+    /** The bike's weekly and yearly goal (null = none), as the settings had them before V1.9.0. */
+    private var goals: Pair<Int?, Int?>
+        get() = goalMap.value[ActivityType.BIKE]?.let { it.weekly to it.yearly } ?: (null to null)
+        set(value) {
+            goalMap.value = goalMap.value + (ActivityType.BIKE to GoalKm(value.first, value.second))
+        }
 
     /** A finished ride of [distanceM] on 2026-10-28 (a Wednesday); [id] is the summary's segment. */
     private fun ride(
         id: Long, distanceM: Double, startedAt: Long = id * 1_000_000L, date: LocalDate = LocalDate.of(2026, 10, 28),
         movingTimeMs: Long = 600_000L, ascentM: Double = 0.0,
-    ) = RideStat(id, TRIP, startedAt, date, distanceM, movingTimeMs, ascentM)
+        activity: ActivityType = ActivityType.BIKE, elapsedMs: Long = 0L, maxAltitudeM: Double? = null,
+    ) = RideStat(
+        id, TRIP, startedAt, date, distanceM, movingTimeMs, ascentM,
+        activity = activity, elapsedMs = elapsedMs, maxAltitudeM = maxAltitudeM,
+    )
 
     private fun TestScope.statsExtras(): SummaryExtras {
         val processor = PostProcessor(
@@ -493,14 +509,14 @@ class SummaryExtrasTest {
         )
         return SummaryExtras(
             shown, store, processor, shortRides, backgroundScope,
-            rideStats = stats, goals = goals, computeContext = kotlin.coroutines.EmptyCoroutineContext,
+            rideStats = stats, goals = goalMap, bestEfforts = efforts, computeContext = kotlin.coroutines.EmptyCoroutineContext,
         )
     }
 
     @Test
     fun weeklyGoalCrossedShowsLine() = runTest {
         val extras = statsExtras()
-        goals.value = 100 to 1_000
+        goals = 100 to 1_000
         stats.value = listOf(ride(1, 95_000.0, date = LocalDate.of(2026, 10, 26)), ride(2, 10_000.0))
         shown.value = 2
         runCurrent()
@@ -510,7 +526,7 @@ class SummaryExtrasTest {
     @Test
     fun yearlyGoalLineGroupsThousands() = runTest {
         val extras = statsExtras()
-        goals.value = null to 1_000
+        goals = null to 1_000
         stats.value = listOf(ride(1, 995_000.0, date = LocalDate.of(2026, 3, 2)), ride(2, 10_000.0))
         shown.value = 2
         runCurrent()
@@ -520,7 +536,7 @@ class SummaryExtrasTest {
     @Test
     fun alreadyAboveGoalNoLine() = runTest {
         val extras = statsExtras()
-        goals.value = 100 to null
+        goals = 100 to null
         stats.value = listOf(ride(1, 120_000.0, date = LocalDate.of(2026, 10, 26)), ride(2, 10_000.0))
         shown.value = 2
         runCurrent()
@@ -548,7 +564,7 @@ class SummaryExtrasTest {
     @Test
     fun shortRideNoLines() = runTest {
         val extras = statsExtras()
-        goals.value = 1 to 1
+        goals = 1 to 1
         stats.value = listOf(ride(1, 20_000.0, date = LocalDate.of(2026, 10, 1)), ride(2, 5.0))
         shown.value = 2
         runCurrent()
@@ -558,7 +574,7 @@ class SummaryExtrasTest {
     @Test
     fun noLinesBeforeTheSegmentIsClosed() = runTest {
         val extras = statsExtras()
-        goals.value = 1 to 1
+        goals = 1 to 1
         stats.value = listOf(ride(1, 4_000.0, date = LocalDate.of(2026, 10, 1)))
         shown.value = 2
         runCurrent()
@@ -575,7 +591,7 @@ class SummaryExtrasTest {
     @Test
     fun linesOrder() = runTest {
         val extras = statsExtras()
-        goals.value = 40 to 40
+        goals = 40 to 40
         stats.value = listOf(
             ride(1, 20_000.0, date = LocalDate.of(2026, 10, 27), movingTimeMs = 3_600_000L, ascentM = 10.0),
             ride(2, 30_000.0, movingTimeMs = 7_200_000L, ascentM = 50.0),
@@ -591,12 +607,72 @@ class SummaryExtrasTest {
         )
     }
 
+    // --- V1.9.0: per-activity goals and records (P16) ---
+
+    @Test
+    fun goalLinesUseTheSegmentsOwnActivity() = runTest {
+        val extras = statsExtras()
+        // A 100 km bike goal and a 5 km run goal; the run crosses its own and not the bike's.
+        goalMap.value = mapOf(ActivityType.BIKE to GoalKm(100, null), ActivityType.RUN to GoalKm(5, null))
+        stats.value = listOf(
+            ride(1, 95_000.0, date = LocalDate.of(2026, 10, 26)),
+            ride(2, 3_000.0, date = LocalDate.of(2026, 10, 27), activity = ActivityType.RUN),
+            ride(3, 3_000.0, activity = ActivityType.RUN),
+        )
+        shown.value = 3
+        runCurrent()
+        assertEquals(listOf("이번 주 목표 5 km 달성"), extras.state.value.achievements)
+        // Another activity's goal does not count a run, and the bike week is not run kilometres.
+        goalMap.value = mapOf(ActivityType.BIKE to GoalKm(1, 1), ActivityType.WALK to GoalKm(1, 1))
+        runCurrent()
+        assertEquals(emptyList<String>(), extras.state.value.achievements)
+    }
+
+    @Test
+    fun runBestEffortLineHasTheTime() = runTest {
+        val extras = statsExtras()
+        stats.value = listOf(
+            ride(1, 6_000.0, date = LocalDate.of(2026, 10, 1), activity = ActivityType.RUN),
+            ride(2, 6_000.0, activity = ActivityType.RUN),
+        )
+        efforts.value = listOf(
+            StoredBestEffort(1, BestEffortDistance.FIVE_K, 1_600_000),
+            StoredBestEffort(2, BestEffortDistance.FIVE_K, 1_491_000),
+        )
+        shown.value = 2
+        runCurrent()
+        assertEquals(listOf("🏆 5 km 최고 기록 24'51\""), extras.state.value.achievements)
+    }
+
+    @Test
+    fun hikeAndWalkRecordLines() = runTest {
+        val extras = statsExtras()
+        stats.value = listOf(
+            ride(1, 6_000.0, date = LocalDate.of(2026, 10, 1), ascentM = 100.0, activity = ActivityType.HIKE, elapsedMs = 1_000_000, maxAltitudeM = 300.0),
+            ride(2, 6_000.0, ascentM = 200.0, activity = ActivityType.HIKE, elapsedMs = 2_000_000, maxAltitudeM = 400.0),
+            ride(3, 6_000.0, date = LocalDate.of(2026, 10, 2), movingTimeMs = 100_000, activity = ActivityType.WALK),
+            ride(4, 6_001.0, movingTimeMs = 200_000, activity = ActivityType.WALK),
+        )
+        shown.value = 2
+        runCurrent()
+        assertEquals(
+            listOf("🏆 가장 많이 오른 등산", "🏆 가장 높이 오른 등산", "🏆 가장 긴 산행"),
+            extras.state.value.achievements,
+        )
+        shown.value = 4
+        runCurrent()
+        assertEquals(
+            listOf("🏆 가장 긴 걷기 신기록", "🏆 가장 오래 걸은 걷기 신기록"),
+            extras.state.value.achievements,
+        )
+    }
+
     @Test
     fun noLinesWhileAskingAboutAShortRideOrDiscarding() = runTest {
         // A segment of 100 m asked about as short is not possible; use a real short segment in the store.
         val (id, _) = setup(SHORT)
         val extras = statsExtras()
-        goals.value = 1 to 1
+        goals = 1 to 1
         stats.value = listOf(ride(id - 1, 20_000.0, date = LocalDate.of(2026, 10, 1)), ride(id, 30_000.0))
         shown.value = id
         runCurrent()

@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.nav
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.navigation.NavState
 import com.cowork.bikerecoder.core.navigation.Progress
@@ -67,7 +68,12 @@ class NavNotificationsTest {
         assertFalse(NavNotifications.canPost(sdkInt = 36, notificationsEnabled = false, postPermissionGranted = true))
     }
 
-    private fun recording(state: RecordingState = RecordingState.Recording, distanceM: Double = 3_010.0) = RideUiState.Active(
+    private fun recording(
+        state: RecordingState = RecordingState.Recording,
+        distanceM: Double = 3_010.0,
+        activity: ActivityType = ActivityType.BIKE,
+        sunsetMillis: Long? = null,
+    ) = RideUiState.Active(
         tripId = 1,
         tripType = TripType.SINGLE_DAY,
         segmentId = 7,
@@ -78,6 +84,8 @@ class NavNotificationsTest {
         fix = null,
         gpsWeak = false,
         saveWarning = null,
+        activity = activity,
+        sunsetMillis = sunsetMillis,
     )
 
     private val guiding = active(Progress(500.0, 0.0, 1_900.0, route.instructions.first(), 300.0))
@@ -156,5 +164,40 @@ class NavNotificationsTest {
         assertEquals(InterruptedNotice(null), NavNotifications.interruptedNotice(trip, 0, 1))
         assertEquals(InterruptedNotice(null), NavNotifications.interruptedNotice(null, 0, 1))
         assertNull(NavNotifications.interruptedNotice(null, 0, 0))
+    }
+
+    @Test
+    fun titleSaysActivity() {
+        fun title(type: ActivityType) = NavNotifications.rideNotice(NavUiState.Idle, recording(activity = type))?.title
+
+        assertEquals("주행 기록 중", title(ActivityType.BIKE))
+        assertEquals("걷기 기록 중", title(ActivityType.WALK))
+        assertEquals("달리기 기록 중", title(ActivityType.RUN))
+        assertEquals("등산 기록 중", title(ActivityType.HIKE))
+        assertEquals(
+            RideNotice("등산 기록 중", "기록을 준비하는 중…"),
+            NavNotifications.rideNotice(NavUiState.Idle, RideUiState.Starting(1, ActivityType.HIKE)),
+        )
+        val paused = recording(RecordingState.Paused(PauseKind.MANUAL), activity = ActivityType.RUN)
+        assertEquals("일시정지됨", NavNotifications.rideNotice(NavUiState.Idle, paused)?.title)
+    }
+
+    @Test
+    fun hikeBodyShowsSunsetFromOneHour() {
+        val sunset = 10_000_000L
+        val minute = 60_000L
+        fun text(now: Long, activity: ActivityType = ActivityType.HIKE) = NavNotifications.rideNotice(
+            NavUiState.Idle,
+            recording(activity = activity, sunsetMillis = sunset),
+            nowMillis = now,
+        )?.text
+
+        assertEquals("3.0km · 이동 10분", text(sunset - 61 * minute))
+        assertEquals("3.0km · 이동 10분 · 일몰까지 1시간 0분", text(sunset - 60 * minute))
+        assertEquals("3.0km · 이동 10분 · 일몰까지 9분", text(sunset - 9 * minute - 1))
+        assertEquals("3.0km · 이동 10분 · 일몰 지남", text(sunset + minute))
+        assertEquals("3.0km · 이동 10분", text(sunset + minute, ActivityType.RUN), "hikes only")
+        val unknown = recording(activity = ActivityType.HIKE, sunsetMillis = null)
+        assertEquals("3.0km · 이동 10분", NavNotifications.rideNotice(NavUiState.Idle, unknown, nowMillis = sunset)?.text)
     }
 }

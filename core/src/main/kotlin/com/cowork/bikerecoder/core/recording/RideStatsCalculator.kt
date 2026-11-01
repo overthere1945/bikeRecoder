@@ -12,6 +12,7 @@ class RideStatsCalculator(
     private val gpsGapMs: Long = 10_000,
     private val minGapSpeedMps: Double = 3.0 / 3.6,
     private val windowMs: Long = 3_000,
+    private val recentWindowMs: Long = 30_000,
 ) {
     var distanceM: Double = 0.0
         private set
@@ -30,8 +31,18 @@ class RideStatsCalculator(
     val avgSpeedMps: Double
         get() = if (movingTimeMs > 0) distanceM / (movingTimeMs / 1000.0) else 0.0
 
+    /**
+     * 기록 중 사슬의 최근 [recentWindowMs] 동안의 (이동 거리 ÷ 시간). 창 안 점이 2개 미만이면 null.
+     * 거리는 [distanceM]에 실제로 더해진 만큼만 센다(끊김으로 버린 구간은 더하지 않는다).
+     */
+    var recentSpeedMps: Double? = null
+        private set
+
     private var prev: LocationFix? = null
     private val window = ArrayDeque<Pair<Long, Double>>()
+
+    /** (시각, 그 점까지의 누적 [distanceM]). */
+    private val recent = ArrayDeque<Pair<Long, Double>>()
 
     fun add(fix: LocationFix, speedMps: Double) {
         val p = prev
@@ -51,6 +62,15 @@ class RideStatsCalculator(
         window.addLast(t to speedMps)
         while (window.isNotEmpty() && window.first().first <= t - windowMs) window.removeFirst()
 
+        recent.addLast(t to distanceM)
+        while (recent.isNotEmpty() && recent.first().first <= t - recentWindowMs) recent.removeFirst()
+        val recentDtSec = (recent.last().first - recent.first().first) / 1000.0
+        recentSpeedMps = if (recent.size >= 2 && recentDtSec > 0) {
+            (recent.last().second - recent.first().second) / recentDtSec
+        } else {
+            null
+        }
+
         currentSpeedMps = window.sumOf { it.second } / window.size
         if (window.size >= 2) {
             val sorted = window.map { it.second }.sorted()
@@ -63,6 +83,8 @@ class RideStatsCalculator(
     fun breakChain() {
         prev = null
         window.clear()
+        recent.clear()
+        recentSpeedMps = null
         currentSpeedMps = 0.0
     }
 }

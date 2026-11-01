@@ -4,15 +4,18 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.util.Log
+import androidx.compose.ui.graphics.toArgb
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.cowork.bikerecoder.BuildConfig
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.video.Aspect
 import com.cowork.bikerecoder.core.video.VideoOptions
 import com.cowork.bikerecoder.feed.AndroidBitmapWebp
 import com.cowork.bikerecoder.map.OpenFreeMapSource
 import com.cowork.bikerecoder.map.TileSource
+import com.cowork.bikerecoder.ui.activity.ActivityStyle
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
@@ -61,7 +64,11 @@ class FeedThumbnailRendererTest {
     private fun Bitmap.count(left: Int, top: Int, right: Int, bottom: Int, match: (Int) -> Boolean) =
         VideoTestTrip.count(this, left, top, right, bottom, match)
 
-    private fun orange(c: Int) = VideoTestTrip.near(c, FrameStyle.ROUTE_ORANGE, 30)
+    /**
+     * The test trip is a bike's (its inputs name no activity): since V1.9.0 the card picture draws the route in the
+     * activity's colour, the bike's orange #D85A30 (spec §2.2), not the video's [FrameStyle.ROUTE_ORANGE].
+     */
+    private fun orange(c: Int) = VideoTestTrip.near(c, ActivityStyle.color(ActivityType.BIKE).toArgb(), 30)
 
     @Test
     fun picture1280x720WithTheRouteInOrange() = runBlocking {

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -35,6 +36,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.cowork.bikerecoder.core.activity.ActivityMix
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.recording.RideSegment
@@ -49,10 +52,14 @@ import com.cowork.bikerecoder.export.ExportState
 import com.cowork.bikerecoder.importing.importedFromText
 import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.post.PhotoThumbnails
+import com.cowork.bikerecoder.ui.activity.ActivityBadge
+import com.cowork.bikerecoder.ui.activity.ActivityBadges
+import com.cowork.bikerecoder.ui.activity.ActivityText
 import com.cowork.bikerecoder.ui.elevation.ChartTab
 import com.cowork.bikerecoder.ui.elevation.ChartText
 import com.cowork.bikerecoder.ui.elevation.ElevationChart
 import com.cowork.bikerecoder.ui.elevation.MetricChart
+import com.cowork.bikerecoder.ui.elevation.SpeedChartStyle
 import com.cowork.bikerecoder.ui.health.HR_REFETCH
 import com.cowork.bikerecoder.ui.health.HeartRateAccess
 import com.cowork.bikerecoder.ui.health.HeartRateGate
@@ -63,7 +70,7 @@ import com.cowork.bikerecoder.ui.photo.PhotoStrip
 import com.cowork.bikerecoder.ui.photo.PhotoViewerHost
 import com.cowork.bikerecoder.ui.photo.rememberMapPhotos
 import com.cowork.bikerecoder.ui.photo.rememberPhotoViewerState
-import com.cowork.bikerecoder.ui.record.NumberRow
+import com.cowork.bikerecoder.ui.record.NumberRows
 import com.cowork.bikerecoder.ui.video.MediaThumbnail
 import com.cowork.bikerecoder.ui.video.TripMediaRow
 import com.cowork.bikerecoder.video.TripMedia
@@ -113,6 +120,8 @@ fun TripDetailScreen(
     val profile by viewModel.profile.collectAsStateWithLifecycle()
     val profileLoaded by viewModel.profileLoaded.collectAsStateWithLifecycle()
     val speedSeries by viewModel.speedSeries.collectAsStateWithLifecycle()
+    val speedStyle by viewModel.speedStyle.collectAsStateWithLifecycle()
+    val totalRows by viewModel.totalRows.collectAsStateWithLifecycle()
     val heartSeries by viewModel.heartSeries.collectAsStateWithLifecycle()
     val heartDescription by viewModel.heartDescription.collectAsStateWithLifecycle()
     val exportState by viewModel.exportState.collectAsStateWithLifecycle()
@@ -134,6 +143,8 @@ fun TripDetailScreen(
         profileLoaded = profileLoaded,
         onOpenChart = onOpenChart,
         speedSeries = speedSeries,
+        speedStyle = speedStyle,
+        totalRows = totalRows,
         heartSeries = heartSeries,
         heartDescription = heartDescription,
         onExport = if (viewModel.canExport) viewModel::export else null,
@@ -216,6 +227,10 @@ internal fun tripRefetchAction(access: HeartRateAccess, refetch: () -> Unit): ((
  * [onExport]: the title row's [⋮] at its right end (the row is drawn for it even while there is no [title]) with "GPX로 내보내기" and "KML로 내보내기" (V1.7.0 spec §4.1), dimmed
  * with "기록을 마친 뒤 내보낼 수 있습니다" while [exportEnabled] is false; [exporting] shows a small progress indicator
  * over the screen's content (§4.2).
+ *
+ * V1.9.0 (spec §2.1, §3.2, §3.5): the title row starts with the trip's activity badges (up to three, the dominant first);
+ * [totalRows] are the totals table's rows for the trip's activity (a bike's when they differ, see
+ * [ActivityText.tripTotalRows]); [speedStyle] names the speed chart (페이스 for runs or walks alone) and reads it out.
  */
 @Composable
 fun TripDetailContent(
@@ -241,6 +256,8 @@ fun TripDetailContent(
     profileLoaded: Boolean = true,
     onOpenChart: ((ChartTab) -> Unit)? = null,
     speedSeries: MetricSeries? = null,
+    speedStyle: SpeedChartStyle = SpeedChartStyle.BIKE,
+    totalRows: List<List<Pair<String, String>>> = ActivityText.tripTotalRows(ActivityType.BIKE, total),
     heartSeries: MetricSeries? = null,
     heartDescription: String = "",
     onExport: ((ExportFormat) -> Unit)? = null,
@@ -256,6 +273,7 @@ fun TripDetailContent(
                 val titled = title != null && onRename != null
                 if (titled || onExport != null) {
                     TripTitleRow(
+                        badges = if (titled) ActivityMix.of(segmentsByDate.values.flatten()).badges else emptyList(),
                         title = if (titled) title else null,
                         onRename = if (titled) onRename else null,
                         onShare = if (titled) onShare else null,
@@ -275,10 +293,10 @@ fun TripDetailContent(
                 }
                 map?.invoke(Modifier.fillMaxWidth().height(240.dp))
                 TripDetailList(
-                    segmentsByDate, total, heartRate, onOpenSegment, onRequestDelete, videos, photos, onRefetchHeartRate,
+                    segmentsByDate, totalRows, heartRate, onOpenSegment, onRequestDelete, videos, photos, onRefetchHeartRate,
                     refetching,
                     charts = if (profileLoaded) {
-                        { TripCharts(profile, speedSeries, heartSeries, total, heartDescription, onOpenChart) }
+                        { TripCharts(profile, speedSeries, speedStyle, heartSeries, total, heartDescription, onOpenChart) }
                     } else {
                         null
                     },
@@ -293,15 +311,26 @@ fun TripDetailContent(
 }
 
 /**
- * The shown title in `titleLarge` (an empty area when [title] is null), and on the right the paper plane "공유" (when
- * [onShare]), [✎]: "제목 바꾸기" (when [onRename]), and at the end [more] (the export [⋮]).
+ * The activity [badges] (none: nothing) and the shown title in `titleLarge` (an empty area when [title] is null), and on
+ * the right the paper plane "공유" (when [onShare]), [✎]: "제목 바꾸기" (when [onRename]), and at the end [more] (the
+ * export [⋮]).
  */
 @Composable
-private fun TripTitleRow(title: String?, onRename: (() -> Unit)?, onShare: (() -> Unit)?, more: @Composable () -> Unit) {
+private fun TripTitleRow(
+    badges: List<ActivityType>,
+    title: String?,
+    onRename: (() -> Unit)?,
+    onShare: (() -> Unit)?,
+    more: @Composable () -> Unit,
+) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (badges.isNotEmpty()) {
+            ActivityBadges(badges, ROW_BADGE)
+            Spacer(Modifier.width(12.dp))
+        }
         if (title != null) {
             Text(
                 title,
@@ -328,7 +357,7 @@ private fun TripTitleRow(title: String?, onRename: (() -> Unit)?, onShare: (() -
 @Composable
 private fun TripDetailList(
     segmentsByDate: Map<LocalDate, List<RideSegment>>,
-    total: SegmentTotals,
+    totalRows: List<List<Pair<String, String>>>,
     heartRate: TripHeartRate,
     onOpenSegment: (Long) -> Unit,
     onRequestDelete: (Long) -> Unit,
@@ -352,7 +381,7 @@ private fun TripDetailList(
         item(key = "photos") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { photos() }
         }
-        item(key = "total") { TripTotal(total, heartRate, onRefetchHeartRate, refetching) }
+        item(key = "total") { TripTotal(totalRows, heartRate, onRefetchHeartRate, refetching) }
         if (charts != null) {
             item(key = "charts") { charts() }
         }
@@ -371,15 +400,20 @@ private fun TripDetailList(
                 }
             }
             items(segments, key = { it.id }) { segment ->
-                Text(
-                    segmentRowText(segment),
+                // The row's activity badge (V1.9.0 spec §2.1) starts the row; its text is what it was.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
                         .combinedClickable(
                             onClick = { onOpenSegment(segment.id) },
                             onLongClick = { onRequestDelete(segment.id) },
                         )
                         .padding(vertical = 12.dp),
-                )
+                ) {
+                    ActivityBadge(segment.activity, ROW_BADGE)
+                    Spacer(Modifier.width(12.dp))
+                    Text(segmentRowText(segment))
+                }
                 HorizontalDivider()
             }
         }
@@ -394,6 +428,7 @@ private fun TripDetailList(
 private fun TripCharts(
     profile: ElevationProfile?,
     speed: MetricSeries?,
+    speedStyle: SpeedChartStyle,
     heart: MetricSeries?,
     total: SegmentTotals,
     heartDescription: String,
@@ -402,9 +437,10 @@ private fun TripCharts(
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         ChartTitle(ChartText.TITLE_ELEVATION)
         ElevationChart(profile, onOpen = onOpenChart?.let { { it(ChartTab.ELEVATION) } })
-        ChartTitle(ChartText.TITLE_SPEED)
+        ChartTitle(ChartText.title(speedStyle))
         MetricChart(
-            speed, MetricKind.SPEED, ChartText.speedDescription(total), onOpen = onOpenChart?.let { { it(ChartTab.SPEED) } },
+            speed, MetricKind.SPEED, ChartText.speedDescription(total, speedStyle),
+            onOpen = onOpenChart?.let { { it(ChartTab.SPEED) } }, pace = speedStyle.pace,
         )
         if (heart != null) {
             ChartTitle(ChartText.TITLE_HEART)
@@ -421,22 +457,16 @@ private fun ChartTitle(text: String) {
 }
 
 @Composable
-private fun TripTotal(total: SegmentTotals, heartRate: TripHeartRate, onRefetchHeartRate: (() -> Unit)?, refetching: Boolean) {
+private fun TripTotal(
+    rows: List<List<Pair<String, String>>>,
+    heartRate: TripHeartRate,
+    onRefetchHeartRate: (() -> Unit)?,
+    refetching: Boolean,
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("여행 합계", style = MaterialTheme.typography.titleMedium)
-            NumberRow(
-                "거리" to RideFormat.distance(total.distanceM),
-                "이동 시간" to RideFormat.clock(total.movingTimeMs),
-            )
-            NumberRow(
-                "평균/최고" to "${RideFormat.speedKmh(total.avgSpeedMps)} / ${RideFormat.speedKmh(total.maxSpeedMps)}km/h",
-            )
-            NumberRow(
-                "누적 상승" to RideFormat.altitude(total.ascentM),
-                "누적 하강" to RideFormat.altitude(total.descentM),
-                "최고 고도" to RideFormat.altitude(total.maxAltitudeM),
-            )
+            NumberRows(rows)
             if (heartRate.avgBpm != null || onRefetchHeartRate != null) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -460,3 +490,6 @@ private fun TripTotal(total: SegmentTotals, heartRate: TripHeartRate, onRefetchH
         }
     }
 }
+
+/** The activity badge of a segment row (spec §2.1: 24 dp in list rows). */
+private val ROW_BADGE = 24.dp
