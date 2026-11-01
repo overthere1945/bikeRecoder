@@ -16,23 +16,24 @@ class ShareCache(
 ) {
 
     /** `root/<tripId>/<name>`, its directory made. */
-    fun fileFor(tripId: Long, name: String): File {
-        val dir = File(root, tripId.toString())
-        if (!dir.isDirectory && !dir.mkdirs() && !dir.isDirectory) throw IOException("cannot make $dir")
-        return File(dir, name)
-    }
+    fun fileFor(tripId: Long, name: String): File = File(madeDir(File(root, tripId.toString())), name)
 
     /**
-     * Writes [bytes] as [file] whole: into a temporary file beside it, then renamed, so a receiving app never reads half a
-     * card. A write that fails for want of space throws [NoSpaceException].
+     * Writes [bytes] as [file] whole: into a temporary file of its own beside it (two writes of one card do not meet),
+     * then renamed over [file], so a receiving app never reads half a card. The directory is made again when a [sweep]
+     * removed it meanwhile. A write that fails for want of space throws [NoSpaceException].
      */
     fun write(file: File, bytes: ByteArray) {
-        val temp = File(file.parentFile, "${file.name}.tmp")
         try {
-            temp.writeBytes(bytes)
-            if (!temp.renameTo(file)) throw IOException("cannot rename $temp to $file")
+            val temp = File.createTempFile(file.name, ".tmp", madeDir(file.parentFile!!))
+            try {
+                temp.writeBytes(bytes)
+                if (!temp.renameTo(file)) throw IOException("cannot rename $temp to $file")
+            } catch (e: IOException) {
+                temp.delete()
+                throw e
+            }
         } catch (e: IOException) {
-            temp.delete()
             throw noSpaceOr(e)
         }
     }
@@ -53,6 +54,11 @@ class ShareCache(
             dir.listFiles()?.forEach { if (it.isFile && it.lastModified() < limit) it.delete() }
             if (dir.list()?.isEmpty() == true) dir.delete()
         }
+    }
+
+    private fun madeDir(dir: File): File {
+        if (!dir.isDirectory && !dir.mkdirs() && !dir.isDirectory) throw IOException("cannot make $dir")
+        return dir
     }
 
     companion object {

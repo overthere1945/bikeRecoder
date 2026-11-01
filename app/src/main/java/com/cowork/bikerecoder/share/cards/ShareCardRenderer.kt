@@ -57,10 +57,10 @@ class ShareCardRenderer(
     private val context: Context,
     private val satellite: TileSource?,
     private val plain: TileSource?,
-) {
+) : CardDrawer {
 
     /** The satellite card (spec §2.2) of [size], [CardSize.FEED] or [CardSize.STORY]. */
-    suspend fun satellite(inputs: VideoInputs, facts: CardFacts, size: CardSize): Bitmap {
+    override suspend fun satellite(inputs: VideoInputs, facts: CardFacts, size: CardSize): Bitmap {
         val boxes = ShareCardLayout.satellite(size)
         val w = size.width
         val h = size.height
@@ -110,7 +110,7 @@ class ShareCardRenderer(
      * right of the route the title line without the badge, the date line and the three numbers; "bikeRecoder" at the
      * bottom right.
      */
-    fun photoCard(inputs: VideoInputs, facts: CardFacts, size: CardSize, photo: Bitmap, takenAt: GeoPoint?): Bitmap {
+    override fun photoCard(inputs: VideoInputs, facts: CardFacts, size: CardSize, photo: Bitmap, takenAt: GeoPoint?): Bitmap {
         val boxes = ShareCardLayout.photoCard(size)
         val w = size.width
         val h = size.height
@@ -147,7 +147,7 @@ class ShareCardRenderer(
      * it; a landscape one across the whole width, in the middle, over a blurred fill of itself (cropped to fill, scaled
      * down to 1/[BLUR_SCALE] and back up, both with filtering). No words, no marks.
      */
-    fun photoSlide(photo: Bitmap, size: CardSize): Bitmap {
+    override fun photoSlide(photo: Bitmap, size: CardSize): Bitmap {
         val w = size.width
         val h = size.height
         val image = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -177,7 +177,7 @@ class ShareCardRenderer(
      * 4-unit line over a black 55% 7-unit one, no start or end point) and the three numbers below, white with two black
      * shadows (3 and 6 units). Nothing else: no map, no title, no "bikeRecoder".
      */
-    fun sticker(inputs: VideoInputs, facts: CardFacts): Bitmap {
+    override fun sticker(inputs: VideoInputs, facts: CardFacts): Bitmap {
         val w = CardSize.STICKER.width
         val h = CardSize.STICKER.height
         val unit = min(w, h) / 360f

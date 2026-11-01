@@ -2,6 +2,9 @@ package com.cowork.bikerecoder.share
 
 import java.io.File
 import java.io.IOException
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.CountDownLatch
+import kotlin.concurrent.thread
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -83,6 +86,40 @@ class ShareCacheTest {
 
         assertEquals(listOf<Byte>(1, 2, 3), file.readBytes().toList())
         assertEquals(listOf("feed-satellite.jpg"), file.parentFile!!.list()!!.toList())
+    }
+
+    @Test
+    fun concurrentWritesOfOneCardBothSucceed() {
+        val cache = cache()
+        val file = cache.fileFor(5, "feed-satellite.jpg")
+        val a = ByteArray(2_000_000) { 1 }
+        val b = ByteArray(2_000_000) { 2 }
+        val start = CountDownLatch(1)
+        val failures = ConcurrentLinkedQueue<Throwable>()
+        val writers = listOf(a, b).map { bytes ->
+            thread {
+                start.await()
+                repeat(20) { runCatching { cache.write(file, bytes) }.exceptionOrNull()?.let(failures::add) }
+            }
+        }
+
+        start.countDown()
+        writers.forEach { it.join() }
+
+        assertEquals(emptyList<Throwable>(), failures.toList())
+        val written = file.readBytes()
+        assertTrue(written.contentEquals(a) || written.contentEquals(b))
+        assertEquals(listOf("feed-satellite.jpg"), file.parentFile!!.list()!!.toList())
+    }
+
+    @Test
+    fun writeAfterTheTripDirWasSwept() {
+        val file = cache().fileFor(6, "sticker.png")
+        file.parentFile!!.delete()
+
+        cache().write(file, byteArrayOf(9))
+
+        assertEquals(listOf<Byte>(9), file.readBytes().toList())
     }
 
     @Test

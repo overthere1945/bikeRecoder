@@ -22,6 +22,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.atomic.AtomicInteger
 
 /** The cards drawn over a trip (spec §2.2, §2.3): the satellite card and the photo card. */
 enum class CardKind { SATELLITE, PHOTO }
@@ -44,6 +45,23 @@ interface ShareCardMaker {
 
     /** The transparent sticker (spec §2.5, §5.6). */
     suspend fun sticker(tripId: Long): ShareFile
+
+    /**
+     * Drops what is kept of the last trip (its inputs, facts and satellite decision), so the next card reads the trip
+     * afresh: the share sheet calls it on opening, the trip may have changed since (spec §3.1).
+     */
+    fun forget()
+}
+
+/** What draws the cards: [ShareCardRenderer] (a fake in JVM tests). Each bitmap returned is the caller's. */
+interface CardDrawer {
+    suspend fun satellite(inputs: VideoInputs, facts: CardFacts, size: CardSize): Bitmap
+
+    fun photoCard(inputs: VideoInputs, facts: CardFacts, size: CardSize, photo: Bitmap, takenAt: GeoPoint?): Bitmap
+
+    fun photoSlide(photo: Bitmap, size: CardSize): Bitmap
+
+    fun sticker(inputs: VideoInputs, facts: CardFacts): Bitmap
 }
 
 /** Photo [mediaId] could not be read (deleted, broken; spec §6). */
@@ -51,7 +69,7 @@ class PhotoUnreadableException(val mediaId: Long) : Exception("Could not read ph
 
 /**
  * [ShareCardMaker] through [ShareCardRenderer] (spec §3). It keeps the last trip's [VideoInputs] and [CardFacts] ([load],
- * [region]) and its renderer, whose satellite source is decided once per trip by [satelliteAt] at the first point (as
+ * [region]) and its renderer until another trip or [forget], whose satellite source is decided once per trip by [satelliteAt] at the first point (as
  * [com.cowork.bikerecoder.video.FeedThumbnailRenderer]: the start check OK → the satellite map; else, or when the check
  * throws, null → the plain map). Photos come from [photo] (software, upright, at most [PHOTO_MAX_PX]; the bitmap is
  * the decoder's and is not recycled here); the photo card marks where the photo was taken, the timeline point at its
@@ -64,7 +82,7 @@ class AndroidShareCardMaker(
     private val load: suspend (tripId: Long) -> VideoInputs?,
     private val region: suspend (tripId: Long) -> String?,
     private val satelliteAt: suspend (start: GeoPoint) -> TileSource?,
-    private val renderer: (satellite: TileSource?) -> ShareCardRenderer,
+    private val renderer: (satellite: TileSource?) -> CardDrawer,
     private val photo: suspend (mediaId: Long) -> Bitmap?,
     private val drawOn: CoroutineDispatcher = Dispatchers.Default,
 ) : ShareCardMaker {
@@ -89,13 +107,24 @@ class AndroidShareCardMaker(
         photo = { mediaId -> photos.full(mediaId, PHOTO_MAX_PX, software = true)?.asAndroidBitmap() },
     )
 
-    private class Prepared(val tripId: Long, val inputs: VideoInputs, val facts: CardFacts, val renderer: ShareCardRenderer)
+    /** A trip made ready in [generation] (of [forget]s): kept only while no [forget] came since. */
+    private class Prepared(
+        val tripId: Long,
+        val generation: Int,
+        val inputs: VideoInputs,
+        val facts: CardFacts,
+        val renderer: CardDrawer,
+    )
 
     private val mutex = Mutex()
+    private val generation = AtomicInteger()
+
+    @Volatile
     private var last: Prepared? = null
 
-    /** Photo slides draw no map: one renderer without sources for them all. */
-    private val slides: ShareCardRenderer by lazy { renderer(null) }
+    /** Photo slides draw no map: one renderer without sources for them all, made on the first slide. */
+    @Volatile
+    private var slides: CardDrawer? = null
 
     override suspend fun card(tripId: Long, kind: CardKind, size: CardSize, photoMediaId: Long?): ShareFile {
         val mode = modeOf(size)
@@ -120,7 +149,8 @@ class AndroidShareCardMaker(
     override suspend fun slide(tripId: Long, mediaId: Long, size: CardSize): ShareFile {
         val mode = modeOf(size)
         val image = photoOf(mediaId)
-        return write(tripId, "$mode-photo-$mediaId.jpg", Format.JPEG) { slides.photoSlide(image, size) }
+        val drawer = slides ?: renderer(null).also { slides = it }
+        return write(tripId, "$mode-photo-$mediaId.jpg", Format.JPEG) { drawer.photoSlide(image, size) }
     }
 
     override suspend fun sticker(tripId: Long): ShareFile {
@@ -128,9 +158,17 @@ class AndroidShareCardMaker(
         return write(tripId, STICKER_NAME, Format.PNG) { trip.renderer.sticker(trip.inputs, trip.facts) }
     }
 
+    override fun forget() {
+        generation.incrementAndGet()
+        last = null
+        slides = null
+    }
+
     /** The trip's inputs, facts and renderer: the kept ones when it is the last trip, else loaded (and kept). */
     private suspend fun prepared(tripId: Long): Prepared = mutex.withLock {
-        last?.takeIf { it.tripId == tripId }?.let { return@withLock it }
+        // Read before loading: a forget() during the load leaves what was loaded unkept.
+        val now = generation.get()
+        last?.takeIf { it.tripId == tripId && it.generation == now }?.let { return@withLock it }
         val inputs = load(tripId) ?: throw IllegalStateException("Trip $tripId has nothing to draw")
         val facts = cardFacts(inputs, region(tripId))
         val satellite = try {
@@ -140,7 +178,7 @@ class AndroidShareCardMaker(
         } catch (e: Exception) {
             null // As a failed start check: the plain map (spec §6, not an error).
         }
-        Prepared(tripId, inputs, facts, renderer(satellite)).also { last = it }
+        Prepared(tripId, now, inputs, facts, renderer(satellite)).also { last = it }
     }
 
     private suspend fun photoOf(mediaId: Long): Bitmap = photo(mediaId) ?: throw PhotoUnreadableException(mediaId)
