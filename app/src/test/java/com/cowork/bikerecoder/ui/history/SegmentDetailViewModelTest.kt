@@ -77,13 +77,13 @@ class SegmentDetailViewModelTest {
         count: Int = 401,
         closed: Boolean = true,
         stepM: Double = 3.0,
+        totals: SegmentTotals = SegmentTotals.ZERO.copy(distanceM = 1_234.0, movingTimeMs = 400_000L, elapsedMs = 400_000L),
     ): Long {
         val startedAt = 1_000_000L
         val step = stepM / 111_320.0
         val points = List(count) { i ->
             TrackPoint(startedAt + i * 1_000L, GeoPoint(37.5 + i * step, 127.0), 30.0, (stepM).toFloat(), 5f)
         }
-        val totals = SegmentTotals.ZERO.copy(distanceM = 1_234.0, movingTimeMs = 400_000L, elapsedMs = 400_000L)
         val id = rides.openSegment(TRIP, startedAt, day, activity)
         rides.appendPoints(id, points, totals)
         if (closed) rides.closeSegment(id, startedAt + (count - 1) * 1_000L, totals)
@@ -155,6 +155,52 @@ class SegmentDetailViewModelTest {
         assertEquals(ActivityType.RUN, rides.segment(id)!!.activity)
         assertEquals(ActivityType.RUN, (vm.state.value as SegmentDetailState.Loaded).segment.activity)
         assertEquals(totals.distanceM, (vm.state.value as SegmentDetailState.Loaded).segment.totals.distanceM)
+    }
+
+    @Test
+    fun changeKeepsTheStoredAscentAltitudesAndElapsedTime() = runTest(dispatcher) {
+        val stored = SegmentTotals(
+            distanceM = 1_234.0,
+            movingTimeMs = 400_000L,
+            elapsedMs = 412_000L,
+            maxSpeedMps = 9.0,
+            ascentM = 87.0,
+            descentM = 41.0,
+            minAltitudeM = 12.5,
+            maxAltitudeM = 96.5,
+        )
+        val id = segment(ActivityType.BIKE, totals = stored)
+        val vm = detail(id)
+        advanceUntilIdle()
+
+        vm.changeActivity(ActivityType.HIKE)
+        advanceUntilIdle()
+
+        val after = rides.segment(id)!!.totals
+        assertEquals(ActivityType.HIKE, rides.segment(id)!!.activity)
+        assertEquals(stored.ascentM, after.ascentM)
+        assertEquals(stored.descentM, after.descentM)
+        assertEquals(stored.minAltitudeM, after.minAltitudeM)
+        assertEquals(stored.maxAltitudeM, after.maxAltitudeM)
+        assertEquals(stored.elapsedMs, after.elapsedMs)
+        // Distance, moving time and highest speed come from the points (400 s of 3 m/s).
+        assertEquals(1_200.0, after.distanceM, 30.0)
+        assertNotEquals(stored.maxSpeedMps, after.maxSpeedMps)
+    }
+
+    @Test
+    fun aChangeQueuedBehindAnotherReadsTheSegmentItStored() = runTest(dispatcher) {
+        val id = segment(ActivityType.WALK)
+        val counting = CountingStore()
+        val vm = detail(id, counting)
+        advanceUntilIdle()
+
+        // Both are asked before the first one has run: the second must see the run the first stored.
+        vm.changeActivity(ActivityType.RUN)
+        vm.changeActivity(ActivityType.RUN)
+        advanceUntilIdle()
+
+        assertEquals(listOf(ActivityType.RUN), counting.calls.map { it.first })
     }
 
     @Test

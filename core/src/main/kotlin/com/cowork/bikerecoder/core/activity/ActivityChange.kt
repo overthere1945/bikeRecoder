@@ -12,11 +12,14 @@ import java.time.ZoneId
 object ActivityChange {
 
     /**
-     * 저장된 [points]를 [activity]의 기록 기준으로 기록 엔진에 다시 넣어 합계를 구한다. 자동 일시정지는 늘 켠다.
-     * [points]는 건드리지 않는다. 엔진이 채택한 점이 2개 미만이거나 거리가 [MIN_RIDE_DISTANCE_M] 미만이면 null
-     * (호출자는 기존 합계를 그대로 둔다).
+     * 저장된 [points]를 [activity]의 기록 기준으로 기록 엔진에 다시 넣어 거리, 이동 시간, 최고 속도만 새로 구한다
+     * (평균 속도는 이 둘에서 나온다). 상승, 하강, 최저·최고 고도, 경과 시간은 [stored]의 값을 그대로 둔다: 저장된 점의
+     * 고도는 이미 융합된 값이라 다시 넣으면 GPS 문턱(5 m)이 상승을 깎는다. 자동 일시정지는 늘 켠다. [points]는 건드리지
+     * 않는다. 엔진이 채택한 점이 2개 미만이거나 거리가 [MIN_RIDE_DISTANCE_M] 미만이면 null(호출자는 기존 합계를 그대로
+     * 둔다).
      */
     fun recompute(
+        stored: SegmentTotals,
         startedAt: Long,
         endedAt: Long,
         points: List<TrackPoint>,
@@ -44,6 +47,10 @@ object ActivityChange {
         }
         val totals = session.stop(endedAt).stats.toTotals()
         if (accepted < 2 || totals.distanceM < MIN_RIDE_DISTANCE_M) return null
-        return totals
+        return stored.copy(
+            distanceM = totals.distanceM,
+            movingTimeMs = totals.movingTimeMs,
+            maxSpeedMps = totals.maxSpeedMps,
+        )
     }
 }

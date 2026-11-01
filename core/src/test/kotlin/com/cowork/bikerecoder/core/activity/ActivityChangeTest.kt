@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.core.activity
 
+import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.core.recording.north
 import org.junit.jupiter.api.Test
@@ -32,18 +33,50 @@ class ActivityChangeTest {
     private val endedAt = startedAt + seconds * 1_000L
     private val elapsedMs = seconds * 1_000L
 
+    /** 기록할 때 저장된 합계(융합 고도로 센 상승 등). 다시 계산해도 고도·경과 시간은 이 값 그대로여야 한다. */
+    private val stored = SegmentTotals(
+        distanceM = 2_950.0,
+        movingTimeMs = 7_000_000L,
+        elapsedMs = elapsedMs,
+        maxSpeedMps = 5.0,
+        ascentM = 297.0,
+        descentM = 3.0,
+        minAltitudeM = 99.5,
+        maxAltitudeM = 400.5,
+    )
+
     @Test
     fun hikeRecomputeKeepsMostMovingTime() {
-        val t = assertNotNull(ActivityChange.recompute(startedAt, endedAt, hikePoints, ActivityType.HIKE, seoul))
+        val t = assertNotNull(ActivityChange.recompute(stored, startedAt, endedAt, hikePoints, ActivityType.HIKE, seoul))
         assertTrue(t.movingTimeMs > elapsedMs * 0.9, "${t.movingTimeMs} / $elapsedMs")
         assertEquals(elapsedMs, t.elapsedMs)
         assertTrue(t.distanceM in 2_900.0..3_100.0, "${t.distanceM}") // 1.5 km/h × 2시간
     }
 
     @Test
+    fun recomputeKeepsStoredAltitudeAndElapsed() {
+        for (type in ActivityType.entries) {
+            val t = assertNotNull(ActivityChange.recompute(stored, startedAt, endedAt, hikePoints, type, seoul))
+            assertEquals(stored.ascentM, t.ascentM, "$type")
+            assertEquals(stored.descentM, t.descentM, "$type")
+            assertEquals(stored.minAltitudeM, t.minAltitudeM, "$type")
+            assertEquals(stored.maxAltitudeM, t.maxAltitudeM, "$type")
+            assertEquals(stored.elapsedMs, t.elapsedMs, "$type")
+        }
+    }
+
+    @Test
+    fun recomputeReplacesDistanceMovingTimeAndMaxSpeed() {
+        val t = assertNotNull(ActivityChange.recompute(stored, startedAt, endedAt, hikePoints, ActivityType.HIKE, seoul))
+        assertTrue(t.distanceM != stored.distanceM && t.movingTimeMs != stored.movingTimeMs, "$t")
+        assertEquals(2.5 / 3.6, t.maxSpeedMps, 0.05) // 사인의 최고 2.5 km/h
+        assertEquals(t.distanceM / (t.movingTimeMs / 1_000.0), t.avgSpeedMps, 1e-9)
+    }
+
+    @Test
     fun bikeRecomputeCutsMovingTime() {
-        val hike = assertNotNull(ActivityChange.recompute(startedAt, endedAt, hikePoints, ActivityType.HIKE, seoul))
-        val bike = assertNotNull(ActivityChange.recompute(startedAt, endedAt, hikePoints, ActivityType.BIKE, seoul))
+        val hike = assertNotNull(ActivityChange.recompute(stored, startedAt, endedAt, hikePoints, ActivityType.HIKE, seoul))
+        val bike = assertNotNull(ActivityChange.recompute(stored, startedAt, endedAt, hikePoints, ActivityType.BIKE, seoul))
         assertTrue(bike.movingTimeMs < hike.movingTimeMs * 0.5, "${bike.movingTimeMs} vs ${hike.movingTimeMs}")
         assertTrue(bike.distanceM < hike.distanceM)
     }
@@ -51,14 +84,14 @@ class ActivityChangeTest {
     @Test
     fun doesNotTouchPoints() {
         val before = hikePoints.toList()
-        ActivityChange.recompute(startedAt, endedAt, hikePoints, ActivityType.WALK, seoul)
+        ActivityChange.recompute(stored, startedAt, endedAt, hikePoints, ActivityType.WALK, seoul)
         assertEquals(before, hikePoints)
     }
 
     @Test
     fun tooShortKeepsTotals() {
-        assertNull(ActivityChange.recompute(startedAt, endedAt, hikePoints.take(1), ActivityType.BIKE, seoul))
-        assertNull(ActivityChange.recompute(startedAt, endedAt, emptyList(), ActivityType.BIKE, seoul))
+        assertNull(ActivityChange.recompute(stored, startedAt, endedAt, hikePoints.take(1), ActivityType.BIKE, seoul))
+        assertNull(ActivityChange.recompute(stored, startedAt, endedAt, emptyList(), ActivityType.BIKE, seoul))
     }
 
     @Test
@@ -68,6 +101,6 @@ class ActivityChangeTest {
             TrackPoint(startedAt, north(0.0), null, null, 5f),
             TrackPoint(startedAt + 3_000, north(5.0), null, null, 5f),
         )
-        assertNull(ActivityChange.recompute(startedAt, startedAt + 3_000, two, ActivityType.WALK, seoul))
+        assertNull(ActivityChange.recompute(stored, startedAt, startedAt + 3_000, two, ActivityType.WALK, seoul))
     }
 }

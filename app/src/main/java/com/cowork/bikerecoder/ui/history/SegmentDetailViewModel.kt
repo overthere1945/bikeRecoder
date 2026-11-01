@@ -181,18 +181,21 @@ class SegmentDetailViewModel(
      * segment not loaded. Otherwise the stored points go through the recording rules of [type] again ([ActivityChange]);
      * the new totals (kept as they were when the points are too few for the rules) are stored with the type and, for a
      * run, the best efforts (none for other activities) in one transaction, and the screen is read again. A failure is
-     * logged and shown through [changeFailed]; nothing is written then.
+     * logged and shown through [changeFailed]; nothing is written then. Changes run one at a time and each reads the
+     * stored segment inside the lock, so a change queued behind another never works from the totals before it.
      */
     fun changeActivity(type: ActivityType) {
-        val segment = (state.value as? SegmentDetailState.Loaded)?.segment ?: return
-        val endedAt = segment.endedAt ?: return
-        if (type == segment.activity) return
+        if (state.value !is SegmentDetailState.Loaded) return
         viewModelScope.launch {
             changeMutex.withLock {
                 try {
+                    // Read inside the lock: a change queued behind another must see the segment that one stored.
+                    val segment = rideStore.segment(segmentId) ?: return@withLock
+                    val endedAt = segment.endedAt ?: return@withLock
+                    if (type == segment.activity) return@withLock
                     val points = rideStore.points(segmentId)
                     val (totals, efforts) = withContext(compute) {
-                        ActivityChange.recompute(segment.startedAt, endedAt, points, type, zone) to
+                        ActivityChange.recompute(segment.totals, segment.startedAt, endedAt, points, type, zone) to
                             if (type == ActivityType.RUN) BestEfforts.find(points) else emptyList()
                     }
                     rideStore.changeActivity(segmentId, type, totals, efforts)
