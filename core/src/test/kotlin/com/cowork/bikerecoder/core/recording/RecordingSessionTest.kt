@@ -325,6 +325,19 @@ class RecordingSessionTest {
         assertEquals(kms[1].movingTimeMs - kms[0].movingTimeMs, kms[1].lapMovingTimeMs)
         assertEquals(400_000L, kms[1].lapMovingTimeMs, "두 번째 1 km는 400초")
         assertEquals(400_000L, s.stats.lastLapMovingTimeMs)
+        assertEquals(1, s.stats.lastLapKms)
+    }
+
+    @Test
+    fun `a fix jumping several km gives the lap's km count`() {
+        val s = profiled(ActivityType.RUN, autoPause = false)
+        // 900 m at 3 m/s (300 s), then one fix 1.2 km further 300 s later: the 2nd km's lap covers two km.
+        val events = ((0..300).map { fix(sec(it), 3.0 * it, 10.8) } + fix(sec(600), 2_100.0, 10.8))
+            .flatMap { s.feed(it).events }
+        val km = events.filterIsInstance<RecordingEvent.KmReached>().single()
+        assertEquals(2, km.km)
+        assertEquals(km.lapMovingTimeMs, s.stats.lastLapMovingTimeMs)
+        assertEquals(2, s.stats.lastLapKms)
     }
 
     @Test

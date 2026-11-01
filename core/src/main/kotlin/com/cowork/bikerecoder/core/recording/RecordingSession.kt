@@ -116,6 +116,7 @@ class RecordingSession(
     // 앞 km 표시 시점의 세션 이동 시간(랩 시간 기준)과 마지막 랩
     private var lapStartMs = 0L
     private var lastLapMs: Long? = null
+    private var lastLapKms = 1
 
     // GPS 감시(tick 시각만)
     private var lastActivityTickMillis: Long? = null
@@ -137,6 +138,7 @@ class RecordingSession(
             maxAltitudeM = maxAltitudeM,
             recentSpeedMps = if (state == RecordingState.Recording) calc.recentSpeedMps else null,
             lastLapMovingTimeMs = lastLapMs,
+            lastLapKms = lastLapKms,
         )
 
     val day: DayTotals
@@ -259,6 +261,7 @@ class RecordingSession(
         if (basis != null) {
             val km = floor(basis.distanceM / 1000).toInt()
             if (km > lastKm) {
+                lastLapKms = km - lastKm
                 lastKm = km
                 val lap = calc.movingTimeMs - lapStartMs
                 lapStartMs = calc.movingTimeMs

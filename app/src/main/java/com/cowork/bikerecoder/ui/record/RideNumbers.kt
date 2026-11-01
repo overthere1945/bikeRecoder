@@ -75,9 +75,12 @@ internal fun currentPaceText(stats: RideStats, paused: Boolean): String =
 internal fun averagePaceText(stats: RideStats): String =
     "${ActivityFormat.paceOf(stats.distanceM, stats.movingTimeMs)}/km"
 
-/** The pace of the last full kilometre, "5'32"/km"; "--'--"/km" before the first one. */
+/**
+ * The pace of the last full kilometre, "5'32"/km"; "--'--"/km" before the first one. As the voice says it: the lap's moving
+ * time over the kilometres it covered (a fix jumping several km shares the lap among them).
+ */
 internal fun lastKmPaceText(stats: RideStats): String =
-    "${stats.lastLapMovingTimeMs?.let { ActivityFormat.paceOf(1000.0, it) } ?: ActivityFormat.NO_PACE}/km"
+    "${stats.lastLapMovingTimeMs?.let { ActivityFormat.paceOf(1000.0 * stats.lastLapKms, it) } ?: ActivityFormat.NO_PACE}/km"
 
 /**
  * The numbers page (spec §3.2) of the [activity]:

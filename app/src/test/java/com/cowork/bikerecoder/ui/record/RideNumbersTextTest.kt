@@ -44,6 +44,14 @@ class RideNumbersTextTest {
         assertEquals("18.0km/h · 3.01km · 0:10:00 · 평균 18.0", rideMapSummaryLine(bike, ActivityType.BIKE))
     }
 
+    /** The screen's "직전 1 km" is the voice's lap pace: the lap's moving time over the km it covered (600 s / 2 km). */
+    @Test
+    fun lastKmPaceSharesALapThatSpansSeveralKm() {
+        assertEquals("--'--\"/km", lastKmPaceText(run))
+        assertEquals("5'30\"/km", lastKmPaceText(run.copy(lastLapMovingTimeMs = 330_000L)))
+        assertEquals("5'00\"/km", lastKmPaceText(run.copy(lastLapMovingTimeMs = 600_000L, lastLapKms = 2)))
+    }
+
     @Test
     fun runSummaryLine() {
         assertEquals("5.00km · 0:27:40 · 평균 5'32\"/km", rideSummaryLine(run, ActivityType.RUN))
