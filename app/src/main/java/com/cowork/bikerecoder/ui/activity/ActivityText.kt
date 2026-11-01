@@ -38,6 +38,18 @@ object ActivityText {
     /** Where the big map's legend would be on a trip of several activities: their colour scales differ (spec §3.5). */
     const val MIXED_COLOR_NOTE = "종류마다 색 기준이 다릅니다"
 
+    /** Labels of the pace, hike time and total ascent cells: one definition for the cards, tables and the stats tab. */
+    const val LABEL_AVG_PACE = "평균 페이스"
+    const val LABEL_HIKE_TIME = "산행 시간"
+    const val LABEL_TOTAL_ASCENT = "누적 상승"
+
+    /** The title of the stats tab's per-activity goal rows under [전체]. */
+    const val GOALS_TITLE = "목표"
+
+    /** The goal row bars' labels: the weekly and the yearly goal. */
+    const val GOAL_WEEK_SHORT = "주"
+    const val GOAL_YEAR_SHORT = "연"
+
     /** The stats tab's [전체] chip (null in the settings). */
     const val STATS_ALL = "전체"
 
@@ -141,7 +153,7 @@ object ActivityText {
     ): List<Pair<String, String>> {
         val distance = "거리" to kmText(distanceM)
         val moving = "이동 시간" to RideFormat.duration(movingTimeMs)
-        val pace = "평균 페이스" to "${ActivityFormat.paceOf(distanceM, movingTimeMs)}/km"
+        val pace = LABEL_AVG_PACE to "${ActivityFormat.paceOf(distanceM, movingTimeMs)}/km"
         return when (activity) {
             ActivityType.BIKE -> {
                 val mps = if (movingTimeMs > 0) distanceM / (movingTimeMs / 1000.0) else 0.0
@@ -150,8 +162,8 @@ object ActivityText {
             ActivityType.RUN -> listOf(distance, pace, moving)
             ActivityType.WALK -> listOf(distance, moving, pace)
             ActivityType.HIKE -> listOf(
-                "산행 시간" to RideFormat.duration(elapsedMs),
-                "누적 상승" to meterText(ascentM),
+                LABEL_HIKE_TIME to RideFormat.duration(elapsedMs),
+                LABEL_TOTAL_ASCENT to meterText(ascentM),
                 "최고 고도" to (maxAltitudeM?.let(::meterText) ?: "--"),
             )
         }
@@ -167,14 +179,14 @@ object ActivityText {
         val distance = "거리" to RideFormat.distance(totals.distanceM)
         val moving = "이동 시간" to RideFormat.clock(totals.movingTimeMs)
         val elapsed = "경과 시간" to RideFormat.clock(totals.elapsedMs)
-        val climb = listOf("누적 상승" to RideFormat.altitude(totals.ascentM), "누적 하강" to RideFormat.altitude(totals.descentM))
+        val climb = listOf(LABEL_TOTAL_ASCENT to RideFormat.altitude(totals.ascentM), "누적 하강" to RideFormat.altitude(totals.descentM))
         val altitude = listOf("최고 고도" to RideFormat.altitude(totals.maxAltitudeM), "최저 고도" to RideFormat.altitude(totals.minAltitudeM))
         return when (activity) {
             ActivityType.BIKE -> listOf(listOf(distance, moving), listOf(elapsed, averageMax(totals)), climb, altitude)
             ActivityType.RUN, ActivityType.WALK ->
                 listOf(listOf(distance, moving, elapsed), paceAndSpeed(totals), climb, altitude)
             ActivityType.HIKE -> listOf(
-                listOf("산행 시간" to RideFormat.clock(totals.elapsedMs)),
+                listOf(LABEL_HIKE_TIME to RideFormat.clock(totals.elapsedMs)),
                 listOf(distance, moving),
                 listOf(averageMax(totals)),
                 climb,
@@ -195,7 +207,7 @@ object ActivityText {
             "이동 시간" to RideFormat.clock(totals.movingTimeMs),
         )
         val altitude = listOf(
-            "누적 상승" to RideFormat.altitude(totals.ascentM),
+            LABEL_TOTAL_ASCENT to RideFormat.altitude(totals.ascentM),
             "누적 하강" to RideFormat.altitude(totals.descentM),
             "최고 고도" to RideFormat.altitude(totals.maxAltitudeM),
         )
@@ -203,7 +215,7 @@ object ActivityText {
             ActivityType.BIKE -> listOf(distanceAndMoving, listOf(averageMax(totals)), altitude)
             ActivityType.RUN, ActivityType.WALK -> listOf(distanceAndMoving, paceAndSpeed(totals), altitude)
             ActivityType.HIKE -> listOf(
-                listOf("산행 시간" to RideFormat.duration(totals.elapsedMs)),
+                listOf(LABEL_HIKE_TIME to RideFormat.duration(totals.elapsedMs)),
                 distanceAndMoving,
                 listOf(averageMax(totals)),
                 altitude,
@@ -215,7 +227,7 @@ object ActivityText {
         "평균/최고" to "${RideFormat.speedKmh(totals.avgSpeedMps)} / ${RideFormat.speedKmh(totals.maxSpeedMps)}km/h"
 
     private fun paceAndSpeed(totals: SegmentTotals): List<Pair<String, String>> = listOf(
-        "평균 페이스" to "${ActivityFormat.paceOf(totals.distanceM, totals.movingTimeMs)}/km",
+        LABEL_AVG_PACE to "${ActivityFormat.paceOf(totals.distanceM, totals.movingTimeMs)}/km",
         "평균 속도" to "${RideFormat.speedKmh(totals.avgSpeedMps)}km/h",
     )
 }

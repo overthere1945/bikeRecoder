@@ -396,12 +396,12 @@ class StatsViewModel(
             ActivityType.WALK, ActivityType.RUN -> listOf(
                 rides,
                 time,
-                StatCell(StatCellKind.PACE, "평균 페이스", "${ActivityFormat.paceOf(totals.distanceM, totals.movingTimeMs)}/km"),
+                StatCell(StatCellKind.PACE, ActivityText.LABEL_AVG_PACE, "${ActivityFormat.paceOf(totals.distanceM, totals.movingTimeMs)}/km"),
             )
             ActivityType.HIKE -> listOf(
                 rides,
-                StatCell(StatCellKind.ELAPSED, "산행 시간", RideFormat.duration(totals.elapsedMs)),
-                StatCell(StatCellKind.ASCENT, "누적 상승", meterText(totals.ascentM)),
+                StatCell(StatCellKind.ELAPSED, ActivityText.LABEL_HIKE_TIME, RideFormat.duration(totals.elapsedMs)),
+                StatCell(StatCellKind.ASCENT, ActivityText.LABEL_TOTAL_ASCENT, meterText(totals.ascentM)),
             )
         }
     }

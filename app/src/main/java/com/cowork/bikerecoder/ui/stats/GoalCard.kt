@@ -37,8 +37,6 @@ const val GOAL_REACHED_WORD = "달성"
 const val WEEKLY_GOAL_TITLE = "주간 목표"
 const val YEARLY_GOAL_TITLE = "연간 목표"
 
-/** The title of the per-activity goal rows under the [전체] chip. */
-const val GOALS_TITLE = "목표"
 
 /**
  * The goal card on top of the stats tab (V1.4.0 spec §3.1). The weekly goal is the ring of the summary tab's strip, the
@@ -95,7 +93,7 @@ fun GoalCard(
             if (rows.isNotEmpty()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        GOALS_TITLE,
+                        ActivityText.GOALS_TITLE,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.weight(1f),
@@ -119,8 +117,8 @@ private fun ActivityGoalRow(row: ActivityGoal) {
             fontWeight = FontWeight.Bold,
             color = colour,
         )
-        row.weekly?.let { MiniGoalBar("주", it, colour, StatsTags.goalRowBar(row.activity, weekly = true)) }
-        row.yearly?.let { MiniGoalBar("연", it, colour, StatsTags.goalRowBar(row.activity, weekly = false)) }
+        row.weekly?.let { MiniGoalBar(ActivityText.GOAL_WEEK_SHORT, it, colour, StatsTags.goalRowBar(row.activity, weekly = true)) }
+        row.yearly?.let { MiniGoalBar(ActivityText.GOAL_YEAR_SHORT, it, colour, StatsTags.goalRowBar(row.activity, weekly = false)) }
     }
 }
 
