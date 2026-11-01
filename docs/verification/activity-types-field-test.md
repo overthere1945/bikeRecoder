@@ -128,6 +128,13 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.te
 | 3 | 끝내기 | 실제 기록을 `내일 이어서 하기`로 끝내고 다음 날 `여행 이어서`로 이어 기록, 마지막에 `여행 완료` | | |
 | 4 | 문구 | 통계 칩별 문구(연속 주, 기간·개인 기록)가 종류의 말로 나오고 자전거 칩은 그대로 | | |
 
+## V1.9.2 짧은 기록 저장 창
+
+- 바뀐 것: 10 m 미만 기록을 마칠 때의 `거의 움직이지 않은 기록입니다. 저장할까요?` 알림창을 카드 창으로(`이 기록을 저장할까요?`, 이유 줄, [버리기](추천) / [저장], 밀어 닫으면 저장). 아래쪽 버튼이 없는 선택 창에 아래 여백.
+- PC: `:app:testDebugUnitTest` 통과, androidTest 컴파일 통과
+- 기기(S22, 2026-11-01): `RecordScreenTest` 20/20, `ChoiceSheetTest` 6/6, `SettingsScreenTest` 22/22(`V1.9.2`), 여백 수정 뒤 `ChoiceSheetTest`·`RecordScreenTest`·`TripStartDialogsTest`·`EndNavigationSheetTest` 통과
+- S22 실제 화면: 기록 시작 직후 정지 → 새 창 확인, 처음에 [저장] 카드가 내비게이션 바에 붙어 있어 여백을 더한 뒤 다시 확인, [버리기]로 시험 기록 지움
+
 ## 알려진 한계
 
 - 걷기·등산 길안내와 경로 탐색은 없습니다(길안내는 자전거 전용, V1.12.0의 GPX 따라가기로 다룸).
