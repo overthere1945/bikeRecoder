@@ -217,16 +217,38 @@ object CameraPath {
     fun overviewInset(points: List<GeoPoint>, widthPx: Int, heightPx: Int, marginPx: Int): Camera =
         overview(points, widthPx, heightPx, marginX = marginPx.toDouble(), marginY = marginPx.toDouble())
 
-    private fun overview(points: List<GeoPoint>, widthPx: Int, heightPx: Int, marginX: Double, marginY: Double): Camera {
-        require(points.isNotEmpty()) { "빈 경로" }
+    /**
+     * [overview]이되 [box](카드 위 사각형)에 여백 없이 맞춘다: 확대는 [box] 크기에 맞추고(같은 [ZOOM_SLOW] 상한),
+     * 중심은 경로 가운데가 [widthPx]×[heightPx] 스냅샷에서 [box] 가운데에 오도록 옮긴다(스펙 공유 카드 §2.2). 기울기 0, 북쪽 위.
+     */
+    fun overviewInBox(points: List<GeoPoint>, widthPx: Int, heightPx: Int, box: Box): Camera {
         require(widthPx > 0 && heightPx > 0) { "지도 크기 ${widthPx}x$heightPx" }
+        val fitted = fitted(points, box.w.toDouble(), box.h.toDouble())
+        val world = TILE_SIZE * 2.0.pow(fitted.zoom)
+        val dx = (box.x + box.w / 2.0 - widthPx / 2.0) / world
+        val dy = (box.y + box.h / 2.0 - heightPx / 2.0) / world
+        val center = GeoPoint(
+            latitudeOf(mercatorY(fitted.center.lat) - dy),
+            longitudeOf(mercatorX(fitted.center.lon) - dx),
+        )
+        return fitted.copy(center = center)
+    }
+
+    private fun overview(points: List<GeoPoint>, widthPx: Int, heightPx: Int, marginX: Double, marginY: Double): Camera {
+        require(widthPx > 0 && heightPx > 0) { "지도 크기 ${widthPx}x$heightPx" }
+        return fitted(points, widthPx - 2 * marginX, heightPx - 2 * marginY)
+    }
+
+    /** 경로가 [usableW]×[usableH] 픽셀 칸에 꽉 차게 들어오는 카메라(중심 = 메르카토르 가운데, [ZOOM_SLOW] 상한, 칸이 1 px 아래면 1 px로 본다). */
+    private fun fitted(points: List<GeoPoint>, usableW: Double, usableH: Double): Camera {
+        require(points.isNotEmpty()) { "빈 경로" }
         val xs = points.map { mercatorX(it.lon) }
         val ys = points.map { mercatorY(it.lat) }
         val spanX = xs.max() - xs.min()
         val spanY = ys.max() - ys.min()
         fun fit(span: Double, usablePx: Double) =
             if (span <= 0.0) Double.POSITIVE_INFINITY else log2(max(1.0, usablePx) / (span * TILE_SIZE))
-        val zoom = min(min(fit(spanX, widthPx - 2 * marginX), fit(spanY, heightPx - 2 * marginY)), ZOOM_SLOW).coerceAtLeast(0.0)
+        val zoom = min(min(fit(spanX, usableW), fit(spanY, usableH)), ZOOM_SLOW).coerceAtLeast(0.0)
         val center = GeoPoint(latitudeOf((ys.max() + ys.min()) / 2), longitudeOf((xs.max() + xs.min()) / 2))
         return Camera(center, zoom, bearing = 0.0, tilt = 0.0)
     }

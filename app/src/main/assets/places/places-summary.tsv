@@ -1,0 +1,230 @@
+kind	tag	points	km	source
+ROUTE	#아라자전거길	85	39.3	osm relation 4145847,4145848
+ROUTE	#한강종주자전거길	271	91.8	osm relation 8280682
+ROUTE	#남한강자전거길	606	168.3	osm relation 8280693
+ROUTE	#북한강자전거길	324	87.6	osm relation 8286939
+ROUTE	#새재자전거길	437	101.3	osm relation 8281515
+ROUTE	#오천자전거길	359	116.7	osm relation 8288695
+ROUTE	#금강자전거길	539	164.4	osm relation 8288722
+ROUTE	#영산강자전거길	480	137.1	osm relation 3868090
+ROUTE	#섬진강자전거길	590	167.0	osm relation 6374513
+ROUTE	#낙동강자전거길	1577	456.7	osm relation 8283141
+ROUTE	#동해안자전거길	1263	288.3	osm relation 8377469
+ROUTE	#동해안자전거길	2183	477.4	osm relation 8381725
+ROUTE	#제주환상자전거길	1054	273.0	osm relation 8374627
+ROUTE	#해파랑길	0	0.0	DROPPED: no OSM relation matches /(^|[ \[])해파랑/
+ROUTE	#남파랑길	0	0.0	DROPPED: no OSM relation matches /(^|[ \[])남파랑/
+ROUTE	#서해랑길	0	0.0	DROPPED: no OSM relation matches /(^|[ \[])서해랑/
+ROUTE	#DMZ평화의길	0	0.0	DROPPED: no OSM relation matches /(^|[ \[])(DMZ|디엠지) ?평화의 ?길/
+ROUTE	#서울둘레길	870	135.7	osm relation 11361878,17486304,17496414,17497635,17500297,17500325,17505902,17506000,17506001,17506050,17506202,17506639,17536037,17536807,17538298,17538299,17538300,17538301
+ROUTE	#북한산둘레길	500	64.9	osm relation 11274316,11274540,11288178,11288179,11288180,11304602,11304603,11304604,11312768,11312769,11340574,11340616,11514826,11514831,11589490,11606773,11606774,11627660,11627661,11639674,11639675,11639676,11639794
+ROUTE	#지리산둘레길	1924	271.8	osm relation 15635353,15635389,15635509,15635510,15635568,15635696,15635697,15635698,15635711,15662694,15662861,15663108,15663109,15664473,15664838,15664903,15688853,15688948,15688970,15689317,15691452
+ROUTE	#제주올레	1807	252.8	osm relation 3793143,3793206,3809942,3878188,4869085,5232945,5458299,5535857,5637062,5650389,6089470,6089589,6107767,7248520,7248521,7248522,7248523,8246395,9149294,9149725,9173551,9180869
+ROUTE	#탄천	135	50.6	osm relation 27411,20771158
+ROUTE	#양재천	55	18.9	osm relation 8423789
+ROUTE	#중랑천	184	63.8	osm relation 8391095,20810039
+ROUTE	#안양천	153	52.1	osm relation 8395919,20781037,20781038,20781041
+ROUTE	#불광천	12	8.6	osm relation 20582139,20582140,20582141,20582142,20582143
+ROUTE	#홍제천	28	9.8	osm relation 20582144,20582145,20582146,20582147
+ROUTE	#신천	0	0.0	DROPPED: no OSM relation matches /(^|[ \[])신천/ inside bbox 35.60,36.02,128.34,128.78 (outside: relation 10327246)
+ROUTE	#금호강	0	0.0	DROPPED: no OSM relation matches /(^|[ \[])금호강/
+ROUTE	#갑천	108	39.9	osm relation 16354648,16387249
+ROUTE	#광주천	184	35.7	osm relation 8447994,8447995
+ROUTE	#온천천	0	0.0	DROPPED: no OSM relation matches /(^|[ \[])온천천/
+ROUTE	#수영강	0	0.0	DROPPED: no OSM relation matches /(^|[ \[])수영강/
+CENTER	#화성시무인인증센터	0	0.0	DROPPED: node 13842007299 화성시 무인인증센터: no national route within 2 km
+CENTER	#쇠소깍인증센터	0	0.0	DROPPED: duplicate of node 8864759319 within 300 m
+CENTER	#낙동강하굿둑인증센터(자전거길)	0	0.0	DROPPED: duplicate of node 13608671409 within 300 m
+CENTER	#평화누리길12코스(통일이음길)인증센터	0	0.0	DROPPED: node 6967494301 평화누리길 12코스 (통일이음길) 인증센터: no national route within 2 km
+CENTER	#죽산보인증센터	0	0.0	DROPPED: duplicate of node 8773654577 within 300 m
+CENTER	#영남알프스완증인증센터	0	0.0	DROPPED: node 10882687853 영남알프스완증인증센터: no national route within 2 km
+CENTER	#항공보안장비시험인증센터	0	0.0	DROPPED: node 14292314784 항공보안장비 시험인증센터: no national route within 2 km
+CENTER	#아라서해갑문인증센터	1	0.0	osm node 2418314103 아라서해갑문 인증센터 -> #아라자전거길 (5 m)
+CENTER	#아라한강갑문인증센터	1	0.0	osm node 2418314102 아라한강갑문 인증센터 -> #아라자전거길 (7 m)
+CENTER	#뚝섬전망콤플렉스인증센터	1	0.0	osm node 5542663097 뚝섬전망콤플렉스 인증센터 -> #한강종주자전거길 (1 m)
+CENTER	#여의도인증센터	1	0.0	osm node 5542663098 여의도 인증센터 -> #한강종주자전거길 (7 m)
+CENTER	#광나루자전거공원인증센터	1	0.0	osm node 5542663096 광나루자전거공원 인증센터 -> #한강종주자전거길 (6 m)
+CENTER	#충주댐인증센터	1	0.0	osm node 5542663088 충주댐 인증센터 -> #남한강자전거길 (16 m)
+CENTER	#비내섬인증센터	1	0.0	osm node 5542663090 비내섬 인증센터 -> #남한강자전거길 (15 m)
+CENTER	#강천보인증센터	1	0.0	osm node 5542663091 강천보 인증센터 -> #남한강자전거길 (4 m)
+CENTER	#여주보인증센터	1	0.0	osm node 5542663092 여주보 인증센터 -> #남한강자전거길 (7 m)
+CENTER	#이포보인증센터	1	0.0	osm node 5542663093 이포보 인증센터 -> #남한강자전거길 (3 m)
+CENTER	#양평군립미술관인증센터	1	0.0	osm node 5542663094 양평군립미술관 인증센터 -> #남한강자전거길 (1 m)
+CENTER	#능내역인증센터	1	0.0	osm node 5542663095 능내역 인증센터 -> #남한강자전거길 (6 m)
+CENTER	#밝은광장인증센터	1	0.0	osm node 5072409226 밝은광장 인증센터 -> #북한강자전거길 (11 m)
+CENTER	#샛터삼거리인증센터	1	0.0	osm node 2442183216 샛터삼거리 인증센터 -> #북한강자전거길 (11 m)
+CENTER	#경강교인증센터	1	0.0	osm node 5449454066 경강교 인증센터 -> #북한강자전거길 (6 m)
+CENTER	#신매대교인증센터	1	0.0	osm node 5074268452 신매대교 인증센터 -> #북한강자전거길 (5 m)
+CENTER	#상주상풍교인증센터	1	0.0	osm node 5542663084 상주상풍교 인증센터 -> #새재자전거길 (2 m)
+CENTER	#문경불정역인증센터	1	0.0	osm node 5542663085 문경불정역 인증센터 -> #새재자전거길 (22 m)
+CENTER	#이화령휴게소인증센터	1	0.0	osm node 5542663086 이화령휴게소 인증센터 -> #새재자전거길 (65 m)
+CENTER	#수안보온천인증센터	1	0.0	osm node 5542663087 수안보온천 인증센터 -> #새재자전거길 (16 m)
+CENTER	#충주탄금대인증센터	1	0.0	osm node 5542663089 충주탄금대 인증센터 -> #새재자전거길 (5 m)
+CENTER	#합강공원인증센터	1	0.0	osm node 5403330286 합강공원 인증센터 -> #오천자전거길 (4 m)
+CENTER	#무심천교인증센터	1	0.0	osm node 4421831288 무심천교 인증센터 -> #오천자전거길 (7 m)
+CENTER	#행촌교차로인증센터	1	0.0	osm node 5060891335 행촌교차로 인증센터 -> #오천자전거길 (148 m)
+CENTER	#백로공원인증센터	1	0.0	osm node 13608487522 백로공원 인증센터 -> #오천자전거길 (10 m)
+CENTER	#괴강교인증센터	1	0.0	osm node 5217636068 괴강교 인증센터 -> #오천자전거길 (10 m)
+CENTER	#금강하굿둑인증센터	1	0.0	osm node 5359915642 금강하굿둑 인증센터 -> #금강자전거길 (11 m)
+CENTER	#익산성당포구인증센터	1	0.0	osm node 5359915480 익산성당포구 인증센터 -> #금강자전거길 (11 m)
+CENTER	#백제보인증센터	1	0.0	osm node 5359603676 백제보 인증센터 -> #금강자전거길 (48 m)
+CENTER	#공주보인증센터	1	0.0	osm node 5359603671 공주보 인증센터 -> #금강자전거길 (6 m)
+CENTER	#세종보인증센터(무인)	1	0.0	osm node 5359507842 세종보 인증센터 (무인) -> #금강자전거길 (16 m)
+CENTER	#대청댐인증센터	1	0.0	osm node 5359447346 대청댐 인증센터 -> #금강자전거길 (68 m)
+CENTER	#세종보인증센터	1	0.0	osm node 5595066036 세종보 인증센터 -> #금강자전거길 (60 m)
+CENTER	#영산강하구둑황포돛배인증센터	1	0.0	osm node 2466603848 영산강하구둑황포돛배 인증센터 -> #영산강자전거길 (20 m)
+CENTER	#느러지인증센터	1	0.0	osm node 6572786691 느러지 인증센터 -> #영산강자전거길 (7 m)
+CENTER	#죽산보인증센터	1	0.0	osm node 8773654577 죽산보 인증센터 -> #영산강자전거길 (7 m)
+CENTER	#승촌보인증센터	1	0.0	osm node 8764137136 승촌보 인증센터 -> #영산강자전거길 (57 m)
+CENTER	#담양대나무숲인증센터	1	0.0	osm node 3259686268 담양대나무숲 인증센터 -> #영산강자전거길 (10 m)
+CENTER	#메타세콰이어길인증센터	1	0.0	osm node 3259679695 메타세콰이어길 인증센터 -> #영산강자전거길 (1 m)
+CENTER	#담양댐인증센터	1	0.0	osm node 3259679694 담양댐 인증센터 -> #영산강자전거길 (2 m)
+CENTER	#배알도수변공원인증센터	1	0.0	osm node 5181130241 배알도수변공원 인증센터 -> #섬진강자전거길 (7 m)
+CENTER	#매화마을인증센터	1	0.0	osm node 5483417781 매화마을 인증센터 -> #섬진강자전거길 (48 m)
+CENTER	#매화마을인증센터	1	0.0	osm node 11647337836 매화마을인증센터 -> #섬진강자전거길 (13 m)
+CENTER	#사성암인증센터	1	0.0	osm node 5247713096 사성암 인증센터 -> #섬진강자전거길 (3 m)
+CENTER	#남도대교인증센터	1	0.0	osm node 5483417776 남도대교 인증센터 -> #섬진강자전거길 (26 m)
+CENTER	#횡탄정인증센터	1	0.0	osm node 5483391036 횡탄정 인증센터 -> #섬진강자전거길 (5 m)
+CENTER	#향가유원지인증센터	1	0.0	osm node 5470118732 향가유원지 인증센터 -> #섬진강자전거길 (9 m)
+CENTER	#장군목인증센터	1	0.0	osm node 5470186344 장군목 인증센터 -> #섬진강자전거길 (1 m)
+CENTER	#섬진강댐인증센터	1	0.0	osm node 4317260107 섬진강댐 인증센터 -> #섬진강자전거길 (27 m)
+CENTER	#낙동강하구둑인증센터	1	0.0	osm node 13608671409 낙동강하구둑 인증센터 -> #낙동강자전거길 (24 m)
+CENTER	#양산물문화관인증센터	1	0.0	osm node 4362509515 양산물문화관 인증센터 -> #낙동강자전거길 (2 m)
+CENTER	#창녕함안보인증센터	1	0.0	osm node 5542663075 창녕함안보 인증센터 -> #낙동강자전거길 (9 m)
+CENTER	#합천창녕보인증센터	1	0.0	osm node 5542663076 합천창녕보 인증센터 -> #낙동강자전거길 (122 m)
+CENTER	#달성보인증센터	1	0.0	osm node 5542663077 달성보 인증센터 -> #낙동강자전거길 (11 m)
+CENTER	#강정고령보유인인증센터	1	0.0	osm node 9774241804 강정고령보 유인인증센터 -> #낙동강자전거길 (596 m)
+CENTER	#강정고령보인증센터	1	0.0	osm node 5542663078 강정고령보 인증센터 -> #낙동강자전거길 (7 m)
+CENTER	#칠곡보인증센터	1	0.0	osm node 5542663079 칠곡보 인증센터 -> #낙동강자전거길 (0 m)
+CENTER	#구미보인증센터	1	0.0	osm node 5542663080 구미보 인증센터 -> #낙동강자전거길 (6 m)
+CENTER	#낙단보인증센터	1	0.0	osm node 5542663081 낙단보 인증센터 -> #낙동강자전거길 (2 m)
+CENTER	#상주보인증센터	1	0.0	osm node 5542663082 상주보 인증센터 -> #낙동강자전거길 (1 m)
+CENTER	#안동댐인증센터	1	0.0	osm node 5614160381 안동댐 인증센터 -> #낙동강자전거길 (16 m)
+CENTER	#임원인증센터	1	0.0	osm node 6433644385 임원 인증센터 -> #동해안자전거길 (2 m)
+CENTER	#한재공원인증센터	1	0.0	osm node 6433644386 한재공원 인증센터 -> #동해안자전거길 (642 m)
+CENTER	#추암촛대바위인증센터	1	0.0	osm node 5390505233 추암촛대바위 인증센터 -> #동해안자전거길 (2 m)
+CENTER	#망상해변인증센터	1	0.0	osm node 5390462522 망상해변 인증센터 -> #동해안자전거길 (19 m)
+CENTER	#정동진인증센터	1	0.0	osm node 5390411199 정동진 인증센터 -> #동해안자전거길 (18 m)
+CENTER	#경포해변인증센터	1	0.0	osm node 5292371831 경포해변 인증센터 -> #동해안자전거길 (15 m)
+CENTER	#지경공원인증센터	1	0.0	osm node 6437406288 지경공원 인증센터 -> #동해안자전거길 (5 m)
+CENTER	#동호해변인증센터	1	0.0	osm node 6437503289 동호해변 인증센터 -> #동해안자전거길 (7 m)
+CENTER	#영금정인증센터	1	0.0	osm node 6320447032 영금정 인증센터 -> #동해안자전거길 (11 m)
+CENTER	#봉포해변인증센터	1	0.0	osm node 6320447033 봉포해변 인증센터 -> #동해안자전거길 (13 m)
+CENTER	#북천철교인증센터	1	0.0	osm node 6308543825 북천철교 인증센터 -> #동해안자전거길 (5 m)
+CENTER	#통일전망대인증센터	1	0.0	osm node 7911560212 통일전망대 인증센터 -> #동해안자전거길 (26 m)
+CENTER	#통일전망대인증센터	1	0.0	osm node 13846478101 통일전망대 인증센터 -> #동해안자전거길 (11 m)
+CENTER	#해맞이공원인증센터	1	0.0	osm node 6432162385 해맞이공원 인증센터 -> #동해안자전거길 (14 m)
+CENTER	#고래불해변인증센터	1	0.0	osm node 8657558321 고래불해변 인증센터 -> #동해안자전거길 (11 m)
+CENTER	#월송정인증센터	1	0.0	osm node 8657538288 월송정 인증센터 -> #동해안자전거길 (5 m)
+CENTER	#망양휴게소인증센터	1	0.0	osm node 8657557852 망양휴게소 인증센터 -> #동해안자전거길 (4 m)
+CENTER	#울진은어다리인증센터	1	0.0	osm node 6433644485 울진은어다리 인증센터 -> #동해안자전거길 (2 m)
+CENTER	#송악산인증센터	1	0.0	osm node 8863043617 송악산 인증센터 -> #제주환상자전거길 (11 m)
+CENTER	#법환바당인증센터	1	0.0	osm node 4691641890 법환바당 인증센터 -> #제주환상자전거길 (10 m)
+CENTER	#쇠소깍인증센터	1	0.0	osm node 8864759319 쇠소깍 인증센터 -> #제주환상자전거길 (16 m)
+CENTER	#표선해변인증센터	1	0.0	osm node 4691733115 표선해변 인증센터 -> #제주환상자전거길 (17 m)
+CENTER	#해거름마을공원인증센터	1	0.0	osm node 10789699706 해거름마을공원 인증센터 -> #제주환상자전거길 (10 m)
+CENTER	#성산일출봉인증센터	1	0.0	osm node 4693102294 성산일출봉 인증센터 -> #제주환상자전거길 (9 m)
+CENTER	#다락쉼터인증센터	1	0.0	osm node 4689934991 다락쉼터 인증센터 -> #제주환상자전거길 (5 m)
+CENTER	#용두암인증센터	1	0.0	osm node 4693076589 용두암 인증센터 -> #제주환상자전거길 (0 m)
+CENTER	#함덕서우봉해변인증센터	1	0.0	osm node 4693056093 함덕서우봉해변 인증센터 -> #제주환상자전거길 (25 m)
+CENTER	#김녕성세기해변인증센터	1	0.0	osm node 4691930792 김녕성세기해변 인증센터 -> #제주환상자전거길 (8 m)
+PEAK	#가리산	1	0.0	osm node 7972724186 가리산 ele 1051
+PEAK	#가리왕산	1	0.0	osm node 7972724271 가리왕산 ele 1561
+PEAK	#가야산	1	0.0	osm node 5750035918 가야산칠불봉 ele 1433
+PEAK	#가지산	1	0.0	osm node 1931784829 가지산 ele 1240.9
+PEAK	#감악산	1	0.0	osm node 4867285021 감악산 ele 674
+PEAK	#강천산	1	0.0	osm node 5368979882 강천산 ele 583
+PEAK	#계룡산	1	0.0	osm node 7609103069 계룡산천황봉 ele 846
+PEAK	#계방산	1	0.0	osm node 7972724285 계방산 ele 1579.1
+PEAK	#공작산	1	0.0	osm node 5182674321 공작산 ele 887
+PEAK	#관악산	1	0.0	override (2 OSM matches) osm node 442878166 관악산 two OSM nodes named 관악산 (632, 624.8 m); 연주대 summit
+PEAK	#구병산	1	0.0	osm node 5255224531 구병산 ele 876.2
+PEAK	#금산	1	0.0	osm node 2608238467 금산 ele 705
+PEAK	#금수산	1	0.0	osm node 7972716201 금수산 ele 1015.8
+PEAK	#금오산	1	0.0	osm node 6212374418 금오산(현월봉) ele 977
+PEAK	#금정산	1	0.0	osm node 1431796378 금정산(고당봉) ele 801.5
+PEAK	#깃대봉	1	0.0	override (6 OSM matches) osm node 5376883809 깃대봉 many 깃대봉 in 전남; 홍도 깃대봉 368 m
+PEAK	#남산	1	0.0	override (no OSM match) osm node 904944669 경주남산(금오봉) OSM name 경주남산(금오봉) 468 m
+PEAK	#내연산	1	0.0	osm node 5369653604 내연산(삼지봉) ele 711.3
+PEAK	#내장산	1	0.0	osm node 5750036192 내장산(신선봉) ele 763
+PEAK	#대둔산	1	0.0	osm node 3819433157 대둔산 ele 878.9
+PEAK	#대암산	1	0.0	osm node 5141269324 대암산 ele 1312.6
+PEAK	#대야산	1	0.0	osm node 1862839230 대야산 ele 930.7
+PEAK	#덕숭산	1	0.0	osm node 5376946871 덕숭산 ele 495
+PEAK	#덕유산	1	0.0	osm node 444235774 덕유산 향적봉 ele 1614
+PEAK	#덕항산	1	0.0	osm node 1873819543 덕항산 ele 1072.5
+PEAK	#도락산	1	0.0	osm node 1345461074 도락산 ele 959.754600
+PEAK	#도봉산	1	0.0	override (2 OSM matches) osm node 5515194666 도봉산자운봉 자운봉 and 신선대 both match; 자운봉 740 m
+PEAK	#두륜산	1	0.0	osm node 1479832159 두륜산(가련봉) ele 703
+PEAK	#두타산	1	0.0	osm node 1873819548 두타산 ele 1352.7
+PEAK	#마니산	1	0.0	osm node 1943766210 마니산 ele 469
+PEAK	#마이산	1	0.0	override (no OSM match) osm node 9684280383 암마이봉 OSM name 암마이봉 687 m
+PEAK	#명성산	1	0.0	osm node 5392409440 명성산 ele 922
+PEAK	#명지산	1	0.0	osm node 7972724215 명지산 ele 1252.3
+PEAK	#모악산	1	0.0	osm node 5084170049 모악산 ele 793.5
+PEAK	#무등산	1	0.0	osm node 5204274494 무등산(천왕봉) ele 1186.8
+PEAK	#무학산	1	0.0	osm node 1892296102 무학산 ele 761.1
+PEAK	#미륵산	1	0.0	osm node 5376903442 미륵산 ele 458
+PEAK	#민주지산	1	0.0	osm node 6212374417 민주지산 ele 1242
+PEAK	#방장산	1	0.0	osm node 7972724204 방장산 ele 743
+PEAK	#방태산	1	0.0	override (2 OSM matches) osm node 1881933251 방태산 two OSM 방태산 nodes; 주억봉 1445.7 m
+PEAK	#백덕산	1	0.0	osm node 4943372823 백덕산 ele 1350.1
+PEAK	#백암산	1	0.0	osm node 5382153299 백암산(상왕봉) ele 741.2
+PEAK	#백운산포천	1	0.0	override (2 OSM matches) osm node 5150951221 백운산 포천·화천 백운산 903 m; 정선 백운산 also within 30 m
+PEAK	#백운산광양	1	0.0	osm node 2017973660 백운산 ele 1222
+PEAK	#백운산정선	1	0.0	override (2 OSM matches) osm node 5391069867 백운산 정선 백운산 883.5 m; 포천 백운산 also within 30 m
+PEAK	#변산	1	0.0	override (no OSM match) osm node 10250409125 의상봉 OSM name 의상봉, ele 546 m
+PEAK	#북한산	1	0.0	osm node 5515194671 북한산(백운대) ele 835.57
+PEAK	#비슬산	1	0.0	osm node 7592786296 비슬산 ele 1083
+PEAK	#삼악산	1	0.0	osm node 5379905196 삼악산 ele 655.8
+PEAK	#서대산	1	0.0	osm node 5371870467 서대산 ele 904.1
+PEAK	#선운산	1	0.0	osm node 5385294849 선운산 ele 334.7
+PEAK	#설악산	1	0.0	override (no OSM match) osm node 5739515162 대청봉 OSM name 대청봉 1708 m
+PEAK	#성인봉	1	0.0	osm node 6392077595 성인봉 ele 986
+PEAK	#소백산	1	0.0	osm node 444326662 소백산 비로봉 ele 1439.5
+PEAK	#소요산	1	0.0	osm node 5379626566 소요산 ele 587.5
+PEAK	#속리산	1	0.0	override (no OSM match) osm node 1862839218 천왕봉 OSM name 천왕봉 1058.4 m
+PEAK	#신불산	1	0.0	osm node 1475996577 신불산 ele 1209
+PEAK	#연화산	1	0.0	override (2 OSM matches) osm node 5377096878 연화산 고성 연화산 524 m; 경주 연화산 532 m also in the 경남 box
+PEAK	#오대산	1	0.0	override (no OSM match) osm node 1012069796 비로봉 OSM name 비로봉 1566 m
+PEAK	#오봉산	1	0.0	osm node 7972716196 오봉산 ele 777.9
+PEAK	#용문산	1	0.0	override (3 OSM matches) osm node 10296666662 용문산 가섭봉 용문산 가섭봉 1157.1 m; 1150봉·1155봉 also match
+PEAK	#용화산	1	0.0	osm node 7972716191 용화산 ele 877.8
+PEAK	#운문산	1	0.0	osm node 6474733400 운문산 ele 1195.1
+PEAK	#운악산	1	0.0	osm node 10253010745 운악산 ele 935
+PEAK	#운장산	1	0.0	override (2 OSM matches) osm node 5397216642 운장산 운장산 1125.8 m; 서봉 칠성대 also matches
+PEAK	#월악산	1	0.0	osm node 7972716276 월악산 영봉 ele 1097
+PEAK	#월출산	1	0.0	osm node 7972724224 월출산(천황봉) ele 816.04
+PEAK	#유명산	1	0.0	osm node 5388363536 유명산 ele 864
+PEAK	#응봉산	1	0.0	override (2 OSM matches) osm node 3878806510 응봉산 울진 응봉산 999.7 m; 정선 응봉산 1013.3 m also matches
+PEAK	#장안산	1	0.0	osm node 5750036142 장안산 ele 1237
+PEAK	#재약산	1	0.0	override (no OSM match) osm node 6471732105 천황산 list height 1189 m is 사자봉 = OSM 천황산 1189 m (OSM 재약산 node is 수미봉 1119 m)
+PEAK	#적상산	1	0.0	osm node 5371885873 적상산 ele 1030
+PEAK	#점봉산	1	0.0	osm node 1881933287 점봉산 ele 1424.2
+PEAK	#조계산	1	0.0	osm node 2321410475 조계산 ele 884
+PEAK	#주왕산	1	0.0	osm node 5750034489 주왕산 주봉 ele 721
+PEAK	#주흘산	1	0.0	override (2 OSM matches) osm node 1865098593 주흘산(주흘영봉) 주흘산(주흘영봉) 1106 m; 주봉 1108.4 m also matches
+PEAK	#지리산	1	0.0	override (no OSM match) osm node 307955533 천왕봉 OSM name 천왕봉 1918 m
+PEAK	#지리망산	1	0.0	override (no OSM match) osm node 5376906399 지리산 사량도 OSM name 지리산, ele 368 m
+PEAK	#천관산	1	0.0	osm node 3810195917 천관산연대봉 ele 723
+PEAK	#천마산	1	0.0	osm node 3169664778 천마산 ele 810.3
+PEAK	#천성산	1	0.0	override (no OSM match) osm node 7972716269 천성산(원효봉) 천성산(원효봉) 920.2 m; list height 812 m
+PEAK	#천태산	1	0.0	override (3 OSM matches) osm node 5381320862 천태산 three OSM 천태산 nodes; 715.2 m
+PEAK	#청량산	1	0.0	osm node 5389019143 청량산 장인봉 ele 869
+PEAK	#추월산	1	0.0	osm node 7972724262 추월산 ele 731.2
+PEAK	#축령산	1	0.0	osm node 443204531 축령산 ele 879
+PEAK	#치악산	1	0.0	override (no OSM match) osm node 3805445347 치악산(비로봉) 치악산(비로봉), OSM ele 1228 m
+PEAK	#칠갑산	1	0.0	osm node 5377252847 칠갑산 ele 560
+PEAK	#태백산	1	0.0	osm node 1871881184 태백산 장군봉 ele 1566.7
+PEAK	#태화산	1	0.0	osm node 5395089718 태화산 ele 1027.5
+PEAK	#팔공산	1	0.0	osm node 5750035647 팔공산비로봉 ele 1193
+PEAK	#팔봉산	1	0.0	osm node 7631245833 팔봉산 ele 328
+PEAK	#팔영산	1	0.0	osm node 7972724265 팔영산 깃대봉 ele 606.8
+PEAK	#한라산	1	0.0	override (no OSM match) osm node 7036109099 한라산동능정상 OSM name 한라산동능정상, no ele
+PEAK	#화악산	1	0.0	override (4 OSM matches) osm node 11637337293 화악산 화악산 1468.3 m; 상봉/중봉/북봉 also match
+PEAK	#화왕산	1	0.0	osm node 5382414737 화왕산 ele 757.7
+PEAK	#황매산	1	0.0	osm node 3426219616 황매산 ele 1113
+PEAK	#황석산	1	0.0	osm node 5403644213 황석산 ele 1192.5
+PEAK	#황악산	1	0.0	osm node 1859787923 황악산 ele 1111
+PEAK	#황장산	1	0.0	osm node 1867179906 황장산 ele 1077.3
+PEAK	#희양산	1	0.0	osm node 1863254729 희양산 ele 996.4

@@ -3,9 +3,10 @@
 
     <application>
         <!-- 디버그 빌드만: 기기 시험(MainActivityImportIntentTest)이 앱 캐시의 import-test/ 파일을 content:// URI로
-             공유·열기 인텐트에 담는다. 내보내지 않는다. -->
+             공유·열기 인텐트에 담는다. 내보내지 않는다. 본 manifest의 공유 카드 FileProvider와 겹치지 않게
+             하위 클래스를 쓴다. -->
         <provider
-            android:name="androidx.core.content.FileProvider"
+            android:name="com.cowork.bikerecoder.TestFileProvider"
             android:authorities="${applicationId}.testfiles"
             android:exported="false"
             android:grantUriPermissions="true">

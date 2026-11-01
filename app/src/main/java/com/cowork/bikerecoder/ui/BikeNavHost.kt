@@ -37,9 +37,7 @@ import com.cowork.bikerecoder.core.post.PeriodFilter
 import com.cowork.bikerecoder.data.AppSettings
 import com.cowork.bikerecoder.favorite.Favorite
 import com.cowork.bikerecoder.favorite.FavoriteKind
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
 import com.cowork.bikerecoder.ui.onboarding.OnboardingScreen
 import com.cowork.bikerecoder.ui.onboarding.OnboardingStep
 import com.cowork.bikerecoder.ui.onboarding.OnboardingViewModel
@@ -104,7 +102,6 @@ import com.cowork.bikerecoder.ui.trip.TripStartViewModel
 import com.cowork.bikerecoder.ui.video.MediaEntry
 import com.cowork.bikerecoder.ui.video.MediaPreviewScreen
 import com.cowork.bikerecoder.ui.video.VideoHost
-import com.cowork.bikerecoder.ui.video.VideoOutcome
 import com.cowork.bikerecoder.ui.video.VideoViewModel
 import com.cowork.bikerecoder.ui.video.galleryThumbnail
 import com.cowork.bikerecoder.ui.video.shareMedia
@@ -400,15 +397,10 @@ fun BikeNavHost(
     }
 
     // A finished job while the app is on screen: the preview (or its failure's message), once. Not over a recording
-    // that started meanwhile: then the "영상을 만들었습니다" notification stays to open it. Not while the share sheet makes
-    // its image either ([hostOutcome]); should the making end with the outcome still there, it is shown here then.
+    // that started meanwhile: then the "영상을 만들었습니다" notification stays to open it.
     val videoOutcome by videoViewModel.outcome.collectAsStateWithLifecycle()
-    // Only whether it makes: the sheet's text changes with every keystroke.
-    val shareMaking by remember(shareViewModel) {
-        shareViewModel.sheet.map { it?.making == true }.distinctUntilChanged()
-    }.collectAsStateWithLifecycle(shareViewModel.sheet.value?.making == true)
-    LaunchedEffect(videoOutcome, shareMaking) {
-        val outcome = hostOutcome(videoOutcome, shareMaking) ?: return@LaunchedEffect
+    LaunchedEffect(videoOutcome) {
+        val outcome = videoOutcome ?: return@LaunchedEffect
         val preview = videoViewModel.previewToOpen(outcome)
         if (preview != null && navController.currentDestination?.route != Routes.ONBOARDING) {
             navController.openPreview(preview.uri, preview.kind, preview.downscaled, preview.satelliteFallback)
@@ -969,14 +961,8 @@ fun BikeNavHost(
         onConfirmCurrent = favoritesViewModel::confirmCurrent,
     )
     VideoHost(videoViewModel)
-    ShareHost(shareViewModel)
+    ShareHost(shareViewModel, container.photoThumbnails)
 }
-
-/**
- * The job's [outcome] as this host shows it (the preview, or the failure's message): none while the share sheet makes its
- * image ([shareMaking]) — that Done or Failed is the sheet's, which sends the image on (V1.5.0 spec §2.4).
- */
-internal fun hostOutcome(outcome: VideoOutcome?, shareMaking: Boolean): VideoOutcome? = outcome.takeUnless { shareMaking }
 
 /** The made file's preview on top (a second one of the same file is not pushed). */
 private fun NavController.openPreview(uri: String, kind: MediaKind, downscaled: Boolean, satelliteFallback: Boolean) {

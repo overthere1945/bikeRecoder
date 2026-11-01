@@ -572,4 +572,39 @@ class CameraPathTest {
         // 10 % of a 500 px square is 50 px: the same camera as the ratio overview.
         assertEquals(CameraPath.overview(tall, 500, 500).zoom, CameraPath.overviewInset(tall, 500, 500, 50).zoom, 1e-9)
     }
+
+    @Test
+    fun overviewInBoxCentresRouteInBox() {
+        val tall = listOf(at(0.0, 0.0), at(20_000.0, -3_000.0), at(8_000.0, 5_000.0), at(-1_000.0, 1_000.0))
+        val wide = listOf(at(0.0, 0.0), at(2_000.0, 30_000.0), at(-3_000.0, 12_000.0))
+        val (w, h) = 1080 to 1350
+        val boxes = listOf(Box(65f, 250f, 950f, 690f), Box(0f, 0f, 1080f, 1350f), Box(300f, 800f, 400f, 400f))
+        for (points in listOf(tall, wide)) for (box in boxes) {
+            val cam = CameraPath.overviewInBox(points, w, h, box)
+            assertEquals(0.0, cam.tilt)
+            assertEquals(0.0, cam.bearing)
+            val world = 512.0 * 2.0.pow(cam.zoom)
+            val xs = points.map { (mercX(it.lon) - mercX(cam.center.lon)) * world + w / 2.0 }
+            val ys = points.map { (mercY(it.lat) - mercY(cam.center.lat)) * world + h / 2.0 }
+            // The route's centre lands on the box centre ...
+            assertEquals(box.x + box.w / 2.0, (xs.max() + xs.min()) / 2, 1.0)
+            assertEquals(box.y + box.h / 2.0, (ys.max() + ys.min()) / 2, 1.0)
+            // ... and the route fills the box without a margin (touching it on the limiting axis).
+            val eps = 1e-6
+            xs.forEach { assertTrue(it >= box.x - eps && it <= box.x + box.w + eps, "x $it") }
+            ys.forEach { assertTrue(it >= box.y - eps && it <= box.y + box.h + eps, "y $it") }
+            val fill = max((xs.max() - xs.min()) / box.w, (ys.max() - ys.min()) / box.h)
+            assertEquals(1.0, fill, 1e-6)
+        }
+        // A tiny route is not zoomed in past the riding zoom, and still lands on the box centre.
+        val tiny = listOf(at(0.0, 0.0), at(3.0, 0.0))
+        val box = Box(65f, 250f, 950f, 690f)
+        val cam = CameraPath.overviewInBox(tiny, w, h, box)
+        assertEquals(CameraPath.ZOOM_SLOW, cam.zoom)
+        val world = 512.0 * 2.0.pow(cam.zoom)
+        val y = tiny.map { (mercY(it.lat) - mercY(cam.center.lat)) * world + h / 2.0 }
+        assertEquals(box.y + box.h / 2.0, (y.max() + y.min()) / 2, 1.0)
+        // The full-canvas box is the plain fit without margin.
+        assertEquals(CameraPath.overviewInset(tall, w, h, 0).zoom, CameraPath.overviewInBox(tall, w, h, Box(0f, 0f, 1080f, 1350f)).zoom, 1e-9)
+    }
 }

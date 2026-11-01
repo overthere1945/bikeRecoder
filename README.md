@@ -13,7 +13,7 @@ Bicycle navigation, route tracking, and photo video generator app based on trave
 | 통계 | 주간·연간 목표, 연속 주행, 주·월·년·전체 통계, 개인 기록, 누적 지도 입구 |
 | 설정 | 기본 경로 성향, 기록 옵션, 경로 데이터, 내려받은 지도, 사진·심박 연결, 공유(기본 해시태그), 기록 가져오기(GPX·ZIP), 앱 버전 |
 
-- 현재 버전: **V1.9.2** · V1.0.0~V1.9.2 출시, 모두 실주행 검증 대기 — 버전 규칙: [docs/VERSIONING.md](docs/VERSIONING.md), 변경 이력: [CHANGELOG.md](CHANGELOG.md)
+- 현재 버전: **V1.10.0** · V1.0.0~V1.10.0 출시, 모두 실주행 검증 대기 — 버전 규칙: [docs/VERSIONING.md](docs/VERSIONING.md), 변경 이력: [CHANGELOG.md](CHANGELOG.md)
 - 대상 기기: Samsung Galaxy S26 (Android 17), Galaxy Watch7 (심박, Health Connect 경유)
 
 ## 로드맵
@@ -31,7 +31,7 @@ Bicycle navigation, route tracking, and photo video generator app based on trave
 | V1.7.0 | 고도와 내보내기 | 여행·구간·경로 미리보기의 경사 색 고도 그래프와 큰 "고도" 지도 화면(훑으면 점이 따라감), 누적 하강·최고 고도, 평소 속도와 오르막 보정으로 계산한 예상 시간, 길안내의 경사 색 경로 선·"앞길 고도" 띠·오르막 음성, 여행과 계획한 경로의 GPX·KML 내보내기(`Download/bikeRecoder/`, 공유·파일 열기) | 출시(`v1.7.0`), 실제 길안내 주행·Bikemap 숫자 비교 대기 |
 | V1.8.0 | 속도·심박 그래프 | 여행 화면에 속도·심박 그래프를 더하고 구간 화면의 그래프를 같은 모양으로 바꿈(5점 중앙값과 시간 평균으로 GPS 잡음을 지움. 구간·짧은 여행에서는 신호등 멈춤이 움푹 들어간 모양으로 보임), 속도 5구간·심박 5구간 색, 큰 지도의 [고도] [속도] [심박] 탭(훑은 위치 유지, 탭마다 선 색·범례), 하루 종일처럼 드문 심박은 그리지 않음 | 출시(`v1.8.0`), 긴 여행 그래프 확인 대기 |
 | V1.9.0 | 활동 종류 | 자전거 전용이던 기록을 걷기·달리기·등산까지 넓힘(종류는 구간마다 붙고 한 여행에 섞일 수 있음). 지도 화면의 종류 칩과 기록 뒤 종류 바꾸기, 종류별 기록 기준·숫자(페이스, 산행 시간·고도)·음성, 등산 일몰 안내, 종류 색·배지·카드·자동 제목, 통계 탭 종류 칩과 종류별 목표·개인 기록(달리기 최고 기록), 영상·공유·GPX의 종류 (V1.9.1: 종류 버튼, 끝낼 때 당일·여러 날 고르기, 새 선택 창, 종류별 통계 문구) | 출시(`v1.9.0`·`v1.9.1`·`v1.9.2`), 걷기·등산·종류 바꾸기 실사용 점검 대기 |
-| V1.10.0 | 공유 카드 | 공유할 것 고르기, 스토리/게시물 비율, 투명 스티커, 유명한 길·산 해시태그 | 예정 |
+| V1.10.0 | 공유 카드 | 공유 창에서 게시물 4:5 / 스토리 9:16을 고르고 "보낼 것" 띠(위성 카드·사진 카드·사진·영상, 번호 순서로 최대 10장, 길게 누르면 미리보기)에서 골라 인스타그램·페이스북에 묶음 게시물로 보내기, 위성 지도 위 경로 카드와 그날 사진 위 숫자 카드, 갤러리에 넣는 투명 스티커 PNG, 오프라인 내장 데이터로 붙이는 "지나간 길" 해시태그(국토종주 자전거길·100대 명산·둘레길·도시 강변길) | 출시(`v1.10.0`), 실사용 점검 대기 |
 | V1.11.0 | 영상 다듬기 2 | Relive식 영상 카메라, 지명 팻말, 시작 카드 개편 | 예정 |
 | V1.12.0 | GPX 경로 따라가기 | 남이 올린 GPX 경로를 불러와 그 길을 따라 길안내(걷기·등산 포함) | 예정 |
 | V1.13.0 | 경로 주변 장소 | 경로 주변의 화장실·물·전기자전거 충전소 찾기 | 예정 |
@@ -148,6 +148,8 @@ $ANDROID_HOME/emulator/emulator -avd bike37 -no-snapshot &
 - [속도·심박 그래프 검증·실사용 점검표](docs/verification/speed-hr-charts-field-test.md)
 - [활동 종류 설계 스펙 (V1.9.0)](docs/superpowers/specs/2026-11-01-activity-types-design.md)
 - [활동 종류 검증·실사용 점검표](docs/verification/activity-types-field-test.md)
+- [공유 카드 설계 스펙 (V1.10.0)](docs/superpowers/specs/2026-11-01-share-cards-design.md)
+- [공유 카드 검증·실사용 점검표](docs/verification/share-cards-field-test.md)
 - [변경 이력](CHANGELOG.md)
 
 ## 라이선스와 출처 표기
@@ -157,4 +159,5 @@ $ANDROID_HOME/emulator/emulator -avd bike37 -no-snapshot &
 - 지도: OpenFreeMap © OpenMapTiles Data from OpenStreetMap
 - 경로 탐색: BRouter © BRouter contributors (MIT License)
 - 지도 데이터: © OpenStreetMap contributors (ODbL)
+- 길·산 데이터: © OpenStreetMap contributors (ODbL), 산림청 100대 명산 목록
 - 영상·요약 이미지의 위성 사진: © 브이월드

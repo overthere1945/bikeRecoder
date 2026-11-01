@@ -1,0 +1,39 @@
+# Routes of share cards spec §4.1. Columns are tab-separated. name_regex is searched in the OSM
+# relation name or name:en; all matching relations are unioned. It must be valid both as a Python regex and as
+# an Overpass (POSIX ERE) regex: build_places.py generates sources/overpass/routes.ql from this column.
+# Keep Hangul out of [...] sets (Overpass may match bytes). Optional bbox (lat0,lat1,lon0,lon1) keeps
+# only relations whose bounds lie inside it. A row with no match is DROPPED in the summary.
+id	kind	tag	group	name_regex	bbox
+ara	ROUTE	#아라자전거길	#국토종주	(^|[ \[])아라 ?자(전|건)거 ?길	
+hangang	ROUTE	#한강종주자전거길	#국토종주	(^|[ \[])한강 ?종주 ?자전거 ?길	
+namhangang	ROUTE	#남한강자전거길	#국토종주	(^|[ \[])남한강 ?자전거 ?길	
+bukhangang	ROUTE	#북한강자전거길	#국토종주	(^|[ \[])북한강 ?자전거 ?길	
+saejae	ROUTE	#새재자전거길	#국토종주	(^|[ \[])새재 ?자전거 ?길	
+ocheon	ROUTE	#오천자전거길	#국토종주	(^|[ \[])오천 ?자전거 ?길	
+geumgang	ROUTE	#금강자전거길	#국토종주	(^|[ \[])금강 ?자전거 ?길	
+yeongsangang	ROUTE	#영산강자전거길	#국토종주	(^|[ \[])영산강 ?자전거 ?길	
+seomjingang	ROUTE	#섬진강자전거길	#국토종주	(^|[ \[])섬진강 ?자전거 ?길	
+nakdonggang	ROUTE	#낙동강자전거길	#국토종주	(^|[ \[])낙동강 ?자전거 ?길	
+donghae_gangwon	ROUTE	#동해안자전거길	#국토종주	(^|[ \[])동해안 ?자전거 ?길 ?\(강원\)	
+donghae_gyeongbuk	ROUTE	#동해안자전거길	#국토종주	(^|[ \[])동해안 ?자전거 ?길 ?\(경북\)	
+jeju	ROUTE	#제주환상자전거길	#국토종주	(^|[ \[])제주 ?환상 ?자전거 ?길	
+haeparang	ROUTE	#해파랑길		(^|[ \[])해파랑	
+namparang	ROUTE	#남파랑길		(^|[ \[])남파랑	
+seohaerang	ROUTE	#서해랑길		(^|[ \[])서해랑	
+dmz	ROUTE	#DMZ평화의길		(^|[ \[])(DMZ|디엠지) ?평화의 ?길	
+seoul_trail	ROUTE	#서울둘레길		(^|[ \[])서울 ?둘레길	
+bukhansan_trail	ROUTE	#북한산둘레길		(^|[ \[])북한산 ?둘레길	
+jirisan_trail	ROUTE	#지리산둘레길		(^|[ \[])지리산 ?둘레길	
+jeju_olle	ROUTE	#제주올레		(^|[ \[])(제주 ?)?올레|^(Jeju )?[Oo]lle	
+tancheon	ROUTE	#탄천		^\[?탄천	
+yangjaecheon	ROUTE	#양재천		^\[?양재천	
+jungnangcheon	ROUTE	#중랑천		^\[?중랑천	
+anyangcheon	ROUTE	#안양천		^\[?안양천	
+bulgwangcheon	ROUTE	#불광천		^\[?불광천	
+hongjecheon	ROUTE	#홍제천		^\[?홍제천	
+sincheon	ROUTE	#신천		(^|[ \[])신천	35.60,36.02,128.34,128.78
+geumhogang	ROUTE	#금호강		(^|[ \[])금호강	
+gapcheon	ROUTE	#갑천		^\[?갑천	
+gwangjucheon	ROUTE	#광주천		^\[?광주천	
+oncheoncheon	ROUTE	#온천천		(^|[ \[])온천천	
+suyeonggang	ROUTE	#수영강		(^|[ \[])수영강	

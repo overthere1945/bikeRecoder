@@ -160,6 +160,39 @@ class ShareTextTest {
     }
 
     @Test
+    fun placeTagsFollowRegion() {
+        val text = autoShareText(
+            facts(region = "경북 상주시"),
+            "#자전거 #라이딩",
+            listOf("#낙동강자전거길", "#국토종주"),
+        )
+        assertEquals("#자전거 #라이딩 #경북 #상주시 #낙동강자전거길 #국토종주", text.lines()[3])
+    }
+
+    @Test
+    fun placeTagEqualToRegionOnce() {
+        val text = autoShareText(facts(region = "경북 상주시"), "#자전거 #라이딩", listOf("#상주시", "#국토종주"))
+        assertEquals("#자전거 #라이딩 #경북 #상주시 #국토종주", text.lines()[3])
+    }
+
+    @Test
+    fun toggleTagAddsAndRemoves() {
+        val text = autoShareText(facts(), "#자전거 #라이딩", emptyList())
+        val on = toggleTag(text, "#낙동강자전거길")
+        assertEquals("#자전거 #라이딩 #서울 #강서구 #낙동강자전거길", on.lines()[3])
+        assertEquals(4, on.lines().size)
+        assertTrue(tagOn(on, "#낙동강자전거길"))
+        assertFalse(tagOn(text, "#낙동강자전거길"))
+        assertEquals(text, toggleTag(on, "#낙동강자전거길"))
+    }
+
+    @Test
+    fun tagOnIsWholeWord() {
+        assertFalse(tagOn("달렸다 #북한산둘레길", "#북한산"))
+        assertTrue(tagOn("달렸다 #북한산둘레길 #북한산", "#북한산"))
+    }
+
+    @Test
     fun normalizeHashtagsInput() {
         assertEquals("#자출 #한강", normalizeHashtags("자출 한강"))
         assertEquals("#자출", normalizeHashtags("#자출  #자출"))

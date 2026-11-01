@@ -1,8 +1,10 @@
 package com.cowork.bikerecoder
 
 import android.content.Context
+import androidx.core.content.FileProvider
 import android.util.Log
 import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.post.MIN_RIDE_DISTANCE_M
 import com.cowork.bikerecoder.core.routing.Router
 import com.cowork.bikerecoder.core.importing.ImportStore
 import com.cowork.bikerecoder.core.recording.RideStore
@@ -50,6 +52,7 @@ import com.cowork.bikerecoder.offline.SegmentRepository
 import com.cowork.bikerecoder.post.HealthConnectHeartRateSource
 import com.cowork.bikerecoder.post.HeartRateSource
 import com.cowork.bikerecoder.post.MediaStorePhotoSource
+import com.cowork.bikerecoder.post.PhotoAccess
 import com.cowork.bikerecoder.post.PhotoSource
 import com.cowork.bikerecoder.post.PhotoThumbnails
 import com.cowork.bikerecoder.post.PostProcessor
@@ -63,7 +66,13 @@ import com.cowork.bikerecoder.search.KakaoLocalClient
 import com.cowork.bikerecoder.search.SearchResult
 import com.cowork.bikerecoder.search.PlaceSearch
 import com.cowork.bikerecoder.search.RecentPlaceStore
+import com.cowork.bikerecoder.share.MediaStoreShareGallery
+import com.cowork.bikerecoder.share.PlaceTags
+import com.cowork.bikerecoder.share.ShareCache
 import com.cowork.bikerecoder.share.ShareCandidates
+import com.cowork.bikerecoder.share.ShareGallery
+import com.cowork.bikerecoder.share.cards.AndroidShareCardMaker
+import com.cowork.bikerecoder.share.cards.ShareCardMaker
 import com.cowork.bikerecoder.tts.AndroidTtsVoiceOutput
 import com.cowork.bikerecoder.tts.VoiceOutput
 import com.cowork.bikerecoder.ui.elevation.ElevationHandoff
@@ -99,6 +108,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import java.io.File
 
@@ -313,6 +323,56 @@ class AppContainer(context: Context) {
 
     /** The made files of a trip that may still be shared (V1.5.0 spec §2.1). */
     val shareCandidates: ShareCandidates by lazy { ShareCandidates(mediaStoreWriter) }
+
+    /** The share cards' files, `cacheDir/share/<tripId>/`, handed out through the FileProvider (share cards spec §3.2). */
+    val shareCache: ShareCache by lazy {
+        ShareCache(
+            root = File(appContext.cacheDir, "share"),
+            uriOf = { FileProvider.getUriForFile(appContext, "${appContext.packageName}.share", it).toString() },
+            now = System::currentTimeMillis,
+        )
+    }
+
+    /** Draws the share sheet's cards into [shareCache] (share cards spec §2, §3); it keeps the last trip's inputs. */
+    val shareCardMaker: ShareCardMaker by lazy {
+        AndroidShareCardMaker(
+            context = appContext,
+            cache = shareCache,
+            inputs = VideoInputsLoader(rideStore, postStore, tripStore, tripLabels),
+            labels = tripLabels,
+            backend = videoBackend(),
+            plainTiles = tileSource,
+            satelliteKey = BuildConfig.VWORLD_API_KEY,
+            photos = photoThumbnails,
+        )
+    }
+
+    /** The "지나간 길" tags of a trip from the built-in place data (share cards spec §4.5). */
+    val placeTags: PlaceTags by lazy {
+        PlaceTags({ appContext.assets.open("places/places.bin") }, rideStore, androidWarnLog("PlaceTags"))
+    }
+
+    /** [저장] and [스티커] of the share sheet put their cards into the gallery here (share cards spec §5.5, §5.6). */
+    val shareGallery: ShareGallery by lazy { MediaStoreShareGallery(appContext.contentResolver, mediaStoreWriter) }
+
+    /**
+     * The photos of the share sheet's strip (share cards spec §1.2): the shown photos of trip [tripId]'s finished rides of
+     * at least [MIN_RIDE_DISTANCE_M], in the order they were taken, that are still in the gallery; none without photo
+     * access (it is not asked for).
+     */
+    suspend fun sharePhotoIds(tripId: Long): List<Long> {
+        if (photoSource.access() == PhotoAccess.NONE) return emptyList()
+        val segmentIds = rideStore.segments(tripId)
+            .filter { it.endedAt != null && it.totals.distanceM >= MIN_RIDE_DISTANCE_M }
+            .map { it.id }
+        if (segmentIds.isEmpty()) return emptyList()
+        val ids = postStore.observePhotos(segmentIds).first()
+            .filterNot { it.hidden }
+            .sortedBy { it.takenAt }
+            .distinctBy { it.mediaId }
+            .map { it.mediaId }
+        return withContext(Dispatchers.IO) { ids.filter { mediaStoreWriter.exists(photoSource.uri(it)) } }
+    }
 
     /** The video/image job runs here, outside any screen; [VideoService] keeps the process up meanwhile. */
     private val videoScope = CoroutineScope(
