@@ -89,7 +89,7 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.te
 
 | 파일 | 만드는 시험 | 확인 |
 |---|---|---|
-| `v190-chips.png` | (지도 화면 종류 칩, 최종 수정 뒤 정함) | |
+| `v190-chips.png` | `ActivityChipsTest` (달리기 칩을 고른 모양) | |
 | `v190-hike-numbers.png` | `RideNumbersPageTest` | |
 | `v190-run-numbers.png` | `RideNumbersPageTest` | |
 | `v190-feed-cards.png` | `FeedCardActivityTest` | |
@@ -101,7 +101,7 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.te
 ## 알려진 한계
 
 - 걷기·등산 길안내와 경로 탐색은 없습니다(길안내는 자전거 전용, V1.12.0의 GPX 따라가기로 다룸).
-- 일몰 시각은 NOAA 식으로 휴대폰 안에서 계산합니다(고도 보정 없음). 시험의 2026-03-20 서울·제주 값은 미국 해군천문대(USNO) 값과 맞춰 본 것이고 한국천문연구원(KASI) 출몰시각과는 아직 대조하지 못했습니다. 실제 산에서 일몰 줄이 맞는지는 점검표 3번에서 봅니다.
+- 일몰 시각은 NOAA 식으로 휴대폰 안에서 계산합니다(고도 보정 없음). 시험값 가운데 서울 2026-03-20, 제주 2026-06-21·2026-12-22는 미국 해군천문대(USNO) 계산값과 맞춰 본 것이고 한국천문연구원(KASI) 출몰시각으로는 확인하지 못했습니다(서울 06-21 19:57·12-22 17:18은 KASI 값을 인용함). 실제 산에서 일몰 줄이 맞는지는 점검표 3번에서 봅니다.
 - 기록을 마친 뒤 종류를 바꿀 때 일시정지 중에 저장되지 않은 위치는 되살릴 수 없습니다. 이미 만든 영상·이미지 파일은 그대로 둡니다.
 - 기록 중에는 종류를 바꿀 수 없습니다.
 - 앱 이름·아이콘·첫 화면과 앱 곳곳의 "주행" 문구는 그대로입니다(V2.0.0).

@@ -1,7 +1,13 @@
 package com.cowork.bikerecoder.ui.main
 
+import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
+import android.os.Environment
+import android.provider.MediaStore
+import android.util.Log
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -18,6 +24,7 @@ import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
+import androidx.test.platform.app.InstrumentationRegistry
 import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.data.SettingsRepository
 import com.cowork.bikerecoder.ui.activity.ActivityChips
@@ -36,7 +43,8 @@ import org.junit.Test
 /**
  * The map screen's activity chips (V1.9.0 spec §1.4, §2.1): four in order, the chosen one selected, each read as its
  * activity's name, and the choice kept in the settings (`last_activity`) for the next time the screen opens. Uses the
- * device's settings DataStore: the chip's value is put back after each test.
+ * device's settings DataStore: the chip's value is put back after each test. Screenshot `v190-chips`
+ * (Download/bikeRecoderTest).
  */
 class ActivityChipsTest {
     @get:Rule
@@ -118,5 +126,44 @@ class ActivityChipsTest {
 
         composeRule.onNodeWithContentDescription("등산").assertIsSelected()
         composeRule.onNodeWithContentDescription("자전거").assertIsNotSelected()
+    }
+
+    /** Download/bikeRecoderTest/v190-chips.png: the chips with a non-bike chip (running) selected. */
+    @Test
+    fun screenshotChips() {
+        composeRule.setContent {
+            MaterialTheme { Surface { ActivityChips(ActivityType.RUN, onSelect = {}) } }
+        }
+        composeRule.onNodeWithContentDescription("달리기").assertIsSelected()
+        screenshot("v190-chips")
+    }
+
+    /** The whole screen into Download/bikeRecoderTest/[name].png (an older file of the name is deleted first). */
+    private fun screenshot(name: String) {
+        composeRule.waitForIdle()
+        Thread.sleep(300)
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val bitmap: Bitmap = instrumentation.uiAutomation.takeScreenshot() ?: return
+        val resolver = instrumentation.targetContext.contentResolver
+        val relative = "${Environment.DIRECTORY_DOWNLOADS}/bikeRecoderTest/"
+        runCatching {
+            resolver.delete(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} = ?",
+                arrayOf("$name.png", relative),
+            )
+        }
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, "$name.png")
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, relative)
+        }
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return
+        resolver.openOutputStream(uri)!!.use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        Log.i(TAG, "screenshot $name → $uri")
+    }
+
+    private companion object {
+        const val TAG = "ActivityChipsTest"
     }
 }
