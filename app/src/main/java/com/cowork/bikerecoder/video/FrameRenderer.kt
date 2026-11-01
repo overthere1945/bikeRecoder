@@ -583,7 +583,8 @@ class FrameRenderer(
         internal fun rideCells(totals: TripTotals, activity: ActivityType): List<Pair<String, String>> {
             val distance = "거리" to RideFormat.distance(totals.distanceM)
             val moving = "이동 시간" to RideFormat.duration(totals.movingTimeMs)
-            val avgPace = ActivityText.LABEL_AVG_PACE to "${ActivityFormat.paceOf(totals.paceDistanceM ?: totals.distanceM, totals.paceMovingTimeMs ?: totals.movingTimeMs)}/km"
+            val pace = ActivityFormat.paceOf(totals.paceDistanceM ?: totals.distanceM, totals.paceMovingTimeMs ?: totals.movingTimeMs)
+            val avgPace = ActivityText.LABEL_AVG_PACE to "$pace/km"
             return when (activity) {
                 ActivityType.BIKE -> listOf(
                     distance,
