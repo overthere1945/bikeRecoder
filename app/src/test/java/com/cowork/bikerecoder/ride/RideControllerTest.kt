@@ -3,6 +3,7 @@ package com.cowork.bikerecoder.ride
 import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.activity.BestEffort
 import com.cowork.bikerecoder.core.activity.BestEffortDistance
+import com.cowork.bikerecoder.core.activity.BestEfforts
 import com.cowork.bikerecoder.core.model.GeoMath
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.LocationFix
@@ -999,6 +1000,40 @@ class RideControllerTest {
         val efforts = h.store.bestEfforts.getValue(segmentId)
         assertEquals(listOf(BestEffortDistance.ONE_K), efforts.map { it.distance })
         assertEquals(300_000.0, efforts.single().timeMs.toDouble(), 1_000.0)
+    }
+
+    /** A run left open by a crash or kill gets its best efforts when it is closed at its last save (as [finish] does). */
+    @Test
+    fun anInterruptedRunSavesItsBestEffortsWhenClosed() = runTest {
+        val h = harness(straight(1_100.0, speedKmh = 12.0))
+        val runTrip = h.trip(TripType.MULTI_DAY)
+        val aJob = Job(backgroundScope.coroutineContext.job)
+        val a = h.newController(CoroutineScope(backgroundScope.coroutineContext + aJob))
+        h.start(runTrip, a, ActivityType.RUN)
+        play(340_000)
+        aJob.cancel() // the process died without a stop
+        runCurrent()
+        val leftover = h.store.openSegments().single()
+        assertFalse(leftover.id in h.store.bestEfforts)
+
+        h.newController().closeInterrupted()
+
+        assertNotNull(h.store.segment(leftover.id)!!.endedAt)
+        val efforts = h.store.bestEfforts.getValue(leftover.id)
+        assertEquals(listOf(BestEffortDistance.ONE_K), efforts.map { it.distance })
+        assertEquals(BestEfforts.find(h.store.points(leftover.id)), efforts)
+    }
+
+    @Test
+    fun anInterruptedBikeSavesNoBestEfforts() = runTest {
+        val h = harness(emptyList())
+        val bike = h.store.openSegment(h.trip(TripType.MULTI_DAY), 0, testDay)
+        h.store.appendPoints(bike, emptyList(), SegmentTotals.ZERO.copy(elapsedMs = 30_000))
+
+        h.controller.closeInterrupted()
+
+        assertNotNull(h.store.segment(bike)!!.endedAt)
+        assertFalse(bike in h.store.bestEfforts)
     }
 
     @Test

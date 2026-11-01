@@ -828,11 +828,19 @@ class RideController(
         _notice.value = ScreenNotice(++noticeIds, text)
     }
 
-    /** Closes every open segment at its last save (startedAt + saved elapsed time, saved totals); returns them. */
+    /**
+     * Closes every open segment at its last save (startedAt + saved elapsed time, saved totals); returns them. A run's
+     * best efforts are saved from its saved points as [finish] does (a failure is only logged).
+     */
     private suspend fun closeOpenSegments(): List<RideSegment> {
         val open = rideStore.openSegments()
         for (segment in open) {
             rideStore.closeSegment(segment.id, segment.startedAt + segment.totals.elapsedMs, segment.totals)
+            if (segment.activity == ActivityType.RUN) {
+                saving("save the best efforts of segment ${segment.id}") {
+                    rideStore.saveBestEfforts(segment.id, BestEfforts.find(rideStore.points(segment.id)))
+                }
+            }
         }
         return open
     }
