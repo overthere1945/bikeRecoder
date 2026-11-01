@@ -34,7 +34,13 @@ data class SegmentExtras(
     val maxBpm: Int? = null,
     val calories: Double? = null,
     val simplifiedDone: Boolean = false,
-)
+) {
+    /**
+     * 심박이 READY이고 자세하다([hrDetailed]: 이동 시간 1분에 표본 1개 이상). 심박 그래프(구간마다 거름 —
+     * MetricSeries.heartRate의 detailed)와 [심박] 지도 색은 이 구간들만 쓴다.
+     */
+    val detailedHeartRate: Boolean get() = hrStatus == HrStatus.READY && hrDetailed
+}
 
 /**
  * 기록 목록 카드(스펙 §6.11)에 쓰는 구간 하나: 단순화 경로(아직 없거나 읽을 수 없으면 null), 숨기지 않은 사진 수,

@@ -60,6 +60,7 @@ import com.cowork.bikerecoder.ui.importing.ImportScreen
 import com.cowork.bikerecoder.ui.importing.ImportViewModel
 import com.cowork.bikerecoder.ui.history.SegmentDetailScreen
 import com.cowork.bikerecoder.ui.history.SegmentDetailViewModel
+import com.cowork.bikerecoder.ui.elevation.ChartTab
 import com.cowork.bikerecoder.ui.elevation.ElevationMapScreen
 import com.cowork.bikerecoder.ui.elevation.ElevationMapViewModel
 import com.cowork.bikerecoder.ui.elevation.ElevationSource
@@ -192,20 +193,28 @@ object Routes {
     const val ARG_OPEN_TAB = "openTab"
 
     /**
-     * The "고도" map screen (V1.7.0 spec §2.2): kind `trip` | `segment` | `plan` and the trip or segment id (plan: 0, its
-     * route is in [AppContainer.elevationHandoff]); see [elevation].
+     * The big map screen (V1.7.0 spec §2.2, V1.8.0 spec §2.4): kind `trip` | `segment` | `plan`, the trip or segment id
+     * (plan: 0, its route is in [AppContainer.elevationHandoff]) and the [ChartTab] it opens on (default `elevation`);
+     * see [elevation].
      */
-    const val ELEVATION = "elevation/{${ElevationMapViewModel.ARG_KIND}}/{${ElevationMapViewModel.ARG_ID}}"
+    const val ELEVATION =
+        "elevation/{${ElevationMapViewModel.ARG_KIND}}/{${ElevationMapViewModel.ARG_ID}}" +
+            "?${ElevationMapViewModel.ARG_TAB}={${ElevationMapViewModel.ARG_TAB}}"
 
-    fun elevation(source: ElevationSource): String {
+    fun elevation(source: ElevationSource, tab: ChartTab): String {
         val (kind, id) = ElevationMapViewModel.kindAndId(source)
-        return "elevation/$kind/$id"
+        return "elevation/$kind/$id?${ElevationMapViewModel.ARG_TAB}=${tab.arg}"
     }
 }
 
-/** The "고도" map screen of [source] on top (for the plan, put its route in [AppContainer.elevationHandoff] first). */
+/** The big map screen of [source] on top, on [tab] (for the plan, put its route in [AppContainer.elevationHandoff] first). */
+fun NavController.openChartMap(source: ElevationSource, tab: ChartTab) {
+    navigate(Routes.elevation(source, tab)) { launchSingleTop = true }
+}
+
+/** The big map screen of [source] on its elevation tab ([openChartMap]). */
 fun NavController.openElevation(source: ElevationSource) {
-    navigate(Routes.elevation(source)) { launchSingleTop = true }
+    openChartMap(source, ChartTab.ELEVATION)
 }
 
 /** What the activity was launched for, from a notification. */
@@ -840,7 +849,7 @@ fun BikeNavHost(
                 tileSource = container.tileSource,
                 thumbnails = container.photoThumbnails,
                 onOpenSegment = { segmentId -> navController.navigate(Routes.segmentDetail(segmentId)) },
-                onOpenElevation = { navController.openElevation(ElevationSource.Trip(tripId)) },
+                onOpenChart = { tab -> navController.openChartMap(ElevationSource.Trip(tripId), tab) },
                 onBack = { navController.popBackStack() },
                 photoPrompt = { PhotoPrompt(container) },
                 heartRateGate = heartRateGate,
@@ -896,6 +905,10 @@ fun BikeNavHost(
             arguments = listOf(
                 navArgument(ElevationMapViewModel.ARG_KIND) { type = NavType.StringType },
                 navArgument(ElevationMapViewModel.ARG_ID) { type = NavType.LongType },
+                navArgument(ElevationMapViewModel.ARG_TAB) {
+                    type = NavType.StringType
+                    defaultValue = ChartTab.ELEVATION.arg
+                },
             ),
         ) { entry ->
             val viewModel: ElevationMapViewModel = viewModel(factory = ElevationMapViewModel.factory(container))
@@ -917,7 +930,7 @@ fun BikeNavHost(
                 tileSource = container.tileSource,
                 thumbnails = container.photoThumbnails,
                 onBack = { navController.popBackStack() },
-                onOpenElevation = { navController.openElevation(ElevationSource.Segment(segmentId)) },
+                onOpenChart = { tab -> navController.openChartMap(ElevationSource.Segment(segmentId), tab) },
                 photoPrompt = { PhotoPrompt(container) },
                 heartRateGate = heartRateGate,
             )

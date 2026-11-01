@@ -1,11 +1,21 @@
 package com.cowork.bikerecoder.ui.history
 
+import android.content.ContentValues
+import android.graphics.Bitmap
+import android.os.Environment
+import android.provider.MediaStore
+import android.util.Log
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -27,7 +37,10 @@ import com.cowork.bikerecoder.post.FakePostStore
 import com.cowork.bikerecoder.post.HealthAvailability
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.SegmentExtras
+import com.cowork.bikerecoder.ui.elevation.ChartTab
+import com.cowork.bikerecoder.ui.elevation.ChartText
 import com.cowork.bikerecoder.ui.elevation.ElevationTags
+import com.cowork.bikerecoder.ui.elevation.MetricTags
 import com.cowork.bikerecoder.ui.health.HeartRateGate
 import com.cowork.bikerecoder.ui.health.TrackColorTags
 import com.cowork.bikerecoder.ui.photo.fakeThumbnails
@@ -86,12 +99,12 @@ class SegmentDetailScreenTest {
         )
     }
 
-    private fun show(gate: HeartRateGate? = null, onOpenElevation: () -> Unit = {}) {
+    private fun show(gate: HeartRateGate? = null, onOpenChart: (ChartTab) -> Unit = {}) {
         val vm = SegmentDetailViewModel(rides, 1, postStore, processor)
         composeRule.setContent {
             MaterialTheme {
                 SegmentDetailScreen(
-                    vm, NoTiles, fakeThumbnails(), onBack = {}, onOpenElevation = onOpenElevation, heartRateGate = gate,
+                    vm, NoTiles, fakeThumbnails(), onBack = {}, onOpenChart = onOpenChart, heartRateGate = gate,
                 ) { c, modifier ->
                     content = c
                     Box(modifier.testTag(MAP))
@@ -101,24 +114,115 @@ class SegmentDetailScreenTest {
         composeRule.waitUntil(5_000) { content?.track?.isNotEmpty() == true }
     }
 
-    /** V1.7.0 spec §2.4: the single-colour altitude line chart is the small elevation chart; speed stays a line chart. */
+    /** V1.7.0 spec §2.4: the single-colour altitude line chart is the small elevation chart. */
     @Test
     fun elevationChartReplacesLineChart() {
-        var opened = 0
-        show(onOpenElevation = { opened++ })
+        val opened = mutableListOf<ChartTab>()
+        show(onOpenChart = { opened += it })
 
         composeRule.onNodeWithText("고도").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag(ElevationTags.CHART).performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("고도 정보가 없습니다").assertDoesNotExist()
         // The old chart wrote its lowest and highest value (20m, 35m) as text; the elevation chart draws them.
         composeRule.onNodeWithText("35m").assertDoesNotExist()
-        composeRule.onNodeWithText("속도").performScrollTo().assertIsDisplayed()
-        // The speed chart still writes its range: "평균/최고" plus the chart's highest and lowest value.
-        assertTrue(composeRule.onAllNodesWithText("km/h", substring = true).fetchSemanticsNodes().size >= 3)
 
-        composeRule.onNodeWithTag(ElevationTags.SHOW_ON_MAP).performScrollTo().performClick()
+        showOnMapIn(ElevationTags.CHART).performScrollTo().performClick()
         composeRule.onNodeWithTag(ElevationTags.CHART).performClick()
-        assertEquals(2, opened)
+        assertEquals(listOf(ChartTab.ELEVATION, ChartTab.ELEVATION), opened)
+    }
+
+    /**
+     * V1.8.0 spec §2.3: the speed and heart-rate line charts are [MetricChart]s in the same place under the same titles,
+     * read out with the segment's stored figures, each opening the big map on its own tab.
+     */
+    @Test
+    fun metricChartsReplaceLineCharts() {
+        // Detailed, so the heart rate is charted; the map's [심박] chip shares the chart's title (left out below).
+        ready(detailed = true)
+        val opened = mutableListOf<ChartTab>()
+        show(onOpenChart = { opened += it })
+        composeRule.waitUntil(5_000) {
+            runCatching { composeRule.onNodeWithTag(MetricTags.HEART_CHART).assertExists() }.isSuccess
+        }
+
+        // The scrolling column lays everything out; positions (unlike bounds) are not clipped to its viewport.
+        val elevation = span(composeRule.onNodeWithTag(ElevationTags.CHART))
+        val speedTitle = span(composeRule.onNodeWithText(ChartText.TITLE_SPEED))
+        val speed = span(composeRule.onNodeWithTag(MetricTags.SPEED_CHART))
+        val heartTitle = span(
+            composeRule.onNode(hasText(ChartText.TITLE_HEART) and !hasAnyAncestor(hasTestTag(TrackColorTags.TOGGLE))),
+        )
+        val heart = span(composeRule.onNodeWithTag(MetricTags.HEART_CHART))
+        assertTrue("속도 under the elevation chart", speedTitle.first >= elevation.second)
+        assertTrue("speed chart under its title", speed.first >= speedTitle.second)
+        assertTrue("심박 under the speed chart", heartTitle.first >= speed.second)
+        assertTrue("heart-rate chart under its title", heart.first >= heartTitle.second)
+        // The old line charts wrote their range as text ("18km/h", "165bpm"); only the rows above say km/h and bpm now.
+        composeRule.onAllNodesWithText("km/h", substring = true).assertCountEquals(1)
+        composeRule.onAllNodesWithText("bpm", substring = true).assertCountEquals(1)
+        val totals = segment.totals
+        composeRule.onNodeWithTag(MetricTags.SPEED_CHART)
+            .assertContentDescriptionEquals(ChartText.speedDescription(totals.avgSpeedMps * 3.6, totals.maxSpeedMps * 3.6))
+        composeRule.onNodeWithTag(MetricTags.HEART_CHART).assertContentDescriptionEquals("심박 그래프, 평균 130bpm, 최고 165bpm")
+
+        for (tag in listOf(MetricTags.SPEED_CHART, MetricTags.HEART_CHART)) {
+            composeRule.onNodeWithTag(tag).performScrollTo().performClick()
+            showOnMapIn(tag).performClick()
+        }
+        assertEquals(listOf(ChartTab.SPEED, ChartTab.SPEED, ChartTab.HEART_RATE, ChartTab.HEART_RATE), opened)
+    }
+
+    /**
+     * The heart-rate chart is shown once the heart rate is READY and detailed with samples to chart (V1.8.0 final review
+     * 1: heart rate that is not detailed is never charted); not while it is not READY, even with samples stored.
+     */
+    @Test
+    fun heartRateChartOnlyWhenDetailed() {
+        runBlocking {
+            postStore.replaceSamples(1, listOf(HeartRateSample(1_000L, 95), HeartRateSample(4_000L, 165)))
+            postStore.saveExtras(SegmentExtras(1, hrStatus = HrStatus.PENDING, hrLastTriedAt = 1L))
+        }
+        show()
+        composeRule.onNodeWithTag(MetricTags.SPEED_CHART).performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag(MetricTags.HEART_CHART).assertDoesNotExist()
+        composeRule.onAllNodesWithText(ChartText.TITLE_HEART).assertCountEquals(0)
+
+        ready(detailed = false)
+        composeRule.waitUntil(5_000) {
+            runCatching { composeRule.onNodeWithText("워치에서 운동을 시작하면 자세한 심박이 기록됩니다").assertExists() }.isSuccess
+        }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag(MetricTags.HEART_CHART).assertDoesNotExist()
+        composeRule.onAllNodesWithText(ChartText.TITLE_HEART).assertCountEquals(0)
+
+        ready(detailed = true)
+        composeRule.waitUntil(5_000) {
+            runCatching { composeRule.onNodeWithTag(MetricTags.HEART_CHART).assertExists() }.isSuccess
+        }
+        composeRule.onNode(hasText(ChartText.TITLE_HEART) and !hasAnyAncestor(hasTestTag(TrackColorTags.TOGGLE)))
+            .performScrollTo().assertIsDisplayed()
+    }
+
+    /** The node's top and bottom in the root (px), not clipped to the scrolling column's viewport. */
+    private fun span(node: SemanticsNodeInteraction): Pair<Float, Float> {
+        val n = node.fetchSemanticsNode()
+        return n.positionInRoot.y to n.positionInRoot.y + n.size.height
+    }
+
+    /** [지도에 표시] inside the chart tagged [chartTag] (each chart has its own). */
+    private fun showOnMapIn(chartTag: String) =
+        composeRule.onNode(hasTestTag(ElevationTags.SHOW_ON_MAP) and hasAnyAncestor(hasTestTag(chartTag)), useUnmergedTree = true)
+
+    /** Download/bikeRecoderTest/v180-segment-charts.png: the segment's speed and heart-rate charts. */
+    @Test
+    fun screenshotCharts() {
+        ready(detailed = true)
+        show()
+        composeRule.waitUntil(5_000) {
+            runCatching { composeRule.onNodeWithTag(MetricTags.HEART_CHART).assertExists() }.isSuccess
+        }
+        composeRule.onNodeWithTag(MetricTags.HEART_CHART).performScrollTo()
+        screenshot("v180-segment-charts")
     }
 
     @Test
@@ -170,7 +274,7 @@ class SegmentDetailScreenTest {
         composeRule.onNodeWithText("기록 없음").assertIsDisplayed()
         // 1 s and 2 s are nearest 95 (blue), 3 s and 4 s nearest 165 (red): one colour per track point.
         assertEquals(listOf("#1E88E5", "#1E88E5", "#E53935", "#E53935"), content?.trackColors)
-        composeRule.onNodeWithText("165bpm").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithTag(MetricTags.HEART_CHART).performScrollTo().assertIsDisplayed()
 
         composeRule.onNodeWithText("기본").performClick()
         composeRule.waitUntil(5_000) { content?.trackColors == null }
@@ -220,8 +324,34 @@ class SegmentDetailScreenTest {
         composeRule.onNodeWithText("워치 심박을 가져오려면 Health Connect 접근을 허용해 주세요").assertDoesNotExist()
     }
 
+    /** The whole screen into Download/bikeRecoderTest/[name].png (an older file of the name is deleted first). */
+    private fun screenshot(name: String) {
+        composeRule.waitForIdle()
+        Thread.sleep(300)
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val bitmap: Bitmap = instrumentation.uiAutomation.takeScreenshot() ?: return
+        val resolver = instrumentation.targetContext.contentResolver
+        val relative = "${Environment.DIRECTORY_DOWNLOADS}/bikeRecoderTest/"
+        runCatching {
+            resolver.delete(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.RELATIVE_PATH} = ?",
+                arrayOf("$name.png", relative),
+            )
+        }
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, "$name.png")
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, relative)
+        }
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: return
+        resolver.openOutputStream(uri)!!.use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        Log.i(TAG, "screenshot $name → $uri")
+    }
+
     private companion object {
         const val MAP = "map-slot"
+        const val TAG = "SegmentDetailScreenTest"
     }
 
     @Test

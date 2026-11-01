@@ -10,20 +10,20 @@ import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
 import com.cowork.bikerecoder.core.elevation.ElevationProfile
+import com.cowork.bikerecoder.core.elevation.TrackAxis
 import com.cowork.bikerecoder.core.model.GeoPoint
-import com.cowork.bikerecoder.core.post.HeartRateCharts
 import com.cowork.bikerecoder.core.post.HeartRateColor
 import com.cowork.bikerecoder.core.post.HeartRateSample
 import com.cowork.bikerecoder.core.post.HrStatus
-import com.cowork.bikerecoder.core.recording.ChartPoint
-import com.cowork.bikerecoder.core.recording.RideCharts
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.TrackPoint
+import com.cowork.bikerecoder.core.series.MetricSeries
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.post.PostStore
 import com.cowork.bikerecoder.post.RidePhoto
 import com.cowork.bikerecoder.post.SegmentExtras
+import com.cowork.bikerecoder.ui.elevation.ChartText
 import com.cowork.bikerecoder.ui.health.TrackColorMode
 import com.cowork.bikerecoder.ui.photo.RidePhotos
 import com.cowork.bikerecoder.ui.photo.observeRidePhotos
@@ -57,13 +57,15 @@ sealed interface SegmentDetailState {
         val track: List<GeoPoint>,
         /** The segment's elevation profile (V1.7.0 spec §2.4); null without usable elevation. */
         val profile: ElevationProfile?,
-        val speed: List<ChartPoint>,
+        /** The segment's speed chart on its track axis (V1.8.0 spec §2.3); null without speed. */
+        val speedSeries: MetricSeries?,
     ) : SegmentDetailState
 }
 
 /**
- * One segment (spec §3.5): its track for the map, the elevation profile (V1.7.0) and the speed chart over distance, its
- * photos (spec §2.3) and its heart rate (spec §3.3: the row, the chart over the same distance axis, the [기본]/[심박] track colours).
+ * One segment (spec §3.5): its track for the map, the elevation profile (V1.7.0) and the speed series on its track axis
+ * (V1.8.0), its photos (spec §2.3) and its heart rate (spec §3.3: the row, the series on the same axis and its read-out,
+ * the [기본]/[심박] track colours).
  * Opening it drops the photos deleted from the gallery and asks for a post-processing pass, once.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -101,16 +103,32 @@ class SegmentDetailViewModel(
         .mapLatest { readyAt -> if (readyAt == null) emptyList() else readSamples() }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    /** The heart-rate chart over the same distance axis as the speed and altitude charts (ruling P1). */
-    val heartRateChart: StateFlow<List<ChartPoint>> = combine(trackPoints, samples) { points, samples ->
-        if (points == null || samples.isEmpty()) emptyList() else HeartRateCharts.bpm(points, samples)
+    /**
+     * The heart-rate series on the same track axis as the speed series and the elevation profile (V1.8.0 spec §2.3);
+     * null without samples, without detailed heart rate ([SegmentExtras.detailedHeartRate], as [canColorByHeartRate])
+     * or with nothing to draw.
+     */
+    val heartSeries: StateFlow<MetricSeries?> = combine(trackPoints, samples, heartRate) { points, samples, extras ->
+        val detailed = extras?.detailedHeartRate == true
+        if (points == null || samples.isEmpty() || !detailed) {
+            null
+        } else {
+            TrackAxis.of(listOf(points))?.let { MetricSeries.heartRate(it, listOf(points), samples, listOf(detailed)) }
+        }
     }
         .flowOn(compute)
-        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** The heart-rate chart's read-out with the segment's stored average and highest; without them, the samples'. */
+    val heartDescription: StateFlow<String> = combine(heartRate, samples) { extras, samples ->
+        ChartText.heartDescription(extras?.avgBpm, extras?.maxBpm, samples)
+    }
+        .flowOn(compute)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     /** [심박] is offered only with detailed heart rate (spec §3.3). */
     val canColorByHeartRate: StateFlow<Boolean> = heartRate
-        .map { it?.hrStatus == HrStatus.READY && it.hrDetailed }
+        .map { it?.detailedHeartRate == true }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private val _colorMode = MutableStateFlow(TrackColorMode.DEFAULT)
@@ -162,7 +180,7 @@ class SegmentDetailViewModel(
                     segment = segment,
                     track = points.map { it.point },
                     profile = ElevationProfile.fromSegments(listOf(points).filter { it.isNotEmpty() }),
-                    speed = RideCharts.speedKmh(points),
+                    speedSeries = TrackAxis.of(listOf(points))?.let { MetricSeries.speed(it, listOf(points)) },
                 )
             }
         }

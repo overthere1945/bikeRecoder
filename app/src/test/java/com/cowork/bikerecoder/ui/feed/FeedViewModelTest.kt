@@ -16,6 +16,7 @@ import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.core.recording.TripDeleteCondition
+import com.cowork.bikerecoder.core.series.MetricKind
 import com.cowork.bikerecoder.core.stats.Streak
 import com.cowork.bikerecoder.core.trip.OfflineMapController
 import com.cowork.bikerecoder.core.trip.Trip
@@ -342,9 +343,14 @@ class FeedViewModelTest {
         assertEquals(points.map { it.point }, loaded.track)
         // 10 m is too short for an elevation profile (spec §1.1: 50 m).
         assertNull(loaded.profile)
-        // No recorded speed: the first point has no predecessor, the others are 5 m/s = 18 km/h.
-        assertEquals(2, loaded.speed.size)
-        loaded.speed.forEach { assertEquals(18.0, it.value, 1e-6) }
+        // No recorded speed: the first point has no predecessor, the others are 5 m/s = 18 km/h (V1.8.0: one series on the
+        // segment's distance axis).
+        val speed = requireNotNull(loaded.speedSeries)
+        assertEquals(MetricKind.SPEED, speed.kind)
+        assertEquals(10.0, speed.totalM, 1e-3)
+        assertNull(speed.values.first())
+        assertEquals(2, speed.values.filterNotNull().size)
+        speed.values.filterNotNull().forEach { assertEquals(18.0, it, 1e-6) }
     }
 
     @Test

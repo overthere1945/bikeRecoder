@@ -16,7 +16,6 @@ import kotlin.math.roundToInt
 object ElevationText {
     const val NO_ELEVATION = "고도 정보가 없습니다"
     const val SHOW_ON_MAP = "지도에 표시"
-    const val TITLE = "고도"
     const val CLOSE = "닫기"
 
     /** "1.2km · 35m · 경사 5%": where the big chart is scrubbed. */

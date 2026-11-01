@@ -25,8 +25,9 @@ import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.Stop
 import com.cowork.bikerecoder.core.post.HrStatus
-import com.cowork.bikerecoder.core.recording.ChartPoint
 import com.cowork.bikerecoder.core.recording.RideSegment
+import com.cowork.bikerecoder.core.series.MetricKind
+import com.cowork.bikerecoder.core.series.MetricSeries
 import com.cowork.bikerecoder.map.BikeMap
 import com.cowork.bikerecoder.map.CameraFit
 import com.cowork.bikerecoder.map.CameraMode
@@ -36,7 +37,10 @@ import com.cowork.bikerecoder.map.MapOverlay
 import com.cowork.bikerecoder.map.MapPhoto
 import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.post.PhotoThumbnails
+import com.cowork.bikerecoder.ui.elevation.ChartTab
+import com.cowork.bikerecoder.ui.elevation.ChartText
 import com.cowork.bikerecoder.ui.elevation.ElevationChart
+import com.cowork.bikerecoder.ui.elevation.MetricChart
 import com.cowork.bikerecoder.ui.health.HeartRateGate
 import com.cowork.bikerecoder.ui.health.HeartRateLegend
 import com.cowork.bikerecoder.ui.health.HeartRateSection
@@ -111,7 +115,7 @@ internal fun ColoredDetailMap(
  * [photoPrompt]: the photo permission card where it applies (spec §2.4), shown under the photo strip.
  * [heartRateGate]: the heart-rate permission flow (spec §3.4; null = none).
  * [map]: the map for its content (replaceable in tests).
- * [onOpenElevation]: the small elevation chart's [지도에 표시] / tap opens the "고도" map screen (V1.7.0 spec §2.4).
+ * [onOpenChart]: a small chart's [지도에 표시] / tap opens the big map on that chart's tab (V1.7.0 spec §2.4, V1.8.0 §2.3).
  */
 @Composable
 fun SegmentDetailScreen(
@@ -119,7 +123,7 @@ fun SegmentDetailScreen(
     tileSource: TileSource,
     thumbnails: PhotoThumbnails,
     onBack: () -> Unit,
-    onOpenElevation: () -> Unit = {},
+    onOpenChart: (ChartTab) -> Unit = {},
     photoPrompt: @Composable () -> Unit = {},
     heartRateGate: HeartRateGate? = null,
     map: @Composable (DetailMapContent, Modifier) -> Unit = { content, modifier -> DetailMap(content, tileSource, modifier) },
@@ -127,7 +131,8 @@ fun SegmentDetailScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val photos by viewModel.photos.collectAsStateWithLifecycle()
     val heartRate by viewModel.heartRate.collectAsStateWithLifecycle()
-    val heartRateChart by viewModel.heartRateChart.collectAsStateWithLifecycle()
+    val heartSeries by viewModel.heartSeries.collectAsStateWithLifecycle()
+    val heartDescription by viewModel.heartDescription.collectAsStateWithLifecycle()
     val canColor by viewModel.canColorByHeartRate.collectAsStateWithLifecycle()
     val colorMode by viewModel.colorMode.collectAsStateWithLifecycle()
     val trackColors by viewModel.trackColors.collectAsStateWithLifecycle()
@@ -142,8 +147,8 @@ fun SegmentDetailScreen(
             SegmentDetailContent(
                 segment = s.segment,
                 profile = s.profile,
-                onOpenElevation = onOpenElevation,
-                speed = s.speed,
+                onOpenChart = onOpenChart,
+                speedSeries = s.speedSeries,
                 map = { modifier ->
                     ColoredDetailMap(canColor, colorMode, viewModel::setColorMode, modifier) { inner, fitPadding ->
                         map(
@@ -167,7 +172,8 @@ fun SegmentDetailScreen(
                     photoPrompt()
                 },
                 heartRate = { HeartRateSection(heartRate, viewModel::refetchHeartRate, heartRateGate) },
-                heartRateChart = heartRateChart.takeIf { heartRate?.hrStatus == HrStatus.READY && it.isNotEmpty() },
+                heartSeries = heartSeries.takeIf { heartRate?.hrStatus == HrStatus.READY },
+                heartDescription = heartDescription,
             )
         }
     }
@@ -178,20 +184,22 @@ fun SegmentDetailScreen(
  * One segment (spec §3.5): the map on top (outside the scrolling part, so it keeps its drags), then [photos] (the photo
  * strip and card, spec §2.3), distance, moving and elapsed time, average/maximum, ascent/descent, highest/lowest
  * altitude, [heartRate] (the heart-rate row and card, spec §3.3), the elevation chart (the segment's [profile], small,
- * opening the "고도" map screen through [onOpenElevation], V1.7.0 spec §2.4) and the speed chart, and the heart-rate
- * chart over the same distance axis when there is heart rate ([heartRateChart] not null).
+ * V1.7.0 spec §2.4), the speed chart of [speedSeries] (read out with the segment's stored average and highest) and, when
+ * there is heart rate ([heartSeries] not null), the heart-rate chart on the same track axis (read out as
+ * [heartDescription], V1.8.0 spec §2.3); each opens the big map on its tab through [onOpenChart].
  */
 @Composable
 fun SegmentDetailContent(
     segment: RideSegment,
     profile: ElevationProfile?,
-    speed: List<ChartPoint>,
+    speedSeries: MetricSeries?,
     map: @Composable (Modifier) -> Unit,
     onBack: () -> Unit,
-    onOpenElevation: (() -> Unit)? = null,
+    onOpenChart: ((ChartTab) -> Unit)? = null,
     photos: @Composable () -> Unit = {},
     heartRate: @Composable () -> Unit = {},
-    heartRateChart: List<ChartPoint>? = null,
+    heartSeries: MetricSeries? = null,
+    heartDescription: String = "",
 ) {
     val totals = segment.totals
     HistoryScaffold(title = "구간 기록", onBack = onBack) {
@@ -224,13 +232,19 @@ fun SegmentDetailContent(
                     "최저 고도" to RideFormat.altitude(totals.minAltitudeM),
                 )
                 heartRate()
-                Text("고도", style = MaterialTheme.typography.titleMedium)
-                ElevationChart(profile, onOpen = onOpenElevation)
-                Text("속도", style = MaterialTheme.typography.titleMedium)
-                LineChart(speed, unit = "km/h", modifier = Modifier.fillMaxWidth().height(160.dp))
-                if (heartRateChart != null) {
-                    Text("심박", style = MaterialTheme.typography.titleMedium)
-                    LineChart(heartRateChart, unit = "bpm", modifier = Modifier.fillMaxWidth().height(160.dp))
+                Text(ChartText.TITLE_ELEVATION, style = MaterialTheme.typography.titleMedium)
+                ElevationChart(profile, onOpen = onOpenChart?.let { { it(ChartTab.ELEVATION) } })
+                Text(ChartText.TITLE_SPEED, style = MaterialTheme.typography.titleMedium)
+                MetricChart(
+                    speedSeries, MetricKind.SPEED, ChartText.speedDescription(totals),
+                    onOpen = onOpenChart?.let { { it(ChartTab.SPEED) } },
+                )
+                if (heartSeries != null) {
+                    Text(ChartText.TITLE_HEART, style = MaterialTheme.typography.titleMedium)
+                    MetricChart(
+                        heartSeries, MetricKind.HEART_RATE, heartDescription,
+                        onOpen = onOpenChart?.let { { it(ChartTab.HEART_RATE) } },
+                    )
                 }
             }
         }

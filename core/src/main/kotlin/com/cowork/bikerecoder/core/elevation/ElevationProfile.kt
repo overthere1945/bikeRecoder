@@ -1,6 +1,5 @@
 package com.cowork.bikerecoder.core.elevation
 
-import com.cowork.bikerecoder.core.model.GeoMath
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.model.Route
 import com.cowork.bikerecoder.core.recording.TrackPoint
@@ -142,28 +141,13 @@ class ElevationProfile private constructor(
 
         /**
          * 구간들을 이어 붙인 단면. 바깥 목록은 시작 시각 순 구간, 안쪽은 시간 순 점.
-         * 구간이 바뀔 때 앞 구간 끝과 다음 구간 첫 점 사이 거리는 더하지 않는다.
+         * 거리 축은 [TrackAxis]를 쓴다: 구간이 바뀔 때 앞 구간 끝과 다음 구간 첫 점 사이 거리는 더하지 않는다.
          * 고도 있는 점이 2개 미만이거나 전체 거리가 [MIN_LENGTH_M] 미만이면 null.
          */
         fun fromSegments(segments: List<List<TrackPoint>>): ElevationProfile? {
-            val points = ArrayList<GeoPoint>()
-            val dist = ArrayList<Double>()
-            val altitudes = ArrayList<Double?>()
-            val boundaries = ArrayList<Double>()
-            var total = 0.0
-            var started = false
-            for (segment in segments) {
-                if (segment.isEmpty()) continue
-                if (started) boundaries.add(total)
-                started = true
-                for ((i, tp) in segment.withIndex()) {
-                    if (i > 0) total += GeoMath.distanceM(segment[i - 1].point, tp.point)
-                    points.add(tp.point)
-                    dist.add(total)
-                    altitudes.add(tp.altitudeM)
-                }
-            }
-            return build(points, dist.toDoubleArray(), altitudes, boundaries)
+            val axis = TrackAxis.of(segments) ?: return null
+            val altitudes = segments.flatMap { segment -> segment.map { it.altitudeM } }
+            return build(axis.points, axis.distancesM, altitudes, axis.boundariesM)
         }
 
         /**
