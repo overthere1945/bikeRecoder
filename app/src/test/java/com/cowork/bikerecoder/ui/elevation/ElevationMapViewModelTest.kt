@@ -3,6 +3,7 @@ package com.cowork.bikerecoder.ui.elevation
 import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.HeartRateSample
+import com.cowork.bikerecoder.core.post.HrStatus
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
@@ -10,9 +11,11 @@ import com.cowork.bikerecoder.map.pathColors
 import com.cowork.bikerecoder.nav.FakeTripStore
 import com.cowork.bikerecoder.post.FakePostStore
 import com.cowork.bikerecoder.post.PostStore
+import com.cowork.bikerecoder.post.SegmentExtras
 import com.cowork.bikerecoder.ride.FakeRideStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -50,7 +53,7 @@ class ElevationMapViewModelTest {
 
     /**
      * [count] points 20 m apart going north from [startLat], climbing 1 m per point (none without [altitude]) at 18 km/h;
-     * with [bpm] a heart-rate sample at every point. Returns the segment id.
+     * with [bpm] a heart-rate sample at every [samplesEvery]-th point. Returns the segment id.
      */
     private suspend fun segment(
         startedAt: Long,
@@ -58,6 +61,7 @@ class ElevationMapViewModelTest {
         count: Int = 30,
         altitude: Boolean = true,
         bpm: Int? = null,
+        samplesEvery: Int = 1,
     ): Long {
         val day = LocalDate.of(2026, 10, 25)
         val step = 20.0 / 111_320.0
@@ -68,7 +72,9 @@ class ElevationMapViewModelTest {
         val id = rides.openSegment(TRIP, startedAt, day)
         rides.appendPoints(id, points, totals)
         rides.closeSegment(id, startedAt + count * 1_000L, totals)
-        if (bpm != null) posts.samplesById[id] = points.map { HeartRateSample(it.timeMillis, bpm) }
+        if (bpm != null) {
+            posts.samplesById[id] = points.filterIndexed { i, _ -> i % samplesEvery == 0 }.map { HeartRateSample(it.timeMillis, bpm) }
+        }
         return id
     }
 
@@ -208,9 +214,55 @@ class ElevationMapViewModelTest {
         val b = all.uiState.value as ElevationMapUiState.Ready
         assertEquals(ChartTab.entries, b.tabs)
         assertEquals(130.0, b.heartRate!!.maxValue, 1e-9)
-        // Read out with the stored totals (580 m in 30 s) and the samples.
+        // Read out with the stored totals (580 m in 30 s).
         assertEquals(ChartText.speedDescription(580.0 / 30.0 * 3.6, 0.0), b.speedDescription)
-        assertEquals(ChartText.heartDescription(130, 130), b.heartDescription)
+    }
+
+    /** READY stored heart rate of segment [id]. */
+    private fun stored(id: Long, avgBpm: Int?, maxBpm: Int?) {
+        posts.extrasById.update { it + (id to SegmentExtras(id, hrStatus = HrStatus.READY, avgBpm = avgBpm, maxBpm = maxBpm)) }
+    }
+
+    @Test
+    fun tripHeartDescriptionUsesStoredAverage() = runTest(dispatcher) {
+        // 30 s with 30 samples at 110, then 60 s with 15 samples at 150: the samples' mean is 123, the moving-time
+        // weighted mean of the stored averages (110 × 30 + 150 × 60) / 90 is 137.
+        val a = segment(startedAt = 1_000_000L, startLat = 37.50, bpm = 110)
+        val b = segment(startedAt = 10_000_000L, startLat = 37.60, count = 60, bpm = 150, samplesEvery = 4)
+        stored(a, avgBpm = 110, maxBpm = 124)
+        stored(b, avgBpm = 150, maxBpm = 171)
+
+        val vm = viewModel(ElevationSource.Trip(TRIP))
+        advanceUntilIdle()
+
+        assertEquals(ChartText.heartDescription(137, 171), (vm.uiState.value as ElevationMapUiState.Ready).heartDescription)
+    }
+
+    @Test
+    fun segmentHeartDescriptionUsesStoredValues() = runTest(dispatcher) {
+        // Samples all at 130; the stored values (from the watch's own summary) differ.
+        val id = segment(startedAt = 1_000_000L, startLat = 37.50, bpm = 130)
+        stored(id, avgBpm = 128, maxBpm = 171)
+
+        val vm = viewModel(ElevationSource.Segment(id))
+        advanceUntilIdle()
+
+        assertEquals(ChartText.heartDescription(128, 171), (vm.uiState.value as ElevationMapUiState.Ready).heartDescription)
+    }
+
+    @Test
+    fun heartDescriptionFallsBackToSamples() = runTest(dispatcher) {
+        // Nothing stored for one segment, a READY one without a highest for the other: the samples' mean and highest.
+        val a = segment(startedAt = 1_000_000L, startLat = 37.50, bpm = 110)
+        val b = segment(startedAt = 10_000_000L, startLat = 37.60, bpm = 150)
+        stored(b, avgBpm = 150, maxBpm = null)
+
+        val trip = viewModel(ElevationSource.Trip(TRIP))
+        val segment = viewModel(ElevationSource.Segment(a))
+        advanceUntilIdle()
+
+        assertEquals(ChartText.heartDescription(130, 150), (trip.uiState.value as ElevationMapUiState.Ready).heartDescription)
+        assertEquals(ChartText.heartDescription(110, 110), (segment.uiState.value as ElevationMapUiState.Ready).heartDescription)
     }
 
     @Test

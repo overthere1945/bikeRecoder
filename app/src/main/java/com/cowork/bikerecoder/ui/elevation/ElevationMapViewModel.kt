@@ -14,12 +14,15 @@ import com.cowork.bikerecoder.core.elevation.TrackAxis
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.HeartRateSample
 import com.cowork.bikerecoder.core.post.HeartRateSummary
+import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.RideStore
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.core.series.MetricSeries
 import com.cowork.bikerecoder.map.pathColors
 import com.cowork.bikerecoder.post.PostStore
+import com.cowork.bikerecoder.ui.history.TripHeartRate
+import com.cowork.bikerecoder.ui.history.tripHeartRate
 import com.cowork.bikerecoder.ui.history.tripTotals
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -63,8 +66,8 @@ sealed interface ElevationMapUiState {
 /**
  * The big map screen (V1.7.0 spec §2.2, V1.8.0 spec §2.4) opened on [requestedTab] (or the first tab there is): a
  * trip's segments (in start order, empty ones left out) or one segment read from [rideStore] with their heart-rate
- * samples from [postStore], or the plan preview's route taken from [handoff]; the profile, series and every tab's colours
- * are computed on [compute]. Samples that cannot be read are logged and leave the heart rate out.
+ * samples and stored heart rate from [postStore], or the plan preview's route taken from [handoff]; the profile, series
+ * and every tab's colours are computed on [compute]. Heart rate that cannot be read is logged and left out.
  */
 class ElevationMapViewModel(
     private val source: ElevationSource,
@@ -133,11 +136,13 @@ class ElevationMapViewModel(
             is ElevationSource.Trip -> {
                 val segments = rideStore.segments(source.tripId).filterNot { it.isEmpty }.sortedBy { it.startedAt }
                 val tracks = segments.map { rideStore.points(it.id) }
-                fromTracks(tracks, samples(segments.map { it.id }), tripTotals(segments))
+                fromTracks(tracks, heartInput(segments.map { it.id }, segments), tripTotals(segments))
             }
             is ElevationSource.Segment -> {
-                val totals = rideStore.segment(source.segmentId)?.totals ?: SegmentTotals.ZERO
-                fromTracks(listOf(rideStore.points(source.segmentId)), samples(listOf(source.segmentId)), totals)
+                val segment = rideStore.segment(source.segmentId)
+                val track = rideStore.points(source.segmentId)
+                val heart = heartInput(listOf(source.segmentId), listOfNotNull(segment))
+                fromTracks(listOf(track), heart, segment?.totals ?: SegmentTotals.ZERO)
             }
         }
     } catch (e: CancellationException) {
@@ -147,9 +152,11 @@ class ElevationMapViewModel(
         null
     }
 
-    /** The heart-rate samples of [segmentIds] one after another; null (logged) when they cannot be read. */
-    private suspend fun samples(segmentIds: List<Long>): List<HeartRateSample>? = try {
-        segmentIds.flatMap { postStore.samples(it) }
+    /** [HeartInput] of [segmentIds] ([segments] their records); null (logged) when it cannot be read. */
+    private suspend fun heartInput(segmentIds: List<Long>, segments: List<RideSegment>): HeartInput? = try {
+        val samples = segmentIds.flatMap { postStore.samples(it) }
+        val extras = segmentIds.mapNotNull { postStore.extras(it) }
+        HeartInput(samples, tripHeartRate(segments.groupBy { it.localDate }, extras))
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
@@ -170,14 +177,14 @@ class ElevationMapViewModel(
     /** Null when no tab has anything to draw. */
     private suspend fun fromTracks(
         tracks: List<List<TrackPoint>>,
-        samples: List<HeartRateSample>?,
+        heart: HeartInput?,
         totals: SegmentTotals,
     ): Loaded? = withContext(compute) {
         val kept = tracks.filter { it.isNotEmpty() }
         val axis = TrackAxis.of(kept) ?: return@withContext null
         val profile = ElevationProfile.fromSegments(kept)
         val speed = MetricSeries.speed(axis, kept)
-        val heartRate = samples?.let { MetricSeries.heartRate(axis, kept, it) }
+        val heartRate = heart?.let { MetricSeries.heartRate(axis, kept, it.samples) }
         val colors = buildMap {
             profile?.let { put(ChartTab.ELEVATION, pathColors(axis.paths, it)) }
             speed?.let { put(ChartTab.SPEED, pathColors(axis.paths, it::colorHexAt, axis)) }
@@ -186,8 +193,6 @@ class ElevationMapViewModel(
         val tabs = ChartTab.entries.filter { it in colors }
         if (tabs.isEmpty()) return@withContext null
         val shown = requestedTab.takeIf { it in tabs } ?: tabs.first()
-        // Read out with the stored totals' speeds and the samples' heart rate (V1.8.0 spec §2.1).
-        val heart = if (heartRate != null) HeartRateSummary.of(samples, movingTimeMs = 0L) else null
         val state = ElevationMapUiState.Ready(
             profile = profile,
             speed = speed,
@@ -196,8 +201,9 @@ class ElevationMapViewModel(
             tab = shown,
             paths = axis.paths,
             colors = colors.getValue(shown),
+            // Read out with the stored values (V1.8.0 spec §2.1).
             speedDescription = ChartText.speedDescription(totals.avgSpeedMps * MPS_TO_KMH, totals.maxSpeedMps * MPS_TO_KMH),
-            heartDescription = heart?.let { ChartText.heartDescription(it.avgBpm, it.maxBpm) }.orEmpty(),
+            heartDescription = if (heart != null && heartRate != null) heartDescription(heart) else "",
         )
         Loaded(state, colors, axis::pointAt)
     }
@@ -244,3 +250,18 @@ class ElevationMapViewModel(
 private fun ElevationMapUiState.Ready.totalM(): Double = profile?.totalM ?: speed?.totalM ?: heartRate?.totalM ?: 0.0
 
 private const val MPS_TO_KMH = 3.6
+
+/** Segments' heart-rate samples one after another and what is stored of their heart rate. */
+private class HeartInput(val samples: List<HeartRateSample>, val stored: TripHeartRate)
+
+/**
+ * The heart-rate chart's read-out: the stored average (weighted by moving time over a trip's segments) and highest
+ * ([tripHeartRate]); without either, the samples' mean and highest.
+ */
+private fun heartDescription(heart: HeartInput): String {
+    val avg = heart.stored.avgBpm
+    val max = heart.stored.maxBpm
+    if (avg != null && max != null) return ChartText.heartDescription(avg, max)
+    val sampled = HeartRateSummary.of(heart.samples, movingTimeMs = 0L) ?: return ""
+    return ChartText.heartDescription(sampled.avgBpm, sampled.maxBpm)
+}
