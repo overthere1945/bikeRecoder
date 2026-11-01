@@ -112,6 +112,7 @@ internal val ATTRIBUTIONS = listOf(
     "지도: OpenFreeMap © OpenMapTiles Data from OpenStreetMap",
     "지도 데이터: © OpenStreetMap contributors (ODbL)",
     "경로 탐색: BRouter © BRouter contributors (MIT License)",
+    "길·산 데이터: © OpenStreetMap contributors (ODbL), 산림청 100대 명산 목록",
 )
 
 /**
