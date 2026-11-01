@@ -2,7 +2,6 @@ package com.cowork.bikerecoder.ui.activity
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -25,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -59,6 +59,12 @@ object ActivityStyle {
         return Color(background) to Color(content)
     }
 
+    /**
+     * Whether a theme whose surface is [surface] is dark. Badges follow the app's theme, not the system setting: the
+     * app may stay light while the phone is in dark mode.
+     */
+    fun isDark(surface: Color): Boolean = surface.luminance() < 0.5f
+
     fun icon(type: ActivityType): ImageVector = when (type) {
         ActivityType.BIKE -> Icons.AutoMirrored.Filled.DirectionsBike
         ActivityType.WALK -> Icons.AutoMirrored.Filled.DirectionsWalk
@@ -88,7 +94,7 @@ fun ActivityBadge(
     modifier: Modifier = Modifier,
     contentDescription: String? = ActivityStyle.name(type),
 ) {
-    val (background, content) = ActivityStyle.badgeColors(type, isSystemInDarkTheme())
+    val (background, content) = ActivityStyle.badgeColors(type, ActivityStyle.isDark(MaterialTheme.colorScheme.surface))
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier

@@ -1,8 +1,12 @@
 package com.cowork.bikerecoder.ui.activity
 
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
 import com.cowork.bikerecoder.core.activity.ActivityType
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /** The activity colours of V1.9.0 spec §2.1, verbatim. */
@@ -30,5 +34,14 @@ class ActivityStyleTest {
     @Test
     fun namesAreTheActivityNames() {
         assertEquals(listOf("자전거", "걷기", "달리기", "등산"), ActivityType.entries.map(ActivityStyle::name))
+    }
+
+    @Test
+    fun darknessFollowsTheAppTheme() {
+        // The app's theme is the default light scheme, whatever the system setting says.
+        assertFalse(ActivityStyle.isDark(lightColorScheme().surface))
+        assertTrue(ActivityStyle.isDark(darkColorScheme().surface))
+        assertFalse(ActivityStyle.isDark(Color.White))
+        assertTrue(ActivityStyle.isDark(Color.Black))
     }
 }
