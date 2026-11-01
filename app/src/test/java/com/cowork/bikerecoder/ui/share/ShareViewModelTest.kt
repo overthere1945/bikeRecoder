@@ -592,6 +592,8 @@ class ShareViewModelTest {
         vm.retryCards()
         advanceUntilIdle()
         assertNull(sheet.error)
+        // A card failure is drawn again; the button is not pressed again.
+        assertFalse(sheet.waiting)
         assertEquals(CardStatus.Rendering, sheet.cards[satellite])
         assertEquals(listOf(satellite, satellite), cards.requests)
 
@@ -599,6 +601,118 @@ class ShareViewModelTest {
         vm.press(ShareTarget.FACEBOOK)
         advanceUntilIdle()
         assertEquals(listOf<ShareEvent>(ShareEvent.Send(ShareTarget.FACEBOOK, listOf(fileOf(satellite)), AUTO)), events)
+    }
+
+    /** Main.immediate runs a send that never suspends inside its launch: the sheet still sends on the next press. */
+    @Test
+    fun pressAgainAfterAnImmediateSend() = runTest(dispatcher) {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        cards.auto = true
+        val vm = opened()
+
+        vm.press(ShareTarget.FACEBOOK)
+        vm.press(ShareTarget.FACEBOOK)
+        advanceUntilIdle()
+
+        val send = ShareEvent.Send(ShareTarget.FACEBOOK, listOf(fileOf(CardKey(CardKind.SATELLITE, ShareMode.FEED, null))), AUTO)
+        assertEquals(listOf<ShareEvent>(send, send), events)
+        assertFalse(sheet.waiting)
+    }
+
+    @Test
+    fun setModeDropsTheWaitingPress() = runTest(dispatcher) {
+        val vm = opened()
+        vm.press(ShareTarget.INSTAGRAM)
+        advanceUntilIdle()
+        assertTrue(sheet.waiting)
+
+        vm.setMode(ShareMode.STORY)
+        assertFalse(sheet.waiting)
+        advanceUntilIdle()
+        cards.complete(CardKey(CardKind.SATELLITE, ShareMode.FEED, null))
+        cards.complete(CardKey(CardKind.SATELLITE, ShareMode.STORY, null))
+        advanceUntilIdle()
+
+        assertFalse(sheet.waiting)
+        assertTrue(events.isEmpty())
+    }
+
+    @Test
+    fun tapDropsTheWaitingPress() = runTest(dispatcher) {
+        photos = listOf(21)
+        val vm = opened()
+        vm.press(ShareTarget.FACEBOOK)
+        advanceUntilIdle()
+        assertTrue(sheet.waiting)
+
+        vm.tap(ShareItem.SatelliteCard)
+        cards.complete(CardKey(CardKind.SATELLITE, ShareMode.FEED, null))
+        advanceUntilIdle()
+
+        assertFalse(sheet.waiting)
+        assertEquals(listOf<ShareItem>(ShareItem.Photo(21, 1)), sheet.selection.chosen)
+        assertTrue(events.isEmpty())
+        assertTrue(cards.slides.isEmpty())
+    }
+
+    /** A slide that fails (not unreadable) is the press's own failure: [다시 시도] presses the same button again. */
+    @Test
+    fun retryAfterASlideFailurePressesAgain() = runTest(dispatcher) {
+        photos = listOf(21)
+        cards.auto = true
+        cards.slideFailure = IllegalStateException("decode")
+        val vm = opened()
+
+        vm.press(ShareTarget.INSTAGRAM)
+        advanceUntilIdle()
+        assertEquals(ShareViewModel.MSG_CARD_FAILED, sheet.error)
+        assertFalse(sheet.waiting)
+        assertTrue(events.isEmpty())
+
+        cards.slideFailure = null
+        vm.retryCards()
+        advanceUntilIdle()
+
+        assertNull(sheet.error)
+        val satellite = fileOf(CardKey(CardKind.SATELLITE, ShareMode.FEED, null))
+        assertEquals(listOf<ShareEvent>(ShareEvent.Send(ShareTarget.INSTAGRAM, listOf(satellite, slide(21)), AUTO)), events)
+    }
+
+    @Test
+    fun retryAfterAStickerFailurePressesAgain() = runTest(dispatcher) {
+        cards.stickerFailure = NoSpaceException(IOException("ENOSPC"))
+        val vm = opened()
+
+        vm.press(ShareTarget.STICKER)
+        advanceUntilIdle()
+        assertEquals(ShareViewModel.MSG_NO_SPACE, sheet.error)
+        assertTrue(events.isEmpty())
+
+        cards.stickerFailure = null
+        vm.retryCards()
+        advanceUntilIdle()
+
+        assertNull(sheet.error)
+        assertEquals(listOf(STICKER to "bikeRecoder_sticker_20261025_213000.png"), gallery.pngs)
+        assertEquals(listOf<ShareEvent>(ShareEvent.Notice(ShareViewModel.MSG_STICKER_SAVED, long = true)), events)
+    }
+
+    @Test
+    fun retryAfterASaveFailurePressesAgain() = runTest(dispatcher) {
+        cards.auto = true
+        gallery.failure = IOException("provider")
+        val vm = opened()
+
+        vm.press(ShareTarget.SAVE)
+        advanceUntilIdle()
+        assertEquals(ShareViewModel.MSG_CARD_FAILED, sheet.error)
+
+        gallery.failure = null
+        vm.retryCards()
+        advanceUntilIdle()
+
+        assertNull(sheet.error)
+        assertEquals(listOf<ShareEvent>(ShareEvent.Notice("카드 1장을 갤러리에 저장했습니다")), events)
     }
 
     @Test
@@ -857,6 +971,10 @@ class ShareViewModelTest {
         private val calls = mutableListOf<Pair<CardKey, CompletableDeferred<ShareFile>>>()
         val slides = mutableListOf<Pair<Long, CardSize>>()
         val unreadable = mutableSetOf<Long>()
+
+        /** Thrown by the next slide or sticker while set. */
+        var slideFailure: Exception? = null
+        var stickerFailure: Exception? = null
         var stickers = 0
         var forgets = 0
 
@@ -872,11 +990,13 @@ class ShareViewModelTest {
 
         override suspend fun slide(tripId: Long, mediaId: Long, size: CardSize): ShareFile {
             if (mediaId in unreadable) throw PhotoUnreadableException(mediaId)
+            slideFailure?.let { throw it }
             slides += mediaId to size
             return slide(mediaId, if (size == CardSize.STORY) "story" else "feed")
         }
 
         override suspend fun sticker(tripId: Long): ShareFile {
+            stickerFailure?.let { throw it }
             stickers++
             return STICKER
         }
@@ -899,8 +1019,10 @@ class ShareViewModelTest {
     private class FakeGallery : ShareGallery {
         val jpegs = mutableListOf<Pair<ShareFile, String>>()
         val pngs = mutableListOf<Pair<ShareFile, String>>()
+        var failure: Exception? = null
 
         override suspend fun saveJpeg(file: ShareFile, displayName: String) {
+            failure?.let { throw it }
             jpegs += file to displayName
         }
 

@@ -47,6 +47,7 @@ import com.cowork.bikerecoder.video.TripMediaStore
 import com.cowork.bikerecoder.video.mimeType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -164,25 +165,32 @@ class ShareViewModel(
     /** A "지나간 길" chip (spec §4.5): [tag] is added or removed as a mood's is. */
     fun togglePlace(tag: String) = changeText { toggleTag(it, tag) }
 
-    /** [게시물 4:5] / [스토리 9:16] (spec §1.2): the mode's first selection, and its cards drawn unless they are. */
+    /**
+     * [게시물 4:5] / [스토리 9:16] (spec §1.2): the mode's first selection, and its cards drawn unless they are. A waiting
+     * press is dropped: it was meant for the other mode's picks.
+     */
     fun setMode(mode: ShareMode) {
         val session = session ?: return
+        if (_sheet.value?.mode == mode) return
+        dropPending(session)
         val s = _sheet.value ?: return
-        if (s.mode == mode) return
         _sheet.value = s.copy(mode = mode, selection = ShareSelection.initial(mode, s.items, s.tripFinished))
         renderMissing(session)
-        proceed(session)
     }
 
-    /** An item of the strip is tapped (spec §1.2); a card cannot be picked on an unfinished trip. */
+    /**
+     * An item of the strip is tapped (spec §1.2); a card cannot be picked on an unfinished trip. A waiting press is
+     * dropped: it was meant for the picks it was pressed with.
+     */
     fun tap(item: ShareItem) {
         val session = session ?: return
+        val before = _sheet.value ?: return
+        if (item !in before.items || (!before.tripFinished && before.keyOf(item) != null)) return
+        dropPending(session)
         val s = _sheet.value ?: return
-        if (item !in s.items || (!s.tripFinished && s.keyOf(item) != null)) return
         val (selection, notice) = s.selection.toggle(item)
         _sheet.value = s.copy(selection = selection)
         notice?.let { emit(ShareEvent.Notice(it)) }
-        proceed(session)
     }
 
     /** The photo card's background is photo [mediaId] (spec §1.2): only the photo card is drawn again. */
@@ -195,12 +203,18 @@ class ShareViewModel(
         proceed(session)
     }
 
-    /** [다시 시도] (spec §6): the error goes away and the cards that failed are drawn again. */
+    /**
+     * [다시 시도] (spec §6): the error goes away and the cards that failed are drawn again; when the error came from a
+     * press itself (a slide, the sticker or the gallery failed), that button is pressed again.
+     */
     fun retryCards() {
         val session = session ?: return
         val s = _sheet.value ?: return
+        val again = session.retry
+        session.retry = null
         _sheet.value = s.copy(error = null)
         s.cards.filterValues { it is CardStatus.Failed }.keys.forEach { render(session, it) }
+        again?.let(::press)
     }
 
     /**
@@ -212,6 +226,7 @@ class ShareViewModel(
         val session = session ?: return
         val s = _sheet.value ?: return
         if (s.waiting || !s.enabled(target)) return
+        session.retry = null
         when (target) {
             ShareTarget.COPY -> {
                 save(s)
@@ -239,7 +254,11 @@ class ShareViewModel(
 
     /** [취소] while waiting (spec §3.1): only the send is dropped; the cards go on being drawn. */
     fun cancelMaking() {
-        val session = session ?: return
+        dropPending(session ?: return)
+    }
+
+    /** The waiting press (and its send or save once begun) is dropped; the cards go on being drawn. */
+    private fun dropPending(session: Session) {
         if (session.pending == null) return
         session.pending = null
         session.finishing?.cancel()
@@ -280,9 +299,12 @@ class ShareViewModel(
         }
         keys.filter { it !in s.cards }.forEach { render(session, it) }
         if (keys.any { s.cards[it] !is CardStatus.Ready }) return
-        session.finishing = viewModelScope.launch(session.job) {
+        // Lazy: on an immediate dispatcher a send that never suspends ends (and clears [Session.finishing]) inside launch.
+        val finishing = viewModelScope.launch(session.job, start = CoroutineStart.LAZY) {
             if (pending.target == ShareTarget.SAVE) saveCards(session, pending, s) else send(session, pending, s)
         }
+        session.finishing = finishing
+        finishing.start()
     }
 
     /** Sends the picked items of [s] in order: cards as drawn, photos as slides drawn now, the video as it is. */
@@ -324,8 +346,7 @@ class ShareViewModel(
             throw e
         } catch (e: Exception) {
             log.warn("Could not save the cards of trip ${session.tripId}", e)
-            if (end(session, pending)) emit(ShareEvent.Notice(if (e is NoSpaceException) MSG_NO_SPACE else MSG_CARD_FAILED))
-            return
+            return fail(session, pending, e is NoSpaceException)
         }
         if (!end(session, pending)) return
         emit(
@@ -344,17 +365,17 @@ class ShareViewModel(
         if (session.stickerSaved) return emit(ShareEvent.Notice(MSG_ALREADY_SAVED))
         if (session.sticker?.isActive == true) return
         session.sticker = viewModelScope.launch(session.job) {
-            val notice = try {
+            try {
                 gallery.savePng(cards.sticker(session.tripId), ShareGalleryNames.sticker(clock(), zone))
-                session.stickerSaved = true
-                ShareEvent.Notice(MSG_STICKER_SAVED, long = true)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 log.warn("Could not save the sticker of trip ${session.tripId}", e)
-                ShareEvent.Notice(if (e is NoSpaceException) MSG_NO_SPACE else MSG_CARD_FAILED)
+                if (this@ShareViewModel.session === session) failed(session, ShareTarget.STICKER, e is NoSpaceException)
+                return@launch
             }
-            if (this@ShareViewModel.session === session) emit(notice)
+            session.stickerSaved = true
+            if (this@ShareViewModel.session === session) emit(ShareEvent.Notice(MSG_STICKER_SAVED, long = true))
         }
     }
 
@@ -368,7 +389,13 @@ class ShareViewModel(
     }
 
     private fun fail(session: Session, pending: Pending, noSpace: Boolean) {
-        if (end(session, pending)) _sheet.update { it?.copy(error = if (noSpace) MSG_NO_SPACE else MSG_CARD_FAILED) }
+        if (end(session, pending)) failed(session, pending.target, noSpace)
+    }
+
+    /** A press of [target] failed by itself (not for a card drawn earlier): the error, and [retryCards] presses it again. */
+    private fun failed(session: Session, target: ShareTarget, noSpace: Boolean) {
+        session.retry = target
+        _sheet.update { it?.copy(error = if (noSpace) MSG_NO_SPACE else MSG_CARD_FAILED) }
     }
 
     /** Draws the current mode's cards that are not drawn (or drawing) yet; none on an unfinished trip. */
@@ -552,9 +579,11 @@ class ShareViewModel(
     /**
      * One open sheet of trip [tripId]: its drawing, sending and saving run under [job] (cancelled by [close]). [pending]
      * is the press waiting for its cards and [finishing] its send or save once they are drawn; [savedCards] and
-     * [stickerSaved] what this sheet put into the gallery (spec §5.5, §5.6).
+     * [stickerSaved] what this sheet put into the gallery (spec §5.5, §5.6); [retry] the button [retryCards] presses
+     * again after it failed by itself.
      */
     private class Session(val tripId: Long, val job: Job) {
+        var retry: ShareTarget? = null
         var pending: Pending? = null
         var finishing: Job? = null
         val savedCards = mutableSetOf<CardKey>()
