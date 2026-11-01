@@ -99,12 +99,16 @@ class ShareCardRendererTest {
         }
     }
 
-    /** Spec §2.2: nothing at all (no text, no band) in the story's top and bottom 14%. */
+    /**
+     * Spec §2.2: nothing at all (no text, no band) in the story's top and bottom 14%. The bands' edges fall inside a
+     * pixel row (the top band starts at 0.14 × 1920 = 268.8, the bottom one ends at 1651.2), so rows 268 and 1651 are
+     * partly band: the clean rows are 0..267 and 1652..1919.
+     */
     @Test
     fun storySafeZonesHaveNoWhiteText() {
         val card = render(CardSize.STORY, plain = null)
         val other = { c: Int -> c != ShareCardRenderer.NO_MAP }
-        assertEquals(0, count(card, 0, 0, 1080, 269, other))
+        assertEquals(0, count(card, 0, 0, 1080, 268, other))
         assertEquals(0, count(card, 0, 1652, 1080, 1920, other))
     }
 
