@@ -31,6 +31,12 @@ interface ShareApps {
     /** Whether Instagram's feed takes several images in one share (spec §5). */
     fun instagramTakesMultiple(): Boolean
 
+    /**
+     * The mail apps: distinct packages of the activities taking `ACTION_SENDTO` `mailto:`, in package-manager order.
+     * [ShareTarget.EMAIL] is aimed at them ([ShareIntents]) and shown only when there is one.
+     */
+    fun mailPackages(): List<String>
+
     /** The app icon for [ShareTarget.FACEBOOK], [ShareTarget.INSTAGRAM] and [ShareTarget.STORY]; null otherwise. */
     fun icon(target: ShareTarget): Drawable?
 }
@@ -42,7 +48,7 @@ class PackageShareApps(private val context: Context) : ShareApps {
     override fun available(target: ShareTarget): Boolean = when (target) {
         ShareTarget.FACEBOOK -> receivers(FACEBOOK_PACKAGE).isNotEmpty()
         ShareTarget.INSTAGRAM, ShareTarget.STORY -> receivers(INSTAGRAM_PACKAGE).isNotEmpty()
-        ShareTarget.EMAIL -> pm.queryIntentActivities(Intent(Intent.ACTION_SENDTO, "mailto:".toUri()), 0).isNotEmpty()
+        ShareTarget.EMAIL -> mailPackages().isNotEmpty()
         ShareTarget.COPY, ShareTarget.SAVE, ShareTarget.MORE, ShareTarget.STICKER -> true
     }
 
@@ -54,6 +60,11 @@ class PackageShareApps(private val context: Context) : ShareApps {
     override fun instagramTakesMultiple(): Boolean = instagramFeedMultiple() != null
 
     override fun instagramStory(): ComponentName? = pickInstagramStory(instagramReceivers())?.toComponent()
+
+    override fun mailPackages(): List<String> =
+        pm.queryIntentActivities(Intent(Intent.ACTION_SENDTO, "mailto:".toUri()), 0)
+            .map { it.activityInfo.packageName }
+            .distinct()
 
     override fun icon(target: ShareTarget): Drawable? {
         val packageName = when (target) {

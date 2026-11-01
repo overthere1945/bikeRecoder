@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
+import android.os.Parcelable
 import androidx.core.net.toUri
 
 /** Title of the system chooser behind [ShareTarget.MORE]. */
@@ -37,33 +38,47 @@ object ShareIntents {
     }
 
     /** Only [text], when there is no file to send (spec §2.5). */
-    fun textOnly(target: ShareTarget, text: String): Intent {
+    fun textOnly(target: ShareTarget, text: String, apps: ShareApps): Intent {
         val send = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_TEXT, text)
         }
-        return aim(target, send, text, apps = null)
+        return aim(target, send, text, apps)
     }
 
     private fun aim(
         target: ShareTarget,
         send: Intent,
         text: String,
-        apps: ShareApps?,
+        apps: ShareApps,
         multiple: Boolean = false,
     ): Intent = when (target) {
         ShareTarget.FACEBOOK -> send.setPackage(FACEBOOK_PACKAGE)
-        ShareTarget.INSTAGRAM -> send.aimAtInstagram(if (multiple) apps?.instagramFeedMultiple() else apps?.instagramFeed())
-        ShareTarget.STORY -> send.aimAtInstagram(apps?.instagramStory())
+        ShareTarget.INSTAGRAM -> send.aimAtInstagram(if (multiple) apps.instagramFeedMultiple() else apps.instagramFeed())
+        ShareTarget.STORY -> send.aimAtInstagram(apps.instagramStory())
         ShareTarget.EMAIL -> send.apply {
-            selector = Intent(Intent.ACTION_SENDTO, "mailto:".toUri())
             putExtra(Intent.EXTRA_SUBJECT, emailSubject(text))
             putExtra(Intent.EXTRA_TEXT, text)
-        }
+        }.aimAtMail(apps.mailPackages())
         ShareTarget.MORE -> Intent.createChooser(send.putExtra(Intent.EXTRA_TEXT, text), CHOOSER_TITLE)
         ShareTarget.COPY, ShareTarget.SAVE, ShareTarget.STICKER -> send
     }
 
     private fun Intent.aimAtInstagram(component: ComponentName?): Intent =
         if (component != null) setComponent(component) else setPackage(INSTAGRAM_PACKAGE)
+
+    /**
+     * Aims the mail at the mail apps themselves. A `mailto:` selector does not resolve with files (resolution keeps this
+     * intent's MIME type, which no `mailto:` filter declares; seen on the S22 with Gmail). One app: its package. Several:
+     * a chooser aimed at the first, the others as initial intents; [Intent.createChooser] moves the clip data and the read
+     * grant onto the chooser, as for [ShareTarget.MORE]. None: unchanged (the button is hidden then).
+     */
+    private fun Intent.aimAtMail(packages: List<String>): Intent = when (packages.size) {
+        0 -> this
+        1 -> setPackage(packages[0])
+        else -> Intent.createChooser(Intent(this).setPackage(packages[0]), CHOOSER_TITLE).apply {
+            val others = packages.drop(1).map { Intent(this@aimAtMail).setPackage(it) }
+            putExtra(Intent.EXTRA_INITIAL_INTENTS, others.toTypedArray<Parcelable>())
+        }
+    }
 }

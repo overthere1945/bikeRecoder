@@ -199,7 +199,7 @@ class ShareActions(
         val message = listOfNotNull(plan.notice, MSG_TEXT_COPIED_PASTE.takeIf { paste }).joinToString("\n")
         if (message.isNotEmpty()) tell(message, plan.notice != null)
         val intent = if (plan.files.isEmpty()) {
-            ShareIntents.textOnly(event.target, event.text)
+            ShareIntents.textOnly(event.target, event.text, apps)
         } else {
             ShareIntents.files(event.target, plan.files, event.text, apps)
         }

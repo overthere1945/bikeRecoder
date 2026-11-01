@@ -14,6 +14,7 @@ import com.cowork.bikerecoder.share.ShareTarget
 import com.cowork.bikerecoder.share.msgEmailTrimmed
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -32,6 +33,10 @@ class ShareActionsTest {
         ShareFile("content://com.cowork.bikerecoder.share/7/slide-21.jpg", "image/jpeg", 500_000L),
     )
 
+    private companion object {
+        const val GMAIL = "com.google.android.gm"
+    }
+
     private val launched = mutableListOf<Intent>()
     private val clips = mutableListOf<ClipData>()
     private val told = mutableListOf<Pair<String, Boolean>>()
@@ -42,6 +47,7 @@ class ShareActionsTest {
         override fun instagramFeed() = null
         override fun instagramStory() = null
         override fun instagramTakesMultiple() = multiple
+        override fun mailPackages() = listOf(GMAIL)
         override fun icon(target: ShareTarget): Drawable? = null
     }
 
@@ -135,7 +141,8 @@ class ShareActionsTest {
         val intent = launched.single()
         assertEquals(Intent.ACTION_SEND, intent.action)
         assertEquals(Uri.parse(big[0].uri), intent.stream())
-        assertEquals("mailto:", intent.selector!!.data.toString())
+        assertEquals(GMAIL, intent.`package`)
+        assertNull(intent.selector)
         assertEquals(listOf(msgEmailTrimmed(1) to true), told)
         assertTrue(clips.isEmpty())
         assertEquals(1, closes)
@@ -153,6 +160,7 @@ class ShareActionsTest {
         assertFalse(intent.hasExtra(Intent.EXTRA_STREAM))
         assertEquals(text, intent.getStringExtra(Intent.EXTRA_TEXT))
         assertEquals("저녁 라이딩 · 서울 강서구", intent.getStringExtra(Intent.EXTRA_SUBJECT))
+        assertEquals(GMAIL, intent.`package`)
         assertEquals(1, closes)
     }
 

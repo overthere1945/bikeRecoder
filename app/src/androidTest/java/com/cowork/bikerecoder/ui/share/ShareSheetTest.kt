@@ -144,6 +144,7 @@ class ShareSheetTest {
         override fun instagramFeed() = null
         override fun instagramStory() = null
         override fun instagramTakesMultiple() = false
+        override fun mailPackages() = emptyList<String>()
         override fun icon(target: ShareTarget): Drawable? = icons(target)
     }
 

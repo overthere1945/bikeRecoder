@@ -25,16 +25,28 @@ class ShareIntentsTest {
         private val feed: ComponentName? = null,
         private val story: ComponentName? = null,
         private val feedMultiple: ComponentName? = null,
+        private val mail: List<String> = emptyList(),
     ) : ShareApps {
         override fun available(target: ShareTarget) = true
         override fun instagramFeed() = feed
         override fun instagramStory() = story
         override fun instagramFeedMultiple() = feedMultiple
         override fun instagramTakesMultiple() = feedMultiple != null
+        override fun mailPackages() = mail
         override fun icon(target: ShareTarget): Drawable? = null
     }
 
+    private val gmail = "com.google.android.gm"
+    private val otherMail = "com.samsung.android.email.provider"
+
     private fun Intent.stream(): Uri? = @Suppress("DEPRECATION") getParcelableExtra(Intent.EXTRA_STREAM)
+
+    @Suppress("DEPRECATION")
+    private fun Intent.inner(): Intent = getParcelableExtra(Intent.EXTRA_INTENT)!!
+
+    @Suppress("DEPRECATION")
+    private fun Intent.initial(): List<Intent> =
+        getParcelableArrayExtra(Intent.EXTRA_INITIAL_INTENTS)!!.map { it as Intent }
 
     private fun assertFileBasics(intent: Intent) {
         assertEquals(Intent.ACTION_SEND, intent.action)
@@ -88,15 +100,49 @@ class ShareIntentsTest {
         assertEquals("com.instagram.android", intent.`package`)
     }
 
+    /** One mail app: the files go straight to it, no `mailto:` selector (it did not resolve on the S22). */
     @Test
-    fun emailHasSelectorSubjectText() {
+    fun emailWithOneMailAppIsAimedAtIt() {
+        val intent = ShareIntents.files(ShareTarget.EMAIL, video, text, FakeApps(mail = listOf(gmail)))
+
+        assertFileBasics(intent)
+        assertEquals(gmail, intent.`package`)
+        assertNull(intent.selector)
+        assertEquals("첫 줄 제목", intent.getStringExtra(Intent.EXTRA_SUBJECT))
+        assertEquals(text, intent.getStringExtra(Intent.EXTRA_TEXT))
+    }
+
+    /** Several mail apps: a chooser aimed at the first, the others as initial intents; the chooser carries the grant. */
+    @Test
+    fun emailWithTwoMailAppsIsChooserOverThem() {
+        val intent = ShareIntents.files(ShareTarget.EMAIL, video, text, FakeApps(mail = listOf(gmail, otherMail)))
+
+        assertEquals(Intent.ACTION_CHOOSER, intent.action)
+        assertEquals("활동 공유하기", intent.getCharSequenceExtra(Intent.EXTRA_TITLE))
+        val inner = intent.inner()
+        assertFileBasics(inner)
+        assertEquals(gmail, inner.`package`)
+        assertNull(inner.selector)
+        assertEquals("첫 줄 제목", inner.getStringExtra(Intent.EXTRA_SUBJECT))
+        assertEquals(text, inner.getStringExtra(Intent.EXTRA_TEXT))
+        val second = intent.initial().single()
+        assertFileBasics(second)
+        assertEquals(otherMail, second.`package`)
+        assertEquals("첫 줄 제목", second.getStringExtra(Intent.EXTRA_SUBJECT))
+        assertEquals(text, second.getStringExtra(Intent.EXTRA_TEXT))
+        assertEquals(Uri.parse(uri), intent.clipData!!.getItemAt(0).uri)
+        assertTrue(intent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+    }
+
+    /** No mail app (the button is hidden then): the plain send with subject and text, nothing aimed. */
+    @Test
+    fun emailWithoutMailAppIsPlainSend() {
         val intent = ShareIntents.files(ShareTarget.EMAIL, video, text, FakeApps())
 
         assertFileBasics(intent)
-        assertEquals(Intent.ACTION_SENDTO, intent.selector!!.action)
-        assertEquals("mailto:", intent.selector!!.data.toString())
+        assertNull(intent.`package`)
+        assertNull(intent.selector)
         assertEquals("첫 줄 제목", intent.getStringExtra(Intent.EXTRA_SUBJECT))
-        assertEquals(text, intent.getStringExtra(Intent.EXTRA_TEXT))
     }
 
     @Test
@@ -116,7 +162,7 @@ class ShareIntentsTest {
 
     @Test
     fun textOnlyHasNoStream() {
-        val intent = ShareIntents.textOnly(ShareTarget.FACEBOOK, text)
+        val intent = ShareIntents.textOnly(ShareTarget.FACEBOOK, text, FakeApps())
 
         assertEquals(Intent.ACTION_SEND, intent.action)
         assertEquals("text/plain", intent.type)
@@ -127,19 +173,37 @@ class ShareIntentsTest {
     }
 
     @Test
-    fun textOnlyEmailHasSubjectAndSelector() {
-        val intent = ShareIntents.textOnly(ShareTarget.EMAIL, text)
+    fun textOnlyEmailIsAimedAtTheMailApp() {
+        val intent = ShareIntents.textOnly(ShareTarget.EMAIL, text, FakeApps(mail = listOf(gmail)))
 
+        assertEquals(Intent.ACTION_SEND, intent.action)
         assertEquals("text/plain", intent.type)
-        assertEquals("mailto:", intent.selector!!.data.toString())
+        assertEquals(gmail, intent.`package`)
+        assertNull(intent.selector)
         assertEquals("첫 줄 제목", intent.getStringExtra(Intent.EXTRA_SUBJECT))
         assertEquals(text, intent.getStringExtra(Intent.EXTRA_TEXT))
         assertFalse(intent.hasExtra(Intent.EXTRA_STREAM))
     }
 
     @Test
+    fun textOnlyEmailWithTwoMailAppsIsChooserOverThem() {
+        val intent = ShareIntents.textOnly(ShareTarget.EMAIL, text, FakeApps(mail = listOf(gmail, otherMail)))
+
+        assertEquals(Intent.ACTION_CHOOSER, intent.action)
+        val inner = intent.inner()
+        assertEquals("text/plain", inner.type)
+        assertEquals(gmail, inner.`package`)
+        assertNull(inner.selector)
+        assertEquals("첫 줄 제목", inner.getStringExtra(Intent.EXTRA_SUBJECT))
+        assertEquals(text, inner.getStringExtra(Intent.EXTRA_TEXT))
+        val second = intent.initial().single()
+        assertEquals(otherMail, second.`package`)
+        assertEquals(text, second.getStringExtra(Intent.EXTRA_TEXT))
+    }
+
+    @Test
     fun textOnlyMoreIsChooser() {
-        val intent = ShareIntents.textOnly(ShareTarget.MORE, text)
+        val intent = ShareIntents.textOnly(ShareTarget.MORE, text, FakeApps())
 
         assertEquals(Intent.ACTION_CHOOSER, intent.action)
         @Suppress("DEPRECATION")
@@ -209,14 +273,15 @@ class ShareIntentsTest {
     }
 
     @Test
-    fun emailHasSelector() {
-        val intent = ShareIntents.files(ShareTarget.EMAIL, cards, text, FakeApps())
+    fun emailWithManyFilesIsAimedAtTheMailApp() {
+        val intent = ShareIntents.files(ShareTarget.EMAIL, cards, text, FakeApps(mail = listOf(gmail)))
 
         assertEquals(Intent.ACTION_SEND_MULTIPLE, intent.action)
-        assertEquals(Intent.ACTION_SENDTO, intent.selector!!.action)
-        assertEquals("mailto:", intent.selector!!.data.toString())
+        assertEquals(gmail, intent.`package`)
+        assertNull(intent.selector)
         assertEquals("첫 줄 제목", intent.getStringExtra(Intent.EXTRA_SUBJECT))
         assertEquals(text, intent.getStringExtra(Intent.EXTRA_TEXT))
         assertEquals(cards.map { Uri.parse(it.uri) }, intent.streams())
+        assertEquals(3, intent.clipData!!.itemCount)
     }
 }
