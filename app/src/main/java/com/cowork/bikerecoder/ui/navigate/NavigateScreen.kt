@@ -285,10 +285,12 @@ fun NavigateScreen(
     }
 
     if (askEnd && state is NavUiState.Active) {
+        // The cards are fixed when the sheet opens: a recording that starts or ends meanwhile must not move them under a finger.
+        val asked = remember { Triple(state.type, recording, state.day) }
         EndNavigationSheet(
-            type = state.type,
-            recording = recording,
-            day = state.day,
+            type = asked.first,
+            recording = asked.second,
+            day = asked.third,
             onChoose = { action ->
                 askEnd = false
                 viewModel.onEndChoice(action)

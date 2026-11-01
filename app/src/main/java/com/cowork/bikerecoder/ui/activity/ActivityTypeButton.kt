@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -36,6 +37,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.testTag
@@ -98,12 +100,13 @@ fun ActivityTypeButton(selected: ActivityType, onSelect: (ActivityType) -> Unit,
 fun ActivityTypeSheet(selected: ActivityType, onSelect: (ActivityType) -> Unit, onDismiss: () -> Unit) {
     val dark = ActivityStyle.isDark(MaterialTheme.colorScheme.surface)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        Column(modifier = Modifier.fillMaxWidth().navigationBarsPadding().testTag(ActivityTypeTags.SHEET)) {
+        // The rows are one radio group, and the title is its heading for a screen reader.
+        Column(modifier = Modifier.fillMaxWidth().navigationBarsPadding().selectableGroup().testTag(ActivityTypeTags.SHEET)) {
             Text(
                 ActivityText.TYPE_SHEET_TITLE,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp).semantics { heading() },
             )
             ActivityType.entries.forEach { type ->
                 val current = type == selected

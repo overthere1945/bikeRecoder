@@ -38,7 +38,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsPropertyKey
 import androidx.compose.ui.semantics.SemanticsPropertyReceiver
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -97,7 +99,8 @@ var SemanticsPropertyReceiver.recommended by Recommended
 /**
  * The bottom sheet that asks how to end or start (V1.9.1): [title], an optional [summary] line (with [summaryLeading]
  * before it, e.g. the activity badge), one card per [choices] (1–3) and a text button [dismissLabel] at the bottom.
- * A card is one accessible button read as "{title}, {subtitle}"; tapping it calls [onChoose] (the caller removes the
+ * A card is one accessible button read as "{title}, {subtitle}" (the recommended one with the state "추천"); [title] is the
+ * sheet's heading; tapping it calls [onChoose] (the caller removes the
  * sheet). [onDismiss]: the bottom button, a swipe down or a tap outside.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -119,7 +122,11 @@ fun ChoiceSheet(
             modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp).padding(bottom = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.testTag(ChoiceSheetTags.TITLE))
+            Text(
+                title,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.semantics { heading() }.testTag(ChoiceSheetTags.TITLE),
+            )
             if (summary != null) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -158,6 +165,8 @@ internal fun ChoiceCard(choice: SheetChoice, onClick: () -> Unit, modifier: Modi
             .clickable(role = Role.Button, onClick = onClick)
             .semantics {
                 contentDescription = spoken
+                // A screen reader says it: the filled look is no help to it.
+                if (choice.recommended) stateDescription = RECOMMENDED_STATE
                 recommended = choice.recommended
             }
             .testTag(ChoiceSheetTags.card(choice.id))
@@ -204,6 +213,9 @@ private fun ChoiceIcon.vector(): ImageVector = when (this) {
     ChoiceIcon.SPLIT -> Icons.AutoMirrored.Rounded.CallSplit
     ChoiceIcon.STOP_RECORDING -> Icons.Rounded.Stop
 }
+
+/** What a screen reader says after the recommended card ([SheetChoice.recommended]). */
+private const val RECOMMENDED_STATE = "추천"
 
 private val CARD_CORNER = 16.dp
 private val TILE_SIZE = 40.dp

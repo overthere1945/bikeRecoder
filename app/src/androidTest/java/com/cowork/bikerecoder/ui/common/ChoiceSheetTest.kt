@@ -22,6 +22,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
 import androidx.test.platform.app.InstrumentationRegistry
 import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.RouteProfile
@@ -42,7 +44,8 @@ import org.junit.Test
 
 /**
  * The V1.9.1 choice sheet: each card is one button read as "{title}, {subtitle}", the recommended card is marked
- * ([Recommended]) and the bottom button dismisses. Screenshots `v191-end-sheet` (the record screen's [정지]) and
+ * ([Recommended]; a screen reader hears "추천"), the title is a heading and the bottom button, a swipe down or Back
+ * dismiss without choosing. Screenshots `v191-end-sheet` (the record screen's [정지]) and
  * `v191-continue-sheet` (the continue question) go to Download/bikeRecoderTest/.
  */
 class ChoiceSheetTest {
@@ -93,6 +96,59 @@ class ChoiceSheetTest {
         composeRule.waitForIdle()
         assertEquals(listOf("tomorrow", "split"), chosen)
         assertEquals(1, dismissed)
+    }
+
+    @Test
+    fun swipeDownDismissesWithoutChoosing() {
+        showSheet()
+
+        composeRule.onNodeWithTag(ChoiceSheetTags.TITLE).performTouchInput {
+            swipeDown(startY = center.y, endY = center.y + 1_500f, durationMillis = 300)
+        }
+
+        composeRule.waitForIdle()
+        assertEquals(1, dismissed)
+        assertEquals(emptyList<String>(), chosen)
+    }
+
+    @Test
+    fun backPressDismissesWithoutChoosing() {
+        showSheet()
+
+        InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand("input keyevent KEYCODE_BACK").close()
+        Thread.sleep(500)
+
+        composeRule.waitForIdle()
+        assertEquals(1, dismissed)
+        assertEquals(emptyList<String>(), chosen)
+    }
+
+    @Test
+    fun theTitleIsAHeadingAndTheRecommendedCardSaysSo() {
+        showSheet()
+
+        composeRule.onNodeWithTag(ChoiceSheetTags.TITLE).assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Heading))
+        composeRule.onNodeWithTag(ChoiceSheetTags.card("finish"))
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "추천"))
+        listOf("tomorrow", "split").forEach { id ->
+            composeRule.onNodeWithTag(ChoiceSheetTags.card(id))
+                .assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.StateDescription))
+        }
+    }
+
+    private fun showSheet() {
+        composeRule.setContent {
+            MaterialTheme {
+                ChoiceSheet(
+                    title = "기록을 끝낼까요?",
+                    choices = listOf(finish, tomorrow, split),
+                    onChoose = { chosen += it.id },
+                    dismissLabel = "계속 기록하기",
+                    onDismiss = { dismissed++ },
+                )
+            }
+        }
+        composeRule.onNodeWithTag(ChoiceSheetTags.TITLE).assertIsDisplayed()
     }
 
     @Test
