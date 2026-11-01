@@ -260,7 +260,7 @@ fun TripDetailContent(
     speedSeries: MetricSeries? = null,
     speedStyle: SpeedChartStyle = SpeedChartStyle.BIKE,
     totalRows: List<List<Pair<String, String>>> = ActivityText.tripTotalRows(ActivityType.BIKE, total),
-    multiDay: Boolean = false,
+    multiDay: Boolean? = false,
     heartSeries: MetricSeries? = null,
     heartDescription: String = "",
     onExport: ((ExportFormat) -> Unit)? = null,

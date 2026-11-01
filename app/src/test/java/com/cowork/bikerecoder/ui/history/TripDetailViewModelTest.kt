@@ -236,6 +236,9 @@ class TripDetailViewModelTest {
     fun multiDayIsWhetherTheTripSpansSeveralDays() = runTest(dispatcher) {
         evening()
         val single = detail()
+        // Unknown until the trip is read: the title is empty rather than "활동 기록" for a moment.
+        assertNull(single.multiDay.value)
+        assertEquals("", ActivityText.tripDetailTitle(single.multiDay.value))
         advanceUntilIdle()
         assertEquals(false, single.multiDay.value)
         assertEquals("활동 기록", ActivityText.tripDetailTitle(single.multiDay.value))

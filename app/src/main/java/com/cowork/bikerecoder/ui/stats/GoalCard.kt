@@ -61,7 +61,7 @@ fun GoalCard(
 ) {
     // One "?" for the card: by the hint without a goal, else by the title of the first goal.
     val tip: @Composable () -> Unit = {
-        HelpTip(StatsHelp.GOAL_TOPIC, StatsHelp.goal(activity),openTip == StatsHelp.GOAL_TOPIC, onToggle = { onToggleTip(StatsHelp.GOAL_TOPIC) })
+        HelpTip(StatsHelp.GOAL_TOPIC, StatsHelp.goal(activity), openTip == StatsHelp.GOAL_TOPIC, onToggle = { onToggleTip(StatsHelp.GOAL_TOPIC) })
     }
     Surface(
         shape = MaterialTheme.shapes.medium,
