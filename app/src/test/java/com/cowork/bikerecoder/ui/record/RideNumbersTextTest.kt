@@ -2,6 +2,7 @@ package com.cowork.bikerecoder.ui.record
 
 import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.recording.RideStats
+import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.ui.activity.ActivityText
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
@@ -120,5 +121,32 @@ class RideNumbersTextTest {
         val cells = ActivityText.cardCells(ActivityType.RUN, 0.0, 0, 0, 0.0, null)
         assertEquals("--'--\"/km", cells[1].second)
         assertEquals("0.0 km/h", ActivityText.cardCells(ActivityType.BIKE, 0.0, 0, 0, 0.0, null)[2].second)
+    }
+
+    /** Spec §3.2: no V1.8.0 summary number is lost; a run and a walk trade "평균/최고" for the average speed. */
+    @Test
+    fun summaryRestCellsKeepTheOldNumbers() {
+        val totals = SegmentTotals.ZERO.copy(
+            distanceM = 5_000.0,
+            movingTimeMs = 1_660_000,
+            maxSpeedMps = 5.0,
+            ascentM = 30.0,
+        )
+        assertEquals(
+            listOf("최고 속도" to "18.0km/h", "누적 상승" to "30m"),
+            summaryRestCells(ActivityType.BIKE, totals),
+        )
+        assertEquals(
+            listOf("평균 속도" to "10.8km/h", "누적 상승" to "30m"),
+            summaryRestCells(ActivityType.RUN, totals),
+        )
+        assertEquals(
+            listOf("평균 속도" to "10.8km/h", "누적 상승" to "30m"),
+            summaryRestCells(ActivityType.WALK, totals),
+        )
+        assertEquals(
+            listOf("거리" to "5.00km", "이동 시간" to "0:27:40", "평균/최고" to "10.8 / 18.0km/h"),
+            summaryRestCells(ActivityType.HIKE, totals),
+        )
     }
 }

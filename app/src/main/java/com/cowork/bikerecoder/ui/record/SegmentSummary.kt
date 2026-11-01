@@ -59,14 +59,27 @@ fun SegmentSummaryContent(
 /** The numbers of the old summary (distance, moving time, average/maximum, climb) the card's three cells leave out. */
 @Composable
 private fun RestCells(activity: ActivityType, totals: SegmentTotals) {
+    // Two cells to a row; a last one alone takes a row of its own.
+    summaryRestCells(activity, totals).chunked(2).forEach { row ->
+        if (row.size == 2) NumberRow(row[0], row[1]) else NumberRow(row[0])
+    }
+}
+
+/**
+ * The cells under the card's three (spec §3.2): what the V1.8.0 summary showed and they leave out. A bike keeps the top
+ * speed and the climb; a run and a walk the average speed ("평균 페이스" is on the card) and the climb; a hike the
+ * distance, the moving time and the speeds (km/h).
+ */
+internal fun summaryRestCells(activity: ActivityType, totals: SegmentTotals): List<Pair<String, String>> {
     val climb = "누적 상승" to RideFormat.altitude(totals.ascentM)
-    when (activity) {
-        ActivityType.BIKE -> NumberRow("최고 속도" to "${RideFormat.speedKmh(totals.maxSpeedMps)}km/h", climb)
-        ActivityType.WALK -> NumberRow("평균 속도" to "${RideFormat.speedKmh(totals.avgSpeedMps)}km/h", climb)
-        ActivityType.RUN -> NumberRow(climb)
-        ActivityType.HIKE -> NumberRow(
+    val averageSpeed = "평균 속도" to "${RideFormat.speedKmh(totals.avgSpeedMps)}km/h"
+    return when (activity) {
+        ActivityType.BIKE -> listOf("최고 속도" to "${RideFormat.speedKmh(totals.maxSpeedMps)}km/h", climb)
+        ActivityType.WALK, ActivityType.RUN -> listOf(averageSpeed, climb)
+        ActivityType.HIKE -> listOf(
             "거리" to RideFormat.distance(totals.distanceM),
             "이동 시간" to RideFormat.clock(totals.movingTimeMs),
+            "평균/최고" to "${RideFormat.speedKmh(totals.avgSpeedMps)} / ${RideFormat.speedKmh(totals.maxSpeedMps)}km/h",
         )
     }
 }
