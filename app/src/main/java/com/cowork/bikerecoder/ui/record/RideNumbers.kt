@@ -28,6 +28,9 @@ import com.cowork.bikerecoder.ui.activity.ActivityText
 import kotlinx.coroutines.delay
 import java.time.ZoneId
 
+/** The sunset line's clock: Asia/Seoul, as the recording ([com.cowork.bikerecoder.ride.RideController]) and every title. */
+private val SEOUL: ZoneId = ZoneId.of("Asia/Seoul")
+
 /** Test tags of the numbers page. */
 object NumbersTags {
     /** The big current speed / pace. */
@@ -129,15 +132,15 @@ private fun BikeNumbers(stats: RideStats) {
 
 @Composable
 private fun PaceNumbers(stats: RideStats, activity: ActivityType, paused: Boolean) {
-    BigNumber("현재 페이스", currentPaceText(stats, paused))
+    BigNumber(ActivityText.LABEL_CURRENT_PACE, currentPaceText(stats, paused))
     NumberRow(
         "거리" to RideFormat.distance(stats.distanceM),
         "이동 시간" to RideFormat.clock(stats.movingTimeMs),
     )
     NumberRow(
-        "평균 페이스" to averagePaceText(stats),
-        if (activity == ActivityType.RUN) "직전 1 km" to lastKmPaceText(stats)
-        else "평균 속도" to "${RideFormat.speedKmh(stats.avgSpeedMps)}km/h",
+        ActivityText.LABEL_AVG_PACE to averagePaceText(stats),
+        if (activity == ActivityType.RUN) ActivityText.LABEL_LAST_KM to lastKmPaceText(stats)
+        else ActivityText.LABEL_AVG_SPEED to "${RideFormat.speedKmh(stats.avgSpeedMps)}km/h",
     )
     AltitudeRow(stats)
 }
@@ -146,12 +149,12 @@ private fun PaceNumbers(stats: RideStats, activity: ActivityType, paused: Boolea
 private fun HikeNumbers(stats: RideStats, sunsetMillis: Long?, nowMillis: Long) {
     // Both at one fixed size (no auto-sizing): they are the page's two equal main numbers.
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-        HikeBigCell("산행 시간", RideFormat.clock(stats.elapsedMs), NumbersTags.HIKE_TIME, Modifier.weight(1f))
-        HikeBigCell("현재 고도", RideFormat.altitude(stats.altitudeM), NumbersTags.HIKE_ALTITUDE, Modifier.weight(1f))
+        HikeBigCell(ActivityText.LABEL_HIKE_TIME, RideFormat.clock(stats.elapsedMs), NumbersTags.HIKE_TIME, Modifier.weight(1f))
+        HikeBigCell(ActivityText.LABEL_CURRENT_ALTITUDE, RideFormat.altitude(stats.altitudeM), NumbersTags.HIKE_ALTITUDE, Modifier.weight(1f))
     }
     NumberRow(
-        "누적 상승" to RideFormat.altitude(stats.ascentM),
-        "누적 하강" to RideFormat.altitude(stats.descentM),
+        ActivityText.LABEL_TOTAL_ASCENT to RideFormat.altitude(stats.ascentM),
+        ActivityText.LABEL_TOTAL_DESCENT to RideFormat.altitude(stats.descentM),
     )
     NumberRow(
         "거리" to RideFormat.distance(stats.distanceM),
@@ -160,7 +163,7 @@ private fun HikeNumbers(stats: RideStats, sunsetMillis: Long?, nowMillis: Long) 
     if (sunsetMillis != null) {
         val warning = ActivityText.sunsetWarning(sunsetMillis, nowMillis)
         Text(
-            ActivityText.sunsetLine(sunsetMillis, nowMillis, ZoneId.systemDefault()),
+            ActivityText.sunsetLine(sunsetMillis, nowMillis, SEOUL),
             style = MaterialTheme.typography.titleMedium,
             color = if (warning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.testTag(if (warning) NumbersTags.SUNSET_WARNING else NumbersTags.SUNSET),

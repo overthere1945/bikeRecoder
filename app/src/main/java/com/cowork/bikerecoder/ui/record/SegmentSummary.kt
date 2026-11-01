@@ -44,8 +44,10 @@ fun SegmentSummaryContent(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            // The speeds on this screen read "18.0km/h", as the V1.8.0 summary wrote them.
             val cells = ActivityText.cardCells(
                 segment.activity, totals.distanceM, totals.movingTimeMs, totals.elapsedMs, totals.ascentM, totals.maxAltitudeM,
+                spacedSpeedUnit = false,
             )
             NumberRow(cells[0], cells[1], cells[2])
             RestCells(segment.activity, totals)
@@ -71,10 +73,10 @@ private fun RestCells(activity: ActivityType, totals: SegmentTotals) {
  * distance, the moving time and the speeds (km/h).
  */
 internal fun summaryRestCells(activity: ActivityType, totals: SegmentTotals): List<Pair<String, String>> {
-    val climb = "누적 상승" to RideFormat.altitude(totals.ascentM)
-    val averageSpeed = "평균 속도" to "${RideFormat.speedKmh(totals.avgSpeedMps)}km/h"
+    val climb = ActivityText.LABEL_TOTAL_ASCENT to RideFormat.altitude(totals.ascentM)
+    val averageSpeed = ActivityText.LABEL_AVG_SPEED to "${RideFormat.speedKmh(totals.avgSpeedMps)}km/h"
     return when (activity) {
-        ActivityType.BIKE -> listOf("최고 속도" to "${RideFormat.speedKmh(totals.maxSpeedMps)}km/h", climb)
+        ActivityType.BIKE -> listOf(ActivityText.LABEL_TOP_SPEED to "${RideFormat.speedKmh(totals.maxSpeedMps)}km/h", climb)
         ActivityType.WALK, ActivityType.RUN -> listOf(averageSpeed, climb)
         ActivityType.HIKE -> listOf(
             "거리" to RideFormat.distance(totals.distanceM),

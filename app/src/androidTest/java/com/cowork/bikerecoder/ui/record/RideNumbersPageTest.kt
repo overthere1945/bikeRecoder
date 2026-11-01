@@ -50,7 +50,7 @@ class RideNumbersPageTest {
         descentM = 35.0,
     )
 
-    private val zone = ZoneId.systemDefault()
+    private val zone = ZoneId.of("Asia/Seoul") // the sunset line is in Asia/Seoul, whatever the device zone
     private val sunset = ZonedDateTime.of(2026, 11, 1, 17, 32, 0, 0, zone).toInstant().toEpochMilli()
     private val minute = 60_000L
 

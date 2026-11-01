@@ -115,6 +115,14 @@ class RideNumbersTextTest {
         )
     }
 
+    /** The recording summary writes its speeds as V1.8.0 did ("18.0km/h"); the feed card keeps "18.0 km/h". */
+    @Test
+    fun summaryBikeSpeedHasNoSpaceLikeItsOtherSpeeds() {
+        val cells = ActivityText.cardCells(ActivityType.BIKE, 5_000.0, 1_660_000L, 1_700_000L, 30.0, 100.0, spacedSpeedUnit = false)
+        assertEquals("평균 속도" to "10.8km/h", cells[2])
+        assertEquals("최고 속도" to "18.0km/h", summaryRestCells(ActivityType.BIKE, SegmentTotals.ZERO.copy(maxSpeedMps = 5.0))[0])
+    }
+
     @Test
     fun hikeCardUsesElapsed() {
         // 2 h 5 min elapsed with 1 h 30 min moving: the hike time is the elapsed one, rests included.
