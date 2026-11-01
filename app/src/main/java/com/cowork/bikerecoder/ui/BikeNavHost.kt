@@ -31,6 +31,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.cowork.bikerecoder.AppContainer
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.post.PeriodFilter
 import com.cowork.bikerecoder.data.AppSettings
@@ -136,7 +137,8 @@ object Routes {
     /** The cumulative map opened on a period (V1.4.0 spec §3.5); see [cumulative]. */
     const val CUMULATIVE_PATTERN = "$CUMULATIVE?${CumulativeMapViewModel.ARG_YEAR}={${CumulativeMapViewModel.ARG_YEAR}}" +
         "&${CumulativeMapViewModel.ARG_MONTH}={${CumulativeMapViewModel.ARG_MONTH}}" +
-        "&${CumulativeMapViewModel.ARG_WEEK_START}={${CumulativeMapViewModel.ARG_WEEK_START}}"
+        "&${CumulativeMapViewModel.ARG_WEEK_START}={${CumulativeMapViewModel.ARG_WEEK_START}}" +
+        "&${CumulativeMapViewModel.ARG_ACTIVITY}={${CumulativeMapViewModel.ARG_ACTIVITY}}"
     const val TRIP_DETAIL = "history/trip/{${TripDetailViewModel.ARG_TRIP}}"
     const val SEGMENT_DETAIL = "history/segment/{${SegmentDetailViewModel.ARG_SEGMENT}}"
 
@@ -157,12 +159,14 @@ object Routes {
 
     /**
      * The cumulative map on [filter] (the stats tab's period, V1.4.0 spec §3.5): a missing year or month is −1, a missing
-     * week [Long.MIN_VALUE] (else its Monday's epoch day); an empty [PeriodFilter] is [전체].
+     * week [Long.MIN_VALUE] (else its Monday's epoch day); an empty [PeriodFilter] is [전체]. [activity] is the stats tab's
+     * chip (V1.9.0 spec §4.1): the map shows only that activity's rides; null (an empty text) shows all.
      */
-    fun cumulative(filter: PeriodFilter): String =
+    fun cumulative(filter: PeriodFilter, activity: ActivityType? = null): String =
         "$CUMULATIVE?${CumulativeMapViewModel.ARG_YEAR}=${filter.year ?: -1}" +
             "&${CumulativeMapViewModel.ARG_MONTH}=${filter.month ?: -1}" +
-            "&${CumulativeMapViewModel.ARG_WEEK_START}=${filter.weekStart?.toEpochDay() ?: Long.MIN_VALUE}"
+            "&${CumulativeMapViewModel.ARG_WEEK_START}=${filter.weekStart?.toEpochDay() ?: Long.MIN_VALUE}" +
+            "&${CumulativeMapViewModel.ARG_ACTIVITY}=${activity?.name.orEmpty()}"
 
     /**
      * The search in register mode (spec §7.4, §8.2): a tapped place becomes this home or work, or (CUSTOM) is named as a
@@ -528,7 +532,7 @@ fun BikeNavHost(
                     MainTab.STATS -> StatsScreen(
                         viewModel = statsViewModel(),
                         onOpenSegment = { segmentId -> if (isCurrent()) navController.navigate(Routes.segmentDetail(segmentId)) },
-                        onOpenCumulative = { filter -> if (isCurrent()) navController.navigate(Routes.cumulative(filter)) },
+                        onOpenCumulative = { filter, activity -> if (isCurrent()) navController.navigate(Routes.cumulative(filter, activity)) },
                         scrollToTop = scrollToTop,
                     )
                     MainTab.SETTINGS -> {
@@ -802,6 +806,10 @@ fun BikeNavHost(
                 navArgument(CumulativeMapViewModel.ARG_WEEK_START) {
                     type = NavType.LongType
                     defaultValue = Long.MIN_VALUE
+                },
+                navArgument(CumulativeMapViewModel.ARG_ACTIVITY) {
+                    type = NavType.StringType
+                    defaultValue = ""
                 },
             ),
         ) {

@@ -10,11 +10,13 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.elevation.ElevationProfile
 import com.cowork.bikerecoder.core.navigation.AheadOfRider
 import com.cowork.bikerecoder.core.navigation.NavState
 import com.cowork.bikerecoder.core.navigation.OffRouteDetector
 import com.cowork.bikerecoder.core.stats.RideStat
+import com.cowork.bikerecoder.core.stats.StoredBestEffort
 import com.cowork.bikerecoder.core.voice.KoreanPhrases
 import com.cowork.bikerecoder.nav.FinishReason
 import com.cowork.bikerecoder.nav.NavNotifications
@@ -30,6 +32,8 @@ import com.cowork.bikerecoder.ride.ScreenNotice
 import com.cowork.bikerecoder.ride.ShortRides
 import com.cowork.bikerecoder.ride.recordingTripId
 import com.cowork.bikerecoder.tts.VoiceOutput
+import com.cowork.bikerecoder.data.goals
+import com.cowork.bikerecoder.ui.stats.GoalKm
 import com.cowork.bikerecoder.ui.elevation.ElevationText
 import com.cowork.bikerecoder.ui.record.SummaryExtras
 import com.cowork.bikerecoder.ui.record.SummaryExtrasState
@@ -87,7 +91,8 @@ class NavigateViewModel(
     shortRides: ShortRides,
     /** The summary's goal and new-record lines ([SummaryExtras]): the finished rides and the weekly and yearly goal in km. */
     rideStats: Flow<List<RideStat>> = emptyFlow(),
-    goals: Flow<Pair<Int?, Int?>> = flowOf(null to null),
+    goals: Flow<Map<ActivityType, GoalKm>> = flowOf(emptyMap()),
+    bestEfforts: Flow<List<StoredBestEffort>> = flowOf(emptyList()),
     /** The summary's trip when it offers [영상 만들기] [이미지 만들기] ([SummaryExtras]); none by default. */
     mediaTrip: suspend (segmentId: Long) -> Long? = { null },
     /** The summary's trip when it offers [공유] ([SummaryExtras]); none by default. */
@@ -104,6 +109,7 @@ class NavigateViewModel(
         scope = viewModelScope,
         rideStats = rideStats,
         goals = goals,
+        bestEfforts = bestEfforts,
         mediaTrip = mediaTrip,
         shareTrip = shareTrip,
     )
@@ -299,7 +305,8 @@ class NavigateViewModel(
                     postProcessor = container.postProcessor,
                     shortRides = container.shortRides,
                     rideStats = container.rideStats.observeRides(),
-                    goals = container.settings.settings.map { it.weeklyGoalKm to it.yearlyGoalKm }.distinctUntilChanged(),
+                    goals = container.settings.settings.map { it.goals }.distinctUntilChanged(),
+                    bestEfforts = container.rideStats.observeBestEfforts(),
                     mediaTrip = { id -> mediaTripOf(id, container.rideStore, container.tripStore) },
                     shareTrip = { id -> shareTripOf(id, container.rideStore) },
                 )

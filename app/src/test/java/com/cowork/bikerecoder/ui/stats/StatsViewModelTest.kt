@@ -1,6 +1,8 @@
 package com.cowork.bikerecoder.ui.stats
 
 import com.cowork.bikerecoder.WarnLog
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.activity.BestEffortDistance
 import com.cowork.bikerecoder.core.post.PeriodFilter
 import com.cowork.bikerecoder.core.stats.GoalInput
 import com.cowork.bikerecoder.core.stats.PeriodKind
@@ -40,17 +42,31 @@ class StatsViewModelTest {
 
     private class FakeRides(initial: List<RideStat> = emptyList()) : RideStatsSource {
         val flow = MutableStateFlow(initial)
+        val efforts = MutableStateFlow<List<StoredBestEffort>>(emptyList())
         override fun observeRides(): Flow<List<RideStat>> = flow
-        override fun observeBestEfforts(): Flow<List<StoredBestEffort>> = flowOf(emptyList())
+        override fun observeBestEfforts(): Flow<List<StoredBestEffort>> = efforts
     }
 
     private class FakeGoals(weekly: Int? = null, yearly: Int? = null) : GoalSettings {
-        val flow = MutableStateFlow(GoalKm(weekly, yearly))
+        val flow = MutableStateFlow<Map<ActivityType, GoalKm>>(
+            if (weekly == null && yearly == null) emptyMap() else mapOf(ActivityType.BIKE to GoalKm(weekly, yearly)),
+        )
         val saved = mutableListOf<GoalKm>()
-        override val goals: Flow<GoalKm> = flow
-        override suspend fun setGoals(weeklyKm: Int?, yearlyKm: Int?) {
+        val savedFor = mutableListOf<ActivityType>()
+        override val goals: Flow<Map<ActivityType, GoalKm>> = flow
+        override suspend fun setGoals(activity: ActivityType, weeklyKm: Int?, yearlyKm: Int?) {
             saved += GoalKm(weeklyKm, yearlyKm)
-            flow.value = GoalKm(weeklyKm, yearlyKm)
+            savedFor += activity
+            val goal = GoalKm(weeklyKm, yearlyKm)
+            flow.value = if (weeklyKm == null && yearlyKm == null) flow.value - activity else flow.value + (activity to goal)
+        }
+    }
+
+    private class FakeChip(initial: ActivityType? = null) : StatsChipSettings {
+        val flow = MutableStateFlow(initial)
+        override val activity: Flow<ActivityType?> = flow
+        override suspend fun setActivity(type: ActivityType?) {
+            flow.value = type
         }
     }
 
@@ -62,7 +78,16 @@ class StatsViewModelTest {
     @AfterEach
     fun tearDown() = Dispatchers.resetMain()
 
-    private fun ride(id: Long, date: LocalDate, km: Double, minutes: Long = 60, ascent: Double = 0.0) = RideStat(
+    private fun ride(
+        id: Long,
+        date: LocalDate,
+        km: Double,
+        minutes: Long = 60,
+        ascent: Double = 0.0,
+        activity: ActivityType = ActivityType.BIKE,
+        elapsedMinutes: Long = 0,
+        maxAltitudeM: Double? = null,
+    ) = RideStat(
         segmentId = id,
         tripId = id,
         startedAt = date.atTime(8, 0).atZone(ZoneId.of("Asia/Seoul")).toInstant().toEpochMilli() + id,
@@ -70,6 +95,9 @@ class StatsViewModelTest {
         distanceM = km * 1000.0,
         movingTimeMs = minutes * 60_000,
         ascentM = ascent,
+        activity = activity,
+        elapsedMs = elapsedMinutes * 60_000,
+        maxAltitudeM = maxAltitudeM,
     )
 
     private val sample = listOf(
@@ -81,8 +109,10 @@ class StatsViewModelTest {
     private fun TestScope.viewModel(
         rides: FakeRides = FakeRides(sample),
         goals: FakeGoals = FakeGoals(),
+        // The tests of V1.4.0 are about bike rides: the bike chip shows what they always showed ([전체] is `null`).
+        chip: FakeChip = FakeChip(ActivityType.BIKE),
     ): StatsViewModel {
-        val vm = StatsViewModel(rides, goals, { today }, WarnLog { _, _ -> }, dispatcher)
+        val vm = StatsViewModel(rides, goals, { today }, WarnLog { _, _ -> }, dispatcher, chip)
         advanceUntilIdle()
         return vm
     }
@@ -91,19 +121,20 @@ class StatsViewModelTest {
     @Test
     fun noStateUntilRidesAndGoalsAreRead() = runTest(dispatcher) {
         val rides = MutableSharedFlow<List<RideStat>>()
-        val goals = MutableSharedFlow<GoalKm>()
+        val goals = MutableSharedFlow<Map<ActivityType, GoalKm>>()
         val vm = StatsViewModel(
             object : RideStatsSource {
                 override fun observeRides(): Flow<List<RideStat>> = rides
                 override fun observeBestEfforts(): Flow<List<StoredBestEffort>> = flowOf(emptyList())
             },
             object : GoalSettings {
-                override val goals: Flow<GoalKm> = goals
-                override suspend fun setGoals(weeklyKm: Int?, yearlyKm: Int?) = Unit
+                override val goals: Flow<Map<ActivityType, GoalKm>> = goals
+                override suspend fun setGoals(activity: ActivityType, weeklyKm: Int?, yearlyKm: Int?) = Unit
             },
             { today },
             WarnLog { _, _ -> },
             dispatcher,
+            FakeChip(ActivityType.BIKE),
         )
         advanceUntilIdle()
         assertNull(vm.state.value)
@@ -115,7 +146,7 @@ class StatsViewModelTest {
         vm.previous()
         vm.selectBar(0)
 
-        goals.emit(GoalKm(100, null))
+        goals.emit(mapOf(ActivityType.BIKE to GoalKm(100, null)))
         advanceUntilIdle()
         assertEquals(100, vm.state.value!!.weeklyGoal?.goalKm)
         assertEquals("2026년 10월", vm.state.value!!.title)
@@ -135,7 +166,7 @@ class StatsViewModelTest {
             }
             override fun observeBestEfforts(): Flow<List<StoredBestEffort>> = flowOf(emptyList())
         }
-        val vm = StatsViewModel(rides, FakeGoals(), { today }, WarnLog { _, _ -> }, compute)
+        val vm = StatsViewModel(rides, FakeGoals(), { today }, WarnLog { _, _ -> }, compute, FakeChip(ActivityType.BIKE))
         advanceUntilIdle()
 
         assertEquals(compute, followedOn)
@@ -693,5 +724,240 @@ class StatsViewModelTest {
         assertEquals(10.0, cumulative.previous.last(), 1e-9) // January 30 is in the grey line's end
         assertEquals("누적 2월 3.0 km, 1월 10.0 km", cumulative.description)
         assertEquals("1월보다 −7.0 km (−70%)", vm.state.value!!.comparisonText)
+    }
+
+    // ---- V1.9.0: activity chips ----
+
+    private val oct = LocalDate.of(2026, 10, 1)
+
+    /** A mixed month: a bike ride, a walk, a run and a hike. */
+    private val mixed = listOf(
+        ride(1, LocalDate.of(2026, 10, 3), 20.0, 60, 100.0),
+        ride(2, LocalDate.of(2026, 10, 3), 3.0, 40, 10.0, activity = ActivityType.WALK),
+        ride(3, LocalDate.of(2026, 10, 25), 10.0, 50, 20.0, activity = ActivityType.RUN),
+        ride(4, LocalDate.of(2026, 10, 25), 8.0, 180, 600.0, activity = ActivityType.HIKE, elapsedMinutes = 240, maxAltitudeM = 950.0),
+    )
+
+    @Test
+    fun chipFiltersRides() = runTest(dispatcher) {
+        val rides = FakeRides(mixed)
+        val chip = FakeChip(null)
+        val vm = viewModel(rides, chip = chip)
+        assertNull(vm.state.value!!.activity)
+        assertEquals(41_000.0, vm.state.value!!.totals.distanceM, 1e-9)
+        assertEquals(4, vm.state.value!!.totals.rides)
+
+        vm.selectActivity(ActivityType.RUN)
+        advanceUntilIdle()
+        val run = vm.state.value!!
+        assertEquals(ActivityType.RUN, run.activity)
+        assertEquals(10_000.0, run.totals.distanceM, 1e-9)
+        assertEquals(1, run.totals.rides)
+        assertEquals(1, run.cumulativeRides)
+        assertEquals(ActivityType.RUN, run.cumulativeActivity)
+
+        vm.selectActivity(null)
+        advanceUntilIdle()
+        assertEquals(4, vm.state.value!!.totals.rides)
+        assertNull(vm.state.value!!.cumulativeActivity)
+    }
+
+    @Test
+    fun chipRemembered() = runTest(dispatcher) {
+        val chip = FakeChip(null)
+        val vm = viewModel(chip = chip)
+        vm.selectActivity(ActivityType.HIKE)
+        advanceUntilIdle()
+        assertEquals(ActivityType.HIKE, chip.flow.value)
+
+        // A new tab (view model) starts on the remembered chip.
+        val again = viewModel(chip = chip)
+        assertEquals(ActivityType.HIKE, again.state.value!!.activity)
+        again.selectActivity(null)
+        advanceUntilIdle()
+        assertNull(chip.flow.value)
+    }
+
+    @Test
+    fun chipChangeClearsTheTappedBar() = runTest(dispatcher) {
+        val vm = viewModel(FakeRides(mixed), chip = FakeChip(null))
+        vm.selectBar(0)
+        advanceUntilIdle()
+        vm.selectActivity(ActivityType.BIKE)
+        advanceUntilIdle()
+        assertNull(vm.state.value!!.selectedBar)
+    }
+
+    @Test
+    fun allChipStacksBarsByActivity() = runTest(dispatcher) {
+        val state = viewModel(FakeRides(mixed), chip = FakeChip(null)).state.value!!
+        // October's weeks: 9/28, 10/5, 10/12, 10/19, 10/26 → the 3rd of October is in the first, the 25th in the fourth.
+        val first = state.bars[0]
+        assertEquals(listOf(ActivityType.BIKE, ActivityType.WALK), first.parts.map { it.activity })
+        assertEquals(listOf(20_000.0, 3_000.0), first.parts.map { it.value })
+        assertEquals(23_000.0, first.value, 1e-9)
+        val fourth = state.bars[3]
+        assertEquals(listOf(ActivityType.RUN, ActivityType.HIKE), fourth.parts.map { it.activity })
+        assertEquals(listOf(10_000.0, 8_000.0), fourth.parts.map { it.value })
+        assertTrue(state.bars[1].parts.isEmpty())
+        // A single-activity chip draws single-colour bars.
+        val bike = viewModel(FakeRides(mixed), chip = FakeChip(ActivityType.BIKE)).state.value!!
+        assertTrue(bike.bars.all { it.parts.isEmpty() })
+    }
+
+    @Test
+    fun allChipStackFollowsTheMetric() = runTest(dispatcher) {
+        val vm = viewModel(FakeRides(mixed), chip = FakeChip(null))
+        vm.selectMetric(StatMetric.ASCENT)
+        advanceUntilIdle()
+        val parts = vm.state.value!!.bars[3].parts
+        assertEquals(listOf(20.0, 600.0), parts.map { it.value })
+    }
+
+    @Test
+    fun streakAllCountsAnyActivity() = runTest(dispatcher) {
+        // A bike ride in one week, a walk in the next one, a run in this one: three weeks in a row.
+        val rides = listOf(
+            ride(1, LocalDate.of(2026, 10, 14), 5.0),
+            ride(2, LocalDate.of(2026, 10, 21), 3.0, activity = ActivityType.WALK),
+            ride(3, LocalDate.of(2026, 10, 28), 6.0, activity = ActivityType.RUN),
+        )
+        assertEquals("3주 연속 주행 중", viewModel(FakeRides(rides), chip = FakeChip(null)).state.value!!.streakText)
+        assertEquals("1주 연속 주행 중", viewModel(FakeRides(rides), chip = FakeChip(ActivityType.RUN)).state.value!!.streakText)
+    }
+
+    @Test
+    fun streakHikeOnlyCountsHikes() = runTest(dispatcher) {
+        val rides = listOf(
+            ride(1, LocalDate.of(2026, 10, 14), 5.0, activity = ActivityType.HIKE),
+            ride(2, LocalDate.of(2026, 10, 21), 5.0), // a bike week breaks the hikes
+            ride(3, LocalDate.of(2026, 10, 28), 5.0, activity = ActivityType.HIKE),
+        )
+        assertEquals("1주 연속 주행 중", viewModel(FakeRides(rides), chip = FakeChip(ActivityType.HIKE)).state.value!!.streakText)
+        assertEquals("3주 연속 주행 중", viewModel(FakeRides(rides), chip = FakeChip(null)).state.value!!.streakText)
+    }
+
+    @Test
+    fun runCellsShowPace() = runTest(dispatcher) {
+        val state = viewModel(FakeRides(mixed), chip = FakeChip(ActivityType.RUN)).state.value!!
+        assertEquals(
+            listOf("달리기" to "1회", "이동 시간" to "50분", "평균 페이스" to "5'00\"/km"),
+            state.cells.map { it.label to it.value },
+        )
+        assertEquals(listOf(StatCellKind.RIDES, StatCellKind.TIME, StatCellKind.PACE), state.cells.map { it.kind })
+        val walk = viewModel(FakeRides(mixed), chip = FakeChip(ActivityType.WALK)).state.value!!
+        assertEquals(listOf("걷기" to "1회", "이동 시간" to "40분", "평균 페이스" to "13'20\"/km"), walk.cells.map { it.label to it.value })
+    }
+
+    @Test
+    fun hikeCellsShowElapsedAndAscent() = runTest(dispatcher) {
+        val state = viewModel(FakeRides(mixed), chip = FakeChip(ActivityType.HIKE)).state.value!!
+        assertEquals(
+            listOf("등산" to "1회", "산행 시간" to "4시간 0분", "누적 상승" to "600 m"),
+            state.cells.map { it.label to it.value },
+        )
+        // The time bars of a hike are the elapsed time too.
+        val vm = viewModel(FakeRides(mixed), chip = FakeChip(ActivityType.HIKE))
+        vm.selectMetric(StatMetric.TIME)
+        advanceUntilIdle()
+        assertEquals("4:00", vm.state.value!!.bars[3].shortText)
+    }
+
+    @Test
+    fun bikeAndAllCells() = runTest(dispatcher) {
+        val bike = viewModel(FakeRides(mixed), chip = FakeChip(ActivityType.BIKE)).state.value!!
+        assertEquals(listOf("라이딩" to "1회", "이동 시간" to "1시간 0분", "상승 고도" to "100 m"), bike.cells.map { it.label to it.value })
+        val all = viewModel(FakeRides(mixed), chip = FakeChip(null)).state.value!!
+        assertEquals(listOf("활동" to "4회", "이동 시간" to "5시간 30분"), all.cells.map { it.label to it.value })
+    }
+
+    @Test
+    fun ridesWordPerChip() = runTest(dispatcher) {
+        fun word(chip: ActivityType?): String =
+            viewModel(FakeRides(mixed), chip = FakeChip(chip)).state.value!!.cells.first { it.kind == StatCellKind.RIDES }
+                .let { "${it.label} ${it.value}" }
+        assertEquals("라이딩 1회", word(ActivityType.BIKE))
+        assertEquals("걷기 1회", word(ActivityType.WALK))
+        assertEquals("달리기 1회", word(ActivityType.RUN))
+        assertEquals("등산 1회", word(ActivityType.HIKE))
+        assertEquals("활동 4회", word(null))
+    }
+
+    @Test
+    fun allChipShowsGoalRowPerActivityWithGoal() = runTest(dispatcher) {
+        val goals = FakeGoals(weekly = 50, yearly = 1000)
+        goals.flow.value = goals.flow.value + (ActivityType.RUN to GoalKm(null, 500))
+        val state = viewModel(FakeRides(mixed), goals, FakeChip(null)).state.value!!
+        assertNull(state.weeklyGoal)
+        assertNull(state.yearlyGoal)
+        assertEquals(listOf(ActivityType.BIKE, ActivityType.RUN), state.goalRows.map { it.activity })
+        val bike = state.goalRows[0]
+        assertEquals(50, bike.weekly!!.goalKm)
+        assertEquals(1000, bike.yearly!!.goalKm)
+        assertEquals(20_000.0, bike.yearly!!.distanceM, 1e-9) // the bike's year, not everything's
+        assertNull(state.goalRows[1].weekly)
+        assertEquals(10_000.0, state.goalRows[1].yearly!!.distanceM, 1e-9)
+        assertNull(state.projectionText)
+    }
+
+    @Test
+    fun chipShowsOnlyItsOwnGoal() = runTest(dispatcher) {
+        val goals = FakeGoals(weekly = 50, yearly = 1000)
+        goals.flow.value = goals.flow.value + (ActivityType.WALK to GoalKm(7, null))
+        val walk = viewModel(FakeRides(mixed), goals, FakeChip(ActivityType.WALK)).state.value!!
+        assertEquals(7, walk.weeklyGoal!!.goalKm)
+        assertNull(walk.yearlyGoal)
+        assertTrue(walk.goalRows.isEmpty())
+        val hike = viewModel(FakeRides(mixed), goals, FakeChip(ActivityType.HIKE)).state.value!!
+        assertNull(hike.weeklyGoal)
+        assertNull(hike.yearlyGoal)
+        assertEquals(mapOf(ActivityType.BIKE to GoalKm(50, 1000), ActivityType.WALK to GoalKm(7, null)), hike.goals)
+    }
+
+    @Test
+    fun noGoalsShowsSetGoal() = runTest(dispatcher) {
+        val state = viewModel(FakeRides(mixed), FakeGoals(), FakeChip(null)).state.value!!
+        assertTrue(state.goalRows.isEmpty())
+        assertNull(state.weeklyGoal)
+        assertNull(state.yearlyGoal)
+    }
+
+    @Test
+    fun saveGoalsGoesToTheActivity() = runTest(dispatcher) {
+        val goals = FakeGoals()
+        val vm = viewModel(FakeRides(mixed), goals, FakeChip(null))
+        vm.saveGoals(ActivityType.RUN, GoalInput.Valid(30), GoalInput.Empty)
+        advanceUntilIdle()
+        assertEquals(listOf(ActivityType.RUN), goals.savedFor)
+        assertEquals(GoalKm(30, null), goals.saved.single())
+        assertEquals(listOf(ActivityType.RUN), vm.state.value!!.goalRows.map { it.activity })
+        // The old two-goal call is the bike's.
+        vm.saveGoals(GoalInput.Valid(100), GoalInput.Empty)
+        advanceUntilIdle()
+        assertEquals(ActivityType.BIKE, goals.savedFor.last())
+    }
+
+    @Test
+    fun recordsAreGroupedByActivityUnderAll() = runTest(dispatcher) {
+        val rides = listOf(
+            ride(1, LocalDate.of(2026, 10, 3), 20.0, 60, 100.0),
+            ride(2, LocalDate.of(2026, 10, 4), 30.0, 90, 200.0),
+            ride(3, LocalDate.of(2026, 10, 10), 5.0, 30, activity = ActivityType.RUN),
+            ride(4, LocalDate.of(2026, 10, 11), 6.0, 33, activity = ActivityType.RUN),
+        )
+        val fake = FakeRides(rides)
+        fake.efforts.value = listOf(
+            StoredBestEffort(3, BestEffortDistance.FIVE_K, 1_491_000),
+            StoredBestEffort(4, BestEffortDistance.FIVE_K, 3_912_000),
+        )
+        val all = viewModel(fake, chip = FakeChip(null)).state.value!!.records
+        val headed = all.filter { it.heading != null }
+        assertEquals(listOf("자전거" to "가장 긴 주행", "달리기" to "가장 긴 달리기", "전체" to "가장 많이 탄 주"), headed.map { it.heading to it.label })
+        val best = all.first { it.label == "5 km 최고 기록" }
+        assertTrue(best.value.startsWith("24'51\""), best.value)
+        val longRun = viewModel(fake, chip = FakeChip(ActivityType.RUN)).state.value!!.records
+        assertTrue(longRun.all { it.heading == null })
+        assertEquals("가장 긴 달리기", longRun.first().label)
+        assertTrue(longRun.none { it.label == "가장 긴 주행" })
     }
 }

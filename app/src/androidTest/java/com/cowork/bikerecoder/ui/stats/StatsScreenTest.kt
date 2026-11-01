@@ -42,6 +42,7 @@ import android.view.InputDevice
 import android.view.MotionEvent
 import androidx.test.platform.app.InstrumentationRegistry
 import com.cowork.bikerecoder.WarnLog
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.post.PeriodFilter
 import com.cowork.bikerecoder.core.stats.PeriodKind
 import com.cowork.bikerecoder.core.stats.RideStat
@@ -71,12 +72,23 @@ class StatsScreenTest {
     }
 
     private class FakeGoals(weekly: Int?, yearly: Int?) : GoalSettings {
-        val flow = MutableStateFlow(GoalKm(weekly, yearly))
+        val flow = MutableStateFlow<Map<ActivityType, GoalKm>>(
+            if (weekly == null && yearly == null) emptyMap() else mapOf(ActivityType.BIKE to GoalKm(weekly, yearly)),
+        )
         val saved = mutableListOf<GoalKm>()
-        override val goals: Flow<GoalKm> = flow
-        override suspend fun setGoals(weeklyKm: Int?, yearlyKm: Int?) {
+        override val goals: Flow<Map<ActivityType, GoalKm>> = flow
+        override suspend fun setGoals(activity: ActivityType, weeklyKm: Int?, yearlyKm: Int?) {
             saved += GoalKm(weeklyKm, yearlyKm)
-            flow.value = GoalKm(weeklyKm, yearlyKm)
+            flow.value = if (weeklyKm == null && yearlyKm == null) flow.value - activity else flow.value + (activity to GoalKm(weeklyKm, yearlyKm))
+        }
+    }
+
+    /** The tests of V1.4.0 are about bike rides: the bike chip shows what the tab always showed. */
+    private class BikeChip : StatsChipSettings {
+        private val chip = MutableStateFlow<ActivityType?>(ActivityType.BIKE)
+        override val activity: Flow<ActivityType?> = chip
+        override suspend fun setActivity(type: ActivityType?) {
+            chip.value = type
         }
     }
 
@@ -121,14 +133,14 @@ class StatsScreenTest {
         scrollToTop: Int = 0,
         fontScale: Float? = null,
     ) {
-        viewModel = StatsViewModel(FakeRides(rides), goals, { LocalDate.of(2026, 10, 28) }, WarnLog { _, _ -> }, Dispatchers.Main)
+        viewModel = StatsViewModel(FakeRides(rides), goals, { LocalDate.of(2026, 10, 28) }, WarnLog { _, _ -> }, Dispatchers.Main, BikeChip())
         composeRule.setContent {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides if (fontScale == null) density else Density(density.density, fontScale)) {
                 MaterialTheme {
                     // The tab sits in the app's scaffold; here the system bars are kept off it by hand.
                     Surface(modifier = Modifier.systemBarsPadding()) {
-                        StatsScreen(viewModel, onOpenSegment = { opened += it }, onOpenCumulative = { cumulative += it }, scrollToTop = scrollToTop)
+                        StatsScreen(viewModel, onOpenSegment = { opened += it }, onOpenCumulative = { filter, _ -> cumulative += filter }, scrollToTop = scrollToTop)
                     }
                 }
             }
@@ -178,11 +190,11 @@ class StatsScreenTest {
     @Test
     fun nothingShowsBeforeTheGoalsAreRead() {
         val unread = object : GoalSettings {
-            override val goals: Flow<GoalKm> = flow { awaitCancellation() }
-            override suspend fun setGoals(weeklyKm: Int?, yearlyKm: Int?) = Unit
+            override val goals: Flow<Map<ActivityType, GoalKm>> = flow { awaitCancellation() }
+            override suspend fun setGoals(activity: ActivityType, weeklyKm: Int?, yearlyKm: Int?) = Unit
         }
-        viewModel = StatsViewModel(FakeRides(rides), unread, { LocalDate.of(2026, 10, 28) }, WarnLog { _, _ -> }, Dispatchers.Main)
-        composeRule.setContent { MaterialTheme { StatsScreen(viewModel, onOpenSegment = {}, onOpenCumulative = {}, scrollToTop = 0) } }
+        viewModel = StatsViewModel(FakeRides(rides), unread, { LocalDate.of(2026, 10, 28) }, WarnLog { _, _ -> }, Dispatchers.Main, BikeChip())
+        composeRule.setContent { MaterialTheme { StatsScreen(viewModel, onOpenSegment = {}, onOpenCumulative = { _, _ -> }, scrollToTop = 0) } }
         composeRule.waitForIdle()
 
         composeRule.onNodeWithTag(StatsTags.LIST).assertDoesNotExist()
@@ -417,11 +429,11 @@ class StatsScreenTest {
     @Test
     fun scrollToTopBringsTheListBackUp() {
         var tick = 0
-        viewModel = StatsViewModel(FakeRides(rides), goals, { LocalDate.of(2026, 10, 28) }, WarnLog { _, _ -> }, Dispatchers.Main)
+        viewModel = StatsViewModel(FakeRides(rides), goals, { LocalDate.of(2026, 10, 28) }, WarnLog { _, _ -> }, Dispatchers.Main, BikeChip())
         val counter = androidx.compose.runtime.mutableIntStateOf(0)
         composeRule.setContent {
             MaterialTheme {
-                StatsScreen(viewModel, onOpenSegment = {}, onOpenCumulative = {}, scrollToTop = counter.intValue)
+                StatsScreen(viewModel, onOpenSegment = {}, onOpenCumulative = { _, _ -> }, scrollToTop = counter.intValue)
             }
         }
         scrollTo(StatsTags.CUMULATIVE)

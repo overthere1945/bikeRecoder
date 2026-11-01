@@ -21,6 +21,7 @@ import com.cowork.bikerecoder.core.recording.TripRideSummary
 import com.cowork.bikerecoder.core.stats.PeriodKind
 import com.cowork.bikerecoder.core.stats.RideRecords
 import com.cowork.bikerecoder.core.stats.RideStat
+import com.cowork.bikerecoder.core.stats.StoredBestEffort
 import com.cowork.bikerecoder.core.stats.RideStatsSource
 import com.cowork.bikerecoder.core.stats.StatsCalculator
 import com.cowork.bikerecoder.core.stats.Streak
@@ -209,9 +210,14 @@ class FeedViewModel(
         allRides,
         labels.observeLabels().safely(emptyMap(), "trip labels"),
         tripMedia.observeVideos().safely(emptyList(), "made videos"),
-        combine(pictures.files.safely(emptyMap(), "feed pictures"), imported.safely(emptyMap(), "imported trips"), ::Pair),
-    ) { loaded, rides, labelMap, videos, (files, importedIds) ->
-        buildFeed(loaded, rides, labelMap, videos, files, importedIds.keys)
+        combine(
+            pictures.files.safely(emptyMap(), "feed pictures"),
+            imported.safely(emptyMap(), "imported trips"),
+            rideStats.observeBestEfforts().safely(emptyList(), "best efforts"),
+            ::Triple,
+        ),
+    ) { loaded, rides, labelMap, videos, (files, importedIds, efforts) ->
+        buildFeed(loaded, rides, efforts, labelMap, videos, files, importedIds.keys)
     }.flowOn(compute).stateIn(viewModelScope, SharingStarted.Eagerly, FeedData.EMPTY)
 
     /** The listed trips' cards by month of their first date, newest month first; the cards by first start, newest first. */
@@ -491,12 +497,14 @@ class FeedViewModel(
     private fun buildFeed(
         loaded: Loaded,
         rides: List<RideStat>,
+        efforts: List<StoredBestEffort>,
         labels: Map<Long, TripLabel>,
         videos: List<TripMedia>,
         files: Map<Long, File>,
         imported: Set<Long>,
     ): FeedData {
-        val trophies = RideRecords.recordHolderTrips(rides)
+        // A trip that holds a record of any activity wears the trophy.
+        val trophies = RideRecords.recordHolderTrips(rides, efforts)
         val ridesOf = StatsCalculator.rides(rides).groupBy { it.tripId }
         val videoOf = videos.filter { it.kind == MediaKind.VIDEO }.groupBy { it.tripId }
             .mapValues { (_, list) -> list.maxWith(compareBy({ it.createdAt }, { it.id })) }

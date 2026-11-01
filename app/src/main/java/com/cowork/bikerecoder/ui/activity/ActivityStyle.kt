@@ -26,6 +26,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
@@ -135,23 +136,70 @@ fun ActivityChips(selected: ActivityType, onSelect: (ActivityType) -> Unit, modi
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier.horizontalScroll(rememberScrollState()),
     ) {
-        ActivityType.entries.forEach { type ->
-            val name = ActivityStyle.name(type)
+        ActivityType.entries.forEach { type -> ActivityChip(type, type == selected) { onSelect(type) } }
+    }
+}
+
+/**
+ * The same chips with a leading [전체] ([includeAll]) for the stats tab (spec §4.1): [selected] null is [전체], which is filled
+ * with the theme's primary colour (it stands for no activity). [onSelect] gets the tapped activity, null for [전체].
+ * Tags: [ActivityChipTags.chip].
+ */
+@Composable
+fun ActivityFilterChips(
+    selected: ActivityType?,
+    onSelect: (ActivityType?) -> Unit,
+    modifier: Modifier = Modifier,
+    includeAll: Boolean = true,
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier.horizontalScroll(rememberScrollState()),
+    ) {
+        if (includeAll) {
             FilterChip(
-                selected = type == selected,
-                onClick = { onSelect(type) },
-                label = { Text(name) },
-                leadingIcon = { ActivityBadge(type, CHIP_BADGE, contentDescription = null) },
+                selected = selected == null,
+                onClick = { onSelect(null) },
+                label = { Text(ActivityText.STATS_ALL) },
                 colors = FilterChipDefaults.filterChipColors(
-                    // Readable on the map.
                     containerColor = MaterialTheme.colorScheme.surface,
-                    selectedContainerColor = ActivityStyle.color(type),
-                    selectedLabelColor = Color.White,
+                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
                 ),
-                modifier = Modifier.semantics { contentDescription = name },
+                modifier = Modifier
+                    .semantics { contentDescription = ActivityText.STATS_ALL }
+                    .testTag(ActivityChipTags.chip(null)),
             )
         }
+        ActivityType.entries.forEach { type -> ActivityChip(type, type == selected) { onSelect(type) } }
     }
+}
+
+@Composable
+private fun ActivityChip(type: ActivityType, selected: Boolean, onClick: () -> Unit) {
+    val name = ActivityStyle.name(type)
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(name) },
+        leadingIcon = { ActivityBadge(type, CHIP_BADGE, contentDescription = null) },
+        colors = FilterChipDefaults.filterChipColors(
+            // Readable on the map.
+            containerColor = MaterialTheme.colorScheme.surface,
+            selectedContainerColor = ActivityStyle.color(type),
+            selectedLabelColor = Color.White,
+        ),
+        modifier = Modifier
+            .semantics { contentDescription = name }
+            .testTag(ActivityChipTags.chip(type)),
+    )
+}
+
+/** Test tags of the activity chips. */
+object ActivityChipTags {
+    /** The chip of [type]; null is [전체]. */
+    fun chip(type: ActivityType?) = "activity-chip-${type?.name ?: "ALL"}"
 }
 
 private const val MAX_BADGES = 3

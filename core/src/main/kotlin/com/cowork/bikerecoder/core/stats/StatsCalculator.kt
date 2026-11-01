@@ -42,7 +42,7 @@ object StatsCalculator {
         return minOf(firstStart, thisStart)..thisStart
     }
 
-    /** [from]~[to](양 끝 포함)에 날짜가 든 주행의 네 값 합. */
+    /** [from]~[to](양 끝 포함)에 날짜가 든 주행의 거리·횟수·이동 시간·상승·경과 시간 합. */
     fun totals(rides: List<RideStat>, from: LocalDate, to: LocalDate): StatTotals {
         val inRange = rides.filter { it.localDate >= from && it.localDate <= to }
         return StatTotals(
@@ -50,6 +50,7 @@ object StatsCalculator {
             rides = inRange.size,
             movingTimeMs = inRange.sumOf { it.movingTimeMs },
             ascentM = inRange.sumOf { it.ascentM },
+            elapsedMs = inRange.sumOf { it.elapsedMs },
         )
     }
 
@@ -135,10 +136,13 @@ object StatsCalculator {
     private fun runningTotals(rides: List<RideStat>, from: LocalDate, to: LocalDate): List<StatTotals> {
         if (to < from) return emptyList()
         val byDay = rides.filter { it.localDate in from..to }.groupBy { it.localDate }
-        var sum = StatTotals(0.0, 0, 0L, 0.0)
+        var sum = StatTotals(0.0, 0, 0L, 0.0, 0L)
         return generateSequence(from) { it.plusDays(1) }.takeWhile { it <= to }.map { day ->
             byDay[day]?.forEach {
-                sum = StatTotals(sum.distanceM + it.distanceM, sum.rides + 1, sum.movingTimeMs + it.movingTimeMs, sum.ascentM + it.ascentM)
+                sum = StatTotals(
+                    sum.distanceM + it.distanceM, sum.rides + 1, sum.movingTimeMs + it.movingTimeMs, sum.ascentM + it.ascentM,
+                    sum.elapsedMs + it.elapsedMs,
+                )
             }
             sum
         }.toList()

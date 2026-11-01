@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 
 import androidx.compose.material3.Button
@@ -18,10 +19,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.cowork.bikerecoder.ui.activity.ActivityStyle
+import com.cowork.bikerecoder.ui.activity.ActivityText
 import com.cowork.bikerecoder.ui.feed.GOAL_REACHED
 import com.cowork.bikerecoder.ui.feed.GOAL_REACHED_TEXT
 import com.cowork.bikerecoder.ui.feed.GoalRing
@@ -32,6 +36,9 @@ const val GOAL_SET = "목표 정하기"
 const val GOAL_REACHED_WORD = "달성"
 const val WEEKLY_GOAL_TITLE = "주간 목표"
 const val YEARLY_GOAL_TITLE = "연간 목표"
+
+/** The title of the per-activity goal rows under the [전체] chip. */
+const val GOALS_TITLE = "목표"
 
 /**
  * The goal card on top of the stats tab (V1.4.0 spec §3.1). The weekly goal is the ring of the summary tab's strip, the
@@ -46,6 +53,8 @@ fun GoalCard(
     projectionText: String?,
     onEdit: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Under the [전체] chip: a small progress row for each activity with a goal (V1.9.0 spec §4.2). */
+    rows: List<ActivityGoal> = emptyList(),
     openTip: String? = null,
     onToggleTip: (String) -> Unit = {},
 ) {
@@ -63,7 +72,7 @@ fun GoalCard(
             verticalArrangement = Arrangement.spacedBy(16.dp),
             modifier = Modifier.clickable(role = Role.Button, onClick = onEdit).padding(16.dp),
         ) {
-            if (weekly == null && yearly == null) {
+            if (weekly == null && yearly == null && rows.isEmpty()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(GOAL_EMPTY_HINT, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                     tip()
@@ -83,7 +92,54 @@ fun GoalCard(
                 }
             }
             if (yearly != null) YearlyGoal(yearly, projectionText, tip.takeIf { weekly == null })
+            if (rows.isNotEmpty()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        GOALS_TITLE,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    tip()
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) { rows.forEach { ActivityGoalRow(it) } }
+            }
         }
+    }
+}
+
+/** One activity's goals in its colour: the name, then a thin bar and "12.3 / 50 km" for the weekly and the yearly goal it has. */
+@Composable
+private fun ActivityGoalRow(row: ActivityGoal) {
+    val colour = ActivityStyle.color(row.activity)
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.testTag(StatsTags.goalRow(row.activity))) {
+        Text(
+            ActivityText.name(row.activity),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = colour,
+        )
+        row.weekly?.let { MiniGoalBar("주", it, colour, StatsTags.goalRowBar(row.activity, weekly = true)) }
+        row.yearly?.let { MiniGoalBar("연", it, colour, StatsTags.goalRowBar(row.activity, weekly = false)) }
+    }
+}
+
+@Composable
+private fun MiniGoalBar(label: String, progress: GoalProgress, colour: Color, tag: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(14.dp))
+        LinearProgressIndicator(
+            progress = { progress.fraction },
+            color = colour,
+            trackColor = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.15f),
+            gapSize = 0.dp,
+            drawStopIndicator = {},
+            modifier = Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(3.dp)).testTag(tag),
+        )
+        Text(
+            goalProgressText(progress.distanceM, progress.goalKm) + if (progress.reached) " $GOAL_REACHED_WORD" else "",
+            style = MaterialTheme.typography.labelSmall,
+        )
     }
 }
 

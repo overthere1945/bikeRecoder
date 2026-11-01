@@ -1,16 +1,20 @@
 package com.cowork.bikerecoder.ui.stats
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.post.CumulativeSummary
 import com.cowork.bikerecoder.core.stats.Comparison
 import com.cowork.bikerecoder.core.stats.PeriodKind
+import com.cowork.bikerecoder.core.stats.RideRecord
 import com.cowork.bikerecoder.core.stats.RideRecordKind
 import com.cowork.bikerecoder.core.stats.RideRecords
 import com.cowork.bikerecoder.core.stats.RideStat
 import com.cowork.bikerecoder.core.stats.StatTotals
+import com.cowork.bikerecoder.core.stats.StoredBestEffort
 import com.cowork.bikerecoder.core.stats.StatsCalculator
 import com.cowork.bikerecoder.core.stats.StatsPeriod
 import com.cowork.bikerecoder.core.stats.Streak
+import com.cowork.bikerecoder.ui.activity.ActivityText
 import com.cowork.bikerecoder.ui.feed.groupedInt
 import com.cowork.bikerecoder.ui.feed.kmText
 import com.cowork.bikerecoder.ui.feed.meterText
@@ -189,8 +193,11 @@ fun barCaptionName(kind: PeriodKind, bucketStart: LocalDate, period: StatsPeriod
         if (StatsCalculator.allIsMonthly(period)) "${bucketStart.year}년 ${bucketStart.monthValue}월" else "${bucketStart.year}년"
 }
 
-/** One line of 개인 기록: [label] and the value with its date; [target] is where a tap goes (null: nowhere). */
-data class RecordRow(val label: String, val value: String, val target: RecordTarget?)
+/**
+ * One line of 개인 기록: [label] and the value with its date; [target] is where a tap goes (null: nowhere). A [heading] is
+ * the subheading written above this line (the first line of a group under the [전체] chip).
+ */
+data class RecordRow(val label: String, val value: String, val target: RecordTarget?, val heading: String? = null)
 
 sealed interface RecordTarget {
     /** The page of that segment. */
@@ -201,44 +208,76 @@ sealed interface RecordTarget {
 }
 
 /**
- * The 개인 기록 block (spec §3.4) over all rides: the best ride of each kind, the best week and month, the longest streak.
- * Empty under two rides. Weeks and months outside [today]'s year name the year.
+ * The 개인 기록 block (spec §3.4, V1.9.0 §4.3) over all rides: the best ride of each kind of [activity] (a bike by default),
+ * the best week and month and the longest streak of those rides. [activity] null is the [전체] chip: each activity's records
+ * in turn under its name, then the weeks, months and streak of all rides under "전체". Empty under two rides.
+ * Weeks and months outside [today]'s year name the year.
  */
-fun recordRows(all: List<RideStat>, today: LocalDate): List<RecordRow> {
-    if (StatsCalculator.rides(all).size < 2) return emptyList()
+fun recordRows(
+    all: List<RideStat>,
+    today: LocalDate,
+    efforts: List<StoredBestEffort> = emptyList(),
+    activity: ActivityType? = ActivityType.BIKE,
+): List<RecordRow> {
+    val scope = StatsCalculator.rides(all).filter { activity == null || it.activity == activity }
+    if (scope.size < 2) return emptyList()
     val rows = mutableListOf<RecordRow>()
-    for (record in RideRecords.rideRecords(all)) {
-        val ride = record.ride
-        val (label, value) = when (record.kind) {
-            RideRecordKind.LONGEST_DISTANCE -> "가장 긴 주행" to kmText(ride.distanceM)
-            RideRecordKind.LONGEST_TIME -> "가장 오래 탄 주행" to RideFormat.duration(ride.movingTimeMs)
-            RideRecordKind.MOST_ASCENT -> "가장 많이 오른 주행" to meterText(ride.ascentM)
-            RideRecordKind.FASTEST_AVG -> "가장 빠른 평균 속도" to "${RideFormat.speedKmh(record.value)} km/h"
-        }
-        rows += RecordRow(label, "$value · ${RideFormat.date(ride.localDate)}", RecordTarget.Segment(ride.segmentId))
+    fun addGroup(group: List<RecordRow>, heading: String?) {
+        if (group.isEmpty()) return
+        rows += if (heading == null) group else listOf(group.first().copy(heading = heading)) + group.drop(1)
     }
-    RideRecords.bestWeek(all)?.let {
-        rows += RecordRow(
+    for (type in ActivityType.entries) {
+        if (activity != null && type != activity) continue
+        val group = RideRecords.rideRecords(all, efforts, type).map { record ->
+            val ride = record.ride
+            RecordRow(
+                ActivityText.recordLabel(record.kind),
+                "${recordValueText(record)} · ${RideFormat.date(ride.localDate)}",
+                RecordTarget.Segment(ride.segmentId),
+            )
+        }
+        addGroup(group, if (activity == null) ActivityText.name(type) else null)
+    }
+    val periods = mutableListOf<RecordRow>()
+    RideRecords.bestWeek(scope)?.let {
+        periods += RecordRow(
             "가장 많이 탄 주",
             "${kmText(it.distanceM)} · ${weekName(it.start, withYear = it.start.year != today.year)}",
             RecordTarget.Period(PeriodKind.WEEK, it.start),
         )
     }
-    RideRecords.bestMonth(all)?.let {
-        rows += RecordRow(
+    RideRecords.bestMonth(scope)?.let {
+        periods += RecordRow(
             "가장 많이 탄 달",
             "${kmText(it.distanceM)} · ${it.start.year}년 ${it.start.monthValue}월",
             RecordTarget.Period(PeriodKind.MONTH, it.start),
         )
     }
-    RideRecords.longestStreak(all)?.let {
+    RideRecords.longestStreak(scope)?.let {
         val first = weekName(it.firstWeek, withYear = it.firstWeek.year != today.year)
         val range = if (it.firstWeek == it.lastWeek) {
             first
         } else {
             "$first~${weekName(it.lastWeek, withYear = it.lastWeek.year != it.firstWeek.year)}"
         }
-        rows += RecordRow("가장 긴 연속 주행", "${it.weeks}주 ($range)", null)
+        periods += RecordRow("가장 긴 연속 주행", "${it.weeks}주 ($range)", null)
     }
+    addGroup(periods, if (activity == null) ActivityText.STATS_ALL else null)
     return rows
+}
+
+/** The value of a record without its date: "42.1 km", "1시간 45분", "123 m", "24'51\"". */
+private fun recordValueText(record: RideRecord): String {
+    val ride = record.ride
+    return when (record.kind) {
+        RideRecordKind.LONGEST_DISTANCE, RideRecordKind.RUN_LONGEST_DISTANCE, RideRecordKind.WALK_LONGEST_DISTANCE ->
+            kmText(ride.distanceM)
+        RideRecordKind.LONGEST_TIME, RideRecordKind.WALK_LONGEST_TIME -> RideFormat.duration(ride.movingTimeMs)
+        RideRecordKind.MOST_ASCENT, RideRecordKind.HIKE_MOST_ASCENT -> meterText(ride.ascentM)
+        RideRecordKind.FASTEST_AVG -> "${RideFormat.speedKmh(record.value)} km/h"
+        RideRecordKind.HIKE_HIGHEST -> meterText(record.value)
+        RideRecordKind.HIKE_LONGEST_ELAPSED -> RideFormat.duration(ride.elapsedMs)
+        RideRecordKind.RUN_BEST_1K, RideRecordKind.RUN_BEST_5K, RideRecordKind.RUN_BEST_10K, RideRecordKind.RUN_BEST_HALF ->
+            ActivityText.effortTime(record.value.toLong())
+    }
 }

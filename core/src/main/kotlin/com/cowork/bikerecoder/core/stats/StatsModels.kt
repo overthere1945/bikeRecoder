@@ -31,7 +31,14 @@ enum class PeriodKind { WEEK, MONTH, YEAR, ALL }
 /** [start]~[endInclusive] 날짜 구간(양 끝 포함). */
 data class StatsPeriod(val kind: PeriodKind, val start: LocalDate, val endInclusive: LocalDate)
 
-data class StatTotals(val distanceM: Double, val rides: Int, val movingTimeMs: Long, val ascentM: Double)
+/** 기간의 합. [elapsedMs]는 구간 경과 시간(멈춘 때 포함)의 합이다(등산의 산행 시간). */
+data class StatTotals(
+    val distanceM: Double,
+    val rides: Int,
+    val movingTimeMs: Long,
+    val ascentM: Double,
+    val elapsedMs: Long = 0L,
+)
 
 /** 막대 하나. [upcoming]은 [start]가 오늘보다 뒤라서 아직 오지 않은 칸. */
 data class Bucket(val start: LocalDate, val endInclusive: LocalDate, val totals: StatTotals, val upcoming: Boolean)

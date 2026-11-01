@@ -4,11 +4,13 @@ import com.cowork.bikerecoder.core.activity.ActivityFormat
 import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.format.RideFormat
 import com.cowork.bikerecoder.core.recording.SegmentTotals
+import com.cowork.bikerecoder.core.stats.RideRecordKind
 import com.cowork.bikerecoder.ui.feed.kmText
 import com.cowork.bikerecoder.ui.feed.meterText
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
  * The screens' and the notification's activity copy (V1.9.0): every new on-screen string of the activity types lives
@@ -35,6 +37,59 @@ object ActivityText {
 
     /** Where the big map's legend would be on a trip of several activities: their colour scales differ (spec §3.5). */
     const val MIXED_COLOR_NOTE = "종류마다 색 기준이 다릅니다"
+
+    /** The stats tab's [전체] chip (null in the settings). */
+    const val STATS_ALL = "전체"
+
+    /** The stats tab's count cell word for a chip (spec §4.1): "라이딩 N회", "걷기 N회", "달리기 N회", "등산 N회", "활동 N회". */
+    fun statsRidesWord(chip: ActivityType?): String = when (chip) {
+        null -> "활동"
+        ActivityType.BIKE -> "라이딩"
+        ActivityType.WALK -> "걷기"
+        ActivityType.RUN -> "달리기"
+        ActivityType.HIKE -> "등산"
+    }
+
+    /**
+     * A running best effort's time (spec §4.3): under an hour minutes'seconds" (`24'51"`), from an hour on
+     * `1:52'10"`. Seconds are rounded to the nearest.
+     */
+    fun effortTime(timeMs: Long): String {
+        val total = (timeMs + 500) / 1000
+        val h = total / 3600
+        val m = total % 3600 / 60
+        val s = total % 60
+        return if (h > 0) String.format(Locale.ROOT, "%d:%02d'%02d\"", h, m, s) else String.format(Locale.ROOT, "%d'%02d\"", m, s)
+    }
+
+    /** A personal record's name in the stats tab's list (spec §4.3). A bike keeps its wording. */
+    fun recordLabel(kind: RideRecordKind): String = when (kind) {
+        RideRecordKind.LONGEST_DISTANCE -> "가장 긴 주행"
+        RideRecordKind.LONGEST_TIME -> "가장 오래 탄 주행"
+        RideRecordKind.MOST_ASCENT -> "가장 많이 오른 주행"
+        RideRecordKind.FASTEST_AVG -> "가장 빠른 평균 속도"
+        RideRecordKind.RUN_LONGEST_DISTANCE -> "가장 긴 달리기"
+        RideRecordKind.RUN_BEST_1K, RideRecordKind.RUN_BEST_5K, RideRecordKind.RUN_BEST_10K, RideRecordKind.RUN_BEST_HALF ->
+            "${kind.effort!!.label} 최고 기록"
+        RideRecordKind.WALK_LONGEST_DISTANCE -> "가장 긴 걷기"
+        RideRecordKind.WALK_LONGEST_TIME -> "가장 오래 걸은 걷기"
+        RideRecordKind.HIKE_MOST_ASCENT -> "가장 많이 오른 등산"
+        RideRecordKind.HIKE_HIGHEST -> "가장 높이 오른 등산"
+        RideRecordKind.HIKE_LONGEST_ELAPSED -> "가장 긴 산행"
+    }
+
+    /**
+     * The summary's new-record line (spec §4.3): "🏆 가장 긴 주행 신기록", "🏆 5 km 최고 기록 24'51\"", "🏆 가장 높이 오른 등산".
+     * [effortMs] is the best effort's time (only for the run bests).
+     */
+    fun newRecordLine(kind: RideRecordKind, effortMs: Long?): String = when (kind) {
+        RideRecordKind.LONGEST_DISTANCE, RideRecordKind.LONGEST_TIME, RideRecordKind.MOST_ASCENT, RideRecordKind.FASTEST_AVG,
+        RideRecordKind.RUN_LONGEST_DISTANCE, RideRecordKind.WALK_LONGEST_DISTANCE, RideRecordKind.WALK_LONGEST_TIME,
+        -> "🏆 ${recordLabel(kind)} 신기록"
+        RideRecordKind.RUN_BEST_1K, RideRecordKind.RUN_BEST_5K, RideRecordKind.RUN_BEST_10K, RideRecordKind.RUN_BEST_HALF ->
+            "🏆 ${recordLabel(kind)}" + (effortMs?.let { " ${effortTime(it)}" } ?: "")
+        RideRecordKind.HIKE_MOST_ASCENT, RideRecordKind.HIKE_HIGHEST, RideRecordKind.HIKE_LONGEST_ELAPSED -> "🏆 ${recordLabel(kind)}"
+    }
 
     /** The activity's name, also what a screen reader says for its badge or chip. */
     fun name(type: ActivityType): String = when (type) {

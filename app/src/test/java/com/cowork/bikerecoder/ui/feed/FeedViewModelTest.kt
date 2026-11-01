@@ -1089,6 +1089,21 @@ class FeedViewModelTest {
         assertEquals(listOf(true, false, false), listOf(1L, 2L, 3L).map { vm.card(it).trophy })
     }
 
+    /** V1.9.0: a record of any activity gives the trophy, and a hike only competes with hikes. */
+    @Test
+    fun trophyForAnyActivitysRecord() = runTest(dispatcher) {
+        for (id in 1L..4L) trip(id, TripStatus.COMPLETED)
+        segment(1, startedAt = 100, totals = ride(50_000.0, movingMs = 9_000_000))
+        segment(2, startedAt = 200, totals = ride(3_000.0, movingMs = 600_000).copy(ascentM = 100.0, elapsedMs = 5_000_000), activity = ActivityType.HIKE)
+        segment(3, startedAt = 300, totals = ride(2_000.0, movingMs = 500_000).copy(ascentM = 400.0, elapsedMs = 4_000_000), activity = ActivityType.HIKE)
+        segment(4, startedAt = 400, totals = ride(1_000.0, movingMs = 100_000), activity = ActivityType.WALK)
+        val vm = history()
+        advanceUntilIdle()
+
+        // The only bike ride has no rival; trip 2 holds the longest hike, trip 3 the most ascent; the lone walk has none.
+        assertEquals(listOf(false, true, true, false), listOf(1L, 2L, 3L, 4L).map { vm.card(it).trophy })
+    }
+
     @Test
     fun noTrophyBeforeASecondRide() = runTest(dispatcher) {
         trip(1, TripStatus.COMPLETED)

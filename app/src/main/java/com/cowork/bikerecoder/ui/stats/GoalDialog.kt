@@ -50,6 +50,7 @@ private val YEARLY_SUGGESTIONS = listOf(1_000, 2_000, 3_000)
  * that fill it. [weeklyKm] and [yearlyKm] start the fields (null = empty). A field takes whole numbers from
  * [Goals.MIN_KM] to [Goals.MAX_KM] (a thousands comma is fine); empty means no such goal. A field that does not fit shows
  * [GOAL_ERROR] and blocks [GOAL_SAVE]. [onSave] gets what the fields mean ([GoalInput.Empty] or [GoalInput.Valid]); [onDismiss] is [취소].
+ * The stats tab puts its activity chips in [header] (V1.9.0: each activity has its own goals).
  */
 @Composable
 fun GoalDialog(
@@ -57,9 +58,13 @@ fun GoalDialog(
     yearlyKm: Int?,
     onSave: (GoalInput, GoalInput) -> Unit,
     onDismiss: () -> Unit,
+    /** Above the fields: the stats tab's activity chips, to edit another activity's goals. */
+    header: (@Composable () -> Unit)? = null,
+    /** The fields start again from [weeklyKm] and [yearlyKm] when this changes (another activity was chosen). */
+    resetKey: Any = Unit,
 ) {
-    var weekly by remember { mutableStateOf(weeklyKm?.toString().orEmpty()) }
-    var yearly by remember { mutableStateOf(yearlyKm?.toString().orEmpty()) }
+    var weekly by remember(resetKey) { mutableStateOf(weeklyKm?.toString().orEmpty()) }
+    var yearly by remember(resetKey) { mutableStateOf(yearlyKm?.toString().orEmpty()) }
     val weeklyInput = Goals.parse(weekly)
     val yearlyInput = Goals.parse(yearly)
     val valid = weeklyInput !is GoalInput.Invalid && yearlyInput !is GoalInput.Invalid
@@ -68,6 +73,7 @@ fun GoalDialog(
         title = { Text(GOAL_DIALOG_TITLE) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.verticalScroll(rememberScrollState())) {
+                header?.invoke()
                 GoalField(GOAL_WEEKLY_LABEL, weekly, GoalDialogTags.WEEKLY, weeklyInput, WEEKLY_SUGGESTIONS, GoalDialogTags::weeklyChip) {
                     weekly = it
                 }

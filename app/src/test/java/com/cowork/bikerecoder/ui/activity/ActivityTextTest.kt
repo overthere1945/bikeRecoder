@@ -2,6 +2,7 @@ package com.cowork.bikerecoder.ui.activity
 
 import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.recording.SegmentTotals
+import com.cowork.bikerecoder.core.stats.RideRecordKind
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -122,5 +123,34 @@ class ActivityTextTest {
             listOf(listOf("산행 시간"), listOf("거리", "이동 시간"), listOf("평균/최고"), listOf("누적 상승", "누적 하강", "최고 고도")),
             labels(hike),
         )
+    }
+
+    @Test
+    fun effortTimeFormats() {
+        assertEquals("24'51\"", ActivityText.effortTime(1_491_000))
+        assertEquals("24'51\"", ActivityText.effortTime(1_490_600)) // rounds to the second
+        assertEquals("4'05\"", ActivityText.effortTime(245_000))
+        assertEquals("59'59\"", ActivityText.effortTime(3_599_000))
+        assertEquals("1:00'00\"", ActivityText.effortTime(3_600_000))
+        assertEquals("1:52'10\"", ActivityText.effortTime(6_730_000))
+    }
+
+    @Test
+    fun recordLabelsAndLines() {
+        assertEquals("가장 긴 주행", ActivityText.recordLabel(RideRecordKind.LONGEST_DISTANCE))
+        assertEquals(
+            listOf("1 km 최고 기록", "5 km 최고 기록", "10 km 최고 기록", "하프 최고 기록"),
+            listOf(RideRecordKind.RUN_BEST_1K, RideRecordKind.RUN_BEST_5K, RideRecordKind.RUN_BEST_10K, RideRecordKind.RUN_BEST_HALF)
+                .map(ActivityText::recordLabel),
+        )
+        assertEquals("🏆 가장 긴 달리기 신기록", ActivityText.newRecordLine(RideRecordKind.RUN_LONGEST_DISTANCE, null))
+        assertEquals("🏆 하프 최고 기록 1:52'10\"", ActivityText.newRecordLine(RideRecordKind.RUN_BEST_HALF, 6_730_000))
+        assertEquals("🏆 가장 긴 산행", ActivityText.newRecordLine(RideRecordKind.HIKE_LONGEST_ELAPSED, null))
+        assertEquals("🏆 가장 오래 탄 주행 신기록", ActivityText.newRecordLine(RideRecordKind.LONGEST_TIME, null))
+    }
+
+    @Test
+    fun statsRidesWords() {
+        assertEquals(listOf("활동", "라이딩", "걷기", "달리기", "등산"), (listOf(null) + ActivityType.entries).map(ActivityText::statsRidesWord))
     }
 }

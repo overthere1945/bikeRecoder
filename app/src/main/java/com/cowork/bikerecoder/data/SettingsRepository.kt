@@ -14,6 +14,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.ui.onboarding.OnboardingStep
+import com.cowork.bikerecoder.ui.stats.GoalKm
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -41,9 +42,23 @@ data class AppSettings(
     val yearlyGoalKm: Int? = null,
     /** Default hashtags of the share text (spec §3.5). null = never saved (the default applies), "" = none. */
     val shareHashtags: String? = null,
+    /**
+     * The walk, run and hike goals (V1.9.0 spec §4.2; an activity without a goal is absent). The bike goal is
+     * [weeklyGoalKm] and [yearlyGoalKm]: the keys that were always there, so an existing goal is the bike goal.
+     */
+    val otherGoals: Map<ActivityType, GoalKm> = emptyMap(),
+    /** The stats tab's activity chip (`stats_activity`); null = [전체] (also when the stored text is unknown). */
+    val statsActivity: ActivityType? = null,
     /** The map screen's activity chip: what [● 기록 시작] records (V1.9.0 spec §1.4). Guided recordings never change it. */
     val lastActivity: ActivityType = ActivityType.BIKE,
 )
+
+/** The goals of every activity that has one; the bike's are [AppSettings.weeklyGoalKm] and [AppSettings.yearlyGoalKm]. */
+val AppSettings.goals: Map<ActivityType, GoalKm>
+    get() = buildMap {
+        if (weeklyGoalKm != null || yearlyGoalKm != null) put(ActivityType.BIKE, GoalKm(weeklyGoalKm, yearlyGoalKm))
+        putAll(otherGoals)
+    }
 
 /** 기록 중에 안내를 새로 시작할 때 기록을 어떻게 할지(스펙 §4.3). */
 enum class GuidanceRecording(val label: String) {
@@ -79,6 +94,13 @@ class SettingsRepository(context: Context) {
             prefs[HEART_RATE_PROMPT_DISMISSED] = next.heartRatePromptDismissed
             prefs.setOrRemove(WEEKLY_GOAL_KM, next.weeklyGoalKm)
             prefs.setOrRemove(YEARLY_GOAL_KM, next.yearlyGoalKm)
+            for (type in EXTRA_GOAL_TYPES) {
+                val goal = next.otherGoals[type]
+                prefs.setOrRemove(weeklyKey(type), goal?.weekly)
+                prefs.setOrRemove(yearlyKey(type), goal?.yearly)
+            }
+            val chip = next.statsActivity
+            if (chip == null) prefs.remove(STATS_ACTIVITY) else prefs[STATS_ACTIVITY] = chip.stored
             val hashtags = next.shareHashtags
             if (hashtags == null) prefs.remove(SHARE_HASHTAGS) else prefs[SHARE_HASHTAGS] = hashtags
             prefs[LAST_ACTIVITY] = next.lastActivity.stored
@@ -95,13 +117,30 @@ class SettingsRepository(context: Context) {
         dataStore.edit { prefs -> prefs[SHARE_HASHTAGS] = value }
     }
 
-    /** 목표를 저장한다. null이면 그 키를 지운다. 다른 설정은 건드리지 않는다. */
-    suspend fun setGoals(weeklyKm: Int?, yearlyKm: Int?) {
+    /** 자전거 목표를 저장한다([setGoals] with [ActivityType.BIKE]). null이면 그 키를 지운다. 다른 설정은 건드리지 않는다. */
+    suspend fun setGoals(weeklyKm: Int?, yearlyKm: Int?) = setGoals(ActivityType.BIKE, weeklyKm, yearlyKm)
+
+    /**
+     * Saves [activity]'s goals; null removes that key. The bike's go to the keys that were always there
+     * (`weekly_goal_km`, `yearly_goal_km`), the others to `weekly_goal_km_walk` and so on. Other settings stay.
+     */
+    suspend fun setGoals(activity: ActivityType, weeklyKm: Int?, yearlyKm: Int?) {
         dataStore.edit { prefs ->
-            prefs.setOrRemove(WEEKLY_GOAL_KM, weeklyKm)
-            prefs.setOrRemove(YEARLY_GOAL_KM, yearlyKm)
+            prefs.setOrRemove(weeklyKey(activity), weeklyKm)
+            prefs.setOrRemove(yearlyKey(activity), yearlyKm)
         }
     }
+
+    /** Saves the stats tab's activity chip; null = [전체] (the key is removed). Other settings stay. */
+    suspend fun setStatsActivity(type: ActivityType?) {
+        dataStore.edit { prefs -> if (type == null) prefs.remove(STATS_ACTIVITY) else prefs[STATS_ACTIVITY] = type.stored }
+    }
+
+    private fun weeklyKey(type: ActivityType): Preferences.Key<Int> =
+        if (type == ActivityType.BIKE) WEEKLY_GOAL_KM else intPreferencesKey("weekly_goal_km_${type.name.lowercase()}")
+
+    private fun yearlyKey(type: ActivityType): Preferences.Key<Int> =
+        if (type == ActivityType.BIKE) YEARLY_GOAL_KM else intPreferencesKey("yearly_goal_km_${type.name.lowercase()}")
 
     private fun MutablePreferences.setOrRemove(key: Preferences.Key<Int>, value: Int?) {
         if (value == null) remove(key) else this[key] = value
@@ -130,6 +169,12 @@ class SettingsRepository(context: Context) {
             heartRatePromptDismissed = this[HEART_RATE_PROMPT_DISMISSED] ?: defaults.heartRatePromptDismissed,
             weeklyGoalKm = this[WEEKLY_GOAL_KM],
             yearlyGoalKm = this[YEARLY_GOAL_KM],
+            otherGoals = EXTRA_GOAL_TYPES.mapNotNull { type ->
+                val weekly = this[weeklyKey(type)]
+                val yearly = this[yearlyKey(type)]
+                if (weekly == null && yearly == null) null else type to GoalKm(weekly, yearly)
+            }.toMap(),
+            statsActivity = this[STATS_ACTIVITY]?.let { stored -> ActivityType.entries.firstOrNull { it.stored == stored } },
             shareHashtags = this[SHARE_HASHTAGS],
             lastActivity = this[LAST_ACTIVITY]?.let(ActivityType::fromStored) ?: defaults.lastActivity,
         )
@@ -151,5 +196,7 @@ class SettingsRepository(context: Context) {
         val YEARLY_GOAL_KM = intPreferencesKey("yearly_goal_km")
         val SHARE_HASHTAGS = stringPreferencesKey("share_hashtags")
         val LAST_ACTIVITY = stringPreferencesKey("last_activity")
+        val STATS_ACTIVITY = stringPreferencesKey("stats_activity")
+        val EXTRA_GOAL_TYPES = listOf(ActivityType.WALK, ActivityType.RUN, ActivityType.HIKE)
     }
 }
