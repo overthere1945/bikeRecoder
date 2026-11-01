@@ -14,10 +14,13 @@ import android.provider.MediaStore
  */
 class MediaStoreWriter(private val resolver: ContentResolver) {
 
-    fun createPending(kind: MediaKind, displayName: String): Uri {
+    fun createPending(kind: MediaKind, displayName: String): Uri = createPending(kind, displayName, kind.mimeType)
+
+    /** [createPending] of another [mimeType] in [kind]'s folder (the share cards' JPEG, share cards spec §5.5). */
+    fun createPending(kind: MediaKind, displayName: String, mimeType: String): Uri {
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
-            put(MediaStore.MediaColumns.MIME_TYPE, kind.mimeType)
+            put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
             put(MediaStore.MediaColumns.RELATIVE_PATH, kind.relativePath)
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }

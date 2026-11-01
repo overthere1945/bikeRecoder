@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 공유 카드 파일(공유 카드 설계 §3.2): cacheDir/share/<tripId>/ 를 FileProvider로 다른 앱에 준다. -->
+<paths>
+    <cache-path name="share" path="share/" />
+</paths>
