@@ -22,7 +22,7 @@ import com.cowork.bikerecoder.ui.activity.ActivityText
 import com.cowork.bikerecoder.ui.common.PlaceLookup
 import com.cowork.bikerecoder.ui.common.PressedPlace
 import com.cowork.bikerecoder.ui.common.addressOrNull
-import com.cowork.bikerecoder.ui.trip.RIDE_RECORD_NAME
+import com.cowork.bikerecoder.ui.trip.lastActivityOf
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -108,6 +108,8 @@ class MainViewModel(
     private val lastActivity: Flow<ActivityType> = flowOf(ActivityType.BIKE),
     /** Saves the chip's choice. */
     private val saveActivity: suspend (ActivityType) -> Unit = {},
+    /** The activity of a trip's last segment ([lastActivityOf]), for naming a trip without stops; null if unknown. */
+    private val tripActivity: suspend (tripId: Long) -> ActivityType? = { null },
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(MainUiState(recoveryBusy = true))
@@ -271,8 +273,8 @@ class MainViewModel(
 
     private suspend fun destinationName(tripId: Long): String {
         val stops = runCatchingNonCancel { tripStore.stops(tripId) }.orEmpty()
-        // A trip started for recording only has no stops.
-        if (stops.isEmpty()) return RIDE_RECORD_NAME
+        // A trip started for recording only has no stops: it is named after what it recorded.
+        if (stops.isEmpty()) return ActivityText.recordName(runCatchingNonCancel { tripActivity(tripId) })
         return (stops.firstOrNull { it.isDestination } ?: stops.last()).name
     }
 
@@ -315,6 +317,7 @@ class MainViewModel(
                     closeInterrupted = { container.ride.closeInterrupted() },
                     lastActivity = container.lastActivity,
                     saveActivity = container.settings::setLastActivity,
+                    tripActivity = { id -> lastActivityOf(container.rideStore.segments(id)) },
                 )
             }
         }

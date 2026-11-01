@@ -228,9 +228,19 @@ class ActivityTextTest {
     }
 
     @Test
+    fun aTripWithoutStopsIsNamedAfterItsActivity() {
+        assertEquals("주행 기록", ActivityText.recordName(ActivityType.BIKE))
+        assertEquals("걷기 기록", ActivityText.recordName(ActivityType.WALK))
+        assertEquals("달리기 기록", ActivityText.recordName(ActivityType.RUN))
+        assertEquals("산행 기록", ActivityText.recordName(ActivityType.HIKE))
+        assertEquals("활동 기록", ActivityText.recordName(null))
+    }
+
+    @Test
     fun tripDetailTitleAndFeedEmpty() {
         assertEquals("활동 기록", ActivityText.tripDetailTitle(multiDay = false))
         assertEquals("여행 기록", ActivityText.tripDetailTitle(multiDay = true))
+        assertEquals("", ActivityText.tripDetailTitle(multiDay = null), "the trip is not read yet")
         assertEquals("첫 활동을 기록해 보세요", ActivityText.FEED_EMPTY)
     }
 

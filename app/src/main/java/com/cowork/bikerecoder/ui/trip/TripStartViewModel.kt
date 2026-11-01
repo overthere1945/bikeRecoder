@@ -8,6 +8,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.cowork.bikerecoder.AppContainer
 import com.cowork.bikerecoder.WarnLog
 import com.cowork.bikerecoder.androidWarnLog
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.trip.StartPrompt
@@ -21,6 +22,7 @@ import com.cowork.bikerecoder.nav.guidingTripId
 import com.cowork.bikerecoder.ride.RideController
 import com.cowork.bikerecoder.ride.RideUiState
 import com.cowork.bikerecoder.ride.recordingTripId
+import com.cowork.bikerecoder.ui.activity.ActivityText
 import com.cowork.bikerecoder.ui.plan.PlannedStop
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,7 +43,7 @@ sealed interface TripStartState {
 
     /**
      * "어떻게 기록할까요?" [여행 이어서 · {day}일째] [새 기록 시작] [취소]: the active multi-day [trip], named [destinationName]
-     * ([RIDE_RECORD_NAME] without stops), on its [day]-th day ([TripManager.dayNumber]); [past] is what it recorded so far
+     * ([ActivityText.recordName] without stops), on its [day]-th day ([TripManager.dayNumber]); [past] is what it recorded so far
      * (null if that could not be read).
      */
     data class AskContinue(
@@ -73,6 +75,9 @@ fun pastRecordsOf(segments: List<RideSegment>): PastRecords {
     val rides = segments.filterNot { it.isEmpty }
     return PastRecords(days = rides.map { it.localDate }.distinct().size, distanceM = rides.sumOf { it.totals.distanceM })
 }
+
+/** The activity of a trip's last segment (the latest start; a mixed trip counts its last one); null without segments. */
+fun lastActivityOf(segments: List<RideSegment>): ActivityType? = segments.maxByOrNull { it.startedAt }?.activity
 
 /** Planned stops as trip stops: order = index, the last one is the destination, none visited. */
 fun List<PlannedStop>.toTripStops(): List<TripStop> = mapIndexed { index, stop ->
@@ -134,6 +139,8 @@ class TripStartViewModel(
     private val closeGuidanceOf: (tripId: Long) -> Unit = {},
     /** What a trip recorded so far ([PastRecords]), for [TripStartState.AskContinue]; null if unknown. */
     private val pastRecords: suspend (tripId: Long) -> PastRecords? = { null },
+    /** The activity of a trip's last segment ([lastActivityOf]), for naming a trip without stops; null if unknown. */
+    private val tripActivity: suspend (tripId: Long) -> ActivityType? = { null },
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<TripStartState>(TripStartState.Idle)
@@ -313,9 +320,19 @@ class TripStartViewModel(
 
     private suspend fun destinationName(tripId: Long): String {
         val stops = tripStore.stops(tripId)
-        // A trip started for recording only has no stops.
-        if (stops.isEmpty()) return RIDE_RECORD_NAME
+        // A trip started for recording only has no stops: it is named after what it recorded.
+        if (stops.isEmpty()) return ActivityText.recordName(activityOrNull(tripId))
         return (stops.firstOrNull { it.isDestination } ?: stops.last()).name
+    }
+
+    private suspend fun activityOrNull(tripId: Long): ActivityType? = try {
+        tripActivity(tripId)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        // Only the name is more general without it.
+        log.warn("Reading the activity of trip $tripId failed", e)
+        null
     }
 
     companion object {
@@ -338,6 +355,7 @@ class TripStartViewModel(
                     splitSegment = { container.ride.splitSegment() },
                     closeGuidanceOf = { id -> if (container.navigationState.guidingTripId == id) container.navigation.close() },
                     pastRecords = { id -> pastRecordsOf(container.rideStore.segments(id)) },
+                    tripActivity = { id -> lastActivityOf(container.rideStore.segments(id)) },
                 )
             }
         }

@@ -168,8 +168,24 @@ object ActivityText {
     /** The feed's empty state: the screen shows every activity. */
     const val FEED_EMPTY = "첫 활동을 기록해 보세요"
 
-    /** The trip detail screen's title: a single day "활동 기록", a trip of several days "여행 기록". */
-    fun tripDetailTitle(multiDay: Boolean): String = if (multiDay) "여행 기록" else "활동 기록"
+    /** The trip detail screen's title: a single day "활동 기록", a trip of several days "여행 기록", none until the trip is read (null). */
+    fun tripDetailTitle(multiDay: Boolean?): String = when (multiDay) {
+        null -> ""
+        true -> "여행 기록"
+        false -> "활동 기록"
+    }
+
+    /**
+     * The name of a trip without stops where a destination name would be shown (the multi-day banner, the "여행 이어서"
+     * card): "주행 기록" for a bike, "걷기 기록", "달리기 기록", "산행 기록"; "활동 기록" while the trip's activity is unknown (null).
+     */
+    fun recordName(activity: ActivityType?): String = when (activity) {
+        ActivityType.BIKE -> "주행 기록"
+        ActivityType.WALK -> "걷기 기록"
+        ActivityType.RUN -> "달리기 기록"
+        ActivityType.HIKE -> "산행 기록"
+        null -> "활동 기록"
+    }
 
     // The activity type button on the map screen (V1.9.1 §A).
     /** The sheet's title. */
@@ -179,7 +195,7 @@ object ActivityText {
     fun typeButtonDescription(type: ActivityType): String = "$TYPE_SHEET_TITLE, ${name(type)}. 눌러서 바꾸기"
 
     /**
-     * The summary's new-record line (spec §4.3): "🏆 가장 긴 주행 신기록", "🏆 5 km 최고 기록 24'51\"", "🏆 가장 높이 오른 등산".
+     * The summary's new-record line (spec §4.3): "🏆 가장 긴 주행 신기록", "🏆 5 km 최고 기록 24'51\"", "🏆 가장 높이 오른 산행".
      * [effortMs] is the best effort's time (only for the run bests).
      */
     fun newRecordLine(kind: RideRecordKind, effortMs: Long?): String = when (kind) {

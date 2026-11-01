@@ -45,6 +45,7 @@ class MainViewModelTest {
     private val guidance = MutableStateFlow<NavUiState>(NavUiState.Idle)
     private val ride = MutableStateFlow<RideUiState>(RideUiState.Idle)
     private var openSegment: RideSegment? = null
+    private var lastSegmentActivity: ActivityType? = ActivityType.BIKE
     private var closeCalls = 0
 
     /** The saved `last_activity` setting. */
@@ -77,6 +78,7 @@ class MainViewModelTest {
             savedActivities += it
             lastActivity.value = it
         },
+        tripActivity = { lastSegmentActivity },
     ).also { runCurrent() }
 
     private fun recording(
@@ -212,6 +214,21 @@ class MainViewModelTest {
         val banner = viewModel().state.value.banner!!
 
         assertEquals(TripBanner(tripId, "주행 기록", 1, BannerAction.NEXT_DESTINATION), banner)
+    }
+
+    @Test
+    fun aTripWithoutStopsIsNamedAfterItsLastActivity() = runTest(dispatcher) {
+        val tripId = tripManager.startTrip(TripType.MULTI_DAY, RouteProfile.CYCLEWAY_FIRST, emptyList()).id
+        val names = mapOf(
+            ActivityType.WALK to "걷기 기록",
+            ActivityType.RUN to "달리기 기록",
+            ActivityType.HIKE to "산행 기록",
+            null to "활동 기록",
+        )
+        names.forEach { (activity, name) ->
+            lastSegmentActivity = activity
+            assertEquals(TripBanner(tripId, name, 1, BannerAction.NEXT_DESTINATION), viewModel().state.value.banner)
+        }
     }
 
     @Test

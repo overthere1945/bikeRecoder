@@ -186,6 +186,53 @@ class TripStartViewModelTest {
     }
 
     @Test
+    fun aTripWithoutStopsIsNamedAfterItsLastActivity() = runTest(dispatcher) {
+        tripManager.startTrip(TripType.MULTI_DAY, RouteProfile.SHORTEST, emptyList())
+        val names = mapOf(
+            ActivityType.BIKE to "주행 기록",
+            ActivityType.WALK to "걷기 기록",
+            ActivityType.RUN to "달리기 기록",
+            ActivityType.HIKE to "산행 기록",
+            null to "활동 기록",
+        )
+        names.forEach { (activity, name) ->
+            val vm = TripStartViewModel(tripManager, store, tripActivity = { activity }).also { runCurrent() }
+
+            vm.onRecordPressed()
+            runCurrent()
+
+            assertEquals(name, (vm.state.value as TripStartState.AskContinue).destinationName)
+        }
+    }
+
+    @Test
+    fun anActivityThatCannotBeReadOnlyMakesTheNameGeneral() = runTest(dispatcher) {
+        tripManager.startTrip(TripType.MULTI_DAY, RouteProfile.SHORTEST, emptyList())
+        val log = RecordingLog()
+        val vm = TripStartViewModel(tripManager, store, log, tripActivity = { throw IOException("disk") }).also { runCurrent() }
+
+        vm.onRecordPressed()
+        runCurrent()
+
+        assertEquals("활동 기록", (vm.state.value as TripStartState.AskContinue).destinationName)
+        assertEquals(1, log.messages.size)
+    }
+
+    @Test
+    fun theLastSegmentsActivityNamesTheTrip() {
+        val day = LocalDate.of(2026, 10, 30)
+        fun segment(id: Long, startedAt: Long, activity: ActivityType) =
+            RideSegment(id, 1, startedAt, startedAt + 1, day, SegmentTotals.ZERO, activity)
+
+        assertNull(lastActivityOf(emptyList()))
+        assertEquals(
+            ActivityType.RUN,
+            lastActivityOf(listOf(segment(1, 100, ActivityType.BIKE), segment(3, 300, ActivityType.RUN), segment(2, 200, ActivityType.WALK))),
+            "a mixed trip is named after its last segment",
+        )
+    }
+
+    @Test
     fun pastRecordsCountTheDatesAndTheDistanceOfRealRides() {
         val day1 = LocalDate.of(2026, 10, 30)
         val day2 = LocalDate.of(2026, 10, 31)
