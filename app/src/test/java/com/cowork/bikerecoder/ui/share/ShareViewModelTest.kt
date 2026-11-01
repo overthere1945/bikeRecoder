@@ -79,6 +79,15 @@ class ShareViewModelTest {
     private var places: List<String> = emptyList()
     private var cache: ShareCache? = null
 
+    /** While set, the video candidates, photos and place tags each wait for theirs; [reads] records each read begun. */
+    private var gates: Map<String, CompletableDeferred<Unit>> = emptyMap()
+    private val reads = mutableListOf<String>()
+
+    private suspend fun gate(name: String) {
+        reads += name
+        gates[name]?.await()
+    }
+
     /** While set, the first share-text write waits this long (a slow earlier save). */
     private var firstSaveDelayMs = 0L
     private var saves = 0
@@ -107,9 +116,18 @@ class ShareViewModelTest {
             hashtagRequests += type
             hashtags
         },
-        candidates = { list -> list.map(::candidate) },
-        photoIds = { photos },
-        placeTags = { places },
+        candidates = { list ->
+            gate("video")
+            list.map(::candidate)
+        },
+        photoIds = {
+            gate("photos")
+            photos
+        },
+        placeTags = {
+            gate("places")
+            places
+        },
         cards = cards,
         gallery = gallery,
         cache = cache,
@@ -876,6 +894,38 @@ class ShareViewModelTest {
         assertEquals(listOf<ShareItem>(ShareItem.SatelliteCard), sheet.items)
         assertEquals(listOf<ShareItem>(ShareItem.SatelliteCard), sheet.selection.chosen)
         assertNull(sheet.photoCardMediaId)
+    }
+
+    /**
+     * Final review I1: the video candidates, photos and place tags are read at once, not one after another; the sheet
+     * opens once all three are in, whichever ends first.
+     */
+    @Test
+    fun theThreeReadsRunTogetherAndTheSheetWaitsForAll() = runTest(dispatcher) {
+        photos = listOf(21)
+        places = listOf("#한강종주자전거길")
+        cards.auto = true
+        gates = listOf("video", "photos", "places").associateWith { CompletableDeferred() }
+        ride(TRIP)
+        val vm = vm()
+        vm.open(TRIP)
+        advanceUntilIdle()
+
+        assertEquals(setOf("video", "photos", "places"), reads.toSet())
+        assertNull(vm.sheet.value)
+        gates.getValue("places").complete(Unit)
+        advanceUntilIdle()
+        assertNull(vm.sheet.value)
+        gates.getValue("photos").complete(Unit)
+        advanceUntilIdle()
+        assertNull(vm.sheet.value)
+        gates.getValue("video").complete(Unit)
+        advanceUntilIdle()
+
+        val s = vm.sheet.value!!
+        assertEquals(places, s.placeTags)
+        assertTrue(s.autoText.contains("#한강종주자전거길"))
+        assertTrue(ShareItem.Photo(21, 1) in s.items)
     }
 
     // --- [저장] and [스티커] (spec §5.5, §5.6) -------------------------------------------------------------------------

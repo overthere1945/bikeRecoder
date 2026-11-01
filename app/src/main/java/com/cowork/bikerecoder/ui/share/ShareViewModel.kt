@@ -51,7 +51,9 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -478,11 +480,20 @@ class ShareViewModel(
         if (rides.isEmpty()) return null
         val label = withContext(io) { tripLabels.label(tripId) }
         val lastEndedAt = rides.maxOf { it.endedAt!! }
-        val video = guarded("Could not read the files of trip $tripId") {
-            candidates(withContext(io) { tripMedia.observe(tripId).first() })
-        }.orEmpty().filter { it.kind == MediaKind.VIDEO && it.createdAt > lastEndedAt }.maxByOrNull { it.createdAt }
-        val photos = guarded("Could not read the photos of trip $tripId") { photoIds(tripId) }.orEmpty()
-        val places = guarded("Could not match the places of trip $tripId") { placeTags(tripId) }.orEmpty()
+        // The three reads grow with the trip (final review I1): run together, each failing on its own into "none".
+        val (video, photos, places) = coroutineScope {
+            val video = async {
+                guarded("Could not read the files of trip $tripId") {
+                    candidates(withContext(io) { tripMedia.observe(tripId).first() })
+                }.orEmpty().filter { it.kind == MediaKind.VIDEO && it.createdAt > lastEndedAt }.maxByOrNull { it.createdAt }
+            }
+            val photos = async { guarded("Could not read the photos of trip $tripId") { photoIds(tripId) }.orEmpty() }
+            // Every track point of the trip is read and mapped: off the main thread.
+            val places = async {
+                guarded("Could not match the places of trip $tripId") { withContext(io) { placeTags(tripId) } }.orEmpty()
+            }
+            Triple(video.await(), photos.await(), places.await())
+        }
         val dominant = ActivityMix.of(rides).dominant
         val tags = guarded("Could not read the default hashtags") { defaultHashtags(dominant) } ?: defaultShareHashtags(dominant)
         return withContext(compute) {
