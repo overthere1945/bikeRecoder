@@ -188,16 +188,14 @@ class ShareActions(
     /**
      * The app of the button opens with the files the button takes ([planSend]) or the text only. Facebook and Instagram
      * take no text with them: the text goes to the clipboard first, to be pasted there. What was left out ([planSend]'s
-     * notice) and the paste hint are told as one longer message, so neither hides the other. The sheet closes once the
-     * app opened; with no app it stays.
+     * notice) and the paste hint are told as one longer message, so neither hides the other, and only once the app
+     * opened; with no app only [MSG_NO_APP] is told and the sheet stays.
      */
     private fun send(event: ShareEvent.Send) {
         // Asking the package manager is for Instagram only (it runs on the main thread).
         val plan = planSend(event.target, event.files, event.target == ShareTarget.INSTAGRAM && apps.instagramTakesMultiple())
         val paste = event.target in PASTE_TARGETS
         if (paste) clip(ClipData.newPlainText(CLIP_LABEL, event.text))
-        val message = listOfNotNull(plan.notice, MSG_TEXT_COPIED_PASTE.takeIf { paste }).joinToString("\n")
-        if (message.isNotEmpty()) tell(message, plan.notice != null)
         val intent = if (plan.files.isEmpty()) {
             ShareIntents.textOnly(event.target, event.text, apps)
         } else {
@@ -213,6 +211,8 @@ class ShareActions(
             tell(MSG_NO_APP, false)
             return
         }
+        val message = listOfNotNull(plan.notice, MSG_TEXT_COPIED_PASTE.takeIf { paste }).joinToString("\n")
+        if (message.isNotEmpty()) tell(message, plan.notice != null)
         close()
     }
 

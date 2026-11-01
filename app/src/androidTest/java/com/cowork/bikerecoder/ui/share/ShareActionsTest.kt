@@ -172,14 +172,43 @@ class ShareActionsTest {
         assertEquals(0, closes)
     }
 
-    /** An Instagram activity that is not open to the app throws on launch: the same message, the sheet stays. */
+    /**
+     * An Instagram activity that is not open to the app throws on launch: the same message, the sheet stays. The text is
+     * on the clipboard already, but the paste hint is not told for an app that did not open.
+     */
     @Test
     fun securityExceptionReadsAsNoApp() {
         actions(launch = { throw SecurityException("not exported") })
             .handle(ShareEvent.Send(ShareTarget.INSTAGRAM, cards.take(1), text))
 
-        assertEquals(listOf(MSG_TEXT_COPIED_PASTE to false, MSG_NO_APP to false), told)
+        assertEquals(listOf(MSG_NO_APP to false), told)
+        assertEquals(1, clips.size)
         assertEquals(0, closes)
+    }
+
+    /** A failed launch with a notice (Instagram takes one image) tells only that no app opened. */
+    @Test
+    fun failedLaunchTellsOnlyNoApp() {
+        actions(apps = Apps(multiple = false), launch = { throw ActivityNotFoundException() })
+            .handle(ShareEvent.Send(ShareTarget.INSTAGRAM, cards, text))
+
+        assertEquals(listOf(MSG_NO_APP to false), told)
+        assertEquals(0, closes)
+    }
+
+    /** The paste hint comes after the app opened, not before. */
+    @Test
+    fun pasteHintIsToldAfterTheLaunch() {
+        val order = mutableListOf<String>()
+        ShareActions(
+            apps = Apps(),
+            launch = { order += "launch" },
+            clip = { order += "clip" },
+            tell = { message, _ -> order += message },
+            close = { order += "close" },
+        ).handle(ShareEvent.Send(ShareTarget.FACEBOOK, cards.take(1), text))
+
+        assertEquals(listOf("clip", "launch", MSG_TEXT_COPIED_PASTE, "close"), order)
     }
 
     /** Spec §3.6: label "활동"; "복사했습니다" below Android 13 only (the phone tells it from 13 on). The sheet stays. */
