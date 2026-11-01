@@ -44,7 +44,7 @@ const val MAX_SUBJECT = 80
  * and the sums of its finished rides (10 m or longer, same as the cards). [activity] is the trip's dominant activity,
  * which picks the numbers line (V1.9.0 spec §5.2); [elapsedMs] is the hike segments' elapsed time and [maxAltitudeM] the
  * highest point (a hike's line). [paceDistanceM] and [paceMovingTimeMs] are the sums of the [activity]'s rides only, the
- * pace of a run's or walk's line (a mixed trip's other rides do not move it).
+ * pace of a run's or walk's line (a mixed trip's other rides do not move it); null: [distanceM] and [movingTimeMs].
  */
 data class ShareFacts(
     val title: String,
@@ -57,8 +57,8 @@ data class ShareFacts(
     val activity: ActivityType = ActivityType.BIKE,
     val elapsedMs: Long = 0L,
     val maxAltitudeM: Double? = null,
-    val paceDistanceM: Double = distanceM,
-    val paceMovingTimeMs: Long = movingTimeMs,
+    val paceDistanceM: Double? = null,
+    val paceMovingTimeMs: Long? = null,
 )
 
 /**
@@ -108,7 +108,10 @@ fun autoShareText(facts: ShareFacts, defaultTags: String): String {
             if (facts.movingTimeMs > 0) add("평균 ${averageKmh(facts.distanceM, facts.movingTimeMs)} km/h")
         }.joinToString(" · ")
         ActivityType.RUN, ActivityType.WALK -> ActivityText.shareRunWalkNumbers(
-            facts.distanceM, facts.movingTimeMs, facts.paceDistanceM, facts.paceMovingTimeMs,
+            facts.distanceM,
+            facts.movingTimeMs,
+            facts.paceDistanceM ?: facts.distanceM,
+            facts.paceMovingTimeMs ?: facts.movingTimeMs,
         )
         ActivityType.HIKE -> ActivityText.shareHikeNumbers(facts.elapsedMs, facts.ascentM, facts.maxAltitudeM)
     }

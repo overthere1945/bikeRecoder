@@ -119,8 +119,8 @@ fun FeedCard(
         // even step, then each column is 1/φ of the one before it, down to the share icon.
         val cells = ActivityText.cardCells(
             card.dominant, card.distanceM, card.movingTimeMs, card.hikeElapsedMs, card.ascentM, card.maxAltitudeM,
-            paceDistanceM = card.paceDistanceM,
-            paceMovingTimeMs = card.paceMovingTimeMs,
+            paceDistanceM = card.paceDistanceM ?: card.distanceM,
+            paceMovingTimeMs = card.paceMovingTimeMs ?: card.movingTimeMs,
         )
         Row(
             modifier = Modifier

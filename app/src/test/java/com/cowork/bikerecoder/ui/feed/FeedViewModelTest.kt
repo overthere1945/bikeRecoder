@@ -867,14 +867,14 @@ class FeedViewModelTest {
 
         val card = vm.card(1)
         assertEquals(ActivityType.RUN, card.dominant)
-        assertEquals(5_000.0, card.paceDistanceM, 1e-9)
+        assertEquals(5_000.0, card.paceDistanceM!!, 1e-9)
         assertEquals(30 * 60_000L, card.paceMovingTimeMs)
         assertEquals(
             listOf("거리" to "15.0 km", "평균 페이스" to "6'00\"/km", "이동 시간" to "50분"),
             ActivityText.cardCells(
                 card.dominant, card.distanceM, card.movingTimeMs, card.hikeElapsedMs, card.ascentM, card.maxAltitudeM,
-                paceDistanceM = card.paceDistanceM,
-                paceMovingTimeMs = card.paceMovingTimeMs,
+                paceDistanceM = card.paceDistanceM!!,
+                paceMovingTimeMs = card.paceMovingTimeMs!!,
             ),
         )
         assertEquals(

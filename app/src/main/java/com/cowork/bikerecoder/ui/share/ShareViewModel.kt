@@ -341,20 +341,24 @@ class ShareViewModel(
         }
     }
 
-    private fun facts(label: TripLabel, rides: List<RideSegment>, distanceM: Double, activity: ActivityType) = ShareFacts(
-        title = RideTitle.shown(label, rides.first().startedAt, rides.map { it.localDate }.distinct().size, zone, activity),
-        firstDate = rides.first().localDate,
-        lastDate = rides.last().localDate,
-        distanceM = distanceM,
-        movingTimeMs = rides.sumOf { it.totals.movingTimeMs },
-        ascentM = rides.sumOf { it.totals.ascentM },
-        regionName = label.regionName,
-        activity = activity,
-        elapsedMs = rides.filter { it.activity == ActivityType.HIKE }.sumOf { it.totals.elapsedMs },
-        maxAltitudeM = rides.mapNotNull { it.totals.maxAltitudeM }.maxOrNull(),
-        paceDistanceM = rides.filter { it.activity == activity }.sumOf { it.totals.distanceM },
-        paceMovingTimeMs = rides.filter { it.activity == activity }.sumOf { it.totals.movingTimeMs },
-    )
+    private fun facts(label: TripLabel, rides: List<RideSegment>, distanceM: Double, activity: ActivityType): ShareFacts {
+        // A run's or walk's pace: the dominant activity's rides only (a one-activity trip: its totals).
+        val paceOf = rides.filter { it.activity == activity }.takeIf { it.size < rides.size }
+        return ShareFacts(
+            title = RideTitle.shown(label, rides.first().startedAt, rides.map { it.localDate }.distinct().size, zone, activity),
+            firstDate = rides.first().localDate,
+            lastDate = rides.last().localDate,
+            distanceM = distanceM,
+            movingTimeMs = rides.sumOf { it.totals.movingTimeMs },
+            ascentM = rides.sumOf { it.totals.ascentM },
+            regionName = label.regionName,
+            activity = activity,
+            elapsedMs = rides.filter { it.activity == ActivityType.HIKE }.sumOf { it.totals.elapsedMs },
+            maxAltitudeM = rides.mapNotNull { it.totals.maxAltitudeM }.maxOrNull(),
+            paceDistanceM = paceOf?.sumOf { it.totals.distanceM },
+            paceMovingTimeMs = paceOf?.sumOf { it.totals.movingTimeMs },
+        )
+    }
 
     /** The trip's usable gallery files; null (logged) when they cannot be read. */
     private suspend fun readCandidates(tripId: Long): List<ShareCandidate>? = guarded("Could not read the files of trip $tripId") {

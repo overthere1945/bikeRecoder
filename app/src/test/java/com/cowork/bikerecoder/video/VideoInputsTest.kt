@@ -248,7 +248,7 @@ class VideoInputsTest {
 
         assertEquals(ActivityType.RUN, inputs.activity)
         assertEquals(15_000.0, inputs.totals.distanceM, 1e-9)
-        assertEquals(5_000.0, inputs.totals.paceDistanceM, 1e-9)
+        assertEquals(5_000.0, inputs.totals.paceDistanceM!!, 1e-9)
         assertEquals(1_800_000L, inputs.totals.paceMovingTimeMs)
         val pace = FrameRenderer.rideCells(inputs.totals, inputs.activity).toMap()["평균 페이스"]
         assertEquals("6'00\"/km", pace)

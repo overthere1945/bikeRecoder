@@ -99,8 +99,10 @@ data class FeedMonth(val header: String, val cards: List<FeedCardState>)
  * V1.9.0: [activities] are the badges in order (the [dominant] activity first, at most three); [routes] are coloured by each
  * segment's activity ([ActivityStyle.hex]); [hikeElapsedMs] is the elapsed time of the hike segments and [maxAltitudeM] the
  * highest altitude of the rides (null when none is known), the hike card's cells. [paceDistanceM] and [paceMovingTimeMs]
- * are the sums of the [dominant] activity's rides only: a run's or walk's pace (cell and bottom line) is theirs, so the
- * other activities of a mixed trip do not move it (the distance and moving-time cells stay the trip's).
+ * are the sums of the [dominant] activity's rides only (null: the card's own [distanceM] and [movingTimeMs]): a run's or
+ * walk's pace (cell and bottom line) is theirs, so the other activities of a mixed trip do not move it (the distance and
+ * moving-time cells stay the trip's). Null rather than defaulting to the totals, so a copy with new totals cannot keep a
+ * stale pace.
  */
 data class FeedCardState(
     val tripId: Long,
@@ -126,13 +128,17 @@ data class FeedCardState(
     val dominant: ActivityType = ActivityType.BIKE,
     val hikeElapsedMs: Long = 0L,
     val maxAltitudeM: Double? = null,
-    val paceDistanceM: Double = distanceM,
-    val paceMovingTimeMs: Long = movingTimeMs,
+    val paceDistanceM: Double? = null,
+    val paceMovingTimeMs: Long? = null,
 ) {
     val videoUri: String? get() = video?.uri
 
     /** The average speed of the [dominant] activity's rides, the run's or walk's pace on the bottom line. */
-    val paceSpeedMps: Double get() = if (paceMovingTimeMs > 0) paceDistanceM / (paceMovingTimeMs / 1000.0) else 0.0
+    val paceSpeedMps: Double
+        get() {
+            val time = paceMovingTimeMs ?: movingTimeMs
+            return if (time > 0) (paceDistanceM ?: distanceM) / (time / 1000.0) else 0.0
+        }
 }
 
 /** The satellite pictures as the feed uses them ([FeedThumbnails] in the app). */
@@ -569,7 +575,7 @@ class FeedViewModel(
             },
         )
         // A run's or walk's pace counts the dominant activity's rides only (a mixed trip's other rides do not move it).
-        val paceRides = rides.filter { it.activity == mix.dominant }
+        val paceRides = rides.filter { it.activity == mix.dominant }.takeIf { it.size < rides.size }
         return FeedCardState(
             tripId = id,
             title = RideTitle.shown(label, firstStartedAt, days.size, zone, mix.dominant),
@@ -593,8 +599,8 @@ class FeedViewModel(
             dominant = mix.dominant,
             hikeElapsedMs = rides.filter { it.activity == ActivityType.HIKE }.sumOf { it.elapsedMs },
             maxAltitudeM = rides.mapNotNull { it.maxAltitudeM }.maxOrNull(),
-            paceDistanceM = paceRides.sumOf { it.distanceM },
-            paceMovingTimeMs = paceRides.sumOf { it.movingTimeMs },
+            paceDistanceM = paceRides?.sumOf { it.distanceM },
+            paceMovingTimeMs = paceRides?.sumOf { it.movingTimeMs },
         )
     }
 
