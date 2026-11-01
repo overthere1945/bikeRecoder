@@ -7,11 +7,17 @@ import android.graphics.drawable.Drawable
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -32,6 +38,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.DpRect
+import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
 import com.cowork.bikerecoder.core.video.Aspect
 import com.cowork.bikerecoder.share.DEFAULT_SHARE_HASHTAGS
@@ -300,6 +308,38 @@ class ShareSheetTest {
         composeRule.onNodeWithTag(ShareTags.PREVIEW_FRAME).assertDoesNotExist()
     }
 
+    /** A short space (a small screen, landscape): the preview shrinks to fit and keeps its shape, nothing cut off. */
+    @Test
+    fun previewFitsAShortSpace() {
+        var item: ShareItem by mutableStateOf(ShareItem.Photo(22, 2))
+        composeRule.setContent {
+            MaterialTheme {
+                Box(modifier = Modifier.size(360.dp, 400.dp).testTag(CONTAINER)) {
+                    SharePreviewPicture(
+                        item = item,
+                        state = state(mode = ShareMode.STORY),
+                        preview = { shown, _, _ -> if (shown is ShareItem.Photo) ImageBitmap(90, 160) else ImageBitmap(108, 192) },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+        val container = composeRule.onNodeWithTag(CONTAINER).getUnclippedBoundsInRoot()
+
+        assertFitsInside(composeRule.onNodeWithTag(ShareTags.PREVIEW_FRAME).assertIsDisplayed(), 1080f / 1920, container)
+
+        item = ShareItem.SatelliteCard
+        assertFitsInside(composeRule.onNodeWithContentDescription("위성 카드").assertIsDisplayed(), 108f / 192, container)
+    }
+
+    private fun assertFitsInside(node: SemanticsNodeInteraction, widthOverHeight: Float, container: DpRect) {
+        val bounds = node.getUnclippedBoundsInRoot()
+        assertEquals(widthOverHeight, (bounds.right - bounds.left) / (bounds.bottom - bounds.top), 0.01f)
+        val slack = 0.5.dp
+        assertTrue("$bounds in $container", bounds.left >= container.left - slack && bounds.right <= container.right + slack)
+        assertTrue("$bounds in $container", bounds.top >= container.top - slack && bounds.bottom <= container.bottom + slack)
+    }
+
     private fun assertPreviewShape(widthOverHeight: Float) {
         val bounds = composeRule.onNodeWithTag(ShareTags.PREVIEW_FRAME).assertIsDisplayed().getUnclippedBoundsInRoot()
         assertEquals(widthOverHeight, (bounds.right - bounds.left) / (bounds.bottom - bounds.top), 0.01f)
@@ -505,6 +545,7 @@ class ShareSheetTest {
 
     private companion object {
         const val TAG = "ShareSheetTest"
+        const val CONTAINER = "short-container"
         val FEED_LABELS = listOf("페이스북", "인스타그램", "이메일", "더 보기", "복사", "저장", "스티커")
     }
 }

@@ -7,9 +7,10 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -45,6 +46,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.min
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.cowork.bikerecoder.share.ShareItem
@@ -69,9 +71,7 @@ internal fun SharePreview(
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(color = Color.Black, contentColor = Color.White, modifier = Modifier.fillMaxSize().testTag(ShareTags.PREVIEW)) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    BigPicture(item, state, preview)
-                }
+                SharePreviewPicture(item, state, preview, Modifier.weight(1f).fillMaxWidth())
                 if (item == ShareItem.PhotoCard) PhotoRow(state, pictures, onPhotoCard)
                 TextButton(
                     onClick = onClose,
@@ -86,12 +86,17 @@ internal fun SharePreview(
 }
 
 /**
- * The item as it is sent, at the screen's width: a card's file, a photo as its slide (spec §2.4, [PhotoSlide]); a spinner
- * while it is drawn or read (a picture of another key, such as the photo card before its background changed, counts as
- * still reading), a warning when its card failed.
+ * The item as it is sent, as large as fits the space ([modifier]) in its own shape: a card's file, a photo as its slide
+ * (spec §2.4, [PhotoSlide]); a spinner while it is drawn or read (a picture of another key, such as the photo card before
+ * its background changed, counts as still reading), a warning when its card failed.
  */
 @Composable
-private fun BigPicture(item: ShareItem, state: ShareSheetState, preview: suspend (ShareItem, ShareSheetState, Int) -> ImageBitmap?) {
+internal fun SharePreviewPicture(
+    item: ShareItem,
+    state: ShareSheetState,
+    preview: suspend (ShareItem, ShareSheetState, Int) -> ImageBitmap?,
+    modifier: Modifier = Modifier,
+) {
     val widthPx = with(LocalDensity.current) { LocalConfiguration.current.screenWidthDp.dp.roundToPx() }
     val key = pictureKey(item, state)
     val current by rememberUpdatedState(state)
@@ -101,20 +106,19 @@ private fun BigPicture(item: ShareItem, state: ShareSheetState, preview: suspend
     val status = state.cardOf(item)
     val fresh = loaded?.takeIf { it.key == key }
     val picture = fresh?.picture
-    when {
-        status is CardStatus.Failed -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Filled.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
-            Text(if (status.noSpace) ShareViewModel.MSG_NO_SPACE else ShareViewModel.MSG_CARD_FAILED)
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        when {
+            status is CardStatus.Failed -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Filled.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                Text(if (status.noSpace) ShareViewModel.MSG_NO_SPACE else ShareViewModel.MSG_CARD_FAILED)
+            }
+            picture != null && item is ShareItem.Photo -> PhotoSlide(picture, state.mode, itemName(item))
+            picture != null -> Fitted(picture.width.toFloat() / picture.height) {
+                Image(picture, contentDescription = itemName(item), contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+            }
+            fresh == null || status == CardStatus.Rendering -> CircularProgressIndicator(color = Color.White)
+            else -> Icon(Icons.Filled.Image, contentDescription = null, modifier = Modifier.size(48.dp))
         }
-        picture != null && item is ShareItem.Photo -> PhotoSlide(picture, state.mode, itemName(item))
-        picture != null -> Image(
-            picture,
-            contentDescription = itemName(item),
-            contentScale = ContentScale.Fit,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        fresh == null || status == CardStatus.Rendering -> CircularProgressIndicator(color = Color.White)
-        else -> Icon(Icons.Filled.Image, contentDescription = null, modifier = Modifier.size(48.dp))
     }
 }
 
@@ -125,13 +129,7 @@ private fun BigPicture(item: ShareItem, state: ShareSheetState, preview: suspend
  */
 @Composable
 private fun PhotoSlide(photo: ImageBitmap, mode: ShareMode, name: String) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(mode.size.width.toFloat() / mode.size.height)
-            .clipToBounds()
-            .testTag(ShareTags.PREVIEW_FRAME),
-    ) {
+    Fitted(mode.size.width.toFloat() / mode.size.height, Modifier.clipToBounds().testTag(ShareTags.PREVIEW_FRAME)) {
         if (photo.height >= photo.width) {
             Image(photo, contentDescription = name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         } else {
@@ -146,6 +144,18 @@ private fun PhotoSlide(photo: ImageBitmap, mode: ShareMode, name: String) {
             Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = BACKDROP_DARKEN)))
             Image(photo, contentDescription = name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
         }
+    }
+}
+
+/**
+ * The largest box of [widthOverHeight] that fits the space (the width, or the height when that is tighter, as on a short
+ * screen or in landscape), centred; [modifier] applies to the box.
+ */
+@Composable
+private fun Fitted(widthOverHeight: Float, modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        val width = min(maxWidth, maxHeight * widthOverHeight)
+        Box(modifier = modifier.size(width, width / widthOverHeight), content = content)
     }
 }
 
