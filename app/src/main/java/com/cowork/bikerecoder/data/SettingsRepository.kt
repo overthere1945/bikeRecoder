@@ -13,6 +13,7 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.RouteProfile
+import com.cowork.bikerecoder.share.defaultShareHashtags
 import com.cowork.bikerecoder.ui.onboarding.OnboardingStep
 import com.cowork.bikerecoder.ui.stats.GoalKm
 import kotlinx.coroutines.flow.Flow
@@ -42,6 +43,10 @@ data class AppSettings(
     val yearlyGoalKm: Int? = null,
     /** Default hashtags of the share text (spec §3.5). null = never saved (the default applies), "" = none. */
     val shareHashtags: String? = null,
+    /** The walk, run and hike default hashtags (V1.9.0 spec §5.2), the same way: null = never saved, "" = none. */
+    val shareHashtagsWalk: String? = null,
+    val shareHashtagsRun: String? = null,
+    val shareHashtagsHike: String? = null,
     /**
      * The walk, run and hike goals (V1.9.0 spec §4.2; an activity without a goal is absent). The bike goal is
      * [weeklyGoalKm] and [yearlyGoalKm]: the keys that were always there, so an existing goal is the bike goal.
@@ -52,6 +57,26 @@ data class AppSettings(
     /** The map screen's activity chip: what [● 기록 시작] records (V1.9.0 spec §1.4). Guided recordings never change it. */
     val lastActivity: ActivityType = ActivityType.BIKE,
 )
+
+/**
+ * The default hashtags of the share text for [type] (spec §5.2): the saved value (an empty one means "none"), or, when it
+ * has never been saved, the first value of that activity ([defaultShareHashtags]). The bike's is the `share_hashtags`
+ * key that was always there.
+ */
+fun AppSettings.hashtagsFor(type: ActivityType): String = when (type) {
+    ActivityType.BIKE -> shareHashtags
+    ActivityType.WALK -> shareHashtagsWalk
+    ActivityType.RUN -> shareHashtagsRun
+    ActivityType.HIKE -> shareHashtagsHike
+} ?: defaultShareHashtags(type)
+
+/** [AppSettings] with [type]'s saved default hashtags set to [value] (null = never saved). */
+fun AppSettings.withHashtags(type: ActivityType, value: String?): AppSettings = when (type) {
+    ActivityType.BIKE -> copy(shareHashtags = value)
+    ActivityType.WALK -> copy(shareHashtagsWalk = value)
+    ActivityType.RUN -> copy(shareHashtagsRun = value)
+    ActivityType.HIKE -> copy(shareHashtagsHike = value)
+}
 
 /** The goals of every activity that has one; the bike's are [AppSettings.weeklyGoalKm] and [AppSettings.yearlyGoalKm]. */
 val AppSettings.goals: Map<ActivityType, GoalKm>
@@ -101,8 +126,10 @@ class SettingsRepository(context: Context) {
             }
             val chip = next.statsActivity
             if (chip == null) prefs.remove(STATS_ACTIVITY) else prefs[STATS_ACTIVITY] = chip.stored
-            val hashtags = next.shareHashtags
-            if (hashtags == null) prefs.remove(SHARE_HASHTAGS) else prefs[SHARE_HASHTAGS] = hashtags
+            for (type in ActivityType.entries) {
+                val hashtags = next.hashtagsSaved(type)
+                if (hashtags == null) prefs.remove(hashtagsKey(type)) else prefs[hashtagsKey(type)] = hashtags
+            }
             prefs[LAST_ACTIVITY] = next.lastActivity.stored
         }
     }
@@ -112,9 +139,26 @@ class SettingsRepository(context: Context) {
         dataStore.edit { prefs -> prefs[LAST_ACTIVITY] = type.stored }
     }
 
-    /** Saves the default hashtags as given ("" = none). The other settings are left alone. */
-    suspend fun setShareHashtags(value: String) {
-        dataStore.edit { prefs -> prefs[SHARE_HASHTAGS] = value }
+    /** Saves the bike's default hashtags as given ("" = none). The other settings are left alone. */
+    suspend fun setShareHashtags(value: String) = setShareHashtags(ActivityType.BIKE, value)
+
+    /** Saves [type]'s default hashtags as given ("" = none). The other settings are left alone. */
+    suspend fun setShareHashtags(type: ActivityType, value: String) {
+        dataStore.edit { prefs -> prefs[hashtagsKey(type)] = value }
+    }
+
+    private fun AppSettings.hashtagsSaved(type: ActivityType): String? = when (type) {
+        ActivityType.BIKE -> shareHashtags
+        ActivityType.WALK -> shareHashtagsWalk
+        ActivityType.RUN -> shareHashtagsRun
+        ActivityType.HIKE -> shareHashtagsHike
+    }
+
+    private fun hashtagsKey(type: ActivityType): Preferences.Key<String> = when (type) {
+        ActivityType.BIKE -> SHARE_HASHTAGS
+        ActivityType.WALK -> SHARE_HASHTAGS_WALK
+        ActivityType.RUN -> SHARE_HASHTAGS_RUN
+        ActivityType.HIKE -> SHARE_HASHTAGS_HIKE
     }
 
     /** 자전거 목표를 저장한다([setGoals] with [ActivityType.BIKE]). null이면 그 키를 지운다. 다른 설정은 건드리지 않는다. */
@@ -176,6 +220,9 @@ class SettingsRepository(context: Context) {
             }.toMap(),
             statsActivity = this[STATS_ACTIVITY]?.let { stored -> ActivityType.entries.firstOrNull { it.stored == stored } },
             shareHashtags = this[SHARE_HASHTAGS],
+            shareHashtagsWalk = this[SHARE_HASHTAGS_WALK],
+            shareHashtagsRun = this[SHARE_HASHTAGS_RUN],
+            shareHashtagsHike = this[SHARE_HASHTAGS_HIKE],
             lastActivity = this[LAST_ACTIVITY]?.let(ActivityType::fromStored) ?: defaults.lastActivity,
         )
     }
@@ -195,6 +242,9 @@ class SettingsRepository(context: Context) {
         val WEEKLY_GOAL_KM = intPreferencesKey("weekly_goal_km")
         val YEARLY_GOAL_KM = intPreferencesKey("yearly_goal_km")
         val SHARE_HASHTAGS = stringPreferencesKey("share_hashtags")
+        val SHARE_HASHTAGS_WALK = stringPreferencesKey("share_hashtags_walk")
+        val SHARE_HASHTAGS_RUN = stringPreferencesKey("share_hashtags_run")
+        val SHARE_HASHTAGS_HIKE = stringPreferencesKey("share_hashtags_hike")
         val LAST_ACTIVITY = stringPreferencesKey("last_activity")
         val STATS_ACTIVITY = stringPreferencesKey("stats_activity")
         val EXTRA_GOAL_TYPES = listOf(ActivityType.WALK, ActivityType.RUN, ActivityType.HIKE)

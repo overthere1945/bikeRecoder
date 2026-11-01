@@ -132,6 +132,9 @@ abstract class RideDao {
     @Query("DELETE FROM segment_best_effort WHERE segmentId = :segmentId")
     abstract suspend fun deleteBestEfforts(segmentId: Long)
 
+    @Query("SELECT * FROM segment_best_effort WHERE segmentId = :segmentId ORDER BY distanceM")
+    abstract suspend fun bestEfforts(segmentId: Long): List<SegmentBestEffortEntity>
+
     @Insert
     abstract suspend fun insertBestEfforts(efforts: List<SegmentBestEffortEntity>)
 

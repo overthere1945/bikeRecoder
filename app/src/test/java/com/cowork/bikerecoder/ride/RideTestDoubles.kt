@@ -126,6 +126,8 @@ class FakeRideStore(private val trips: FakeTripStore, private val clock: () -> L
         bestEfforts[segmentId] = efforts
     }
 
+    override suspend fun bestEfforts(segmentId: Long): List<BestEffort> = bestEfforts[segmentId].orEmpty()
+
     override suspend fun changeActivity(
         segmentId: Long,
         activity: ActivityType,

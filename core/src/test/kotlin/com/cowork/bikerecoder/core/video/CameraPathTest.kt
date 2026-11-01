@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.core.video
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.GeoMath
 import com.cowork.bikerecoder.core.model.GeoPoint
 import org.junit.jupiter.api.Test
@@ -95,6 +96,64 @@ class CameraPathTest {
         assertEquals(16.6, CameraPath.zoomForSpeed(40.0), 1e-9)
         assertEquals(16.6, CameraPath.zoomForSpeed(30.0), 1e-9)
         assertEquals(17.4, CameraPath.zoomForSpeed(0.0), 1e-9)
+    }
+
+    @Test
+    fun bikeZoomUnchanged() {
+        assertEquals(CameraPath.zoomForSpeed(20.0), CameraPath.zoomForSpeed(20.0, 10.0, 30.0), 1e-12)
+        assertEquals(17.0, CameraPath.zoomForSpeed(20.0, 10.0, 30.0), 1e-9)
+
+        // 20 km/h 곧은 길: 종류를 안 넘긴 것, 자전거로 넘긴 것이 프레임마다 같은 카메라다.
+        val timeline = path(*(listOf(0.0 to 0.0) + walk(0.0 to 0.0, 0.0, 60, 20.0 / 3.6)).toTypedArray())
+        val plans = VideoTimeline.plan(timeline, emptyList(), VideoOptions(length = VideoLength.SHORT), emptyList())
+        val overview = CameraPath.overview(timeline.points.map { it.point }, Aspect.PORTRAIT)
+        val plain = CameraPath.cameras(plans, timeline, overview, overview, heightPx = Aspect.PORTRAIT.height)
+        val bike = CameraPath.cameras(
+            plans, timeline, overview, overview, heightPx = Aspect.PORTRAIT.height, segmentActivities = listOf(ActivityType.BIKE),
+        )
+        assertEquals(plain, bike)
+        // 첫 주행 장은 속도를 재기 전이라 가장 가깝게 시작해 초당 0.25씩 다가간다. 마지막 장은 17.0에 닿아 있다.
+        assertEquals(17.0, plain[plans.of(SceneKind.RIDE).last().index].zoom, 1e-6)
+    }
+
+    @Test
+    fun walkZoomUsesTwoToSix() {
+        assertEquals(17.0, CameraPath.zoomForSpeed(4.0, 2.0, 6.0), 1e-9)
+        assertEquals(17.4, CameraPath.zoomForSpeed(2.0, 2.0, 6.0), 1e-9)
+        assertEquals(16.6, CameraPath.zoomForSpeed(6.0, 2.0, 6.0), 1e-9)
+
+        // 4 km/h로 걷는 구간: 가운데 확대. 같은 속도의 자전거는 가장 가깝게(10 km/h 이하) 본다.
+        val timeline = path(*(listOf(0.0 to 0.0) + walk(0.0 to 0.0, 0.0, 60, 4.0 / 3.6)).toTypedArray())
+        val plans = VideoTimeline.plan(timeline, emptyList(), VideoOptions(length = VideoLength.SHORT), emptyList())
+        val overview = CameraPath.overview(timeline.points.map { it.point }, Aspect.PORTRAIT)
+        val walking = CameraPath.cameras(
+            plans, timeline, overview, overview, heightPx = Aspect.PORTRAIT.height, segmentActivities = listOf(ActivityType.WALK),
+        )
+        val biking = CameraPath.cameras(plans, timeline, overview, overview, heightPx = Aspect.PORTRAIT.height)
+        val last = plans.of(SceneKind.RIDE).last().index
+        assertEquals(17.0, walking[last].zoom, 1e-6)
+        assertEquals(17.4, biking[last].zoom, 1e-6)
+    }
+
+    @Test
+    fun zoomFollowsTheSegmentUnderTheFrame() {
+        // 앞 구간은 4 km/h 걷기, 뒤 구간은 같은 4 km/h 자전거: 걷는 동안 17.0, 구간이 바뀐 뒤 17.4로 천천히 다가간다.
+        val a = walk(0.0 to 0.0, 0.0, 30, 4.0 / 3.6)
+        val b = walk(a.last(), 0.0, 30, 4.0 / 3.6)
+        val points = (listOf(0.0 to 0.0) + a + b).mapIndexed { i, (n, e) ->
+            RidePoint(i * 1_000L, at(n, e), null, i * 1_000L, if (i <= 30) 0 else 1, 0)
+        }
+        val timeline = RideTimeline(points)
+        val plans = VideoTimeline.plan(timeline, emptyList(), VideoOptions(length = VideoLength.SHORT), emptyList())
+        val overview = CameraPath.overview(points.map { it.point }, Aspect.PORTRAIT)
+        val cameras = CameraPath.cameras(
+            plans, timeline, overview, overview, heightPx = Aspect.PORTRAIT.height,
+            segmentActivities = listOf(ActivityType.WALK, ActivityType.BIKE),
+        )
+        val rides = plans.of(SceneKind.RIDE)
+        // 걷는 구간 한가운데(이동 25초)는 17.0, 마지막은 자전거 기준의 17.4.
+        assertEquals(17.0, cameras[rides.minBy { abs(it.moveMs - 25_000L) }.index].zoom, 1e-6)
+        assertEquals(17.4, cameras[rides.last().index].zoom, 1e-6)
     }
 
     @Test

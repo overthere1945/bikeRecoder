@@ -42,6 +42,13 @@ object ActivityText {
     const val LABEL_AVG_PACE = "평균 페이스"
     const val LABEL_HIKE_TIME = "산행 시간"
     const val LABEL_TOTAL_ASCENT = "누적 상승"
+    const val LABEL_MAX_ALTITUDE = "최고 고도"
+
+    /** The video's number band shows the pace of a run or walk under this label (the cards say "평균 페이스"). */
+    const val LABEL_PACE = "페이스"
+
+    /** The closing card's run cell: the pace of the fastest 1 km (spec V1.9.0 §5.1). */
+    const val LABEL_FASTEST_KM = "가장 빠른 1 km"
 
     /** The title of the stats tab's per-activity goal rows under [전체]. */
     const val GOALS_TITLE = "목표"
@@ -164,7 +171,7 @@ object ActivityText {
             ActivityType.HIKE -> listOf(
                 LABEL_HIKE_TIME to RideFormat.duration(elapsedMs),
                 LABEL_TOTAL_ASCENT to meterText(ascentM),
-                "최고 고도" to (maxAltitudeM?.let(::meterText) ?: "--"),
+                LABEL_MAX_ALTITUDE to (maxAltitudeM?.let(::meterText) ?: "--"),
             )
         }
     }
@@ -230,4 +237,33 @@ object ActivityText {
         LABEL_AVG_PACE to "${ActivityFormat.paceOf(totals.distanceM, totals.movingTimeMs)}/km",
         "평균 속도" to "${RideFormat.speedKmh(totals.avgSpeedMps)}km/h",
     )
+
+    /**
+     * The share text's numbers line of a run or walk (spec §5.2): "5.0 km · 27분 · 평균 5'32\"/km" ([kmText], then
+     * [RideFormat.duration]). Without a usable pace (no moving time, or slower than 60 minutes a kilometre) the average is left out.
+     */
+    fun shareRunWalkNumbers(distanceM: Double, movingTimeMs: Long): String {
+        val pace = ActivityFormat.paceOf(distanceM, movingTimeMs)
+        return buildList {
+            add(kmText(distanceM))
+            add(RideFormat.duration(movingTimeMs))
+            if (pace != ActivityFormat.NO_PACE) add("평균 $pace/km")
+        }.joinToString(" · ")
+    }
+
+    /**
+     * The share text's numbers line of a hike (spec §5.2): "산행 3시간 20분 · 상승 520 m · 최고 836 m"; the highest point
+     * is left out when unknown.
+     */
+    fun shareHikeNumbers(elapsedMs: Long, ascentM: Double, maxAltitudeM: Double?): String = buildList {
+        add("산행 ${RideFormat.duration(elapsedMs)}")
+        add("상승 ${meterText(ascentM)}")
+        if (maxAltitudeM != null) add("최고 ${meterText(maxAltitudeM)}")
+    }.joinToString(" · ")
+
+    /** The settings row of an activity's default hashtags (spec §5.2): "기본 해시태그 · 걷기". */
+    fun hashtagsRowLabel(type: ActivityType): String = "$HASHTAGS_ROW · ${name(type)}"
+
+    /** The word before the activity's name on the settings' hashtag rows and their dialog. */
+    const val HASHTAGS_ROW = "기본 해시태그"
 }

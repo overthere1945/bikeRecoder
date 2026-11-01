@@ -2,6 +2,7 @@ package com.cowork.bikerecoder.data
 
 import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.activity.BestEffort
+import com.cowork.bikerecoder.core.activity.BestEffortDistance
 import com.cowork.bikerecoder.core.elevation.UsualSpeed
 import com.cowork.bikerecoder.core.model.GeoPoint
 import com.cowork.bikerecoder.core.recording.DayTotals
@@ -40,6 +41,10 @@ class RoomRideStore(db: AppDatabase) : RideStore {
 
     override suspend fun saveBestEfforts(segmentId: Long, efforts: List<BestEffort>) =
         dao.replaceBestEfforts(segmentId, efforts.map { it.toEntity(segmentId) })
+
+    override suspend fun bestEfforts(segmentId: Long): List<BestEffort> = dao.bestEfforts(segmentId).mapNotNull { row ->
+        BestEffortDistance.ofKey(row.distanceM)?.let { BestEffort(it, row.timeMs, row.startIndex) }
+    }
 
     override suspend fun changeActivity(
         segmentId: Long,

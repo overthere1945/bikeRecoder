@@ -127,6 +127,9 @@ interface RideStore {
     /** 그 구간의 달리기 최고 기록 행을 모두 [efforts]로 바꾼다. */
     suspend fun saveBestEfforts(segmentId: Long, efforts: List<BestEffort>)
 
+    /** 그 구간에 저장된 달리기 최고 기록 행, 거리 순. 없으면(달리기가 아니거나 거리를 못 채움) 빈 목록. */
+    suspend fun bestEfforts(segmentId: Long): List<BestEffort>
+
     /**
      * 구간의 종류를 바꾼다. 한 트랜잭션으로, [totals]가 null이면 합계는 그대로 두고, 최고 기록은 [efforts]로 바꾼다
      * ([activity]가 달리기가 아니면 빈 목록을 넘긴다).

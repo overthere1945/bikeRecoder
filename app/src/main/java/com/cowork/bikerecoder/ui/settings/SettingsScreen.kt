@@ -46,8 +46,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cowork.bikerecoder.AppVersion
 import com.cowork.bikerecoder.BuildConfig
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.data.GuidanceRecording
+import com.cowork.bikerecoder.data.hashtagsFor
+import com.cowork.bikerecoder.ui.activity.ActivityText
 import com.cowork.bikerecoder.importing.IMPORT_CANCEL
 import com.cowork.bikerecoder.importing.IMPORT_DELETE
 import com.cowork.bikerecoder.importing.IMPORT_DELETED
@@ -62,7 +65,6 @@ import com.cowork.bikerecoder.importing.importingText
 import com.cowork.bikerecoder.offline.SegmentInfo
 import com.cowork.bikerecoder.post.PhotoAccess
 import com.cowork.bikerecoder.post.PhotoSource
-import com.cowork.bikerecoder.share.DEFAULT_SHARE_HASHTAGS
 import com.cowork.bikerecoder.ui.common.GlyphIcon
 import com.cowork.bikerecoder.ui.health.HEALTH_CONNECT_UNAVAILABLE
 import com.cowork.bikerecoder.ui.health.HeartRateAccess
@@ -94,6 +96,9 @@ object SettingsTags {
     const val HEART_RATE_STATUS = "settings_heart_rate_status"
     const val HEART_RATE_ALLOW = "settings_heart_rate_allow"
     const val SHARE_HASHTAGS = "settings_share_hashtags"
+    /** The hashtag row of [type]; the bike's is [SHARE_HASHTAGS] (the key that was always there). */
+    fun shareHashtags(type: ActivityType) =
+        if (type == ActivityType.BIKE) SHARE_HASHTAGS else "${SHARE_HASHTAGS}_${type.name.lowercase()}"
     const val SHARE_HASHTAGS_INPUT = "settings_share_hashtags_input"
     fun profile(profile: RouteProfile) = "settings_profile_${profile.name}"
     fun guidanceRecording(mode: GuidanceRecording) = "settings_guidance_recording_${mode.name}"
@@ -217,7 +222,7 @@ internal fun SettingsContent(
     onDeleteSegment: (String) -> Unit,
     onDeleteAllMaps: () -> Unit,
     onSetRecordingOnNewGuidance: (GuidanceRecording) -> Unit = {},
-    onSetShareHashtags: (String) -> Unit = {},
+    onSetShareHashtags: (ActivityType, String) -> Unit = { _, _ -> },
     onPickImport: () -> Unit = {},
     onOpenImport: () -> Unit = {},
     onDeleteAllImported: () -> Unit = {},
@@ -226,9 +231,8 @@ internal fun SettingsContent(
     var confirmDeleteSegment by remember { mutableStateOf<SegmentInfo?>(null) }
     var confirmDeleteImported by remember { mutableStateOf(false) }
     var confirmDeleteMaps by remember { mutableStateOf(false) }
-    var editingHashtags by remember { mutableStateOf(false) }
-    // null = never saved (the default applies), "" = none.
-    val hashtags = state.settings.shareHashtags ?: DEFAULT_SHARE_HASHTAGS
+    // The activity whose default hashtags the dialog is editing.
+    var editingHashtags by remember { mutableStateOf<ActivityType?>(null) }
 
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
@@ -335,22 +339,28 @@ internal fun SettingsContent(
                 HorizontalDivider()
 
                 SectionTitle("공유")
-                Row(
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag(SettingsTags.SHARE_HASHTAGS)
-                        .clickable(role = Role.Button) { editingHashtags = true },
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("기본 해시태그", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        hashtags.ifEmpty { "없음" },
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.End,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-                    )
-                    Text("›", style = MaterialTheme.typography.titleMedium)
+                // One row per activity (V1.9.0 spec §5.2), labelled by its name; the share text takes the trip's dominant one.
+                Text(ActivityText.HASHTAGS_ROW, style = MaterialTheme.typography.bodyLarge)
+                ActivityType.entries.forEach { type ->
+                    // The saved value (an empty one means "none"), or the activity's first value while never saved.
+                    val hashtags = state.settings.hashtagsFor(type)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag(SettingsTags.shareHashtags(type))
+                            .clickable(role = Role.Button) { editingHashtags = type },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(ActivityText.name(type), style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            hashtags.ifEmpty { "없음" },
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.End,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                        )
+                        Text("›", style = MaterialTheme.typography.titleMedium)
+                    }
                 }
                 HorizontalDivider()
 
@@ -422,14 +432,15 @@ internal fun SettingsContent(
             },
         )
     }
-    if (editingHashtags) {
+    editingHashtags?.let { type ->
         ShareHashtagsDialog(
-            current = hashtags,
+            current = state.settings.hashtagsFor(type),
+            title = ActivityText.hashtagsRowLabel(type),
             onSave = {
-                editingHashtags = false
-                onSetShareHashtags(it)
+                editingHashtags = null
+                onSetShareHashtags(type, it)
             },
-            onDismiss = { editingHashtags = false },
+            onDismiss = { editingHashtags = null },
         )
     }
     if (confirmDeleteMaps) {

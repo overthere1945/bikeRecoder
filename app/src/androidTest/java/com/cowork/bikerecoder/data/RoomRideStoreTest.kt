@@ -185,6 +185,22 @@ class RoomRideStoreTest {
     }
 
     @Test
+    fun bestEffortsReadsTheSegmentsRowsInDistanceOrder() = runTest {
+        val tripId = newTrip()
+        val id = closedSegment(tripId, 1_000L, ActivityType.RUN)
+        val other = closedSegment(tripId, 2_000L, ActivityType.RUN)
+        assertEquals(emptyList<BestEffort>(), store.bestEfforts(id))
+
+        store.saveBestEfforts(id, listOf(effort(BestEffortDistance.FIVE_K, 1_400_000L, 7), effort(BestEffortDistance.ONE_K, 250_000L, 3)))
+        store.saveBestEfforts(other, listOf(effort(BestEffortDistance.ONE_K, 240_000L, 1)))
+
+        assertEquals(
+            listOf(effort(BestEffortDistance.ONE_K, 250_000L, 3), effort(BestEffortDistance.FIVE_K, 1_400_000L, 7)),
+            store.bestEfforts(id),
+        )
+    }
+
+    @Test
     fun changeActivityReplacesTotalsAndEfforts() = runTest {
         val id = closedSegment(newTrip(), 1_000L, ActivityType.RUN, distanceM = 6_000.0)
         store.saveBestEfforts(id, listOf(effort(BestEffortDistance.ONE_K, 250_000L)))

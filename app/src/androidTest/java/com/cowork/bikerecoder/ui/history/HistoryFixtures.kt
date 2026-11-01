@@ -37,6 +37,7 @@ internal class ReadOnlyRides(
             .sortedByDescending { it.startedAt }.take(limit)
     override suspend fun openSegment(tripId: Long, startedAt: Long, localDate: LocalDate, activity: ActivityType): Long = error("read only")
     override suspend fun saveBestEfforts(segmentId: Long, efforts: List<BestEffort>) = error("read only")
+    override suspend fun bestEfforts(segmentId: Long): List<BestEffort> = emptyList()
     override suspend fun changeActivity(
         segmentId: Long,
         activity: ActivityType,

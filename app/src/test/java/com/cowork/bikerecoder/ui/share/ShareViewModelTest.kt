@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.ui.share
 
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.model.RouteProfile
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.trip.Trip
@@ -66,6 +67,7 @@ class ShareViewModelTest {
     private val media = FakeFeedMedia()
     private val job = FakeJob()
     private var hashtags: String? = null
+    private val hashtagRequests = mutableListOf<ActivityType>()
 
     /** How long reading the gallery files takes (the window between Done and the action). */
     private var candidatesDelayMs = 0L
@@ -94,7 +96,10 @@ class ShareViewModelTest {
             }
         },
         tripMedia = media,
-        defaultHashtags = { hashtags },
+        defaultHashtags = { type ->
+            hashtagRequests += type
+            hashtags
+        },
         candidates = { list ->
             delay(candidatesDelayMs)
             list.map(::candidate)
@@ -158,6 +163,37 @@ class ShareViewModelTest {
         assertEquals(listOf("보낼 것: 요약 이미지 · 세로 (누르면 만듭니다)"), s.fileLines)
         assertNull(s.blocked)
         assertFalse(s.making)
+    }
+
+    /** V1.9.0 spec §5.2: the numbers line and the default hashtags follow the trip's dominant activity. */
+    @Test
+    fun aRunTripTakesTheRunLineAndTags() = runTest(dispatcher) {
+        val id = rides.openSegment(TRIP, START, DAY, ActivityType.RUN)
+        rides.closeSegment(id, END, SegmentTotals(5_000.0, 1_660_000, 1_700_000, 4.5, 40.0, 30.0, 10.0, 60.0))
+        labels.setRegionName(TRIP, "서울 강서구")
+        val vm = vm()
+        vm.open(TRIP)
+        advanceUntilIdle()
+
+        val lines = vm.sheet.value!!.autoText.lines()
+        assertEquals("5.0 km · 27분 · 평균 5'32\"/km", lines[2])
+        assertEquals("#러닝 #달리기 #서울 #강서구", lines[3])
+        assertEquals(listOf(ActivityType.RUN), hashtagRequests)
+    }
+
+    @Test
+    fun aHikeTripTakesTheHikeLineAndASavedHikeTag() = runTest(dispatcher) {
+        val id = rides.openSegment(TRIP, START, DAY, ActivityType.HIKE)
+        rides.closeSegment(id, END, SegmentTotals(6_400.0, 9_000_000, 12_000_000, 1.4, 520.0, 500.0, 300.0, 836.0))
+        hashtags = "#산행"
+        val vm = vm()
+        vm.open(TRIP)
+        advanceUntilIdle()
+
+        val lines = vm.sheet.value!!.autoText.lines()
+        assertEquals("산행 3시간 20분 · 상승 520 m · 최고 836 m", lines[2])
+        assertEquals("#산행", lines[3])
+        assertEquals(listOf(ActivityType.HIKE), hashtagRequests)
     }
 
     @Test

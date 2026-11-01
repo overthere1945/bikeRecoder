@@ -11,6 +11,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.cowork.bikerecoder.BuildConfig
+import com.cowork.bikerecoder.core.activity.ActivityType
 import com.cowork.bikerecoder.core.post.HeartRateSample
 import com.cowork.bikerecoder.core.video.Aspect
 import com.cowork.bikerecoder.core.video.Box
@@ -78,6 +79,7 @@ class FrameRendererTest {
         CameraPath.cameras(
             plans, videoInputs.timeline, FrameRenderer.introCamera(videoInputs, width, height),
             FrameRenderer.outroCamera(videoInputs, width, height), heightPx = height,
+            segmentActivities = videoInputs.activitiesBySegment(),
         )
 
     private fun renderer(
@@ -446,6 +448,25 @@ class FrameRendererTest {
         val c = renderer().frame(gone)
         val d = renderer(videoInputs = other).frame(gone)
         assertTrue("faded by the 5th descent frame", differing(c, d, isWhite) + differing(c, d, isOrangeText) < 50)
+    }
+
+    /** V1.9.0 spec §5.1: a rounded square in the activity's badge colours sits left of the ride's name. */
+    @Test
+    fun titleCardBadgeFollowsTheActivity() {
+        val layout = FrameLayout.title(W, H)
+        val left = Box(W / 2f - 200 * unit, layout.nameBaseline - 24 * unit, 200 * unit, 36 * unit)
+        val first = nth(SceneKind.INTRO_OVERVIEW, 0)
+
+        val bike = renderer().frame(first)
+        val bikeBackground = count(bike, left) { VideoTestTrip.near(it, 0xFFFAECE7.toInt(), 6) }
+        val bikeIcon = count(bike, left) { VideoTestTrip.near(it, 0xFF993C1D.toInt(), 30) }
+        assertTrue("the bike badge's background: $bikeBackground", bikeBackground > 200)
+        assertTrue("the bike icon on it: $bikeIcon", bikeIcon > 30)
+
+        val run = renderer(videoInputs = inputs.copy(activity = ActivityType.RUN)).frame(first)
+        assertTrue("the run badge's background", count(run, left) { VideoTestTrip.near(it, 0xFFFBEAF0.toInt(), 6) } > 200)
+        assertTrue("the run badge's icon", count(run, left) { VideoTestTrip.near(it, 0xFF993556.toInt(), 30) } > 30)
+        assertEquals("no bike badge on a run", 0, count(run, left) { VideoTestTrip.near(it, 0xFF993C1D.toInt(), 30) })
     }
 
     // ---- the photo card (spec §3.6) ----
