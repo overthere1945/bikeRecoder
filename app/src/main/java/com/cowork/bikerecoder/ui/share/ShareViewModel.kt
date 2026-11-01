@@ -352,6 +352,8 @@ class ShareViewModel(
         activity = activity,
         elapsedMs = rides.filter { it.activity == ActivityType.HIKE }.sumOf { it.totals.elapsedMs },
         maxAltitudeM = rides.mapNotNull { it.totals.maxAltitudeM }.maxOrNull(),
+        paceDistanceM = rides.filter { it.activity == activity }.sumOf { it.totals.distanceM },
+        paceMovingTimeMs = rides.filter { it.activity == activity }.sumOf { it.totals.movingTimeMs },
     )
 
     /** The trip's usable gallery files; null (logged) when they cannot be read. */

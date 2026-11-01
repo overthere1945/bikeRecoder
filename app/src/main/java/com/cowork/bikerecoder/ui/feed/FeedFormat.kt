@@ -76,13 +76,20 @@ fun averageLineText(avgSpeedMps: Double, avgBpm: Int?): String {
 
 /**
  * The card's bottom line by the dominant [activity] (V1.9.0 spec §2.2): a bike's is [averageLineText] as it was; a run or
- * a walk "평균 5'32"/km · ♥ 150"; a hike "상승 520 m · 평균 2.1 km/h", with " · ♥ 128" when a heart rate is known.
+ * a walk "평균 5'32"/km · ♥ 150" (the pace of [paceSpeedMps], the dominant activity's rides only on a mixed trip); a hike
+ * "상승 520 m · 평균 2.1 km/h", with " · ♥ 128" when a heart rate is known.
  */
-fun averageLineText(activity: ActivityType, avgSpeedMps: Double, avgBpm: Int?, ascentM: Double): String {
+fun averageLineText(
+    activity: ActivityType,
+    avgSpeedMps: Double,
+    avgBpm: Int?,
+    ascentM: Double,
+    paceSpeedMps: Double = avgSpeedMps,
+): String {
     val heart = avgBpm?.let { " · ♥ $it" } ?: ""
     return when (activity) {
         ActivityType.BIKE -> averageLineText(avgSpeedMps, avgBpm)
-        ActivityType.RUN, ActivityType.WALK -> "평균 ${ActivityFormat.pace(avgSpeedMps)}/km$heart"
+        ActivityType.RUN, ActivityType.WALK -> "평균 ${ActivityFormat.pace(paceSpeedMps)}/km$heart"
         ActivityType.HIKE -> "상승 ${meterText(ascentM)} · 평균 ${RideFormat.speedKmh(avgSpeedMps)} km/h$heart"
     }
 }

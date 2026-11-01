@@ -181,6 +181,20 @@ class ShareViewModelTest {
         assertEquals(listOf(ActivityType.RUN), hashtagRequests)
     }
 
+    /** A mixed trip: the pace is the dominant run's (5 km in 30 min), not the trip's 15 km in 50 min. */
+    @Test
+    fun aMixedTripsPaceIsTheDominantActivitysOnly() = runTest(dispatcher) {
+        val run = rides.openSegment(TRIP, START, DAY, ActivityType.RUN)
+        rides.closeSegment(run, START + 1_800_000, SegmentTotals(5_000.0, 1_800_000, 1_800_000, 4.5, 0.0, 0.0, null, null))
+        val bike = rides.openSegment(TRIP, START + 1_800_000, DAY, ActivityType.BIKE)
+        rides.closeSegment(bike, END, SegmentTotals(10_000.0, 1_200_000, 1_200_000, 9.0, 0.0, 0.0, null, null))
+        val vm = vm()
+        vm.open(TRIP)
+        advanceUntilIdle()
+
+        assertEquals("15.0 km · 50분 · 평균 6'00\"/km", vm.sheet.value!!.autoText.lines()[2])
+    }
+
     @Test
     fun aHikeTripTakesTheHikeLineAndASavedHikeTag() = runTest(dispatcher) {
         val id = rides.openSegment(TRIP, START, DAY, ActivityType.HIKE)

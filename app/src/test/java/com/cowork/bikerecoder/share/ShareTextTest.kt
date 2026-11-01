@@ -97,6 +97,14 @@ class ShareTextTest {
     }
 
     @Test
+    fun mixedTripPaceIsTheDominantActivitysOnly() {
+        // RUN 5 km / 30 min (dominant) + BIKE 10 km / 20 min: distance and time are the trip's, the pace the run's.
+        val mixed = facts(distanceM = 15_000.0, movingTimeMs = 3_000_000)
+            .copy(activity = ActivityType.RUN, paceDistanceM = 5_000.0, paceMovingTimeMs = 1_800_000)
+        assertEquals("15.0 km · 50분 · 평균 6'00\"/km", numbersOf(mixed))
+    }
+
+    @Test
     fun walkNumbersLineAndNoPaceWithoutMovingTime() {
         val walk = facts(distanceM = 3_200.0, movingTimeMs = 2_400_000).copy(activity = ActivityType.WALK)
         assertEquals("3.2 km · 40분 · 평균 12'30\"/km", numbersOf(walk))

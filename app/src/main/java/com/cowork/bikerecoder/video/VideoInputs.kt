@@ -25,7 +25,8 @@ import java.time.ZoneId
  * average speed = distance / moving time, the highest speed, the ascent, and the heart rate average / calories when
  * known (spec §2.4). The activity types add (V1.9.0 spec §5.1): [hikeElapsedMs] the hike segments' elapsed time (rests
  * included), [maxAltitudeM] the highest point of the segments that know one, and [fastestKmMs] the fastest 1 km among the
- * run segments' saved best efforts (null when none covered 1 km).
+ * run segments' saved best efforts (null when none covered 1 km). [paceDistanceM] and [paceMovingTimeMs] are the sums of
+ * the dominant activity's segments only, the average pace of a run or walk.
  */
 data class TripTotals(
     val distanceM: Double,
@@ -38,6 +39,8 @@ data class TripTotals(
     val hikeElapsedMs: Long = 0L,
     val maxAltitudeM: Double? = null,
     val fastestKmMs: Long? = null,
+    val paceDistanceM: Double = distanceM,
+    val paceMovingTimeMs: Long = movingTimeMs,
 )
 
 /**
@@ -132,6 +135,9 @@ class VideoInputsLoader(
                 hikeElapsedMs = targets.filter { it.activity == ActivityType.HIKE }.sumOf { it.totals.elapsedMs },
                 maxAltitudeM = targets.mapNotNull { it.totals.maxAltitudeM }.maxOrNull(),
                 fastestKmMs = fastestKmMs,
+                // A run's or walk's average pace: the dominant activity's segments only.
+                paceDistanceM = targets.filter { it.activity == activity }.sumOf { it.totals.distanceM },
+                paceMovingTimeMs = targets.filter { it.activity == activity }.sumOf { it.totals.movingTimeMs },
             ),
             canColorByHeart = hr.canColor,
             firstStartedAt = targets.first().startedAt,

@@ -236,6 +236,24 @@ class VideoInputsTest {
         assertNull(loader.load(TRIP)!!.totals.fastestKmMs)
     }
 
+    /** A mixed trip: the pace sums are the dominant activity's segments only (RUN 5 km / 30 min, BIKE 10 km / 20 min). */
+    @Test
+    fun paceSumsAreTheDominantActivitysSegments() = runTest {
+        trip(TripType.SINGLE_DAY)
+        val morning = sunday.atTime(8, 0).atZone(seoul).toInstant().toEpochMilli()
+        segment(sunday, track(morning, 1_800), distanceM = 5_000.0, activity = ActivityType.RUN)
+        segment(sunday, track(morning + 3_600_000, 1_200), distanceM = 10_000.0, activity = ActivityType.BIKE)
+
+        val inputs = loader.load(TRIP)!!
+
+        assertEquals(ActivityType.RUN, inputs.activity)
+        assertEquals(15_000.0, inputs.totals.distanceM, 1e-9)
+        assertEquals(5_000.0, inputs.totals.paceDistanceM, 1e-9)
+        assertEquals(1_800_000L, inputs.totals.paceMovingTimeMs)
+        val pace = FrameRenderer.rideCells(inputs.totals, inputs.activity).toMap()["평균 페이스"]
+        assertEquals("6'00\"/km", pace)
+    }
+
     /** V1.4.0 §2.5: the trip's own title goes in as it is, flagged so the job adds no region. */
     @Test
     fun customTitleIsTheRideTitle() = runTest {

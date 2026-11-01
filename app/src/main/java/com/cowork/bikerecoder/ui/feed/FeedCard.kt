@@ -119,6 +119,8 @@ fun FeedCard(
         // even step, then each column is 1/φ of the one before it, down to the share icon.
         val cells = ActivityText.cardCells(
             card.dominant, card.distanceM, card.movingTimeMs, card.hikeElapsedMs, card.ascentM, card.maxAltitudeM,
+            paceDistanceM = card.paceDistanceM,
+            paceMovingTimeMs = card.paceMovingTimeMs,
         )
         Row(
             modifier = Modifier
@@ -142,7 +144,7 @@ fun FeedCard(
             }
         }
         Text(
-            averageLineText(card.dominant, card.avgSpeedMps, card.avgBpm, card.ascentM),
+            averageLineText(card.dominant, card.avgSpeedMps, card.avgBpm, card.ascentM, card.paceSpeedMps),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 12.dp),

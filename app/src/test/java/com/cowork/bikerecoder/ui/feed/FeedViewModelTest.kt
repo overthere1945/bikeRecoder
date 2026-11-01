@@ -853,6 +853,36 @@ class FeedViewModelTest {
         assertEquals("아침 등산", vm.card(2).title)
     }
 
+    /**
+     * A mixed trip's pace (cell and bottom line) is the dominant activity's rides only: RUN 5 km in 30 min (the longest
+     * segment) + BIKE 10 km in 20 min → 6'00"/km, not 15 km in 50 min (3'20"). The distance cell stays the trip's.
+     */
+    @Test
+    fun mixedTripPaceCountsTheDominantActivityOnly() = runTest(dispatcher) {
+        trip(1, TripStatus.COMPLETED)
+        segment(1, startedAt = 100, totals = ride(5_000.0, movingMs = 30 * 60_000L), activity = ActivityType.RUN)
+        segment(1, startedAt = 200, totals = ride(10_000.0, movingMs = 20 * 60_000L), activity = ActivityType.BIKE)
+        val vm = history()
+        advanceUntilIdle()
+
+        val card = vm.card(1)
+        assertEquals(ActivityType.RUN, card.dominant)
+        assertEquals(5_000.0, card.paceDistanceM, 1e-9)
+        assertEquals(30 * 60_000L, card.paceMovingTimeMs)
+        assertEquals(
+            listOf("거리" to "15.0 km", "평균 페이스" to "6'00\"/km", "이동 시간" to "50분"),
+            ActivityText.cardCells(
+                card.dominant, card.distanceM, card.movingTimeMs, card.hikeElapsedMs, card.ascentM, card.maxAltitudeM,
+                paceDistanceM = card.paceDistanceM,
+                paceMovingTimeMs = card.paceMovingTimeMs,
+            ),
+        )
+        assertEquals(
+            "평균 6'00\"/km",
+            averageLineText(card.dominant, card.avgSpeedMps, card.avgBpm, card.ascentM, card.paceSpeedMps),
+        )
+    }
+
     /** A trip of bike segments (the V1.8.0 data): one bike badge, the old title. */
     @Test
     fun bikeTripKeepsTheOldTitleAndOneBadge() = runTest(dispatcher) {

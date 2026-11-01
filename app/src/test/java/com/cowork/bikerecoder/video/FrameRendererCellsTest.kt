@@ -83,6 +83,19 @@ class FrameRendererCellsTest {
     }
 
     @Test
+    fun mixedTripPaceIsTheDominantActivitysOnly() {
+        // RUN 5 km / 30 min (dominant) + BIKE 10 km / 20 min: the distance is the trip's, the pace the run's.
+        val mixed = TripTotals(
+            15_000.0, 3_000_000L, 5.0, 9.0, 0.0, avgBpm = null, calories = null,
+            paceDistanceM = 5_000.0, paceMovingTimeMs = 1_800_000L,
+        )
+        assertEquals(
+            listOf("거리" to "15.00km", "이동 시간" to "50분", "평균 페이스" to "6'00\"/km"),
+            FrameRenderer.rideCells(mixed, ActivityType.RUN),
+        )
+    }
+
+    @Test
     fun walkCells() {
         val walk = TripTotals(3_200.0, 2_400_000L, 1.333, 2.0, 12.0, avgBpm = 101, calories = 150.0)
         assertEquals(

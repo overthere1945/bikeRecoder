@@ -149,6 +149,7 @@ object ActivityText {
      * The three numbers of a record card (spec §2.2) as (label, value), in the activity's order: a bike 거리·이동 시간·평균
      * 속도, a run 거리·평균 페이스·이동 시간, a walk 거리·이동 시간·평균 페이스, a hike 산행 시간·누적 상승·최고 고도.
      * Values use the feed card's formats ("5.0 km", "27분", "5'32"/km"); the hike time is the [elapsedMs] (rests included).
+     * The pace is of [paceDistanceM] in [paceMovingTimeMs]: on a mixed trip the dominant activity's rides only.
      */
     fun cardCells(
         activity: ActivityType,
@@ -157,10 +158,12 @@ object ActivityText {
         elapsedMs: Long,
         ascentM: Double,
         maxAltitudeM: Double?,
+        paceDistanceM: Double = distanceM,
+        paceMovingTimeMs: Long = movingTimeMs,
     ): List<Pair<String, String>> {
         val distance = "거리" to kmText(distanceM)
         val moving = "이동 시간" to RideFormat.duration(movingTimeMs)
-        val pace = LABEL_AVG_PACE to "${ActivityFormat.paceOf(distanceM, movingTimeMs)}/km"
+        val pace = LABEL_AVG_PACE to "${ActivityFormat.paceOf(paceDistanceM, paceMovingTimeMs)}/km"
         return when (activity) {
             ActivityType.BIKE -> {
                 val mps = if (movingTimeMs > 0) distanceM / (movingTimeMs / 1000.0) else 0.0
@@ -241,9 +244,15 @@ object ActivityText {
     /**
      * The share text's numbers line of a run or walk (spec §5.2): "5.0 km · 27분 · 평균 5'32\"/km" ([kmText], then
      * [RideFormat.duration]). Without a usable pace (no moving time, or slower than 60 minutes a kilometre) the average is left out.
+     * The pace is of [paceDistanceM] in [paceMovingTimeMs]: on a mixed trip the dominant activity's rides only.
      */
-    fun shareRunWalkNumbers(distanceM: Double, movingTimeMs: Long): String {
-        val pace = ActivityFormat.paceOf(distanceM, movingTimeMs)
+    fun shareRunWalkNumbers(
+        distanceM: Double,
+        movingTimeMs: Long,
+        paceDistanceM: Double = distanceM,
+        paceMovingTimeMs: Long = movingTimeMs,
+    ): String {
+        val pace = ActivityFormat.paceOf(paceDistanceM, paceMovingTimeMs)
         return buildList {
             add(kmText(distanceM))
             add(RideFormat.duration(movingTimeMs))

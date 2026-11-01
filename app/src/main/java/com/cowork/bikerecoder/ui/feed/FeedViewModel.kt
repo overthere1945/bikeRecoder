@@ -98,7 +98,9 @@ data class FeedMonth(val header: String, val cards: List<FeedCardState>)
  * [imported]: the trip came from a GPX file (V1.6.0 spec §4.2), so the date line ends in " · 가져옴".
  * V1.9.0: [activities] are the badges in order (the [dominant] activity first, at most three); [routes] are coloured by each
  * segment's activity ([ActivityStyle.hex]); [hikeElapsedMs] is the elapsed time of the hike segments and [maxAltitudeM] the
- * highest altitude of the rides (null when none is known), the hike card's cells.
+ * highest altitude of the rides (null when none is known), the hike card's cells. [paceDistanceM] and [paceMovingTimeMs]
+ * are the sums of the [dominant] activity's rides only: a run's or walk's pace (cell and bottom line) is theirs, so the
+ * other activities of a mixed trip do not move it (the distance and moving-time cells stay the trip's).
  */
 data class FeedCardState(
     val tripId: Long,
@@ -124,8 +126,13 @@ data class FeedCardState(
     val dominant: ActivityType = ActivityType.BIKE,
     val hikeElapsedMs: Long = 0L,
     val maxAltitudeM: Double? = null,
+    val paceDistanceM: Double = distanceM,
+    val paceMovingTimeMs: Long = movingTimeMs,
 ) {
     val videoUri: String? get() = video?.uri
+
+    /** The average speed of the [dominant] activity's rides, the run's or walk's pace on the bottom line. */
+    val paceSpeedMps: Double get() = if (paceMovingTimeMs > 0) paceDistanceM / (paceMovingTimeMs / 1000.0) else 0.0
 }
 
 /** The satellite pictures as the feed uses them ([FeedThumbnails] in the app). */
@@ -561,6 +568,8 @@ class FeedViewModel(
                 facts.cards.map { it.activity to it.movingTimeMs }
             },
         )
+        // A run's or walk's pace counts the dominant activity's rides only (a mixed trip's other rides do not move it).
+        val paceRides = rides.filter { it.activity == mix.dominant }
         return FeedCardState(
             tripId = id,
             title = RideTitle.shown(label, firstStartedAt, days.size, zone, mix.dominant),
@@ -584,6 +593,8 @@ class FeedViewModel(
             dominant = mix.dominant,
             hikeElapsedMs = rides.filter { it.activity == ActivityType.HIKE }.sumOf { it.elapsedMs },
             maxAltitudeM = rides.mapNotNull { it.maxAltitudeM }.maxOrNull(),
+            paceDistanceM = paceRides.sumOf { it.distanceM },
+            paceMovingTimeMs = paceRides.sumOf { it.movingTimeMs },
         )
     }
 

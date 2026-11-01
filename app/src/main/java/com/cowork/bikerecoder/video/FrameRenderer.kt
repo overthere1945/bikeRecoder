@@ -577,12 +577,13 @@ class FrameRenderer(
          * The first numbers of the closing card and the summary image for the trip's dominant [activity] (spec §5.1).
          * A bike: distance, moving time, average and top speed. A run: distance, moving time, average pace and the fastest
          * 1 km's pace (left out when no 1 km was run). A walk: distance, moving time, average pace and average speed. A hike:
-         * the hike time, ascent, highest point and distance.
+         * the hike time, ascent, highest point and distance. The average pace is of [TripTotals.paceDistanceM] in
+         * [TripTotals.paceMovingTimeMs] (a mixed trip: the dominant activity's segments only).
          */
         internal fun rideCells(totals: TripTotals, activity: ActivityType): List<Pair<String, String>> {
             val distance = "거리" to RideFormat.distance(totals.distanceM)
             val moving = "이동 시간" to RideFormat.duration(totals.movingTimeMs)
-            val avgPace = ActivityText.LABEL_AVG_PACE to "${ActivityFormat.paceOf(totals.distanceM, totals.movingTimeMs)}/km"
+            val avgPace = ActivityText.LABEL_AVG_PACE to "${ActivityFormat.paceOf(totals.paceDistanceM, totals.paceMovingTimeMs)}/km"
             return when (activity) {
                 ActivityType.BIKE -> listOf(
                     distance,
