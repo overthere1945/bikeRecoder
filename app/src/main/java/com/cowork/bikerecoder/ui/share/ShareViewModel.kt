@@ -601,10 +601,9 @@ class ShareViewModel(
 
     /**
      * One open sheet of trip [tripId]: its drawing, sending and saving run under [job] (cancelled by [close]; a sticker
-     * save once begun outlives it, see [sticker]). [pending]
-     * is the press waiting for its cards and [finishing] its send or save once they are drawn; [savedCards] and
-     * [stickerSaved] what this sheet put into the gallery (spec §5.5, §5.6); [retry] the button [retryCards] presses
-     * again after it failed by itself.
+     * save once begun outlives it, see [sticker]). [pending] is the press waiting for its cards and [finishing] its send
+     * or save once they are drawn; [savedCards] and [stickerSaved] what this sheet put into the gallery (spec §5.5, §5.6);
+     * [retry] the button [retryCards] presses again after it failed by itself.
      */
     private class Session(val tripId: Long, val job: Job) {
         var retry: ShareTarget? = null
