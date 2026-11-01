@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -435,19 +436,23 @@ class TripDetailScreenTest {
         )
 
         composeRule.onNodeWithTag(MetricTags.HEART_CHART).performScrollTo().assertIsDisplayed()
-        val card = composeRule.onNodeWithText("여행 합계").getBoundsInRoot()
-        val elevation = composeRule.onNodeWithText(ChartText.TITLE_ELEVATION).getBoundsInRoot()
-        val speed = composeRule.onNodeWithText(ChartText.TITLE_SPEED).getBoundsInRoot()
-        val heart = composeRule.onNodeWithText(ChartText.TITLE_HEART).getBoundsInRoot()
-        val elevationChart = composeRule.onNodeWithTag(ElevationTags.CHART).getBoundsInRoot()
-        val speedChart = composeRule.onNodeWithTag(MetricTags.SPEED_CHART).getBoundsInRoot()
-        val heartChart = composeRule.onNodeWithTag(MetricTags.HEART_CHART).getBoundsInRoot()
-        assertTrue("고도 under the card", elevation.top >= card.bottom)
-        assertTrue("고도 chart under its title", elevationChart.top >= elevation.bottom)
-        assertTrue("속도 under the 고도 chart", speed.top >= elevationChart.bottom)
-        assertTrue("속도 chart under its title", speedChart.top >= speed.bottom)
-        assertTrue("심박 under the 속도 chart", heart.top >= speedChart.bottom)
-        assertTrue("심박 chart under its title", heartChart.top >= heart.bottom)
+        // Positions (unlike bounds) are not clipped to the list's viewport, so a node scrolled half out keeps its size.
+        val card = span(composeRule.onNodeWithText("여행 합계"))
+        val elevation = span(composeRule.onNodeWithText(ChartText.TITLE_ELEVATION))
+        val speed = span(composeRule.onNodeWithText(ChartText.TITLE_SPEED))
+        val heart = span(composeRule.onNodeWithText(ChartText.TITLE_HEART))
+        val elevationChart = span(composeRule.onNodeWithTag(ElevationTags.CHART))
+        val speedChart = span(composeRule.onNodeWithTag(MetricTags.SPEED_CHART))
+        val heartChart = span(composeRule.onNodeWithTag(MetricTags.HEART_CHART))
+        for ((name, s) in listOf("고도" to elevation, "속도" to speed, "심박" to heart, "고도 chart" to elevationChart)) {
+            assertTrue("$name has a height", s.second > s.first)
+        }
+        assertTrue("고도 under the card", elevation.first >= card.second)
+        assertTrue("고도 chart under its title", elevationChart.first >= elevation.second)
+        assertTrue("속도 under the 고도 chart", speed.first >= elevationChart.second)
+        assertTrue("속도 chart under its title", speedChart.first >= speed.second)
+        assertTrue("심박 under the 속도 chart", heart.first >= speedChart.second)
+        assertTrue("심박 chart under its title", heartChart.first >= heart.second)
         // Read out with the trip's stored totals (3 km in 10 min = 18 km/h, highest 11 m/s = 39.6 km/h), not the series.
         composeRule.onNodeWithTag(MetricTags.SPEED_CHART).assertContentDescriptionEquals("속도 그래프, 평균 18km/h, 최고 40km/h")
         composeRule.onNodeWithTag(MetricTags.HEART_CHART).assertContentDescriptionEquals("심박 그래프, 평균 131bpm, 최고 160bpm")
@@ -462,6 +467,12 @@ class TripDetailScreenTest {
         composeRule.onNodeWithText(ChartText.NO_SPEED).performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText(ChartText.TITLE_HEART).assertDoesNotExist()
         composeRule.onNodeWithTag(MetricTags.HEART_CHART).assertDoesNotExist()
+    }
+
+    /** The node's top and bottom in the root (px), not clipped to the scrolling list's viewport. */
+    private fun span(node: SemanticsNodeInteraction): Pair<Float, Float> {
+        val n = node.fetchSemanticsNode()
+        return n.positionInRoot.y to n.positionInRoot.y + n.size.height
     }
 
     /** Each chart (and its [지도에 표시]) opens the big map on its own tab. */

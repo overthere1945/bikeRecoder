@@ -368,6 +368,33 @@ class TripDetailViewModelTest {
         assertEquals("심박 그래프, 평균 145bpm, 최고 160bpm", vm.heartDescription.value)
     }
 
+    /** 화면을 연 뒤에 표본이 들어와도(후처리, [다시 가져오기]) 심박 계열이 따라 생기고, 다시 들어오면 바뀐다. */
+    @Test
+    fun heartSeriesFollowsNewSamples() = runTest(dispatcher) {
+        openTrip()
+        val t = SegmentTotals.ZERO.copy(distanceM = 300.0, movingTimeMs = 60_000)
+        val points = track(1_000_000L, 37.5, 31) { null }
+        val id = ride(1_000_000L, LocalDate.of(2026, 10, 24), points, t)
+        val vm = detail()
+        advanceUntilIdle()
+        assertNull(vm.heartSeries.value)
+        assertEquals(true, vm.profileLoaded.value)
+
+        val first = heart(id, points, { 120 }, avg = 120, max = 120)
+        advanceUntilIdle()
+        val axis = TrackAxis.of(listOf(points))!!
+        assertSameSeries(MetricSeries.heartRate(axis, listOf(points), first)!!, vm.heartSeries.value)
+
+        // 다시 가져와 더 많은 표본이 저장되었다(hrLastTriedAt이 바뀐다).
+        val second = points.mapIndexed { i, p -> HeartRateSample(p.timeMillis, 150 + i) }
+        store.replaceSamples(id, second)
+        store.saveExtras(
+            SegmentExtras(id, hrStatus = HrStatus.READY, hrLastTriedAt = 2L, hrDetailed = true, avgBpm = 165, maxBpm = 180),
+        )
+        advanceUntilIdle()
+        assertSameSeries(MetricSeries.heartRate(axis, listOf(points), second)!!, vm.heartSeries.value)
+    }
+
     /** 계열 계산이 실패해도 불러오기는 끝나고(그래프 자리는 비지 않는다), 고도 단면은 그대로다. */
     @Test
     fun seriesFailureStillLoaded() = runTest(dispatcher) {

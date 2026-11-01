@@ -76,6 +76,12 @@ import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.ZoneId
 
+/** The track axis of a trip's non-empty segments in start order, their points ([tracks]) and ids, in that order. */
+private class ChartInput(val axis: TrackAxis, val tracks: List<List<TrackPoint>>, val segmentIds: List<Long>)
+
+/** A heart-rate [series] (null: nothing to draw) and the [samples] it was made from (the read-out falls back to them). */
+private class HeartChart(val series: MetricSeries?, val samples: List<HeartRateSample>)
+
 /**
  * One trip's segments by date (oldest first) and the trip's totals (spec §3.5), without empty segments
  * ([RideSegment.isEmpty]). An open segment (still being recorded,
@@ -97,9 +103,11 @@ import java.time.ZoneId
  * V1.7.0 (spec §4.1, §4.2): [export] saves the trip as GPX or KML under the shown [title] through [exportTrip];
  * [exportState] is where that stands, and [recording] (some segment is still open) dims the export menu.
  *
- * V1.8.0 (spec §2.2): [speedSeries] and [heartSeries] lie on the same track axis of the segments in start order, computed
- * with [profile] on [compute] (and again when it is); the heart rate from each segment's stored samples, left out (logged)
- * when they cannot be read. [heartDescription] reads the heart-rate chart out with the stored figures ([heartRate]).
+ * V1.8.0 (spec §2.2): [speedSeries] and [heartSeries] lie on the same track axis of the segments in start order. The axis
+ * and [speedSeries] are computed with [profile] on [compute] (and again when it is); [heartSeries] from each segment's
+ * stored samples, read again whenever a READY segment's samples are stored (as [lines]), so heart rate that arrives after
+ * the screen opened is charted too; left out (logged) when they cannot be read. [heartDescription] reads the heart-rate
+ * chart out with the stored figures ([heartRate]).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class TripDetailViewModel(
@@ -142,8 +150,8 @@ class TripDetailViewModel(
     private val _profileLoaded = MutableStateFlow(false)
 
     /**
-     * True once [profile], [speedSeries] and [heartSeries] are computed (null then means "no data"), so the screen does not
-     * flash "고도 정보가 없습니다" or "속도 정보가 없습니다".
+     * True once [profile] and [speedSeries] are computed (null then means "no data"), so the screen does not flash
+     * "고도 정보가 없습니다" or "속도 정보가 없습니다". [heartSeries] follows on its own (no chart while it is null).
      */
     val profileLoaded: StateFlow<Boolean> = _profileLoaded.asStateFlow()
 
@@ -152,13 +160,8 @@ class TripDetailViewModel(
     /** The trip's speed chart (V1.8.0 spec §2.2); null while it is computed, without speed, or when computing it failed. */
     val speedSeries: StateFlow<MetricSeries?> = _speedSeries.asStateFlow()
 
-    private val _heartSeries = MutableStateFlow<MetricSeries?>(null)
-
-    /** The trip's heart-rate chart; null while it is computed and when there is nothing to draw (no chart then). */
-    val heartSeries: StateFlow<MetricSeries?> = _heartSeries.asStateFlow()
-
-    /** The samples [heartSeries] was made from, in start order: the read-out falls back to them. */
-    private val chartSamples = MutableStateFlow<List<HeartRateSample>>(emptyList())
+    /** What the heart-rate series is built on, set with [speedSeries]; null until then or when there is no axis. */
+    private val chartInput = MutableStateFlow<ChartInput?>(null)
 
     private val _canMakeMedia = MutableStateFlow(false)
 
@@ -260,13 +263,6 @@ class TripDetailViewModel(
     val heartRate: StateFlow<TripHeartRate> = combine(_segmentsByDate, extras, ::tripHeartRate)
         .stateIn(viewModelScope, SharingStarted.Eagerly, TripHeartRate())
 
-    /** "심박 그래프, 평균 …bpm, 최고 …bpm" with [heartRate]'s stored figures; without them, the samples' (V1.8.0 spec §2.1). */
-    val heartDescription: StateFlow<String> = combine(heartRate, chartSamples) { hr, samples ->
-        ChartText.heartDescription(hr.avgBpm, hr.maxBpm, samples)
-    }
-        .flowOn(compute)
-        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
-
     private val _colorMode = MutableStateFlow(TrackColorMode.DEFAULT)
 
     /** [기본] first, every time the screen opens (not remembered). */
@@ -276,6 +272,34 @@ class TripDetailViewModel(
     private val readyAt = extras
         .map { list -> list.filter { it.hrStatus == HrStatus.READY }.associate { it.segmentId to it.hrLastTriedAt } }
         .distinctUntilChanged()
+
+    /**
+     * The heart-rate series on [chartInput]'s axis and the samples it was made from, read again for a new axis and whenever
+     * [readyAt] changes; null without an axis or when the samples cannot be read or charted (logged).
+     */
+    private val heartChart: StateFlow<HeartChart?> = combine(chartInput, readyAt) { input, _ -> input }
+        .mapLatest { input ->
+            if (input == null) {
+                null
+            } else {
+                guarded("Could not chart the heart rate of trip $tripId") {
+                    val samples = input.segmentIds.flatMap { postStore.samples(it) }
+                    HeartChart(withContext(compute) { MetricSeries.heartRate(input.axis, input.tracks, samples) }, samples)
+                }
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** The trip's heart-rate chart; null while it is computed and when there is nothing to draw (no chart then). */
+    val heartSeries: StateFlow<MetricSeries?> = heartChart.map { it?.series }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** "심박 그래프, 평균 …bpm, 최고 …bpm" with [heartRate]'s stored figures; without them, the samples' (V1.8.0 spec §2.1). */
+    val heartDescription: StateFlow<String> = combine(heartRate, heartChart) { hr, chart ->
+        ChartText.heartDescription(hr.avgBpm, hr.maxBpm, chart?.samples.orEmpty())
+    }
+        .flowOn(compute)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     /**
      * One line per listed segment; in [TrackColorMode.HEART_RATE] each coloured by its own samples — only while [심박]
@@ -450,27 +474,22 @@ class TripDetailViewModel(
                 val read = ordered.map { it.id to rideStore.points(it.id) }
                 tracks.value = read
                 trackOf = segments
-                val startOrder = ordered.indices.sortedBy { ordered[it].startedAt }
-                val byStart = startOrder.map { read[it].second }.filter { it.isNotEmpty() }
-                // Without them the trip is shown without heart rate.
-                val samples = guarded("Could not read the heart-rate samples of trip $tripId") {
-                    startOrder.flatMap { postStore.samples(ordered[it].id) }
-                }
+                val startOrder = ordered.indices.sortedBy { ordered[it].startedAt }.filter { read[it].second.isNotEmpty() }
+                val byStart = startOrder.map { read[it].second }
                 // A failing computation (e.g. out of memory on a huge trip) must still end the loading state: no chart, no retry loop.
                 _profile.value = guarded("Could not compute the elevation profile of trip $tripId") {
                     withContext(compute) { profileOf(byStart) }
                 }
-                val series = guarded("Could not compute the speed and heart-rate series of trip $tripId") {
+                val series = guarded("Could not compute the speed series of trip $tripId") {
                     withContext(compute) {
-                        val axis = TrackAxis.of(byStart)
-                        val speed = axis?.let { speedOf(it, byStart) }
-                        val heart = if (axis == null || samples == null) null else MetricSeries.heartRate(axis, byStart, samples)
-                        speed to heart
+                        TrackAxis.of(byStart)?.let { axis ->
+                            ChartInput(axis, byStart, startOrder.map { ordered[it].id }) to speedOf(axis, byStart)
+                        }
                     }
                 }
-                _speedSeries.value = series?.first
-                _heartSeries.value = series?.second
-                chartSamples.value = samples.orEmpty()
+                _speedSeries.value = series?.second
+                // The heart-rate series follows ([heartChart]); after a failure above there is none either.
+                chartInput.value = series?.first
                 _profileLoaded.value = true
             }
             askRegion(segments)
