@@ -30,7 +30,7 @@ class RecordChoicesTest {
         assertEquals(
             listOf(
                 listOf("오늘은 여기까지", "2일째 기록을 마치고 여행은 이어 갑니다", RecordingEnd.STOP_TODAY, true),
-                listOf("여행 완료", "여러 날 여행을 끝내고 전체 요약을 봅니다", RecordingEnd.COMPLETE_TRIP, false),
+                listOf("여행 완료", "여러 날 여행을 끝내고 오늘 기록의 요약을 봅니다", RecordingEnd.COMPLETE_TRIP, false),
             ),
             table(recordEndChoices(TripType.MULTI_DAY, navigating = false, day = 2)),
         )

@@ -20,18 +20,18 @@ const val END_QUESTION = "안내를 끝낼까요?"
 const val TRIP_COMPLETED = "여행을 완료했습니다"
 const val RECORDING_QUESTION = "기록을 어떻게 할까요?"
 
-/** The name of a trip without stops (started from [● 기록 시작]) where a destination name would be shown. */
-const val RIDE_RECORD_NAME = "주행 기록"
+/**
+ * Which sheet shows the end cards; what a card promises depends on it: the record screen's [정지] ends the recording,
+ * the guidance's [종료] ends the guidance and, while it records ([GUIDANCE_RECORDING]), the recording with it.
+ */
+enum class EndSheet { RECORD, GUIDANCE_RECORDING, GUIDANCE_ONLY }
 
 /** The copy of the end and start choice sheets (V1.9.1): card titles, their one-line notes and the bottom buttons. */
 object TripChoiceText {
     const val FINISH_TODAY = "오늘로 끝내기"
-    const val FINISH_TODAY_NOTE = "이 기록을 마치고 요약을 봅니다"
     const val CONTINUE_TOMORROW = "내일 이어서 하기"
-    const val CONTINUE_TOMORROW_NOTE = "여러 날 여행으로 남겨 두고, 다음에 기록을 시작하면 이어서 쌓입니다"
     const val STOP_TODAY = "오늘은 여기까지"
     const val COMPLETE_TRIP = "여행 완료"
-    const val COMPLETE_TRIP_NOTE = "여러 날 여행을 끝내고 전체 요약을 봅니다"
 
     /** While guiding, [정지] ends only the recording. */
     const val END_RECORDING = "기록 끝내기"
@@ -54,7 +54,26 @@ object TripChoiceText {
     const val KEEP_GOING = "계속 기록하기"
     const val CANCEL = "취소"
 
-    fun stopTodayNote(day: Int) = "${day}일째 기록을 마치고 여행은 이어 갑니다"
+    fun finishTodayNote(sheet: EndSheet) = when (sheet) {
+        EndSheet.RECORD -> "이 기록을 마치고 요약을 봅니다"
+        EndSheet.GUIDANCE_RECORDING -> "안내와 기록을 마치고 요약을 봅니다"
+        EndSheet.GUIDANCE_ONLY -> "안내를 마치고 여행을 완료합니다"
+    }
+
+    fun continueTomorrowNote(sheet: EndSheet) = when (sheet) {
+        EndSheet.RECORD, EndSheet.GUIDANCE_RECORDING -> "여러 날 여행으로 남겨 두고, 다음에 기록을 시작하면 이어서 쌓입니다"
+        EndSheet.GUIDANCE_ONLY -> "여러 날 여행으로 남겨 두고, 다음에 시작할 때 이어 갑니다"
+    }
+
+    fun stopTodayNote(day: Int, sheet: EndSheet = EndSheet.RECORD) = when (sheet) {
+        EndSheet.RECORD, EndSheet.GUIDANCE_RECORDING -> "${day}일째 기록을 마치고 여행은 이어 갑니다"
+        EndSheet.GUIDANCE_ONLY -> "${day}일째 안내를 마치고 여행은 이어 갑니다"
+    }
+
+    fun completeTripNote(sheet: EndSheet) = when (sheet) {
+        EndSheet.RECORD, EndSheet.GUIDANCE_RECORDING -> "여러 날 여행을 끝내고 오늘 기록의 요약을 봅니다"
+        EndSheet.GUIDANCE_ONLY -> "여러 날 여행을 완료합니다"
+    }
 
     fun continueTitle(day: Int) = "여행 이어서 · ${day}일째"
 
@@ -65,20 +84,20 @@ object TripChoiceText {
 
 /** The cards shared by the record screen's [정지] and the guidance's [종료] sheets; [recommended] fills the card. */
 object TripCards {
-    fun finishToday(recommended: Boolean = true) = SheetChoice(
-        "finish-today", TripChoiceText.FINISH_TODAY, TripChoiceText.FINISH_TODAY_NOTE, ChoiceIcon.FINISH, recommended,
+    fun finishToday(sheet: EndSheet = EndSheet.RECORD, recommended: Boolean = true) = SheetChoice(
+        "finish-today", TripChoiceText.FINISH_TODAY, TripChoiceText.finishTodayNote(sheet), ChoiceIcon.FINISH, recommended,
     )
 
-    fun continueTomorrow() = SheetChoice(
-        "continue-tomorrow", TripChoiceText.CONTINUE_TOMORROW, TripChoiceText.CONTINUE_TOMORROW_NOTE, ChoiceIcon.TOMORROW,
+    fun continueTomorrow(sheet: EndSheet = EndSheet.RECORD) = SheetChoice(
+        "continue-tomorrow", TripChoiceText.CONTINUE_TOMORROW, TripChoiceText.continueTomorrowNote(sheet), ChoiceIcon.TOMORROW,
     )
 
-    fun stopToday(day: Int, recommended: Boolean = true) = SheetChoice(
-        "stop-today", TripChoiceText.STOP_TODAY, TripChoiceText.stopTodayNote(day), ChoiceIcon.TOMORROW, recommended,
+    fun stopToday(day: Int, sheet: EndSheet = EndSheet.RECORD, recommended: Boolean = true) = SheetChoice(
+        "stop-today", TripChoiceText.STOP_TODAY, TripChoiceText.stopTodayNote(day, sheet), ChoiceIcon.TOMORROW, recommended,
     )
 
-    fun completeTrip() = SheetChoice(
-        "complete-trip", TripChoiceText.COMPLETE_TRIP, TripChoiceText.COMPLETE_TRIP_NOTE, ChoiceIcon.FINISH,
+    fun completeTrip(sheet: EndSheet = EndSheet.RECORD) = SheetChoice(
+        "complete-trip", TripChoiceText.COMPLETE_TRIP, TripChoiceText.completeTripNote(sheet), ChoiceIcon.FINISH,
     )
 
     fun endRecording() = SheetChoice(
@@ -114,19 +133,20 @@ object TripCards {
  * [종료] on the guidance screen (spec §3.3, V1.9.1): a single-day trip ends today ([오늘로 끝내기], suggested) or is kept
  * for tomorrow ([내일 이어서 하기]: it becomes a multi-day trip); a multi-day trip stops for today ([오늘은 여기까지] on its
  * [day]-th day, suggested) or completes. While [recording], the guidance alone can end first (the recording goes on),
- * and ending the trip ends the recording too.
+ * and ending the trip ends the recording too; the cards' notes say which of the two they end.
  */
-fun endChoices(type: TripType, recording: Boolean = false, day: Int = 1): List<EndChoice> = listOfNotNull(
-    EndChoice(EndAction.END_GUIDANCE_ONLY, TripCards.guidanceOnly()).takeIf { recording },
-) + when (type) {
-    TripType.SINGLE_DAY -> listOf(
-        EndChoice(EndAction.COMPLETE_TRIP, TripCards.finishToday()),
-        EndChoice(EndAction.CONTINUE_TOMORROW, TripCards.continueTomorrow()),
-    )
-    TripType.MULTI_DAY -> listOf(
-        EndChoice(EndAction.STOP_TODAY, TripCards.stopToday(day)),
-        EndChoice(EndAction.COMPLETE_TRIP, TripCards.completeTrip()),
-    )
+fun endChoices(type: TripType, recording: Boolean = false, day: Int = 1): List<EndChoice> {
+    val sheet = if (recording) EndSheet.GUIDANCE_RECORDING else EndSheet.GUIDANCE_ONLY
+    return listOfNotNull(EndChoice(EndAction.END_GUIDANCE_ONLY, TripCards.guidanceOnly()).takeIf { recording }) + when (type) {
+        TripType.SINGLE_DAY -> listOf(
+            EndChoice(EndAction.COMPLETE_TRIP, TripCards.finishToday(sheet)),
+            EndChoice(EndAction.CONTINUE_TOMORROW, TripCards.continueTomorrow(sheet)),
+        )
+        TripType.MULTI_DAY -> listOf(
+            EndChoice(EndAction.STOP_TODAY, TripCards.stopToday(day, sheet)),
+            EndChoice(EndAction.COMPLETE_TRIP, TripCards.completeTrip(sheet)),
+        )
+    }
 }
 
 /** The completion screen offers [여러 날로 바꾸기] for a single-day trip that was completed. */
