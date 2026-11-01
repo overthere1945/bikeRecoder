@@ -134,6 +134,7 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.te
 - PC: `:app:testDebugUnitTest` 통과, androidTest 컴파일 통과
 - 기기(S22, 2026-11-01): `RecordScreenTest` 20/20, `ChoiceSheetTest` 6/6, `SettingsScreenTest` 22/22(`V1.9.2`), 여백 수정 뒤 `ChoiceSheetTest`·`RecordScreenTest`·`TripStartDialogsTest`·`EndNavigationSheetTest` 통과
 - S22 실제 화면: 기록 시작 직후 정지 → 새 창 확인, 처음에 [저장] 카드가 내비게이션 바에 붙어 있어 여백을 더한 뒤 다시 확인, [버리기]로 시험 기록 지움
+- S25 설치(2026-11-01): main `e8c64b7`(1.9.1-dev → 1.9.2-dev). 설치 전 DB(9판) 백업, 열린 구간 0. 설치 뒤 표 14개의 개수·내용 해시가 설치 전과 같음, 설정 `V1.9.2`, 종류 버튼이 마지막 선택을 기억
 
 ## 알려진 한계
 
