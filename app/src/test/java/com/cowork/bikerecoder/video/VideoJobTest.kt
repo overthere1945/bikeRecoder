@@ -11,6 +11,7 @@ import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.core.video.Aspect
 import com.cowork.bikerecoder.core.video.Beats
 import com.cowork.bikerecoder.core.video.Camera
+import com.cowork.bikerecoder.core.video.FPS
 import com.cowork.bikerecoder.core.video.CameraPath
 import com.cowork.bikerecoder.core.video.FramePlan
 import com.cowork.bikerecoder.core.video.RideTimelineBuilder
@@ -125,7 +126,7 @@ class VideoJobTest {
         val sink = backend.sinks.single()
         assertEquals(plans, sink.plans)
         // The music is made before the start and handed over before the first frame (ruling V7).
-        assertEquals(plans.size * 1_000_000L / 30, backend.musicDurations.single())
+        assertEquals(plans.size * 1_000_000L / FPS, backend.musicDurations.single())
         assertEquals("audio:content://music/1", sink.events.first())
         assertEquals(plans.size, sink.events.count { it == "frame" })
         assertEquals(listOf("finish", "close"), sink.events.takeLast(2))
@@ -547,7 +548,7 @@ class VideoJobTest {
         assertEquals(listOf("analyze", "probe", "music"), backend.calls)
         assertEquals(planned.frames, backend.sinks.single().plans)
         assertEquals(listOf(planned.musicStartUs), backend.musicStarts)
-        assertEquals(listOf(planned.frames.size * 1_000_000L / 30), backend.musicDurations)
+        assertEquals(listOf(planned.frames.size * 1_000_000L / FPS), backend.musicDurations)
     }
 
     /** Music that cannot be read is refused at the analysis: no probe, no map, no pending job. */

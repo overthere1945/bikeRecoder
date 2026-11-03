@@ -2,6 +2,8 @@ package com.cowork.bikerecoder.video
 
 import android.content.Context
 import android.net.Uri
+import android.os.SystemClock
+import android.util.Log
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.cowork.bikerecoder.R
@@ -25,7 +27,10 @@ class BuiltInMusicBeatsTest {
     private fun assertBeats(res: Int, bpm: Double) {
         val name = context.resources.getResourceEntryName(res)
         val uri = Uri.parse("android.resource://${context.packageName}/raw/$name")
+        val started = SystemClock.elapsedRealtime()
         val beats = runBlocking { maker.analyze(uri) }.beats
+        // 분석 시간(스펙 §5.2, 판정 P12: 150초 곡에 2초 이하 목표). logcat 태그 BuiltInMusicBeats.
+        Log.i(TAG, "$name analysed in ${SystemClock.elapsedRealtime() - started} ms")
         assertNotNull("$name: no beat", beats)
         val found = 60_000_000.0 / beats!!.beatUs
         assertTrue("$name: $found BPM, expected $bpm", abs(found - bpm) <= 1.0)
@@ -40,4 +45,8 @@ class BuiltInMusicBeatsTest {
 
     @Test
     fun overTheHill() = assertBeats(R.raw.music_over_the_hill, 132.0)
+
+    private companion object {
+        const val TAG = "BuiltInMusicBeats"
+    }
 }

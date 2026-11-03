@@ -28,14 +28,26 @@ internal class MusicEnergy(private val sampleRate: Int, private val channels: In
     /** 다음에 들어올 모노 표본 번호. */
     private var index = 0L
 
-    /** 열린 창은 [firstOpen] ..< [nextWindow]; 창 k의 제곱합은 [sums]\[k % [sums].size]. */
+    /** 지금까지 받은 모노 표본 수. */
+    val samples: Long get() = index
+
+    /**
+     * 열린 창은 [firstOpen] ..< [nextWindow]; 창 k의 제곱합은 [sums]\[k % [RING]], 끝(다음 표본 번호)은 [ends]\[k % [RING]].
+     * 다음 창이 열리는 표본 [nextStart]와 가장 먼저 닫힐 창의 끝 [closeAt]을 미리 계산해 둔다.
+     */
     private var firstOpen = 0
     private var nextWindow = 0
     private var nextStart = 0L
-    private val sums = DoubleArray(BeatFinder.WINDOW / BeatFinder.HOP + 2)
+    private var closeAt = Long.MAX_VALUE
+    private val sums = DoubleArray(RING)
+    private val ends = LongArray(RING)
 
     private var values = FloatArray(1_024)
     private var count = 0
+
+    /** 버퍼를 한 번에 읽어 두는 곳(다시 쓴다). */
+    private var floats = FloatArray(0)
+    private var shorts = ShortArray(0)
 
     override val full: Boolean get() = index >= maxSamples
 
@@ -44,18 +56,28 @@ internal class MusicEnergy(private val sampleRate: Int, private val channels: In
     /** 디코더 출력 한 덩어리. [full]이 된 뒤의 표본은 버린다. */
     override fun push(buffer: ByteBuffer) {
         if (isFloat) {
-            val floats = buffer.asFloatBuffer()
-            while (floats.remaining() >= channels && !full) {
+            val source = buffer.asFloatBuffer()
+            val n = source.remaining() - source.remaining() % channels
+            if (floats.size < n) floats = FloatArray(n)
+            source.get(floats, 0, n)
+            var i = 0
+            while (i < n && !full) {
                 var sum = 0f
-                repeat(channels) { sum += floats.get() }
+                for (c in 0 until channels) sum += floats[i + c]
                 add(sum / channels)
+                i += channels
             }
         } else {
-            val shorts = buffer.asShortBuffer()
-            while (shorts.remaining() >= channels && !full) {
-                var sum = 0f
-                repeat(channels) { sum += shorts.get() / 32768f }
-                add(sum / channels)
+            val source = buffer.asShortBuffer()
+            val n = source.remaining() - source.remaining() % channels
+            if (shorts.size < n) shorts = ShortArray(n)
+            source.get(shorts, 0, n)
+            var i = 0
+            while (i < n && !full) {
+                var sum = 0
+                for (c in 0 until channels) sum += shorts[i + c]
+                add(sum / 32768f / channels)
+                i += channels
             }
         }
     }
@@ -63,16 +85,20 @@ internal class MusicEnergy(private val sampleRate: Int, private val channels: In
     /** 모노 표본 하나. */
     private fun add(sample: Float) {
         while (index >= nextStart) {
-            sums[nextWindow % sums.size] = 0.0
+            val slot = nextWindow % RING
+            sums[slot] = 0.0
+            ends[slot] = nextStart + windowSamples
+            if (firstOpen == nextWindow) closeAt = ends[slot]
             nextWindow++
             nextStart = startOf(nextWindow)
         }
         val square = sample.toDouble() * sample
-        for (w in firstOpen until nextWindow) sums[w % sums.size] += square
+        for (w in firstOpen until nextWindow) sums[w % RING] += square
         index++
-        while (firstOpen < nextWindow && startOf(firstOpen) + windowSamples <= index) {
-            emit(sqrt(sums[firstOpen % sums.size] / windowSamples).toFloat().coerceIn(0f, 1f))
+        while (index >= closeAt) {
+            emit(sqrt(sums[firstOpen % RING] / windowSamples).toFloat().coerceIn(0f, 1f))
             firstOpen++
+            closeAt = if (firstOpen < nextWindow) ends[firstOpen % RING] else Long.MAX_VALUE
         }
     }
 
@@ -83,4 +109,9 @@ internal class MusicEnergy(private val sampleRate: Int, private val channels: In
 
     /** 지금까지 다 찬 창들의 RMS. */
     fun energy(): FloatArray = values.copyOf(count)
+
+    private companion object {
+        /** 한 번에 열려 있을 수 있는 창 수의 상한(창이 간격의 두 배라 많아야 3개). */
+        const val RING = BeatFinder.WINDOW / BeatFinder.HOP + 2
+    }
 }
