@@ -190,8 +190,8 @@ class VideoViewModelTest {
         vm.open(TRIP, MediaKind.VIDEO)
         advanceUntilIdle()
         val i = inputs!!
-        assertEquals(720, VideoTimeline.plan(i.timeline, i.photos, VideoOptions(length = VideoLength.SHORT), i.dayStarts).size)
-        assertEquals(36, vm.sheet.value!!.dataNoticeMb, "50,000 B × 720 frames")
+        assertEquals(900, VideoTimeline.plan(i.timeline, i.photos, VideoOptions(length = VideoLength.SHORT), i.dayStarts).size)
+        assertEquals(45, vm.sheet.value!!.dataNoticeMb, "50,000 B × 900 frames")
 
         vm.closeSheet()
         vm.open(TRIP, MediaKind.IMAGE)

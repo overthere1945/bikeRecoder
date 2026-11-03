@@ -15,7 +15,8 @@ class VideoOptionsTest {
         assertEquals(true, o.hud)
         assertEquals(RouteColoring.DEFAULT, o.coloring)
         assertNull(o.musicUri)
-        assertEquals(24, FPS)
+        assertEquals(30, FPS)
+        assertEquals(8, framesOf(0.25))
     }
 
     @Test

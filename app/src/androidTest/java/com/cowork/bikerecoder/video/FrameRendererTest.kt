@@ -17,6 +17,7 @@ import com.cowork.bikerecoder.core.video.Aspect
 import com.cowork.bikerecoder.core.video.Box
 import com.cowork.bikerecoder.core.video.Camera
 import com.cowork.bikerecoder.core.video.CameraPath
+import com.cowork.bikerecoder.core.video.FPS
 import com.cowork.bikerecoder.core.video.FramePlan
 import com.cowork.bikerecoder.core.video.RouteColoring
 import com.cowork.bikerecoder.core.video.SceneKind
@@ -278,8 +279,8 @@ class FrameRendererTest {
             }
             return n
         }
-        val small = tinted(flatFrame(plan, index = 24 * 4 + 2)) // phase 0.08: radius ≈ 15u
-        val wide = tinted(flatFrame(plan, index = 24 * 4 + 14)) // phase 0.58: radius ≈ 23u
+        val small = tinted(flatFrame(plan, index = FPS * 4 + 2)) // phase 0.07: radius ≈ 15u
+        val wide = tinted(flatFrame(plan, index = FPS * 4 + 17)) // phase 0.57: radius ≈ 23u
         Log.i(TAG, "pulse ring pixels: small $small, wide $wide")
         assertTrue("the wide pulse fills the ring: $wide", wide > 1_200)
         assertTrue("the small pulse does not reach it: $small vs $wide", small * 5 < wide)
@@ -513,9 +514,9 @@ class FrameRendererTest {
         }
         val final = W * 0.8f
 
-        val third = width(renderer.frame(nth(SceneKind.PHOTO, 2)))
+        val fourth = width(renderer.frame(nth(SceneKind.PHOTO, 3)))
         val thirtieth = width(renderer.frame(nth(SceneKind.PHOTO, 29)))
-        assertTrue("3rd frame: $third of $final", third > 0.85f * final)
+        assertTrue("4th frame (about 0.1 s in): $fourth of $final", fourth > 0.85f * final)
         assertEquals("30th frame: the card's own size", final, thirtieth.toFloat(), 2f)
     }
 
@@ -647,7 +648,7 @@ class FrameRendererTest {
 
     @Test
     fun outroCardSixCellsAndStartEndDots() {
-        val frame = renderer(source = offline).frame(nth(SceneKind.OUTRO, 39))
+        val frame = renderer(source = offline).frame(nth(SceneKind.OUTRO, 50))
         val layout = FrameLayout.outro(W, H, 6)
         val card = layout.card
 

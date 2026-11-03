@@ -1,7 +1,12 @@
 package com.cowork.bikerecoder.core.video
 
+import kotlin.math.roundToInt
+
 /** 영상 초당 장 수. */
-const val FPS = 24
+const val FPS = 30
+
+/** [seconds]초에 해당하는 장 수(반올림). 장면 길이는 초로 적고 장 수는 여기서 얻는다. */
+fun framesOf(seconds: Double): Int = (seconds * FPS).roundToInt()
 
 /** 화면 비율: 세로 9:16, 가로 16:9. */
 enum class Aspect(val width: Int, val height: Int) { PORTRAIT(1080, 1920), LANDSCAPE(1920, 1080) }

@@ -16,14 +16,23 @@ class VideoTimelineTest {
     fun frameCountPerLength() {
         val timeline = simpleTimeline(600)
         val normal = VideoTimeline.plan(timeline, emptyList(), VideoOptions(), emptyList())
-        assertEquals(60 * 24, normal.size)
+        assertEquals(60 * 30, normal.size)
         assertEquals(normal.indices.toList(), normal.map { it.index })
-        assertEquals(72, normal.count(SceneKind.INTRO_OVERVIEW) + normal.count(SceneKind.INTRO_DESCENT))
-        assertEquals(29, normal.count(SceneKind.INTRO_OVERVIEW))
-        assertEquals(43, normal.count(SceneKind.INTRO_DESCENT))
-        assertEquals(96, normal.count(SceneKind.OUTRO))
-        assertEquals(30 * 24, VideoTimeline.plan(timeline, emptyList(), VideoOptions(length = VideoLength.SHORT), emptyList()).size)
-        assertEquals(120 * 24, VideoTimeline.plan(timeline, emptyList(), VideoOptions(length = VideoLength.LONG), emptyList()).size)
+        assertEquals(90, normal.count(SceneKind.INTRO_OVERVIEW) + normal.count(SceneKind.INTRO_DESCENT))
+        assertEquals(36, normal.count(SceneKind.INTRO_OVERVIEW))
+        assertEquals(54, normal.count(SceneKind.INTRO_DESCENT))
+        assertEquals(120, normal.count(SceneKind.OUTRO))
+        assertEquals(30 * 30, VideoTimeline.plan(timeline, emptyList(), VideoOptions(length = VideoLength.SHORT), emptyList()).size)
+        assertEquals(120 * 30, VideoTimeline.plan(timeline, emptyList(), VideoOptions(length = VideoLength.LONG), emptyList()).size)
+    }
+
+    @Test
+    fun plansCarryTheirSceneFrames() {
+        val plans = VideoTimeline.plan(simpleTimeline(600), emptyList(), VideoOptions(), emptyList())
+        val outro = plans.filter { it.kind == SceneKind.OUTRO }
+        assertEquals((0 until 120).toList(), outro.map { it.sceneFrame })
+        assertTrue(outro.all { it.sceneFrames == 120 && it.cardFrom == 36 })
+        assertEquals(54, plans.first { it.kind == SceneKind.INTRO_DESCENT }.sceneFrames)
     }
 
     @Test
@@ -31,8 +40,8 @@ class VideoTimelineTest {
         val timeline = simpleTimeline(600)
         val photos = List(8) { cue(it.toLong(), 30_000L + it * 70_000L) }
         val frames = VideoTimeline.plan(timeline, photos, VideoOptions(), emptyList())
-        assertEquals(1440, frames.size)
-        assertEquals(33 * 24, frames.count(SceneKind.RIDE))
+        assertEquals(1800, frames.size)
+        assertEquals(37 * 30, frames.count(SceneKind.RIDE))
         assertEquals(8 * 60, frames.count(SceneKind.PHOTO))
     }
 
@@ -42,14 +51,14 @@ class VideoTimelineTest {
         val photos = List(8) { cue(it.toLong(), 30_000L + it * 70_000L) }
         val frames = VideoTimeline.plan(timeline, photos, VideoOptions(photos = false), emptyList())
         assertEquals(0, frames.count(SceneKind.PHOTO))
-        assertEquals(53 * 24, frames.count(SceneKind.RIDE))
+        assertEquals(53 * 30, frames.count(SceneKind.RIDE))
     }
 
     @Test
     fun shortMoveIsNotStretched() {
         val frames = VideoTimeline.plan(simpleTimeline(20), emptyList(), VideoOptions(), emptyList())
-        assertEquals((3 + 20 + 4) * 24, frames.size)
-        assertEquals(20 * 24, frames.count(SceneKind.RIDE))
+        assertEquals((3 + 20 + 4) * 30, frames.size)
+        assertEquals(20 * 30, frames.count(SceneKind.RIDE))
     }
 
     @Test
@@ -131,9 +140,9 @@ class VideoTimelineTest {
         assertEquals(300_000L, dayStart)
         val frames = VideoTimeline.plan(timeline, emptyList(), VideoOptions(), timeline.dayStarts)
         val captioned = frames.filter { it.caption != null }
-        assertEquals(36, captioned.size)
+        assertEquals(45, captioned.size)
         assertTrue(captioned.all { it.kind == SceneKind.RIDE && it.caption == "2일째 · 10월 18일" })
-        assertEquals((captioned.first().index until captioned.first().index + 36).toList(), captioned.map { it.index })
+        assertEquals((captioned.first().index until captioned.first().index + 45).toList(), captioned.map { it.index })
         assertTrue(captioned.first().moveMs >= dayStart)
         assertTrue(frames[captioned.first().index - 1].moveMs < dayStart)
     }
@@ -143,7 +152,7 @@ class VideoTimelineTest {
         val timeline = simpleTimeline(600)
         val frames = VideoTimeline.plan(timeline, listOf(cue(1, 300_000)), VideoOptions(), emptyList())
         val overview = frames.filter { it.kind == SceneKind.INTRO_OVERVIEW }
-        assertEquals(29, overview.size)
+        assertEquals(36, overview.size)
         // The camera turns over the overview, orbits during a photo and rises at the start of the outro: a new map every frame there.
         assertTrue(overview.all { !it.reuseMap })
         assertTrue(overview.all { it.moveMs == 0L })
@@ -153,7 +162,7 @@ class VideoTimelineTest {
         assertEquals(60, photo.size)
         assertTrue(photo.all { !it.reuseMap })
         val outro = frames.filter { it.kind == SceneKind.OUTRO }
-        assertEquals(List(36) { false } + List(60) { true }, outro.map { it.reuseMap })
+        assertEquals(List(45) { false } + List(75) { true }, outro.map { it.reuseMap })
         assertTrue(outro.all { it.moveMs == timeline.totalMoveMs })
         assertEquals(0f, overview.first().sceneProgress)
         assertEquals(1f, outro.last().sceneProgress)
@@ -162,11 +171,11 @@ class VideoTimelineTest {
     @Test
     fun fadeOnLastSecond() {
         val frames = VideoTimeline.plan(simpleTimeline(600), emptyList(), VideoOptions(), emptyList())
-        val last = frames.takeLast(24)
+        val last = frames.takeLast(30)
         assertEquals(0f, last.first().fade)
         assertEquals(1f, last.last().fade)
         assertTrue(last.zipWithNext().all { (a, b) -> b.fade > a.fade })
-        assertTrue(frames.dropLast(24).all { it.fade == 0f })
+        assertTrue(frames.dropLast(30).all { it.fade == 0f })
     }
 
     @Test
@@ -179,7 +188,7 @@ class VideoTimelineTest {
         val frames = VideoTimeline.plan(timeline, chosen, VideoOptions(length = VideoLength.LONG), timeline.dayStarts)
         frames.forEach { timeline.at(it.moveMs) }
         val elapsedMs = (System.nanoTime() - started) / 1_000_000
-        assertEquals(120 * 24, frames.size)
+        assertEquals(120 * 30, frames.size)
         assertTrue(elapsedMs < 1_000, "took $elapsedMs ms")
     }
 }

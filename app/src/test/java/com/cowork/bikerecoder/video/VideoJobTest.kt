@@ -124,7 +124,7 @@ class VideoJobTest {
         val sink = backend.sinks.single()
         assertEquals(plans, sink.plans)
         // The music is made before the start and handed over before the first frame (ruling V7).
-        assertEquals(plans.size * 1_000_000L / 24, backend.musicDurations.single())
+        assertEquals(plans.size * 1_000_000L / 30, backend.musicDurations.single())
         assertEquals("audio:content://music/1", sink.events.first())
         assertEquals(plans.size, sink.events.count { it == "frame" })
         assertEquals(listOf("finish", "close"), sink.events.takeLast(2))
@@ -631,7 +631,7 @@ class VideoJobTest {
 
     @Test
     fun bytesPerFrameRecordedOnlyForSatellite() = runBlocking {
-        assertEquals(720, plans.size)
+        assertEquals(900, plans.size)
         backend.probe = SatelliteCheck.OK
         backend.received.addAll(listOf(1_000_000L, 37_000_000L))
 
@@ -639,7 +639,7 @@ class VideoJobTest {
         awaitEnd()
         awaitIdle()
 
-        assertEquals(50_000.0, store.bytesPerFrame())
+        assertEquals(40_000.0, store.bytesPerFrame())
 
         // Made on the plain map instead: its bytes say nothing about satellite tiles.
         backend.probe = SatelliteCheck.FAILED
@@ -647,7 +647,7 @@ class VideoJobTest {
         assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
         awaitEnd()
         awaitIdle()
-        assertEquals(50_000.0, store.bytesPerFrame())
+        assertEquals(40_000.0, store.bytesPerFrame())
 
         // The counter unsupported on this phone.
         backend.probe = SatelliteCheck.OK
@@ -655,7 +655,7 @@ class VideoJobTest {
         backend.received.addAll(listOf(null, null))
         assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
         awaitEnd()
-        assertEquals(50_000.0, store.bytesPerFrame())
+        assertEquals(40_000.0, store.bytesPerFrame())
     }
 
     @Test
