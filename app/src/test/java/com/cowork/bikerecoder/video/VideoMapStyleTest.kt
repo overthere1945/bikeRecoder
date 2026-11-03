@@ -1,5 +1,8 @@
 package com.cowork.bikerecoder.video
 
+import com.cowork.bikerecoder.core.activity.ActivityProfile
+import com.cowork.bikerecoder.core.activity.ActivityType
+import com.cowork.bikerecoder.core.video.CameraPath
 import com.cowork.bikerecoder.map.TileSource
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -90,8 +93,10 @@ class VideoMapStyleTest {
             json("""["match",["get","class"],["motorway","trunk","primary","secondary"],true,false]"""),
             road["filter"],
         )
-        // Road names only close up, not on the sky view.
-        assertEquals(15, road["minzoom"]!!.jsonPrimitive.int)
+        // Road names at every ride zoom (ruling P10: the lowest is bike 14.8 − 0.4 = 14.4), not on the far sky view.
+        assertEquals(14, road["minzoom"]!!.jsonPrimitive.int)
+        val lowestRide = ActivityType.entries.minOf { ActivityProfile.of(it).cameraZoomMin } + CameraPath.FAST_ZOOM
+        assertTrue(road["minzoom"]!!.jsonPrimitive.int <= lowestRide, "road minzoom above the lowest ride zoom $lowestRide")
         // Korean name first (as the app's own map).
         val koreanName = json("""["coalesce",["get","name:ko"],["get","name"]]""")
         assertEquals(koreanName, place["layout"]!!.jsonObject["text-field"])

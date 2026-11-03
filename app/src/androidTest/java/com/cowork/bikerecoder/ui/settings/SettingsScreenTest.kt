@@ -128,7 +128,7 @@ class SettingsScreenTest {
     @Test
     fun showsVersionAndTogglesVoice() {
         show()
-        composeRule.onNodeWithText("V1.10.0").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("V1.11.0").performScrollTo().assertIsDisplayed()
 
         composeRule.onNodeWithTag(SettingsTags.VOICE).performScrollTo().assertIsOn()
         composeRule.onNodeWithTag(SettingsTags.VOICE).performClick()
@@ -193,6 +193,7 @@ class SettingsScreenTest {
             composeRule.onAllNodesWithText("사용 중인 저장 공간 5.0 MB").fetchSemanticsNodes().isNotEmpty()
         }
         ATTRIBUTIONS.forEach { composeRule.onNodeWithText(it).performScrollTo().assertIsDisplayed() }
+        composeRule.onNodeWithText("기본 배경음악: bikeRecoder가 직접 만든 곡").performScrollTo().assertIsDisplayed()
     }
 
     @Test

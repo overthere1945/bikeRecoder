@@ -20,8 +20,10 @@ import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.core.video.Aspect
+import com.cowork.bikerecoder.core.video.FPS
 import com.cowork.bikerecoder.core.video.VideoLength
 import com.cowork.bikerecoder.core.video.VideoOptions
+import com.cowork.bikerecoder.core.video.VideoTimeline
 import com.cowork.bikerecoder.data.TripEntity
 import com.cowork.bikerecoder.data.toEntity
 import com.cowork.bikerecoder.search.KakaoLocalClient
@@ -88,7 +90,12 @@ class VideoJobDeviceTest {
     @Test
     fun shortPortraitVideoIsMadeSavedAndRecorded() = runBlocking {
         val job = container.videoJob
-        val options = VideoOptions(aspect = Aspect.PORTRAIT, length = VideoLength.SHORT, photos = true, hud = true, musicUri = null)
+        val options = VideoOptions(
+            aspect = Aspect.PORTRAIT, length = VideoLength.SHORT, photos = true, hud = true, musicUri = null, builtInMusic = null,
+        )
+        // V1.11.0: the length follows the distance (no music → no beat snapping), so the plan gives the exact duration.
+        val inputs = VideoInputsLoader(container.rideStore, container.postStore, container.tripStore, container.tripLabels).load(tripId)!!
+        val expectedS = VideoTimeline.plan(inputs.timeline, inputs.photos, options, inputs.dayStarts).size.toDouble() / FPS
         val started = SystemClock.elapsedRealtime()
 
         assertEquals(StartResult.STARTED, job.startVideo(tripId, options))
@@ -115,7 +122,8 @@ class VideoJobDeviceTest {
             assertTrue("size $size", size == (1080 to 1920) || size == (720 to 1280))
             assertEquals(done.downscaled, size == (720 to 1280))
             val durationS = video.getLong(MediaFormat.KEY_DURATION) / 1e6
-            assertTrue("duration $durationS s", abs(durationS - 30.0) <= 1.0)
+            assertTrue("duration $durationS s, planned $expectedS s", abs(durationS - expectedS) <= 2.0 / FPS)
+            assertTrue("within the maximum: $durationS s", durationS <= VideoLength.SHORT.seconds + 1.0 / FPS)
             assertEquals("no music track", 1, extractor.trackCount)
         } finally {
             extractor.release()

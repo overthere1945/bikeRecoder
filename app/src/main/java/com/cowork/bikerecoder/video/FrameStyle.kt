@@ -73,12 +73,13 @@ internal object FrameStyle {
     const val TITLE_BADGE_GAP = 8f
     const val TITLE_DISTANCE_SIZE = 24f
 
-    /** The title fades over the first frames of the descent (§2.2). */
-    const val TITLE_FADE_FRAMES = 4
+    /** The title fades over the first part of the descent (§2.2): 4 frames at 24 fps. */
+    const val TITLE_FADE_SECONDS = 1.0 / 6
 
     // §3.6 the photo card.
-    const val PHOTO_IN_FRAMES = 7
-    const val PHOTO_OUT_FRAMES = 7
+    /** The card pops in over the photo scene's first seconds and shrinks away over its last (7 frames each at 24 fps). */
+    const val PHOTO_IN_SECONDS = 7.0 / 24
+    const val PHOTO_OUT_SECONDS = 7.0 / 24
     const val PHOTO_START_SCALE = 0.85f
     const val PHOTO_OVERSHOOT_SCALE = 1.04f
     const val PHOTO_END_SCALE = 0.95f

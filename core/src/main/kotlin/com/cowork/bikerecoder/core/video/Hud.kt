@@ -4,6 +4,7 @@ import com.cowork.bikerecoder.core.model.GeoMath
 import com.cowork.bikerecoder.core.post.HeartRateColor
 import com.cowork.bikerecoder.core.post.HeartRateSample
 import com.cowork.bikerecoder.core.recording.AscentCounter
+import kotlin.math.roundToLong
 
 /**
  * 숫자 띠 한 장의 값. [altitudeM]·[heartBpm]이 null이면 그 칸은 생략한다.
@@ -72,6 +73,9 @@ internal class RouteDistance(private val timeline: RideTimeline) {
         }
     }
 
+    /** 경로 전체 거리(m). 지점이 없으면 0. */
+    val total: Double = cumulative.lastOrNull() ?: 0.0
+
     fun at(located: Located): Double {
         val i = located.doneIndex
         if (i >= points.lastIndex || located.fraction == 0.0) return cumulative[i]
@@ -79,6 +83,27 @@ internal class RouteDistance(private val timeline: RideTimeline) {
     }
 
     fun atMove(moveMs: Long): Double = at(timeline.at(moveMs))
+
+    /**
+     * 거리가 [alongM]에 처음 닿는 이동 시각([atMove]의 역, 스펙 §2.1). [alongM]은 0~[total]로 자르고, 두 지점 사이는 직선으로 보간한다.
+     * 같은 거리에 머문 지점(일시정지·구간 사이)은 그 처음 지점의 이동 시각이다.
+     */
+    fun moveAt(alongM: Double): Long {
+        if (points.isEmpty()) return 0L
+        val d = alongM.coerceIn(0.0, total)
+        // 누적 거리가 d 이상인 첫 지점(그 앞 지점은 d 미만이므로 그 사이 거리는 0보다 크다).
+        var lo = 0
+        var hi = points.lastIndex
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (cumulative[mid] >= d) hi = mid else lo = mid + 1
+        }
+        if (lo == 0) return points[0].moveMs
+        val a = points[lo - 1]
+        val b = points[lo]
+        val f = (d - cumulative[lo - 1]) / (cumulative[lo] - cumulative[lo - 1])
+        return a.moveMs + ((b.moveMs - a.moveMs) * f).roundToLong()
+    }
 }
 
 /**

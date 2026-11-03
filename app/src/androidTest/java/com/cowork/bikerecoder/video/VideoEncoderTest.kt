@@ -6,6 +6,7 @@ import android.media.MediaFormat
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.cowork.bikerecoder.core.video.Aspect
+import com.cowork.bikerecoder.core.video.FPS
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -30,7 +31,7 @@ class VideoEncoderTest {
     private fun newFile(): File = File.createTempFile("video_encoder_test", ".mp4", context.cacheDir).also { files += it }
 
     /**
-     * 48장(2초)을 [first] 색 24장, [second] 색 23장, 마지막 1장 흰색으로 그려 [file]에 쓰고 인코더 크기를 돌려준다.
+     * 2초([FRAMES] = 2·[FPS]장)를 [first] 색 [FPS]장, [second] 색 [FPS] − 1장, 마지막 1장 흰색으로 그려 [file]에 쓰고 인코더 크기를 돌려준다.
      * 장마다 색이 정해져 있어 빠지거나 밀린 장, 끝에서 잘린 장을 잡는다.
      */
     private fun encode(file: File, aspect: Aspect, first: Int, second: Int, forceFallback: Boolean = false): Pair<Int, Int> {
@@ -38,7 +39,7 @@ class VideoEncoderTest {
             val (encoder, fellBack) = VideoEncoder.open(pfd.fileDescriptor, aspect, forceFallback)
             encoder.use {
                 assertEquals(forceFallback, fellBack)
-                repeat(48) { i -> encoder.drawFrame { canvas -> canvas.drawColor(colorOf(i, first, second)) } }
+                repeat(FRAMES) { i -> encoder.drawFrame { canvas -> canvas.drawColor(colorOf(i, first, second)) } }
                 encoder.finish()
             }
             return encoder.width to encoder.height
@@ -50,28 +51,28 @@ class VideoEncoderTest {
         assertEquals(MediaFormat.MIMETYPE_VIDEO_AVC, video.format.getString(MediaFormat.KEY_MIME))
         assertEquals(width, video.format.getInteger(MediaFormat.KEY_WIDTH))
         assertEquals(height, video.format.getInteger(MediaFormat.KEY_HEIGHT))
-        assertTrue("frames ${video.sampleCount}", abs(video.sampleCount - 48) <= 1)
+        assertTrue("frames ${video.sampleCount}", abs(video.sampleCount - FRAMES) <= 1)
         assertTrue("duration ${video.durationUs}", abs(video.durationUs - 2_000_000L) <= 100_000L)
-        // 프레임 시각 = index / 24: 마지막 장(47번)은 1.958초.
-        assertTrue("last pts ${video.lastPtsUs}", abs(video.lastPtsUs - 47 * 1_000_000L / 24) <= 1_000L)
-        // 키프레임 1초마다: 0번과 24번 근처.
+        // 프레임 시각 = index / FPS: 마지막 장(FRAMES − 1번)은 2초보다 한 장 앞(30 fps면 1.967초).
+        assertTrue("last pts ${video.lastPtsUs}", abs(video.lastPtsUs - (FRAMES - 1) * 1_000_000L / FPS) <= 1_000L)
+        // 키프레임 1초마다: 0번과 FPS번 근처.
         assertEquals(0, video.syncIndices.first())
-        assertTrue("sync ${video.syncIndices}", video.syncIndices.any { it in 23..25 })
+        assertTrue("sync ${video.syncIndices}", video.syncIndices.any { it in FPS - 1..FPS + 1 })
         assertTrue("no audio", TestMedia.tracks(file, "audio/").isEmpty())
     }
 
     private fun colorOf(index: Int, first: Int, second: Int): Int = when {
-        index < 24 -> first
-        index < 47 -> second
+        index < FPS -> first
+        index < FRAMES - 1 -> second
         else -> Color.WHITE
     }
 
-    /** 48장 모두 풀어, 장마다 가운데 색이 그 순번에 그린 색과 같다(빠지거나 밀린 장, 끝에서 잘린 장이 없다). */
+    /** [FRAMES]장 모두 풀어, 장마다 가운데 색이 그 순번에 그린 색과 같다(빠지거나 밀린 장, 끝에서 잘린 장이 없다). */
     private fun assertFrameColors(file: File, first: Int, second: Int) {
         val frames = TestMedia.decodeVideoCenters(file)
-        assertEquals(48, frames.size)
+        assertEquals(FRAMES, frames.size)
         frames.forEach { frame ->
-            val index = Math.round(frame.ptsUs * 24 / 1_000_000.0).toInt()
+            val index = Math.round(frame.ptsUs * FPS / 1_000_000.0).toInt()
             val expected = yuvOf(colorOf(index, first, second))
             val actual = intArrayOf(frame.y, frame.u, frame.v)
             assertTrue(
@@ -120,5 +121,10 @@ class VideoEncoderTest {
         assertEquals(1280 to 720, encode(landscape, Aspect.LANDSCAPE, Color.RED, Color.GREEN, forceFallback = true))
         assertVideo(landscape, 1280, 720)
         assertFrameColors(landscape, Color.RED, Color.GREEN)
+    }
+
+    private companion object {
+        /** 2초 영상의 장 수. */
+        const val FRAMES = 2 * FPS
     }
 }

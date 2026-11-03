@@ -35,20 +35,20 @@ class ActivityProfileTest {
         assertEquals(80.0 / 3.6, bike.maxSpeedMps)
         assertEquals(3.0 / 3.6, bike.minGapSpeedMps)
         assertEquals(KmBasis.DAY, bike.kmBasis)
-        assertEquals(10.0 to 30.0, bike.cameraSlowKmh to bike.cameraFastKmh)
+        assertEquals(14.8 to 16.8, bike.cameraZoomMin to bike.cameraZoomMax)
 
         val run = ActivityProfile.of(ActivityType.RUN)
         assertEquals(listOf(2.0, 4.0), listOf(kmh(run.pauseBelowMps), kmh(run.resumeAtMps)).map { Math.round(it * 1e9) / 1e9 })
         assertEquals(5_000L to 2_000L, run.pauseAfterMs to run.resumeAfterMs)
         assertEquals(10.0, run.resumeDistanceM)
         assertEquals(KmBasis.SEGMENT, run.kmBasis)
-        assertEquals(6.0 to 15.0, run.cameraSlowKmh to run.cameraFastKmh)
+        assertEquals(15.6 to 17.6, run.cameraZoomMin to run.cameraZoomMax)
 
         val walk = ActivityProfile.of(ActivityType.WALK)
         assertEquals(10_000L to 3_000L, walk.pauseAfterMs to walk.resumeAfterMs)
         assertEquals(2.5 / 3.6, walk.resumeAtMps)
         assertEquals(KmBasis.SEGMENT, walk.kmBasis)
-        assertEquals(2.0 to 6.0, walk.cameraSlowKmh to walk.cameraFastKmh)
+        assertEquals(15.6 to 17.6, walk.cameraZoomMin to walk.cameraZoomMax)
 
         val hike = ActivityProfile.of(ActivityType.HIKE)
         assertEquals(0.7 / 3.6, hike.pauseBelowMps)
@@ -58,7 +58,7 @@ class ActivityProfileTest {
         assertEquals(10.0, hike.resumeDistanceM)
         assertEquals(40.0 / 3.6, hike.maxSpeedMps)
         assertEquals(KmBasis.NONE, hike.kmBasis)
-        assertEquals(2.0 to 6.0, hike.cameraSlowKmh to hike.cameraFastKmh)
+        assertEquals(15.2 to 17.4, hike.cameraZoomMin to hike.cameraZoomMax)
     }
 
     @Test

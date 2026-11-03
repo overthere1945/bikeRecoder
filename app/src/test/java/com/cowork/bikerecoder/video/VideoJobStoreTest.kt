@@ -4,6 +4,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.cowork.bikerecoder.core.video.Aspect
+import com.cowork.bikerecoder.core.video.BuiltInMusic
 import com.cowork.bikerecoder.core.video.RouteColoring
 import com.cowork.bikerecoder.core.video.VideoLength
 import com.cowork.bikerecoder.core.video.VideoOptions
@@ -17,6 +18,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -70,16 +72,58 @@ class VideoJobStoreTest {
 
         val bytes = File(dir, "video_job.preferences_pb").readBytes().toString(Charsets.ISO_8859_1)
         assertFalse(bytes.contains("audio%3A12"), bytes)
-        assertFalse(bytes.contains("music", ignoreCase = true), bytes)
+        assertFalse(bytes.contains("content://"), bytes)
     }
 
     @Test
-    fun `options json round trip drops the music and broken json reads as defaults`() {
+    fun `options json round trip drops the picked file and broken json reads as defaults`() {
         val json = VideoOptionsJson.encode(chosen)
 
-        assertFalse(json.contains("music", ignoreCase = true), json)
+        assertFalse(json.contains("audio"), json)
         assertEquals(chosen.copy(musicUri = null), VideoOptionsJson.decode(json))
         assertEquals(VideoOptions(), VideoOptionsJson.decode("{not json"))
+    }
+
+    @Test
+    fun missingMusicMeansSunnyPedal() {
+        val json = """{"aspect":"LANDSCAPE","length":"LONG","photos":false,"hud":true,"coloring":"DEFAULT"}"""
+
+        assertEquals(BuiltInMusic.SUNNY_PEDAL, VideoOptionsJson.decode(json).builtInMusic)
+        assertEquals(BuiltInMusic.SUNNY_PEDAL, VideoOptionsJson.decode("""{"music":"no_such_track"}""").builtInMusic)
+    }
+
+    @Test
+    fun noneRoundTrips() {
+        val json = VideoOptionsJson.encode(VideoOptions(builtInMusic = null))
+
+        assertTrue(json.contains("\"music\":\"none\""), json)
+        assertNull(VideoOptionsJson.decode(json).builtInMusic)
+        assertNull(VideoOptionsJson.decode("""{"music":"none"}""").builtInMusic)
+    }
+
+    @Test
+    fun builtInRoundTrips() {
+        BuiltInMusic.entries.forEach { music ->
+            val json = VideoOptionsJson.encode(VideoOptions(builtInMusic = music))
+
+            assertTrue(json.contains("\"music\":\"${music.key}\""), json)
+            assertEquals(music, VideoOptionsJson.decode(json).builtInMusic)
+        }
+    }
+
+    @Test
+    fun pickedFileNotWritten() {
+        val json = VideoOptionsJson.encode(VideoOptions(musicUri = "content://music/1", builtInMusic = null))
+
+        assertFalse(json.contains("content://"), json)
+        assertTrue(json.contains("\"music\":\"none\""), json)
+        assertEquals(VideoOptions(builtInMusic = null), VideoOptionsJson.decode(json))
+    }
+
+    @Test
+    fun `the last options keep the built in track and forget a picked file`() = runTest {
+        VideoJobStore(dataStore()).saveOptions(VideoOptions(builtInMusic = BuiltInMusic.WIND_ROAD))
+        assertEquals(BuiltInMusic.WIND_ROAD, reopen().lastOptions.first().builtInMusic)
     }
 
     @Test

@@ -41,6 +41,32 @@ class HudTest {
     }
 
     @Test
+    fun moveAtInvertsAtMove() {
+        // 0~50 m(0~10초), 1 km 떨어진 곳에서 다시 50 m(10~20초). 옮겨 간 거리는 세지 않는다.
+        val first = straightPoints(0, 11, stepM = 5.0)
+        val second = straightPoints(3_600_000, 11, startM = 1_050.0, stepM = 5.0)
+        val timeline = RideTimelineBuilder.build(
+            listOf(segment(1, 0) to first, segment(2, 3_600_000, LocalDate.of(2026, 10, 17)) to second),
+            SEOUL,
+        )
+        val route = timeline.routeDistance
+        assertEquals(100.0, route.total, 1e-6)
+        for (k in 0 until 20) {
+            val d = route.total * k / 19
+            assertEquals(d, route.atMove(route.moveAt(d)), 0.5)
+        }
+        // 구간 사이(50 m)는 다음 구간의 첫 지점, 범위 밖은 처음·끝.
+        assertEquals(11, timeline.at(route.moveAt(50.0)).doneIndex)
+        assertEquals(0L, route.moveAt(-5.0))
+        assertEquals(timeline.totalMoveMs, route.moveAt(1_000.0))
+        // 같은 자리에 머문 동안(1~3초, 거리 0)은 그 처음 시각.
+        val stopped = listOf(trackPoint(0, 0.0), trackPoint(1_000, 5.0), trackPoint(2_000, 5.0), trackPoint(3_000, 5.0), trackPoint(4_000, 10.0))
+        val stoppedRoute = timelineOf(stopped).routeDistance
+        assertEquals(1_000L, stoppedRoute.moveAt(5.0))
+        assertEquals(3_500L, stoppedRoute.moveAt(7.5))
+    }
+
+    @Test
     fun hudHeartWithinThirtySeconds() {
         val timeline = simpleTimeline(120)
         assertEquals(130, Hud.at(60_000, timeline, listOf(HeartRateSample(90_000, 130))).heartBpm)

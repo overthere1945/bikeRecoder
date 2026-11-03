@@ -14,6 +14,7 @@ import kotlin.math.log2
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
+import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sinh
 import kotlin.math.tan
@@ -21,41 +22,63 @@ import kotlin.math.tan
 /** 지도 카메라 한 장. [bearing]은 0~360°(0 = 북), [tilt]는 0°(위에서) ~ 60°. */
 data class Camera(val center: GeoPoint, val zoom: Double, val bearing: Double, val tilt: Double)
 
-/** 프레임별 카메라(스펙 §2). */
+/** 프레임별 카메라(스펙 §2, 높이·기울기·도는 시점은 영상 다듬기 2 스펙 §4). */
 object CameraPath {
 
+    /** 주행 기울기: 느린 곳(그리고 기본) [TILT], 빠른 곳 [FAST_TILT]. */
     const val TILT = 60.0
+    const val FAST_TILT = 55.0
 
-    /** 주행 확대: [SLOW_KMH] 이하면 [ZOOM_SLOW], [FAST_KMH] 이상이면 [ZOOM_FAST], 그 사이는 직선. */
-    const val ZOOM_SLOW = 17.4
-    const val ZOOM_FAST = 16.6
-    const val SLOW_KMH = 10.0
-    const val FAST_KMH = 30.0
+    /** 빠르기([FramePlan.speed])가 이 이상이면 빠른 곳, [SLOW_PACE] 이하면 느린 곳, 그 사이는 직선으로 잇는다(스펙 §4.2). */
+    const val FAST_PACE = 1.5
+    const val SLOW_PACE = 0.75
 
-    /** 주행 확대가 영상 1초에 바뀌는 최대량. */
-    const val ZOOM_RATE_PER_S = 0.25
+    /** 기준 확대 z0에 더하는 값: 빠른 곳 [FAST_ZOOM](멀리), 느린 곳 [SLOW_ZOOM](가까이). */
+    const val FAST_ZOOM = -0.4
+    const val SLOW_ZOOM = 0.3
 
-    /** 속도를 재는 최근 이동 시간. */
-    const val SPEED_WINDOW_MS = 8_000L
-    const val LOOK_AHEAD_M = 120.0
+    /** 주행 확대·기울기가 영상 1초에 바뀌는 최대량. */
+    const val ZOOM_RATE_PER_S = 0.3
+    const val TILT_RATE_PER_S = 4.0
+
+    /** 진행 방향은 경로를 따라 max([LOOK_AHEAD_MIN_M], [LOOK_AHEAD_S]초 동안 갈 거리) 앞을 본다. */
+    const val LOOK_AHEAD_S = 2.0
+    const val LOOK_AHEAD_MIN_M = 60.0
     const val MAX_TURN_DEG_PER_S = 45.0
 
-    /** 흔들기: 따라가는 방향에 ±[SWAY_DEG]°, 영상 시간 [SWAY_PERIOD_S]초 주기의 사인. */
-    const val SWAY_DEG = 8.0
-    const val SWAY_PERIOD_S = 16.0
+    /** 도는 시점: 따라가는 방향에 ±[ORBIT_DEG]°, 이동 장면 시간 [ORBIT_PERIOD_S]초 주기의 사인. */
+    const val ORBIT_DEG = 25.0
+    const val ORBIT_PERIOD_S = 12.0
+
+    /** 내려가기에서 짧은 쪽 보간에 더하는 감아 돌기: 도는 쪽 부호 × sin(π·t) × 이 값(판정 P11: 왼쪽으로 돌면 왼쪽으로 감는다). */
+    const val DESCENT_SPIRAL_DEG = 30.0
 
     /**
-     * 연속한 두 주행 프레임의 직선거리가 그 사이 경로로 지나온 거리보다 이만큼 넘게 길면(구간 사이를 건너뜀) 확대·방향 평활을
+     * 연속한 두 주행 프레임의 직선거리가 그 사이 경로로 지나온 거리보다 이만큼 넘게 길면(구간 사이를 건너뜀) 확대·기울기·방향 평활을
      * 다시 시작한다(판정 J2: 구간 사이 이동은 경로 거리 0으로 센다. 이어진 긴 주행은 프레임당 이동이 커도 평활을 유지).
      */
     const val JUMP_M = 500.0
     const val PHOTO_ORBIT_DEG = 40.0
 
+    /** 사진 장면에서 다가가는 확대(주행 확대 + 이 값까지). */
+    const val PHOTO_PUSH_ZOOM = 0.3
+
     /** 현재 위치가 놓일 화면 높이(위에서부터의 비율). */
     const val MARKER_FROM_TOP = 2.0 / 3
 
-    /** 지수 평활: 프레임마다 목표 방향과의 차이 중 이만큼만 따라간다(그 뒤 초당 [MAX_TURN_DEG_PER_S] 상한). */
-    private const val SMOOTHING = 0.15
+    /** 전체 경로 지도(하늘 위·요약 이미지·공유 카드)가 이보다 더 들어가지 않는다(아주 짧은 경로). */
+    const val OVERVIEW_MAX_ZOOM = 17.4
+
+    /** 기준 확대 z0: 현재 위치가 1초에 짧은 변 1080 px 기준 이만큼 간다(화면 폭의 약 1/3, 스펙 §4.1). */
+    private const val TARGET_PX_PER_S = 350.0
+    private const val TARGET_SHORT_SIDE_PX = 1080.0
+
+    /**
+     * 따라가기: 초당 [FOLLOW_FPS]장에서 프레임마다 목표 방향과의 차이 중 1 − 이 값(15%)만큼 따라간다. 다른 초당 장 수에서는
+     * 1 − 0.85^(30 / fps)로 같은 시간에 같은 만큼 따라간다(그 뒤 초당 [MAX_TURN_DEG_PER_S] 상한).
+     */
+    private const val FOLLOW_KEEP = 0.85
+    private const val FOLLOW_FPS = 30.0
 
     /** 전체 경로 지도의 바깥 여백(각 변, 화면 크기 비율). */
     private const val OVERVIEW_MARGIN = 0.1
@@ -73,13 +96,27 @@ object CameraPath {
     private const val MIN_LOOK_M = 25.0
 
     /**
-     * 속도(km/h)에 맞는 주행 확대(스펙 §2.1). [slowKmh] 이하면 가장 가깝게, [fastKmh] 이상이면 가장 멀리 본다.
-     * 기본값은 자전거 기준이고, 다른 종류는 [ActivityProfile.cameraSlowKmh]·[ActivityProfile.cameraFastKmh](스펙 V1.9.0 §5.1)를 넘긴다.
+     * 영상마다 정하는 기준 확대 z0(스펙 §4.1): 평균 지상 빠르기 v = [totalM] / [rideSeconds]일 때 현재 위치가 1초에
+     * 350 px × [shortSidePx] / 1080 가도록 z0 = log2(C·cos φ · px / (512 · v)), φ = [latDeg]. [type]의
+     * [ActivityProfile.cameraZoomMin]~[ActivityProfile.cameraZoomMax]로 자르고, 움직이지 않으면(v ≤ 0) 가장 가깝게 본다.
      */
-    fun zoomForSpeed(kmh: Double, slowKmh: Double = SLOW_KMH, fastKmh: Double = FAST_KMH): Double {
-        val t = ((kmh - slowKmh) / (fastKmh - slowKmh)).coerceIn(0.0, 1.0)
-        return ZOOM_SLOW + (ZOOM_FAST - ZOOM_SLOW) * t
+    fun baseZoom(totalM: Double, rideSeconds: Double, latDeg: Double, shortSidePx: Int, type: ActivityType): Double {
+        val profile = ActivityProfile.of(type)
+        val v = if (rideSeconds > 0.0) totalM / rideSeconds else 0.0
+        if (!(v > 0.0) || !v.isFinite()) return profile.cameraZoomMax
+        val px = TARGET_PX_PER_S * shortSidePx / TARGET_SHORT_SIDE_PX
+        val z0 = log2(EARTH_CIRCUMFERENCE_M * cos(Math.toRadians(latDeg)) * px / (TILE_SIZE * v))
+        return z0.coerceIn(profile.cameraZoomMin, profile.cameraZoomMax)
     }
+
+    /** 빠른 곳 0 ~ 느린 곳 1([FAST_PACE] 이상 0, [SLOW_PACE] 이하 1, 그 사이 직선). */
+    private fun slowness(speed: Double) = ((FAST_PACE - speed) / (FAST_PACE - SLOW_PACE)).coerceIn(0.0, 1.0)
+
+    /** 빠르기 [speed]에서 z0에 더하는 확대(빠른 곳 [FAST_ZOOM] ~ 느린 곳 [SLOW_ZOOM], 스펙 §4.2). */
+    internal fun zoomOffset(speed: Double): Double = FAST_ZOOM + (SLOW_ZOOM - FAST_ZOOM) * slowness(speed)
+
+    /** 빠르기 [speed]의 기울기(빠른 곳 [FAST_TILT] ~ 느린 곳 [TILT], 스펙 §4.2). */
+    internal fun tiltFor(speed: Double): Double = FAST_TILT + (TILT - FAST_TILT) * slowness(speed)
 
     /**
      * 높이 [heightPx]인 화면에서 확대 [zoom]·기울기 [tiltDeg]일 때, 화면 위에서 [markerFromTop] 높이의 땅이 화면 중심의 땅보다
@@ -95,17 +132,22 @@ object CameraPath {
     }
 
     /**
-     * [plans]와 같은 길이(스펙 §2). [heightPx] = 찍는 지도 높이(현재 위치를 화면 아래 1/3에 두는 데 쓴다).
-     * - RIDE: 그 이동 시각 위치에서 경로를 따라 120 m 앞을 보는 방향을 평활·초당 45° 상한으로 따라가고(첫 주행 프레임은 바로 그 방향),
-     *   흔들기(±8°, 영상 시간 = 지금까지의 주행 프레임 수 / 24초, 16초 주기)를 더한다. 확대는 최근 8초 속도의 [zoomForSpeed]를 초당 0.25까지만
-     *   따라간다. 앞 주행 프레임과의 직선거리가 경로로 지나온 거리보다 500 m 넘게 길면(구간 사이를 건너뜀, 판정 J2) 방향·확대를
-     *   바로 목표값으로 둔다. 중심은 [markerLeadM]만큼 진행 방향 앞.
-     *   확대 기준(느림·빠름)은 그 프레임 위치가 속한 구간 종류의 [ActivityProfile]을 따른다([segmentActivities]는 타임라인의 `segmentIndex` 순서,
-     *   비었거나 모자라면 자전거: 10·30 km/h).
+     * [plans]와 같은 길이(스펙 §2, 영상 다듬기 2 스펙 §4). [widthPx]×[heightPx] = 찍는 지도 크기(짧은 변이 기준 확대를, 높이가
+     * 현재 위치를 화면 아래 1/3에 두는 것을 정한다).
+     * - 기준 확대 z0 = [baseZoom](경로 전체 거리, 이동 장면 길이 = 주행 장 수 / FPS, 경로 가운데 위도, 짧은 변, 가장 길게 간 종류).
+     *   종류는 [segmentActivities](타임라인의 `segmentIndex` 순서, 비었거나 모자라면 자전거)에서 구간마다 경로 거리를 더해 가장 긴 것,
+     *   같으면 첫 구간의 종류.
+     * - RIDE: 확대 = z0 + [zoomOffset], 기울기 = [tiltFor](그 장의 [FramePlan.speed])를 초당 0.3·4°까지만 따라간다. 방향은 그 이동 시각
+     *   위치에서 경로를 따라 max(60 m, 2초 동안 갈 거리 = 2 × 평균 빠르기 × 빠르기) 앞을 보는 방향을 1 − 0.85^(30/FPS)씩, 초당 45°
+     *   상한으로 따라가고(첫 주행 장은 바로 그 방향), 도는 시점(25° × sin(2π × 이동 장면 시간 / 12초))을 더한다. 앞 주행 프레임과의
+     *   직선거리가 경로로 지나온 거리보다 500 m 넘게 길면(구간 사이를 건너뜀, 판정 J2) 방향·확대·기울기를 바로 목표값으로 둔다.
+     *   중심은 [markerLeadM]만큼 진행 방향 앞.
      * - INTRO_OVERVIEW: [overview] 중심, 확대 − 1, 기울기 0, 정북 그대로(규칙 F4: 제목 카드가 떠 있는 동안 돌지 않는다).
-     * - INTRO_DESCENT: 그 카메라에서 첫 주행 카메라로 smoothstep 보간. 방향은 정북에서 첫 주행 방향까지 짧은 쪽(|돌기| ≤ 180°).
-     * - PHOTO: 그 이동 시각의 주행 카메라를 (사진 시작 방향 + 40° × 진행)으로, 확대·기울기는 직전 장 그대로. 끝나면 그 방향에서 다시 따라간다.
-     * - OUTRO: 끝 직전 카메라(마지막 주행 장, 끝에 사진이 있으면 그 사진 장)에서 [outro]로 [VideoTimeline.OUTRO_RISE_FRAMES]장 동안
+     * - INTRO_DESCENT: 그 카메라에서 첫 주행 카메라로 smoothstep 보간. 방향은 정북에서 첫 주행 방향까지 짧은 쪽(|돌기| ≤ 180°)에
+     *   ±sin(π·t) × 30°를 더해 도는 쪽으로 감아 돌며 내려온다(판정 P11: 짧은 쪽이 왼쪽이면 −, 오른쪽이나 0이면 +. t = 0, 1에서 0).
+     * - PHOTO: 그 이동 시각의 주행 카메라를 (사진 시작 방향 + 40° × smoothstep)으로 돌며, 확대는 직전 장에서 주행 확대 + 0.3까지
+     *   smoothstep으로 다가간다. 기울기는 직전 장 그대로. 끝나면 그 방향·확대에서 다시 따라간다.
+     * - OUTRO: 끝 직전 카메라(마지막 주행 장, 끝에 사진이 있으면 그 사진 장)에서 [outro]로 [VideoTimeline.OUTRO_RISE_SECONDS] 동안
      *   smoothstep, 그 뒤 [outro] 그대로.
      */
     fun cameras(
@@ -113,85 +155,111 @@ object CameraPath {
         timeline: RideTimeline,
         overview: Camera,
         outro: Camera = overview,
+        widthPx: Int,
         heightPx: Int,
         segmentActivities: List<ActivityType> = emptyList(),
+    ): List<Camera> = cameras(plans, timeline, overview, outro, widthPx, heightPx, segmentActivities, FPS)
+
+    /** [cameras]이되 초당 [fps]장의 [plans](따라가기·상한·도는 시점을 시간 기준으로 쓰는지 시험한다). */
+    internal fun cameras(
+        plans: List<FramePlan>,
+        timeline: RideTimeline,
+        overview: Camera,
+        outro: Camera,
+        widthPx: Int,
+        heightPx: Int,
+        segmentActivities: List<ActivityType>,
+        fps: Int,
     ): List<Camera> {
         val route = timeline.routeDistance
-        val profiles = HashMap<ActivityType, ActivityProfile>()
-        fun zoomAt(located: Located, kmh: Double): Double {
-            val type = segmentActivities.getOrElse(located.segmentIndex) { ActivityType.BIKE }
-            val profile = profiles.getOrPut(type) { ActivityProfile.of(type) }
-            return zoomForSpeed(kmh, profile.cameraSlowKmh, profile.cameraFastKmh)
-        }
         val segmentEnd = segmentEnds(timeline)
-        val maxTurn = MAX_TURN_DEG_PER_S / FPS
-        val maxZoomStep = ZOOM_RATE_PER_S / FPS
+        val maxTurn = MAX_TURN_DEG_PER_S / fps
+        val maxZoomStep = ZOOM_RATE_PER_S / fps
+        val maxTiltStep = TILT_RATE_PER_S / fps
+        val follow = 1 - FOLLOW_KEEP.pow(FOLLOW_FPS / fps)
+        val riseFrames = (VideoTimeline.OUTRO_RISE_SECONDS * fps).roundToInt()
 
-        fun lookBearing(located: Located, previous: Double): Double {
-            val ahead = pointAt(timeline, route.cumulative, route.at(located) + LOOK_AHEAD_M, segmentEnd[located.doneIndex])
+        val rideSeconds = plans.count { it.kind == SceneKind.RIDE }.toDouble() / fps
+        val lats = timeline.points.map { it.point.lat }
+        val midLat = if (lats.isEmpty()) 0.0 else (lats.min() + lats.max()) / 2
+        val z0 = baseZoom(route.total, rideSeconds, midLat, min(widthPx, heightPx), dominantType(timeline, segmentActivities))
+        val meanSpeed = if (rideSeconds > 0.0) route.total / rideSeconds else 0.0
+
+        fun lookBearing(located: Located, speed: Double, previous: Double): Double {
+            val aheadM = max(LOOK_AHEAD_MIN_M, LOOK_AHEAD_S * meanSpeed * speed)
+            val ahead = pointAt(timeline, route.cumulative, route.at(located) + aheadM, segmentEnd[located.doneIndex])
             return if (GeoMath.distanceM(located.point, ahead) < MIN_LOOK_M) previous else bearing(located.point, ahead)
         }
 
-        fun speedKmh(moveMs: Long): Double {
-            val from = max(0L, moveMs - SPEED_WINDOW_MS)
-            if (moveMs <= from) return 0.0
-            return (route.atMove(moveMs) - route.atMove(from)) / ((moveMs - from) / 1000.0) * 3.6
-        }
+        fun orbit(rideFrames: Int) = ORBIT_DEG * sin(2 * PI * rideFrames / fps / ORBIT_PERIOD_S)
 
-        fun sway(rideFrames: Int) = SWAY_DEG * sin(2 * PI * rideFrames / FPS / SWAY_PERIOD_S)
+        fun riding(at: GeoPoint, zoom: Double, bearing: Double, tilt: Double) =
+            Camera(ahead(at, bearing, markerLeadM(zoom, tilt, heightPx, at.lat)), zoom, bearing, tilt)
 
-        fun riding(at: GeoPoint, zoom: Double, bearing: Double) =
-            Camera(ahead(at, bearing, markerLeadM(zoom, TILT, heightPx, at.lat)), zoom, bearing, TILT)
-
-        val firstRideMs = plans.firstOrNull { it.kind == SceneKind.RIDE }?.moveMs ?: 0L
-        val firstLocated = timeline.at(firstRideMs)
-        val firstBearing = lookBearing(firstLocated, overview.bearing)
-        val firstRide = riding(firstLocated.point, zoomAt(firstLocated, speedKmh(firstRideMs)), firstBearing)
+        val firstPlan = plans.firstOrNull { it.kind == SceneKind.RIDE }
+        val firstSpeed = firstPlan?.speed?.toDouble() ?: 1.0
+        val firstLocated = timeline.at(firstPlan?.moveMs ?: 0L)
+        val firstBearing = lookBearing(firstLocated, firstSpeed, overview.bearing)
+        val firstRide = riding(firstLocated.point, z0 + zoomOffset(firstSpeed), firstBearing, tiltFor(firstSpeed))
         val high = Camera(overview.center, (overview.zoom - 1).coerceAtLeast(0.0), bearing = 0.0, tilt = 0.0)
+        val spiralSide = if (signedDelta(high.bearing, firstRide.bearing) < 0.0) -1.0 else 1.0
 
         val out = ArrayList<Camera>(plans.size)
-        var heading: Double? = null // 평활해 따라가는 진행 방향(흔들기 전)
+        var heading: Double? = null // 평활해 따라가는 진행 방향(도는 시점 전)
         var zoom = firstRide.zoom
+        var tilt = firstRide.tilt
+        var rideZoom = firstRide.zoom // 마지막 주행 장의 확대(사진이 다가가는 기준)
         var rideFrames = 0
         var lastRidePoint: GeoPoint? = null
         var lastRideAlong = 0.0 // 앞 주행 프레임의 경로상 누적 거리(구간 사이는 0으로 셈)
-        var photoStart = firstBearing
+        var photoStart = firstRide
         var outroFrame = 0
         var riseFrom = outro
         for (plan in plans) {
             out += when (plan.kind) {
                 // 규칙 F4: 제목 카드가 떠 있는 동안은 돌지 않는다(화면 가운데를 축으로 돌면 경로가 제목 위로 쓸려 온다).
                 SceneKind.INTRO_OVERVIEW -> high
-                // 도는 것은 내려가기만: 정북에서 첫 주행 방향까지 짧은 쪽으로(signedDelta), 확대·기울기·중심과 같은 smoothstep.
-                SceneKind.INTRO_DESCENT -> interpolate(high, firstRide, smoothstep(plan.sceneProgress.toDouble()))
+                // 도는 것은 내려가기만: 정북에서 첫 주행 방향까지 짧은 쪽으로(signedDelta), 확대·기울기·중심과 같은 smoothstep에
+                // 도는 쪽으로 감아 돌기를 더한다(시작·끝 카메라는 그대로).
+                SceneKind.INTRO_DESCENT -> {
+                    val t = smoothstep(plan.sceneProgress.toDouble())
+                    val cam = interpolate(high, firstRide, t)
+                    cam.copy(bearing = normalize(cam.bearing + spiralSide * DESCENT_SPIRAL_DEG * sin(PI * t)))
+                }
                 SceneKind.PHOTO -> {
-                    val before = out.lastOrNull() ?: firstRide
-                    if (plan.sceneProgress == 0f) photoStart = before.bearing
-                    val bearing = normalize(photoStart + PHOTO_ORBIT_DEG * plan.sceneProgress)
-                    // 사진 뒤 첫 주행 장이 이 방향에서 이어지도록(흔들기는 다시 더해진다).
-                    heading = normalize(bearing - sway(rideFrames))
-                    riding(timeline.at(plan.moveMs).point, before.zoom, bearing)
+                    if (plan.sceneFrame == 0) photoStart = out.lastOrNull() ?: firstRide
+                    val t = smoothstep(plan.sceneProgress.toDouble())
+                    val bearing = normalize(photoStart.bearing + PHOTO_ORBIT_DEG * t)
+                    zoom = photoStart.zoom + (rideZoom + PHOTO_PUSH_ZOOM - photoStart.zoom) * t
+                    tilt = photoStart.tilt
+                    // 사진 뒤 첫 주행 장이 이 방향·확대에서 이어지도록(도는 시점은 다시 더해진다).
+                    heading = normalize(bearing - orbit(rideFrames))
+                    riding(timeline.at(plan.moveMs).point, zoom, bearing, tilt)
                 }
                 SceneKind.RIDE -> {
                     val located = timeline.at(plan.moveMs)
+                    val speed = plan.speed.toDouble()
                     val previous = lastRidePoint
                     val along = route.at(located)
                     val travelled = (along - lastRideAlong).coerceAtLeast(0.0)
                     val jumped = previous != null && GeoMath.distanceM(previous, located.point) > JUMP_M + travelled
                     val current = heading // 첫 주행 장 앞에 사진이 있었으면 그 사진이 돈 방향
-                    val wanted = lookBearing(located, current ?: firstBearing)
+                    val wanted = lookBearing(located, speed, current ?: firstBearing)
                     val next = if (current == null || jumped) wanted
-                    else normalize(current + (signedDelta(current, wanted) * SMOOTHING).coerceIn(-maxTurn, maxTurn))
-                    val wantedZoom = zoomAt(located, speedKmh(plan.moveMs))
-                    zoom = if (previous == null || jumped) wantedZoom else zoom + (wantedZoom - zoom).coerceIn(-maxZoomStep, maxZoomStep)
+                    else normalize(current + (signedDelta(current, wanted) * follow).coerceIn(-maxTurn, maxTurn))
+                    val wantedZoom = z0 + zoomOffset(speed)
+                    val wantedTilt = tiltFor(speed)
+                    zoom = if (jumped) wantedZoom else zoom + (wantedZoom - zoom).coerceIn(-maxZoomStep, maxZoomStep)
+                    tilt = if (jumped) wantedTilt else tilt + (wantedTilt - tilt).coerceIn(-maxTiltStep, maxTiltStep)
                     heading = next
+                    rideZoom = zoom
                     lastRidePoint = located.point
                     lastRideAlong = along
-                    riding(located.point, zoom, normalize(next + sway(rideFrames++)))
+                    riding(located.point, zoom, normalize(next + orbit(rideFrames++)), tilt)
                 }
                 SceneKind.OUTRO -> {
                     if (outroFrame == 0) riseFrom = out.lastOrNull() ?: outro
-                    val t = outroFrame++.toDouble() / max(1, VideoTimeline.OUTRO_RISE_FRAMES - 1)
+                    val t = outroFrame++.toDouble() / max(1, riseFrames - 1)
                     interpolate(riseFrom, outro, smoothstep(t))
                 }
             }
@@ -199,12 +267,31 @@ object CameraPath {
         return out
     }
 
+    /**
+     * 영상 전체의 카메라 높이를 정하는 종류(스펙 §4.1): 구간마다 경로 거리를 그 구간 종류([segmentActivities], 모자라면 자전거)에 더해
+     * 가장 긴 종류. 같으면 첫 구간의 종류.
+     */
+    private fun dominantType(timeline: RideTimeline, segmentActivities: List<ActivityType>): ActivityType {
+        val points = timeline.points
+        fun typeOf(segment: Int) = segmentActivities.getOrElse(segment) { ActivityType.BIKE }
+        val first = typeOf(points.firstOrNull()?.segmentIndex ?: 0)
+        val cumulative = timeline.routeDistance.cumulative
+        val distance = LinkedHashMap<ActivityType, Double>() // 처음 나온 차례: 같은 거리면 앞 구간의 종류가 남는다
+        for (i in 1 until points.size) {
+            val type = typeOf(points[i].segmentIndex)
+            distance[type] = (distance[type] ?: 0.0) + (cumulative[i] - cumulative[i - 1])
+        }
+        var best = first
+        for ((type, m) in distance) if (m > (distance[best] ?: 0.0)) best = type
+        return best
+    }
+
     /** 영상 화면 전체([aspect] 크기)에 맞춘 [overview]. */
     fun overview(points: List<GeoPoint>, aspect: Aspect): Camera = overview(points, aspect.width, aspect.height)
 
     /**
      * 전체 경로가 [widthPx]×[heightPx] 지도(기울기 0, 북쪽 위)에 각 변 10% 여백을 두고 들어오는 카메라. 중심은 메르카토르 상의 가운데.
-     * zoom은 지도 1픽셀 = 스냅샷 1픽셀(pixel ratio 1) 기준이고 [ZOOM_SLOW]보다 크지 않다. 요약 이미지의 지도 칸·720p 영상처럼
+     * zoom은 지도 1픽셀 = 스냅샷 1픽셀(pixel ratio 1) 기준이고 [OVERVIEW_MAX_ZOOM]보다 크지 않다. 요약 이미지의 지도 칸·720p 영상처럼
      * 실제로 찍는 지도 크기를 넘긴다(규칙 V5).
      */
     fun overview(points: List<GeoPoint>, widthPx: Int, heightPx: Int): Camera =
@@ -218,7 +305,7 @@ object CameraPath {
         overview(points, widthPx, heightPx, marginX = marginPx.toDouble(), marginY = marginPx.toDouble())
 
     /**
-     * [overview]이되 [box](카드 위 사각형)에 여백 없이 맞춘다: 확대는 [box] 크기에 맞추고(같은 [ZOOM_SLOW] 상한),
+     * [overview]이되 [box](카드 위 사각형)에 여백 없이 맞춘다: 확대는 [box] 크기에 맞추고(같은 [OVERVIEW_MAX_ZOOM] 상한),
      * 중심은 경로 가운데가 [widthPx]×[heightPx] 스냅샷에서 [box] 가운데에 오도록 옮긴다(스펙 공유 카드 §2.2). 기울기 0, 북쪽 위.
      */
     fun overviewInBox(points: List<GeoPoint>, widthPx: Int, heightPx: Int, box: Box): Camera {
@@ -239,7 +326,7 @@ object CameraPath {
         return fitted(points, widthPx - 2 * marginX, heightPx - 2 * marginY)
     }
 
-    /** 경로가 [usableW]×[usableH] 픽셀 칸에 꽉 차게 들어오는 카메라(중심 = 메르카토르 가운데, [ZOOM_SLOW] 상한, 칸이 1 px 아래면 1 px로 본다). */
+    /** 경로가 [usableW]×[usableH] 픽셀 칸에 꽉 차게 들어오는 카메라(중심 = 메르카토르 가운데, [OVERVIEW_MAX_ZOOM] 상한, 칸이 1 px 아래면 1 px로 본다). */
     private fun fitted(points: List<GeoPoint>, usableW: Double, usableH: Double): Camera {
         require(points.isNotEmpty()) { "빈 경로" }
         val xs = points.map { mercatorX(it.lon) }
@@ -248,7 +335,7 @@ object CameraPath {
         val spanY = ys.max() - ys.min()
         fun fit(span: Double, usablePx: Double) =
             if (span <= 0.0) Double.POSITIVE_INFINITY else log2(max(1.0, usablePx) / (span * TILE_SIZE))
-        val zoom = min(min(fit(spanX, usableW), fit(spanY, usableH)), ZOOM_SLOW).coerceAtLeast(0.0)
+        val zoom = min(min(fit(spanX, usableW), fit(spanY, usableH)), OVERVIEW_MAX_ZOOM).coerceAtLeast(0.0)
         val center = GeoPoint(latitudeOf((ys.max() + ys.min()) / 2), longitudeOf((xs.max() + xs.min()) / 2))
         return Camera(center, zoom, bearing = 0.0, tilt = 0.0)
     }
@@ -304,7 +391,7 @@ object CameraPath {
     private fun smoothstep(t: Double) = t.coerceIn(0.0, 1.0).let { it * it * (3 - 2 * it) }
 
     /** a → b 초기 방위각(0~360°). */
-    private fun bearing(a: GeoPoint, b: GeoPoint): Double {
+    internal fun bearing(a: GeoPoint, b: GeoPoint): Double {
         val lat1 = Math.toRadians(a.lat)
         val lat2 = Math.toRadians(b.lat)
         val dLon = Math.toRadians(b.lon - a.lon)
@@ -324,7 +411,7 @@ object CameraPath {
     }
 
     /** from에서 to로 가는 가장 짧은 회전(-180~180°). */
-    private fun signedDelta(from: Double, to: Double): Double = ((to - from) % 360 + 540) % 360 - 180
+    internal fun signedDelta(from: Double, to: Double): Double = ((to - from) % 360 + 540) % 360 - 180
 
     private fun normalize(deg: Double): Double = ((deg % 360) + 360) % 360
 

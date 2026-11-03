@@ -208,7 +208,7 @@ data class HeartRateSampleEntity(
     val bpm: Int,
 )
 
-/** kind는 MediaKind의 name, uri는 갤러리(MediaStore) 항목, optionsJson은 만들 때의 옵션(음악 제외). */
+/** kind는 MediaKind의 name, uri는 갤러리(MediaStore) 항목, optionsJson은 만들 때의 옵션(`"music"`은 기본 곡의 키 또는 "none", 고른 파일의 URI는 쓰지 않음). */
 @Entity(
     tableName = "trip_media",
     foreignKeys = [

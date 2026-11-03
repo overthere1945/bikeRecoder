@@ -9,7 +9,10 @@ import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.core.video.Aspect
+import com.cowork.bikerecoder.core.video.BuiltInMusic
+import com.cowork.bikerecoder.core.video.Beats
 import com.cowork.bikerecoder.core.video.Camera
+import com.cowork.bikerecoder.core.video.FPS
 import com.cowork.bikerecoder.core.video.CameraPath
 import com.cowork.bikerecoder.core.video.FramePlan
 import com.cowork.bikerecoder.core.video.RideTimelineBuilder
@@ -71,7 +74,7 @@ class VideoJobTest {
 
     private val labels = FakeTripLabelStore()
     private var inputs = testInputs()
-    private val short = VideoOptions(length = VideoLength.SHORT, photos = false, hud = true)
+    private val short = VideoOptions(length = VideoLength.SHORT, photos = false, hud = true, builtInMusic = null)
     private val plans = VideoTimeline.plan(inputs.timeline, inputs.photos, short, inputs.dayStarts)
 
     private val job by lazy {
@@ -86,7 +89,7 @@ class VideoJobTest {
             regions = regions(),
             startService = { servicesStarted++ },
             scope = scope(),
-            log = { message, _ -> warnings += message },
+            log = { message, _ -> warnings += message }, packageName = "test.pkg",
             clock = { NOW },
             nanoTime = { backend.nanos },
         )
@@ -124,10 +127,27 @@ class VideoJobTest {
         val sink = backend.sinks.single()
         assertEquals(plans, sink.plans)
         // The music is made before the start and handed over before the first frame (ruling V7).
-        assertEquals(plans.size * 1_000_000L / 24, backend.musicDurations.single())
+        assertEquals(plans.size * 1_000_000L / FPS, backend.musicDurations.single())
         assertEquals("audio:content://music/1", sink.events.first())
         assertEquals(plans.size, sink.events.count { it == "frame" })
         assertEquals(listOf("finish", "close"), sink.events.takeLast(2))
+    }
+
+    @Test
+    fun builtInMusicIsReadFromTheAppsRawResource() = runBlocking {
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short.copy(builtInMusic = BuiltInMusic.WIND_ROAD)))
+        awaitEnd()
+
+        assertEquals("audio:android.resource://test.pkg/raw/music_wind_road", backend.sinks.single().events.first())
+        assertEquals(listOf("analyze", "music"), backend.calls.filter { it == "analyze" || it == "music" })
+    }
+
+    @Test
+    fun noMusicAtAllReadsNothing() = runBlocking {
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
+        awaitEnd()
+
+        assertEquals(emptyList<String>(), backend.calls.filter { it == "analyze" || it == "music" })
     }
 
     /** The trip being made, for its progress card (only that trip's screens show it); none before or after. */
@@ -466,7 +486,7 @@ class VideoJobTest {
 
     /** Ruling C3: the sky view above the opening title, the outro above the closing card, the frame's own height. */
     private fun camerasAt(w: Int, h: Int) = CameraPath.cameras(
-        plans, inputs.timeline, FrameRenderer.introCamera(inputs, w, h), FrameRenderer.outroCamera(inputs, w, h), heightPx = h,
+        plans, inputs.timeline, FrameRenderer.introCamera(inputs, w, h), FrameRenderer.outroCamera(inputs, w, h), widthPx = w, heightPx = h,
     )
 
     @Test
@@ -516,16 +536,62 @@ class VideoJobTest {
         assertNothingStarted()
     }
 
-    /** The probe comes after the map check and before the music (spec §1.3). */
+    /** The probe comes after the map check and before the music is made (spec §1.3); the analysis before both (V1.11.0 spec §5). */
     @Test
     fun theProbeComesBeforeTheMusic() = runBlocking {
         backend.probe = SatelliteCheck.FAILED
-        backend.musicReadable = false
+        backend.musicLoadable = false
 
         assertEquals(StartResult.MUSIC_UNREADABLE, job.startVideo(TRIP, short.copy(musicUri = "content://music/broken")))
 
         assertEquals(1, backend.probed.size)
-        assertEquals(listOf("probe", "music"), backend.calls)
+        assertEquals(listOf("analyze", "probe", "music"), backend.calls)
+        assertNothingStarted()
+    }
+
+    /**
+     * The music's beat is read before the video is planned (V1.11.0 spec §5.3): the frames are [VideoTimeline.planToBeats]
+     * with its beats, and the track starts at the planned [com.cowork.bikerecoder.core.video.Planned.musicStartUs].
+     */
+    @Test
+    fun musicAnalysedBeforePlanning() = runBlocking {
+        val beats = Beats(startUs = 400_000, beatUs = 500_000)
+        backend.analysis = MusicAnalysis(beats, firstSoundUs = 300_000)
+        val planned = VideoTimeline.planToBeats(inputs.timeline, inputs.photos, short, inputs.dayStarts, beats)
+        assertNotEquals(plans, planned.frames) // the beats change the plan here
+
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short.copy(musicUri = "content://music/1")))
+        assertTrue(awaitEnd() is VideoJobState.Done)
+
+        assertEquals(listOf("analyze", "probe", "music"), backend.calls)
+        assertEquals(planned.frames, backend.sinks.single().plans)
+        assertEquals(listOf(planned.musicStartUs), backend.musicStarts)
+        assertEquals(listOf(planned.frames.size * 1_000_000L / FPS), backend.musicDurations)
+    }
+
+    /** Music that cannot be read is refused at the analysis: no probe, no map, no pending job. */
+    @Test
+    fun unreadableMusicRefusedBeforeAnything() = runBlocking {
+        online = false
+        backend.musicReadable = false
+
+        assertEquals(StartResult.MUSIC_UNREADABLE, job.startVideo(TRIP, short.copy(musicUri = "content://music/broken")))
+
+        assertEquals(listOf("analyze"), backend.calls)
+        assertEquals(emptyList<List<GeoPoint>>(), maps.downloads)
+        assertNothingStarted()
+    }
+
+    /** No clear beat: the plan without beats, and the track starts where the sound starts. */
+    @Test
+    fun noBeatMusicStartsAtFirstSound() = runBlocking {
+        backend.analysis = MusicAnalysis(beats = null, firstSoundUs = 1_500_000)
+
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short.copy(musicUri = "content://music/1")))
+        assertTrue(awaitEnd() is VideoJobState.Done)
+
+        assertEquals(plans, backend.sinks.single().plans)
+        assertEquals(listOf(1_500_000L), backend.musicStarts)
     }
 
     @Test
@@ -626,20 +692,21 @@ class VideoJobTest {
     private fun virtualTimeJob(scope: CoroutineScope) = VideoJob(
         loadInputs = { if (it == TRIP) inputs else null }, store = store, tripMedia = media, maps = maps, backend = backend,
         recording = recording, online = { true }, regions = regions(), startService = {}, scope = scope,
-        log = { message, _ -> warnings += message }, clock = { NOW }, nanoTime = { backend.nanos },
+        log = { message, _ -> warnings += message }, packageName = "test.pkg", clock = { NOW }, nanoTime = { backend.nanos },
     )
 
     @Test
     fun bytesPerFrameRecordedOnlyForSatellite() = runBlocking {
-        assertEquals(720, plans.size)
+        // 600 m: R0 = 6 + 5 × √0.6 s of ride between the 3 s start and the 4 s end.
+        assertEquals(506, plans.size)
         backend.probe = SatelliteCheck.OK
-        backend.received.addAll(listOf(1_000_000L, 37_000_000L))
+        backend.received.addAll(listOf(1_000_000L, 1_000_000L + 40_000L * plans.size))
 
         assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
         awaitEnd()
         awaitIdle()
 
-        assertEquals(50_000.0, store.bytesPerFrame())
+        assertEquals(40_000.0, store.bytesPerFrame())
 
         // Made on the plain map instead: its bytes say nothing about satellite tiles.
         backend.probe = SatelliteCheck.FAILED
@@ -647,7 +714,7 @@ class VideoJobTest {
         assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
         awaitEnd()
         awaitIdle()
-        assertEquals(50_000.0, store.bytesPerFrame())
+        assertEquals(40_000.0, store.bytesPerFrame())
 
         // The counter unsupported on this phone.
         backend.probe = SatelliteCheck.OK
@@ -655,7 +722,7 @@ class VideoJobTest {
         backend.received.addAll(listOf(null, null))
         assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
         awaitEnd()
-        assertEquals(50_000.0, store.bytesPerFrame())
+        assertEquals(40_000.0, store.bytesPerFrame())
     }
 
     @Test
@@ -785,7 +852,7 @@ class VideoJobTest {
             loadInputs = { inputs }, store = store, tripMedia = media, maps = maps, backend = backend, recording = recording,
             online = { true }, regions = regions(), startService = {},
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + handler).also { scopes += it },
-            log = { message, _ -> warnings += message }, clock = { NOW }, nanoTime = { backend.nanos },
+            log = { message, _ -> warnings += message }, packageName = "test.pkg", clock = { NOW }, nanoTime = { backend.nanos },
         )
         maps.failDelete = { StackOverflowError("cleanup") }
 
@@ -820,7 +887,7 @@ class VideoJobTest {
         val throwing = VideoJob(
             loadInputs = { inputs }, store = store, tripMedia = media, maps = maps, backend = backend, recording = recording,
             online = { true }, regions = regions(), startService = { throw IllegalStateException("not allowed") }, scope = scope(),
-            log = { message, _ -> warnings += message }, clock = { NOW }, nanoTime = { backend.nanos },
+            log = { message, _ -> warnings += message }, packageName = "test.pkg", clock = { NOW }, nanoTime = { backend.nanos },
         )
         backend.gateAt = 2
 
@@ -844,7 +911,14 @@ class VideoJobTest {
     private inner class FakeBackend : VideoBackend {
         var nanos = 0L
         var free = 10_000_000_000L
+        /** False: [analyzeMusic] cannot read the file (null). */
         var musicReadable = true
+
+        /** False: the file was analysed but [loadMusic] cannot make the track (null). */
+        var musicLoadable = true
+
+        /** What [analyzeMusic] finds: no beat, sound from the start by default (the plan without beats). */
+        var analysis = MusicAnalysis(beats = null, firstSoundUs = 0)
         var downscale = false
         var failAt = -1
         var onFail: () -> Unit = {}
@@ -860,6 +934,7 @@ class VideoJobTest {
         val published = mutableListOf<String>()
         val deleted: MutableList<String> = Collections.synchronizedList(mutableListOf())
         val musicDurations = mutableListOf<Long>()
+        val musicStarts = mutableListOf<Long>()
         val sinks = mutableListOf<FakeSink>()
         val images = mutableListOf<Pair<String, Aspect>>()
         var firstStateSeen: VideoJobState? = null
@@ -888,10 +963,16 @@ class VideoJobTest {
 
         override fun freeBytes(): Long = free
 
-        override suspend fun loadMusic(uri: String, durationUs: Long): MusicTrack? {
+        override suspend fun analyzeMusic(uri: String): MusicAnalysis? {
+            calls += "analyze"
+            return if (musicReadable) analysis else null
+        }
+
+        override suspend fun loadMusic(uri: String, durationUs: Long, startUs: Long): MusicTrack? {
             calls += "music"
             musicDurations += durationUs
-            return if (musicReadable) FakeMusic(uri) else null
+            musicStarts += startUs
+            return if (musicLoadable) FakeMusic(uri) else null
         }
 
         override suspend fun existingNames(kind: MediaKind): Set<String> = names.toSet()

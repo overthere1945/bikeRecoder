@@ -35,8 +35,11 @@ object VideoMapStyle {
             """["all",["match",["get","class"],["quarter","neighbourhood"],true,false],[">=",["zoom"],15]]]""",
     )
 
-    /** Road names only close up (the ride's 16.6–17.4), not on the sky view. */
-    private const val ROAD_MIN_ZOOM = 15
+    /**
+     * Road names at every ride zoom, not on the far sky view. Ruling P10: the ride camera goes down to 14.4 (bike's lowest base
+     * zoom 14.8 − 0.4 on fast parts; hike 14.8, run and walk 15.2), so the names start at 14.
+     */
+    private const val ROAD_MIN_ZOOM = 14
 
     /** Place names 1.6× the base sizes, fixed: 18 at zoom 12 to 26 at zoom 17. */
     private val PLACE_SIZE = Json.parseToJsonElement("""["interpolate",["linear"],["zoom"],12,18,17,26]""")

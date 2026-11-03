@@ -13,7 +13,7 @@ enum class KmBasis {
 }
 
 /**
- * 종류별 기록 기준(스펙 §1.3, 카메라는 §5.1). 속도는 m/s, 시간은 밀리초, 거리는 미터.
+ * 종류별 기록 기준(스펙 §1.3, 카메라 높이는 영상 다듬기 2 스펙 §4.1). 속도는 m/s, 시간은 밀리초, 거리는 미터.
  * 자전거 값은 V1.8.0 엔진의 기본값과 같다.
  *
  * @property pauseBelowMps 이 속도 미만이 [pauseAfterMs] 이어지면 자동 일시정지.
@@ -22,8 +22,8 @@ enum class KmBasis {
  * @property resumeDistanceM 멈춘 자리에서 이만큼 움직이면 다시 시작.
  * @property maxSpeedMps 앞 점과의 속도가 이것을 넘으면 튐으로 버린다.
  * @property minGapSpeedMps GPS 끊김(10초 넘는 틈)을 이동으로 셀 최소 평균 속도.
- * @property cameraSlowKmh 영상 카메라가 가장 확대되는 속도(km/h). 이하면 가장 가깝게 본다.
- * @property cameraFastKmh 영상 카메라가 가장 멀어지는 속도(km/h). 이상이면 가장 멀리 본다.
+ * @property cameraZoomMin 영상 카메라의 기준 확대(z0)가 내려갈 수 있는 가장 작은 값(가장 멀리, 긴 기록).
+ * @property cameraZoomMax 영상 카메라의 기준 확대(z0)가 올라갈 수 있는 가장 큰 값(가장 가까이, 짧은 기록).
  */
 data class ActivityProfile(
     val pauseBelowMps: Double,
@@ -34,8 +34,8 @@ data class ActivityProfile(
     val maxSpeedMps: Double,
     val minGapSpeedMps: Double,
     val kmBasis: KmBasis,
-    val cameraSlowKmh: Double,
-    val cameraFastKmh: Double,
+    val cameraZoomMin: Double,
+    val cameraZoomMax: Double,
 ) {
     companion object {
         fun of(type: ActivityType): ActivityProfile = when (type) {
@@ -48,8 +48,8 @@ data class ActivityProfile(
                 maxSpeedMps = 80.0 / 3.6,
                 minGapSpeedMps = 3.0 / 3.6,
                 kmBasis = KmBasis.DAY,
-                cameraSlowKmh = 10.0,
-                cameraFastKmh = 30.0,
+                cameraZoomMin = 14.8,
+                cameraZoomMax = 16.8,
             )
             ActivityType.RUN -> ActivityProfile(
                 pauseBelowMps = 2.0 / 3.6,
@@ -60,8 +60,8 @@ data class ActivityProfile(
                 maxSpeedMps = 40.0 / 3.6,
                 minGapSpeedMps = 2.0 / 3.6,
                 kmBasis = KmBasis.SEGMENT,
-                cameraSlowKmh = 6.0,
-                cameraFastKmh = 15.0,
+                cameraZoomMin = 15.6,
+                cameraZoomMax = 17.6,
             )
             ActivityType.WALK -> ActivityProfile(
                 pauseBelowMps = 1.0 / 3.6,
@@ -72,8 +72,8 @@ data class ActivityProfile(
                 maxSpeedMps = 40.0 / 3.6,
                 minGapSpeedMps = 1.0 / 3.6,
                 kmBasis = KmBasis.SEGMENT,
-                cameraSlowKmh = 2.0,
-                cameraFastKmh = 6.0,
+                cameraZoomMin = 15.6,
+                cameraZoomMax = 17.6,
             )
             ActivityType.HIKE -> ActivityProfile(
                 pauseBelowMps = 0.7 / 3.6,
@@ -84,8 +84,8 @@ data class ActivityProfile(
                 maxSpeedMps = 40.0 / 3.6,
                 minGapSpeedMps = 0.7 / 3.6,
                 kmBasis = KmBasis.NONE,
-                cameraSlowKmh = 2.0,
-                cameraFastKmh = 6.0,
+                cameraZoomMin = 15.2,
+                cameraZoomMax = 17.4,
             )
         }
     }

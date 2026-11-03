@@ -16,6 +16,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.cowork.bikerecoder.core.video.Aspect
+import com.cowork.bikerecoder.core.video.BuiltInMusic
 import com.cowork.bikerecoder.core.video.RouteColoring
 import com.cowork.bikerecoder.core.video.VideoLength
 import com.cowork.bikerecoder.core.video.VideoOptions
@@ -38,18 +39,23 @@ class VideoOptionsSheetTest {
 
     @Test
     fun theVideoSheetShowsTheItemsWithTheDefaultsChosen() {
-        composeRule.setContent { MaterialTheme { VideoOptionsContent(defaults, {}, {}, {}, {}) } }
+        composeRule.setContent { MaterialTheme { VideoOptionsContent(defaults, {}, {}, {}, {}, {}) } }
 
         composeRule.onNodeWithText("영상 만들기").assertIsDisplayed()
-        for (label in listOf("화면 비율", "길이", "사진 넣기", "숫자 표시", "배경음악", "음악 고르기")) {
+        for (label in listOf("화면 비율", "길이", "사진 넣기", "숫자 표시", "배경음악")) {
             composeRule.onNodeWithText(label).assertExists()
         }
         composeRule.onNodeWithText("세로 9:16").assertIsSelected()
         composeRule.onNodeWithText("가로 16:9").assertIsNotSelected()
-        composeRule.onNodeWithText("짧게(약 30초)").assertIsNotSelected()
-        composeRule.onNodeWithText("보통(약 1분)").assertIsSelected()
-        composeRule.onNodeWithText("길게(약 2분)").assertIsNotSelected()
-        composeRule.onNodeWithText("없음").assertIsSelected()
+        composeRule.onNodeWithText("최대 30초").assertIsNotSelected()
+        composeRule.onNodeWithText("최대 1분").assertIsSelected()
+        composeRule.onNodeWithText("최대 2분").assertIsNotSelected()
+        for (label in listOf("없음", "햇살 페달", "바람길", "언덕 너머", "파일에서 고르기")) {
+            composeRule.onNodeWithText(label).assertExists()
+        }
+        composeRule.onNodeWithText("햇살 페달").assertIsSelected()
+        composeRule.onNodeWithText("없음").assertIsNotSelected()
+        composeRule.onNodeWithText("바람길").assertIsNotSelected()
         // No detailed heart rate: no [경로 색] choice.
         composeRule.onNodeWithText("경로 색").assertDoesNotExist()
         composeRule.onNodeWithText("심박").assertDoesNotExist()
@@ -61,7 +67,7 @@ class VideoOptionsSheetTest {
     @Test
     fun heartRateIsOfferedWhenTheTripHasIt() {
         composeRule.setContent {
-            MaterialTheme { VideoOptionsContent(defaults.copy(canColorByHeart = true), {}, {}, {}, {}) }
+            MaterialTheme { VideoOptionsContent(defaults.copy(canColorByHeart = true), {}, {}, {}, {}, {}) }
         }
         composeRule.onNodeWithText("경로 색").assertExists()
         composeRule.onNodeWithText("기본").assertIsSelected()
@@ -74,11 +80,11 @@ class VideoOptionsSheetTest {
         val seen = mutableListOf<VideoOptions>()
         composeRule.setContent {
             MaterialTheme {
-                VideoOptionsContent(sheet, { seen += it; sheet = sheet.copy(options = it) }, {}, {}, {})
+                VideoOptionsContent(sheet, { seen += it; sheet = sheet.copy(options = it) }, {}, {}, {}, {})
             }
         }
         composeRule.onNodeWithText("가로 16:9").performClick()
-        composeRule.onNodeWithText("길게(약 2분)").performClick()
+        composeRule.onNodeWithText("최대 2분").performClick()
         composeRule.onNodeWithText("사진 넣기").performClick()
         composeRule.onNodeWithText("숫자 표시").performClick()
         composeRule.onNodeWithText("심박").performClick()
@@ -88,30 +94,55 @@ class VideoOptionsSheetTest {
             seen.last(),
         )
         composeRule.onNodeWithText("가로 16:9").assertIsSelected()
-        composeRule.onNodeWithText("길게(약 2분)").assertIsSelected()
+        composeRule.onNodeWithText("최대 2분").assertIsSelected()
     }
 
     @Test
     fun pickedMusicShowsItsNameAndNoneGoesBack() {
         var picks = 0
         var clears = 0
-        val withMusic = defaults.copy(options = VideoOptions(musicUri = "content://music/1"), musicName = "여의도 산책.mp3")
-        composeRule.setContent { MaterialTheme { VideoOptionsContent(withMusic, {}, { picks++ }, { clears++ }, {}) } }
+        val withMusic = defaults.copy(options = VideoOptions(musicUri = "content://music/1", builtInMusic = null), musicName = "여의도 산책.mp3")
+        composeRule.setContent { MaterialTheme { VideoOptionsContent(withMusic, {}, { picks++ }, { clears++ }, {}, {}) } }
 
         composeRule.onNodeWithTag(VideoTags.MUSIC_NAME).assertTextEquals("여의도 산책.mp3")
-        composeRule.onNodeWithText("음악 고르기").assertIsSelected()
+        composeRule.onNodeWithText("파일에서 고르기").assertIsSelected()
         composeRule.onNodeWithText("없음").assertIsNotSelected()
-        composeRule.onNodeWithText("음악 고르기").performClick()
+        composeRule.onNodeWithText("햇살 페달").assertIsNotSelected()
+        composeRule.onNodeWithText("파일에서 고르기").performClick()
         composeRule.onNodeWithText("없음").performClick()
         assertEquals(1, picks)
         assertEquals(1, clears)
     }
 
     @Test
+    fun tappingATrackSelectsIt() {
+        var sheet by mutableStateOf(defaults)
+        val picked = mutableListOf<BuiltInMusic>()
+        composeRule.setContent {
+            MaterialTheme {
+                VideoOptionsContent(
+                    sheet, {}, {}, { sheet = sheet.copy(options = sheet.options.copy(builtInMusic = null)) },
+                    { picked += it; sheet = sheet.copy(options = sheet.options.copy(builtInMusic = it)) }, {},
+                )
+            }
+        }
+        composeRule.onNodeWithText("바람길").performClick()
+
+        assertEquals(listOf(BuiltInMusic.WIND_ROAD), picked)
+        composeRule.onNodeWithText("바람길").assertIsSelected()
+        composeRule.onNodeWithText("햇살 페달").assertIsNotSelected()
+        composeRule.onNodeWithTag(VideoTags.MUSIC_BUILT_IN_PREFIX + "wind_road").assertIsSelected()
+        composeRule.onNodeWithTag(VideoTags.MUSIC_NONE).performClick()
+        composeRule.onNodeWithTag(VideoTags.MUSIC_NONE).assertIsSelected()
+        composeRule.onNodeWithTag(VideoTags.MUSIC_FILE).assertIsNotSelected()
+        composeRule.onNodeWithTag(VideoTags.MUSIC_NAME).assertDoesNotExist()
+    }
+
+    @Test
     fun makeWaitsForTheEstimateThenStarts() {
         var sheet by mutableStateOf(defaults.copy(minutes = null))
         var made = 0
-        composeRule.setContent { MaterialTheme { VideoOptionsContent(sheet, {}, {}, {}, { made++ }) } }
+        composeRule.setContent { MaterialTheme { VideoOptionsContent(sheet, {}, {}, {}, {}, { made++ }) } }
 
         composeRule.onNodeWithTag(VideoTags.MAKE).assertIsNotEnabled()
         sheet = sheet.copy(minutes = 2)
@@ -128,7 +159,7 @@ class VideoOptionsSheetTest {
     @Test
     fun dataNoticeText() {
         var sheet by mutableStateOf(defaults.copy(dataNoticeMb = 20))
-        composeRule.setContent { MaterialTheme { VideoOptionsContent(sheet, {}, {}, {}, {}) } }
+        composeRule.setContent { MaterialTheme { VideoOptionsContent(sheet, {}, {}, {}, {}, {}) } }
 
         val notice = composeRule.onNodeWithTag(VideoTags.DATA_NOTICE)
         notice.assertIsDisplayed().assertTextEquals("위성 지도 데이터 약 20 MB가 듭니다 (Wi-Fi 권장)")
@@ -148,7 +179,7 @@ class VideoOptionsSheetTest {
     @Test
     fun theImageSheetAsksOnlyForTheAspect() {
         val image = VideoSheet(TRIP, MediaKind.IMAGE, VideoOptions(aspect = Aspect.LANDSCAPE))
-        composeRule.setContent { MaterialTheme { VideoOptionsContent(image, {}, {}, {}, {}) } }
+        composeRule.setContent { MaterialTheme { VideoOptionsContent(image, {}, {}, {}, {}, {}) } }
 
         composeRule.onNodeWithText("이미지 만들기").assertIsDisplayed()
         composeRule.onNodeWithText("가로 16:9").assertIsSelected()
@@ -164,11 +195,11 @@ class VideoOptionsSheetTest {
     fun makeIsReachableInTheBottomSheet() {
         val longest = defaults.copy(
             canColorByHeart = true,
-            options = VideoOptions(musicUri = "content://music/1"),
+            options = VideoOptions(musicUri = "content://music/1", builtInMusic = null),
             musicName = "아주 긴 이름의 배경음악 파일 - 한강 자전거길 여의도에서 반포까지.mp3",
             dataNoticeMb = 60,
         )
-        composeRule.setContent { MaterialTheme { VideoOptionsSheet(longest, {}, {}, {}, {}, {}) } }
+        composeRule.setContent { MaterialTheme { VideoOptionsSheet(longest, {}, {}, {}, {}, {}, {}) } }
         composeRule.onNodeWithTag(VideoTags.MAKE).assertIsDisplayed()
         composeRule.onNodeWithTag(VideoTags.ESTIMATE).assertIsDisplayed()
         composeRule.onNodeWithTag(VideoTags.DATA_NOTICE).assertIsDisplayed()

@@ -8,6 +8,8 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
 import com.cowork.bikerecoder.core.video.AudioPlanner
+import com.cowork.bikerecoder.core.video.BeatFinder
+import com.cowork.bikerecoder.core.video.Beats
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -17,9 +19,16 @@ import java.nio.ByteOrder
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
+ * 음악 분석 결과(V1.11.0 스펙 §5.2): [beats] = 박(뚜렷하지 않으면 null), [firstSoundUs] = 처음 소리가 나는 음악 파일 시각
+ * (박이 없을 때 음악을 여기서부터 튼다).
+ */
+data class MusicAnalysis(val beats: Beats?, val firstSoundUs: Long)
+
+/**
  * 배경음악 트랙(스펙 §3.1⑤, §3.4): 고른 파일을 MediaExtractor + MediaCodec으로 PCM까지 풀고, 44.1 kHz 스테레오로 바꿔
- * 영상 길이로 자른 뒤(짧으면 반복하지 않고 그 길이까지) 마지막 2초를 서서히 줄여([AudioPlanner]) AAC 128 kbps로
+ * 시작점부터 영상 길이로 자른 뒤(짧으면 반복하지 않고 그 길이까지) 마지막 2초를 서서히 줄여([AudioPlanner]) AAC 128 kbps로
  * 다시 인코딩한다. 결과는 메모리에 두었다가 [VideoEncoder.addAudio]로 같은 MP4에 넣는다(2분이면 약 2 MB).
+ * 계획 전에는 [analyze]로 박을 찾는다(V1.11.0 스펙 §5).
  * 파일을 열거나 풀 수 없으면 [Unreadable] — 화면은 "음악 파일을 읽을 수 없습니다. 음악 없이 만들까요?"를 보인다.
  */
 class AudioTrackMaker(private val context: Context) {
@@ -33,10 +42,52 @@ class AudioTrackMaker(private val context: Context) {
     /** 음악 파일을 열거나 풀 수 없다. */
     class Unreadable(cause: Throwable? = null) : Exception("music file cannot be read", cause)
 
-    suspend fun make(uri: Uri, videoDurationUs: Long): Encoded = withContext(Dispatchers.Default) {
+    /**
+     * 음악 파일 [startUs](박에 맞춘 시작점, 박이 없으면 처음 소리가 나는 때)부터 영상 길이 [videoDurationUs]만큼의 트랙.
+     * [startUs]가 곡 끝 뒤면 쓸 소리가 없어 [Unreadable].
+     */
+    suspend fun make(uri: Uri, videoDurationUs: Long, startUs: Long = 0): Encoded = withContext(Dispatchers.Default) {
         require(videoDurationUs > 0) { "video duration $videoDurationUs" }
-        val pcm = try {
-            decode(uri, maxFrames = framesOf(videoDurationUs))
+        require(startUs >= 0) { "start $startUs" }
+        val pcm = Pcm(capacity = framesOf(videoDurationUs), skip = framesOf(startUs))
+        readable { decode(uri) { format -> Resampler(format, pcm) } }
+        if (pcm.frames == 0) throw Unreadable()
+        val plan = AudioPlanner.plan(musicDurationUs = startUs + usOf(pcm.frames), videoDurationUs = videoDurationUs, startUs = startUs)
+        val takeFrames = minOf(pcm.frames, framesOf(plan.takeUs))
+        pcm.fadeOut(fromFrame = framesOf(plan.fadeStartUs), toFrame = takeFrames)
+        encode(pcm, takeFrames)
+    }
+
+    /**
+     * 박 찾기(V1.11.0 스펙 §5.2): 앞 [ANALYSIS_US](180초)까지 풀어 모노 소리 크기([MusicEnergy])만 남기고(PCM은 두지 않는다)
+     * [BeatFinder.find]·[BeatFinder.firstSoundUs].
+     */
+    suspend fun analyze(uri: Uri): MusicAnalysis = withContext(Dispatchers.Default) {
+        var meter: MusicEnergy? = null
+        var meterFormat: PcmFormat? = null
+        readable {
+            decode(uri) { format ->
+                // 출력 형식 알림은 보통 첫 출력 전에 한 번. 형식이 그대로면 이어서 잰다. 소리를 받은 뒤 형식이 바뀌면
+                // 창의 시각이 어긋나므로(박 위치가 밀린다) 읽을 수 없는 파일로 본다.
+                val pcm = pcmFormat(format)
+                val current = meter
+                when {
+                    current != null && pcm == meterFormat -> current
+                    current != null && current.samples > 0 ->
+                        throw Unreadable(IllegalStateException("PCM format changed mid-stream: $meterFormat → $pcm"))
+                    else -> MusicEnergy(pcm.rate, pcm.channels, pcm.isFloat, ANALYSIS_US).also { meter = it; meterFormat = pcm }
+                }
+            }
+        }
+        val energy = meter?.energy()
+        if (energy == null || energy.isEmpty()) throw Unreadable()
+        MusicAnalysis(BeatFinder.find(energy), BeatFinder.firstSoundUs(energy))
+    }
+
+    /** 풀다가 난 예외는 [Unreadable]로(취소는 그대로). */
+    private suspend fun readable(block: suspend () -> Unit) {
+        try {
+            block()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Unreadable) {
@@ -44,16 +95,18 @@ class AudioTrackMaker(private val context: Context) {
         } catch (e: Exception) {
             throw Unreadable(e)
         }
-        if (pcm.frames == 0) throw Unreadable()
-        val plan = AudioPlanner.plan(musicDurationUs = usOf(pcm.frames), videoDurationUs = videoDurationUs)
-        val takeFrames = minOf(pcm.frames, framesOf(plan.takeUs))
-        pcm.fadeOut(fromFrame = framesOf(plan.fadeStartUs), toFrame = takeFrames)
-        encode(pcm, takeFrames)
     }
 
-    /** [uri]의 첫 오디오 트랙을 풀어 44.1 kHz 스테레오로 [maxFrames]장까지. */
-    private suspend fun decode(uri: Uri, maxFrames: Int): Pcm {
-        val out = Pcm(maxFrames)
+    /**
+     * [uri]의 첫 오디오 트랙을 풀어 [sinkFor]가 만든 곳에 [PcmSink.full]까지 넣는다. [sinkFor]는 디코더의 출력 형식을 알게
+     * 될 때(형식이 바뀔 때마다) 불린다.
+     *
+     * 빠르기(판정 P12): 한 번에 하나씩 넣고 빼며 기다리지 않는다. 빈 입력 버퍼는 모두 채우고, 나온 출력은 모두 받고, 아무것도
+     * 넣지 못했을 때만 출력을 [IDLE_US]까지 기다린다. 남는 시간은 디코더와 버퍼 하나를 주고받는 비용(S22에서 AAC 한 덩어리당
+     * 약 0.75 ms, 그 가운데 queueInputBuffer가 약 0.4 ms)이다. 여러 덩어리를 한 버퍼로 넣는 large audio frame(Android 15+)은
+     * 비동기 MediaCodec에서만 된다.
+     */
+    private suspend fun decode(uri: Uri, sinkFor: (MediaFormat) -> PcmSink) {
         val extractor = MediaExtractor()
         try {
             extractor.setDataSource(context, uri, null)
@@ -67,35 +120,35 @@ class AudioTrackMaker(private val context: Context) {
                 decoder.configure(format, null, null, 0)
                 decoder.start()
                 val info = MediaCodec.BufferInfo()
-                var resampler: Resampler? = null
+                var sink: PcmSink? = null
                 var inputDone = false
-                while (!out.full) {
+                var outputDone = false
+                while (!outputDone && sink?.full != true) {
                     currentCoroutineContext().ensureActive()
-                    if (!inputDone) {
-                        val i = decoder.dequeueInputBuffer(TIMEOUT_US)
-                        if (i >= 0) {
-                            val n = extractor.readSampleData(decoder.getInputBuffer(i)!!, 0)
-                            if (n < 0) {
-                                decoder.queueInputBuffer(i, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                                inputDone = true
-                            } else {
-                                decoder.queueInputBuffer(i, 0, n, extractor.sampleTime, 0)
-                                extractor.advance()
-                            }
-                        }
+                    var fed = false
+                    while (!inputDone) {
+                        val i = decoder.dequeueInputBuffer(0)
+                        if (i < 0) break
+                        inputDone = queueOne(decoder, i, extractor)
+                        fed = true
                     }
-                    val o = decoder.dequeueOutputBuffer(info, TIMEOUT_US)
-                    if (o == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                        resampler = Resampler(decoder.outputFormat, out)
-                    } else if (o >= 0) {
-                        if (info.size > 0) {
-                            val r = resampler ?: Resampler(decoder.outputFormat, out).also { resampler = it }
-                            val buffer = decoder.getOutputBuffer(o)!!
-                            buffer.position(info.offset).limit(info.offset + info.size)
-                            r.push(buffer.slice().order(ByteOrder.nativeOrder()))
+                    var timeoutUs = if (fed) 0L else IDLE_US
+                    while (!outputDone && sink?.full != true) {
+                        val o = decoder.dequeueOutputBuffer(info, timeoutUs)
+                        if (o == MediaCodec.INFO_TRY_AGAIN_LATER) break
+                        timeoutUs = 0L
+                        if (o == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                            sink = sinkFor(decoder.outputFormat)
+                        } else if (o >= 0) {
+                            if (info.size > 0) {
+                                val r = sink ?: sinkFor(decoder.outputFormat).also { sink = it }
+                                val buffer = decoder.getOutputBuffer(o)!!
+                                buffer.position(info.offset).limit(info.offset + info.size)
+                                r.push(buffer.slice().order(ByteOrder.nativeOrder()))
+                            }
+                            decoder.releaseOutputBuffer(o, false)
+                            if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outputDone = true
                         }
-                        decoder.releaseOutputBuffer(o, false)
-                        if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
                     }
                 }
             } finally {
@@ -105,7 +158,18 @@ class AudioTrackMaker(private val context: Context) {
         } finally {
             extractor.release()
         }
-        return out
+    }
+
+    /** 입력 버퍼 [index]에 한 덩어리(끝이면 끝 표시). 끝을 넣었으면 true. */
+    private fun queueOne(decoder: MediaCodec, index: Int, extractor: MediaExtractor): Boolean {
+        val n = extractor.readSampleData(decoder.getInputBuffer(index)!!, 0)
+        if (n < 0) {
+            decoder.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+            return true
+        }
+        decoder.queueInputBuffer(index, 0, n, extractor.sampleTime, 0)
+        extractor.advance()
+        return false
     }
 
     /** [pcm]의 처음 [frames]장을 AAC로. */
@@ -163,8 +227,8 @@ class AudioTrackMaker(private val context: Context) {
         }
     }
 
-    /** 44.1 kHz 스테레오 16비트 PCM을 [capacity]장까지 모은다(필요한 만큼만 늘린다). */
-    private class Pcm(private val capacity: Int) {
+    /** 44.1 kHz 스테레오 16비트 PCM: 앞 [skip]장은 버리고 그 뒤 [capacity]장까지 모은다(필요한 만큼만 늘린다). */
+    private class Pcm(private val capacity: Int, private var skip: Int = 0) {
         var samples = ShortArray(minOf(capacity, SAMPLE_RATE) * CHANNELS)
             private set
         var frames = 0
@@ -173,6 +237,10 @@ class AudioTrackMaker(private val context: Context) {
 
         fun add(left: Short, right: Short) {
             if (full) return
+            if (skip > 0) {
+                skip--
+                return
+            }
             if (frames * CHANNELS + 1 >= samples.size) {
                 samples = samples.copyOf(minOf(capacity, samples.size / CHANNELS * 2) * CHANNELS)
             }
@@ -199,43 +267,52 @@ class AudioTrackMaker(private val context: Context) {
      * 디코더 출력(아무 표본율, 1채널 이상, 16비트 또는 float)을 44.1 kHz 스테레오로 바꿔 [out]에 넣는다. 선형 보간.
      * 1채널은 양쪽에 같게, 3채널 이상은 앞의 두 채널(왼쪽·오른쪽)을 쓴다.
      */
-    private class Resampler(format: MediaFormat, private val out: Pcm) {
-        private val inRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-        private val channels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-        private val isFloat = format.containsKey(MediaFormat.KEY_PCM_ENCODING) &&
-            format.getInteger(MediaFormat.KEY_PCM_ENCODING) == AudioFormat.ENCODING_PCM_FLOAT
+    private class Resampler(format: MediaFormat, private val out: Pcm) : PcmSink {
+        private val inRate: Int
+        private val channels: Int
+        private val isFloat: Boolean
+
+        init {
+            val pcm = pcmFormat(format)
+            inRate = pcm.rate
+            channels = pcm.channels
+            isFloat = pcm.isFloat
+        }
+
         private val step = inRate.toDouble() / SAMPLE_RATE
         private var inIndex = 0L // 다음에 들어올 입력 장 번호
         private var outIndex = 0L // 다음에 낼 출력 장 번호
         private var prevLeft = 0f
         private var prevRight = 0f
 
-        init {
-            if (format.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
-                val encoding = format.getInteger(MediaFormat.KEY_PCM_ENCODING)
-                if (encoding != AudioFormat.ENCODING_PCM_16BIT && encoding != AudioFormat.ENCODING_PCM_FLOAT) {
-                    throw Unreadable(IllegalArgumentException("PCM encoding $encoding"))
-                }
-            }
-            if (inRate <= 0 || channels <= 0) throw Unreadable(IllegalArgumentException("$inRate Hz, $channels ch"))
-        }
+        override val full: Boolean get() = out.full
 
-        fun push(buffer: ByteBuffer) {
+        /** 버퍼를 한 번에 읽어 두는 곳(다시 쓴다). */
+        private var floats = FloatArray(0)
+        private var shorts = ShortArray(0)
+
+        override fun push(buffer: ByteBuffer) {
             if (isFloat) {
-                val floats = buffer.asFloatBuffer()
-                while (floats.remaining() >= channels && !out.full) {
-                    val left = floats.get()
-                    val right = if (channels > 1) floats.get() else left
-                    repeat(channels - minOf(channels, 2)) { floats.get() }
-                    frame(left, right)
+                val source = buffer.asFloatBuffer()
+                val n = source.remaining() - source.remaining() % channels
+                if (floats.size < n) floats = FloatArray(n)
+                source.get(floats, 0, n)
+                var i = 0
+                while (i < n && !out.full) {
+                    val left = floats[i]
+                    frame(left, if (channels > 1) floats[i + 1] else left)
+                    i += channels
                 }
             } else {
-                val shorts = buffer.asShortBuffer()
-                while (shorts.remaining() >= channels && !out.full) {
-                    val left = shorts.get() / 32768f
-                    val right = if (channels > 1) shorts.get() / 32768f else left
-                    repeat(channels - minOf(channels, 2)) { shorts.get() }
-                    frame(left, right)
+                val source = buffer.asShortBuffer()
+                val n = source.remaining() - source.remaining() % channels
+                if (shorts.size < n) shorts = ShortArray(n)
+                source.get(shorts, 0, n)
+                var i = 0
+                while (i < n && !out.full) {
+                    val left = shorts[i] / 32768f
+                    frame(left, if (channels > 1) shorts[i + 1] / 32768f else left)
+                    i += channels
                 }
             }
         }
@@ -261,12 +338,37 @@ class AudioTrackMaker(private val context: Context) {
         private fun toShort(v: Float): Short = (v * 32767f).coerceIn(-32768f, 32767f).toInt().toShort()
     }
 
+    /** 디코더 출력 형식: 표본율, 채널 수, float인가(아니면 16비트). */
+    private data class PcmFormat(val rate: Int, val channels: Int, val isFloat: Boolean)
+
     private companion object {
+        /** 박 찾기에 푸는 길이: 앞 180초. */
+        const val ANALYSIS_US = 180_000_000L
+
         const val SAMPLE_RATE = 44_100
         const val CHANNELS = 2
         const val BIT_RATE = 128_000
         const val BYTES_PER_FRAME = CHANNELS * 2
         const val TIMEOUT_US = 5_000L
+
+        /** 풀기: 넣을 것도 나온 것도 없을 때 출력을 기다리는 시간. */
+        const val IDLE_US = 10_000L
+
+        /** 디코더 출력 형식. 16비트·float가 아니거나 표본율·채널 수가 없으면 [Unreadable]. */
+        fun pcmFormat(format: MediaFormat): PcmFormat {
+            val rate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+            val channels = format.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+            var isFloat = false
+            if (format.containsKey(MediaFormat.KEY_PCM_ENCODING)) {
+                val encoding = format.getInteger(MediaFormat.KEY_PCM_ENCODING)
+                if (encoding != AudioFormat.ENCODING_PCM_16BIT && encoding != AudioFormat.ENCODING_PCM_FLOAT) {
+                    throw Unreadable(IllegalArgumentException("PCM encoding $encoding"))
+                }
+                isFloat = encoding == AudioFormat.ENCODING_PCM_FLOAT
+            }
+            if (rate <= 0 || channels <= 0) throw Unreadable(IllegalArgumentException("$rate Hz, $channels ch"))
+            return PcmFormat(rate, channels, isFloat)
+        }
 
         fun framesOf(us: Long): Int = (us * SAMPLE_RATE / 1_000_000L).toInt()
         fun usOf(frames: Int): Long = frames * 1_000_000L / SAMPLE_RATE

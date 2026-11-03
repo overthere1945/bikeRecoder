@@ -35,6 +35,7 @@ import com.cowork.bikerecoder.core.video.RouteColoring
 import com.cowork.bikerecoder.core.video.SceneKind
 import com.cowork.bikerecoder.core.video.VideoOptions
 import com.cowork.bikerecoder.core.video.VideoTimeline
+import com.cowork.bikerecoder.core.video.framesOf
 import com.cowork.bikerecoder.map.TileSource
 import com.cowork.bikerecoder.ui.activity.ActivityText
 import kotlinx.coroutines.CancellationException
@@ -183,12 +184,11 @@ class FrameRenderer(
 
     private fun hudShown(plan: FramePlan) = options.hud && (plan.kind == SceneKind.RIDE || plan.kind == SceneKind.PHOTO)
 
-    /** The title card: whole over the sky view, fading over the descent's first [FrameStyle.TITLE_FADE_FRAMES] frames. */
+    /** The title card: whole over the sky view, fading over the descent's first [FrameStyle.TITLE_FADE_SECONDS]. */
     private fun titleAlpha(plan: FramePlan): Float = when (plan.kind) {
         SceneKind.INTRO_OVERVIEW -> 1f
         SceneKind.INTRO_DESCENT -> {
-            val k = frameOf(plan, VideoTimeline.DESCENT_FRAMES)
-            (1f - (k + 1f) / FrameStyle.TITLE_FADE_FRAMES).coerceIn(0f, 1f)
+            (1f - (plan.sceneFrame + 1f) / framesOf(FrameStyle.TITLE_FADE_SECONDS)).coerceIn(0f, 1f)
         }
         else -> 0f
     }
@@ -448,11 +448,10 @@ class FrameRenderer(
      * The closing card (spec §3.7) at [OutroCardLayout.card]: the date, the ride's name, six numbers in two columns
      * (three lying), units smaller than their numbers, and "bikeRecoder" with the map attribution in its footer. Opaque:
      * the outro camera ([outroCamera]) keeps the route above it. It rises into place from frame
-     * [VideoTimeline.OUTRO_CARD_FROM] over [VideoTimeline.OUTRO_CARD_FRAMES] frames.
+     * [FramePlan.cardFrom] over [VideoTimeline.OUTRO_CARD_FRAMES] frames.
      */
     private fun drawSummary(canvas: Canvas, plan: FramePlan) {
-        val k = frameOf(plan, VideoTimeline.OUTRO_FRAMES)
-        val a = ((k - VideoTimeline.OUTRO_CARD_FROM + 1f) / VideoTimeline.OUTRO_CARD_FRAMES).coerceIn(0f, 1f)
+        val a = ((plan.sceneFrame - plan.cardFrom + 1f) / VideoTimeline.OUTRO_CARD_FRAMES).coerceIn(0f, 1f)
         if (a <= 0f) return
         val layout = FrameLayout.outro(width, height, cells.size)
         val card = layout.card
@@ -540,7 +539,7 @@ class FrameRenderer(
         /**
          * The sky view's camera for a [width]×[height] frame (ruling F3): the whole route fitted, north up and flat, into
          * the part of the frame above the opening title ([FrameLayout.title], less [TITLE_CLEARANCE]), like [outroCamera]
-         * above the closing card. Pass it as `overview` to `CameraPath.cameras(plans, timeline, overview, outro, heightPx)`,
+         * above the closing card. Pass it as `overview` to `CameraPath.cameras(plans, timeline, overview, outro, widthPx, heightPx)`,
          * which shows it one zoom out (spec §2.2 "overview − 1"): zooming out about the middle draws the route in, so it
          * stays above the title, which starts below the middle.
          */
@@ -551,7 +550,7 @@ class FrameRenderer(
 
         /**
          * The OUTRO camera for a [width]×[height] frame (the encoder's size, 720p fallback included): the whole route fitted
-         * above the closing card ([CameraPath.outro]). Pass it to `CameraPath.cameras(plans, timeline, overview, outro, heightPx)`.
+         * above the closing card ([CameraPath.outro]). Pass it to `CameraPath.cameras(plans, timeline, overview, outro, widthPx, heightPx)`.
          */
         fun outroCamera(inputs: VideoInputs, width: Int, height: Int): Camera =
             CameraPath.outro(inputs.timeline.points.map { it.point }, width, height, outroCard(inputs, width, height).y)
@@ -663,11 +662,13 @@ class FrameRenderer(
 
         /** The photo card's opacity and size in [plan]'s frame: popping in over the first frames, shrinking away over the last. */
         private fun photoPhase(plan: FramePlan): Pair<Float, Float> {
-            val k = frameOf(plan, VideoTimeline.PHOTO_FRAMES)
-            val outFrom = VideoTimeline.PHOTO_FRAMES - FrameStyle.PHOTO_OUT_FRAMES
+            val k = plan.sceneFrame
+            val inFrames = framesOf(FrameStyle.PHOTO_IN_SECONDS)
+            val outFrames = framesOf(FrameStyle.PHOTO_OUT_SECONDS)
+            val outFrom = plan.sceneFrames - outFrames
             return when {
-                k < FrameStyle.PHOTO_IN_FRAMES -> (k / (FrameStyle.PHOTO_IN_FRAMES - 1f)).let { it to popScale(it) }
-                k >= outFrom -> ((k - outFrom) / (FrameStyle.PHOTO_OUT_FRAMES - 1f)).let { 1f - it to 1f + (FrameStyle.PHOTO_END_SCALE - 1f) * it }
+                k < inFrames -> (k / (inFrames - 1f)).let { it to popScale(it) }
+                k >= outFrom -> ((k - outFrom) / (outFrames - 1f)).let { 1f - it to 1f + (FrameStyle.PHOTO_END_SCALE - 1f) * it }
                 else -> 1f to 1f
             }
         }
@@ -692,9 +693,6 @@ class FrameRenderer(
             return value.removeSuffix(unitText) to unitText
         }
 
-
-        /** [plan]'s frame number (from 0) within its scene of [frames] frames. */
-        private fun frameOf(plan: FramePlan, frames: Int): Int = (plan.sceneProgress * (frames - 1)).roundToInt()
 
         /** The photo's size while it pops in, [t] 0 → 1: 0.85 up to 1.04 at 60 %, then settling to 1. */
         private fun popScale(t: Float): Float = if (t < POP_PEAK) {

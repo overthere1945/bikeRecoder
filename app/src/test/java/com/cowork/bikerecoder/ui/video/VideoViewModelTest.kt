@@ -9,6 +9,7 @@ import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.core.video.Aspect
+import com.cowork.bikerecoder.core.video.BuiltInMusic
 import com.cowork.bikerecoder.core.video.RideTimelineBuilder
 import com.cowork.bikerecoder.core.video.RouteColoring
 import com.cowork.bikerecoder.core.video.VideoEstimate
@@ -139,18 +140,20 @@ class VideoViewModelTest {
     @Test
     fun `the estimate follows the length and this phone's seconds per frame`() = runTest(dispatcher) {
         secondsPerFrame = 0.4
+        // 30 km: the ride is 33 s long, so 짧게 (a 30 s limit) makes it shorter and 보통 and 길게 do not.
+        inputs = inputs(canColorByHeart = false, metersPerSecond = 50.0)
         val vm = vm()
         vm.open(TRIP, MediaKind.VIDEO)
         advanceUntilIdle()
         assertEquals(expectedMinutes(VideoOptions(), 0.4), vm.sheet.value!!.minutes)
         assertTrue(vm.sheet.value!!.canMake)
 
-        vm.setOptions(vm.sheet.value!!.options.copy(length = VideoLength.LONG))
+        vm.setOptions(vm.sheet.value!!.options.copy(length = VideoLength.SHORT))
         assertNull(vm.sheet.value!!.minutes, "worked out again")
         assertFalse(vm.sheet.value!!.canMake)
         advanceUntilIdle()
-        assertEquals(expectedMinutes(VideoOptions(length = VideoLength.LONG), 0.4), vm.sheet.value!!.minutes)
-        assertTrue(expectedMinutes(VideoOptions(length = VideoLength.LONG), 0.4) > expectedMinutes(VideoOptions(), 0.4))
+        assertEquals(expectedMinutes(VideoOptions(length = VideoLength.SHORT), 0.4), vm.sheet.value!!.minutes)
+        assertTrue(expectedMinutes(VideoOptions(length = VideoLength.SHORT), 0.4) < expectedMinutes(VideoOptions(), 0.4))
     }
 
     @Test
@@ -190,8 +193,9 @@ class VideoViewModelTest {
         vm.open(TRIP, MediaKind.VIDEO)
         advanceUntilIdle()
         val i = inputs!!
-        assertEquals(720, VideoTimeline.plan(i.timeline, i.photos, VideoOptions(length = VideoLength.SHORT), i.dayStarts).size)
-        assertEquals(36, vm.sheet.value!!.dataNoticeMb, "50,000 B × 720 frames")
+        // 3 km: R0 = 6 + 5 × √3 s of ride, under 짧게's 23 s.
+        assertEquals(649, VideoTimeline.plan(i.timeline, i.photos, VideoOptions(length = VideoLength.SHORT), i.dayStarts).size)
+        assertEquals(33, vm.sheet.value!!.dataNoticeMb, "50,000 B × 649 frames")
 
         vm.closeSheet()
         vm.open(TRIP, MediaKind.IMAGE)
@@ -224,6 +228,81 @@ class VideoViewModelTest {
         vm.clearMusic()
         assertNull(vm.sheet.value!!.options.musicUri)
         assertNull(vm.sheet.value!!.musicName)
+    }
+
+    @Test
+    fun firstSheetHasSunnyPedal() = runTest(dispatcher) {
+        val vm = vm()
+        vm.open(TRIP, MediaKind.VIDEO)
+        advanceUntilIdle()
+        assertEquals(BuiltInMusic.SUNNY_PEDAL, vm.sheet.value!!.options.builtInMusic)
+        assertNull(vm.sheet.value!!.options.musicUri)
+    }
+
+    @Test
+    fun builtInRemembered() = runTest(dispatcher) {
+        val vm = openVideo()
+        vm.onPickBuiltIn(BuiltInMusic.WIND_ROAD)
+        assertEquals(BuiltInMusic.WIND_ROAD, vm.sheet.value!!.options.builtInMusic)
+        vm.make()
+        advanceUntilIdle()
+        assertEquals(BuiltInMusic.WIND_ROAD, saved.single().builtInMusic)
+        assertEquals(BuiltInMusic.WIND_ROAD, job.videos.single().second.builtInMusic)
+
+        last = saved.single()
+        val next = vm()
+        next.open(TRIP, MediaKind.VIDEO)
+        advanceUntilIdle()
+        assertEquals(BuiltInMusic.WIND_ROAD, next.sheet.value!!.options.builtInMusic)
+    }
+
+    @Test
+    fun pickedFileForgottenNextTime() = runTest(dispatcher) {
+        val vm = openVideo()
+        vm.pickMusic(MUSIC)
+        advanceUntilIdle()
+        assertNull(vm.sheet.value!!.options.builtInMusic)
+        vm.make()
+        advanceUntilIdle()
+        assertEquals(MUSIC, job.videos.single().second.musicUri)
+        assertNull(saved.single().musicUri)
+        assertNull(saved.single().builtInMusic)
+
+        last = saved.single()
+        val next = vm()
+        next.open(TRIP, MediaKind.VIDEO)
+        advanceUntilIdle()
+        assertNull(next.sheet.value!!.options.builtInMusic)
+        assertNull(next.sheet.value!!.options.musicUri)
+    }
+
+    @Test
+    fun `picking a track drops the picked file and its name, and none clears both`() = runTest(dispatcher) {
+        val vm = openVideo()
+        vm.pickMusic(MUSIC)
+        advanceUntilIdle()
+        vm.onPickBuiltIn(BuiltInMusic.OVER_THE_HILL)
+        val sheet = vm.sheet.value!!
+        assertNull(sheet.options.musicUri)
+        assertNull(sheet.musicName)
+        assertEquals(BuiltInMusic.OVER_THE_HILL, sheet.options.builtInMusic)
+
+        vm.clearMusic()
+        assertNull(vm.sheet.value!!.options.builtInMusic)
+        assertNull(vm.sheet.value!!.options.musicUri)
+    }
+
+    @Test
+    fun `unreadable built in music is made again with no music at all`() = runTest(dispatcher) {
+        job.videoResult = StartResult.MUSIC_UNREADABLE
+        val vm = openVideo()
+        vm.make()
+        advanceUntilIdle()
+        job.videoResult = StartResult.STARTED
+        vm.makeWithoutMusic()
+        advanceUntilIdle()
+        assertEquals(listOf(BuiltInMusic.SUNNY_PEDAL, null), job.videos.map { it.second.builtInMusic })
+        assertNull(vm.sheet.value)
     }
 
     // --- entry ------------------------------------------------------------------------------------------------------
@@ -571,6 +650,18 @@ class VideoViewModelTest {
     }
 
     @Test
+    fun retryKeepsBuiltIn() = runTest(dispatcher) {
+        val options = VideoOptions(builtInMusic = BuiltInMusic.OVER_THE_HILL)
+        job.pending = PendingJob(TRIP, MediaKind.VIDEO, VideoOptionsJson.encode(options), 1L)
+        val vm = vm()
+        vm.checkUnfinished()
+        advanceUntilIdle()
+        vm.retryUnfinished()
+        advanceUntilIdle()
+        assertEquals(listOf(TRIP to options), job.videos)
+    }
+
+    @Test
     fun `an unfinished image is made again with its aspect`() = runTest(dispatcher) {
         job.pending = PendingJob(TRIP, MediaKind.IMAGE, VideoOptionsJson.encode(VideoOptions(aspect = Aspect.LANDSCAPE)), 1L)
         val vm = vm()
@@ -711,10 +802,10 @@ class VideoViewModelTest {
             SegmentTotals(distanceM, 1_000, 1_000, 5.0, 0.0, 0.0, null, null),
         )
 
-        /** 10 minutes at 5 m/s, one point a second. */
-        fun inputs(canColorByHeart: Boolean): VideoInputs {
+        /** 10 minutes at [metersPerSecond] (5 m/s: 3 km), one point a second. */
+        fun inputs(canColorByHeart: Boolean, metersPerSecond: Double = 5.0): VideoInputs {
             val start = LocalDate.of(2026, 10, 25).atTime(9, 0).atZone(SEOUL).toInstant().toEpochMilli()
-            val track = List(601) { TrackPoint(start + it * 1_000L, GeoPoint(37.52, 126.93 + it * 0.0000565), 20.0, 5f, 5f) }
+            val track = List(601) { TrackPoint(start + it * 1_000L, GeoPoint(37.52, 126.93 + it * 0.0000113 * metersPerSecond), 20.0, 5f, 5f) }
             val totals = SegmentTotals(3_000.0, 600_000, 600_000, 5.5, 3.0, 3.0, 20.0, 23.0)
             val segment = RideSegment(1, TRIP, start, track.last().timeMillis, LocalDate.of(2026, 10, 25), totals)
             return VideoInputs(

@@ -19,6 +19,7 @@ import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripStore
 import com.cowork.bikerecoder.core.video.Aspect
+import com.cowork.bikerecoder.core.video.BuiltInMusic
 import com.cowork.bikerecoder.core.video.RouteColoring
 import com.cowork.bikerecoder.core.video.VideoEstimate
 import com.cowork.bikerecoder.core.video.VideoOptions
@@ -207,9 +208,9 @@ class VideoViewModel(
         if (s.kind == MediaKind.VIDEO && (allowed.length != s.options.length || allowed.photos != s.options.photos)) estimate()
     }
 
-    /** [음악 고르기] picked [uri] (its name is read for the sheet). */
+    /** [파일에서 고르기] picked [uri] (its name is read for the sheet); no bundled track then. */
     fun pickMusic(uri: String) {
-        _sheet.update { it?.copy(options = it.options.copy(musicUri = uri), musicName = null) }
+        _sheet.update { it?.copy(options = it.options.copy(musicUri = uri, builtInMusic = null), musicName = null) }
         viewModelScope.launch {
             val name = guarded("Could not read the music's name") { musicName(uri) }
             _sheet.update { if (it?.options?.musicUri == uri) it.copy(musicName = name ?: MUSIC_PICKED) else it }
@@ -218,7 +219,12 @@ class VideoViewModel(
 
     /** [없음]: no music. */
     fun clearMusic() {
-        _sheet.update { it?.copy(options = it.options.copy(musicUri = null), musicName = null) }
+        _sheet.update { it?.copy(options = it.options.copy(musicUri = null, builtInMusic = null), musicName = null) }
+    }
+
+    /** A bundled track ([햇살 페달] …): instead of a picked file. */
+    fun onPickBuiltIn(music: BuiltInMusic) {
+        _sheet.update { it?.copy(options = it.options.copy(musicUri = null, builtInMusic = music), musicName = null) }
     }
 
     fun closeSheet() {
@@ -251,13 +257,13 @@ class VideoViewModel(
         start(request)
     }
 
-    /** [음악 없이 만들기]: the same video without music. */
+    /** [음악 없이 만들기]: the same video without music — neither the picked file nor a bundled track. */
     fun makeWithoutMusic() {
         val request = (waiting as? Request.Video) ?: return dismissDialog()
         waiting = null
         _dialog.value = null
-        _sheet.update { it?.copy(options = it.options.copy(musicUri = null), musicName = null) }
-        start(request.copy(options = request.options.copy(musicUri = null)))
+        _sheet.update { it?.copy(options = it.options.copy(musicUri = null, builtInMusic = null), musicName = null) }
+        start(request.copy(options = request.options.copy(musicUri = null, builtInMusic = null)))
     }
 
     /** [확인] / [취소] / dismissed (the unfinished job's [닫기] is [dismissUnfinished]). */
@@ -300,7 +306,7 @@ class VideoViewModel(
         }
     }
 
-    /** [다시 만들기]: the same options, without music. */
+    /** [다시 만들기]: the same options, without a picked file (the bundled track stays). */
     fun retryUnfinished() {
         val pending = (_dialog.value as? VideoDialog.Unfinished)?.job ?: return
         _dialog.value = null

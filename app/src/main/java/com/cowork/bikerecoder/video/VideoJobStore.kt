@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.cowork.bikerecoder.core.video.Aspect
+import com.cowork.bikerecoder.core.video.BuiltInMusic
 import com.cowork.bikerecoder.core.video.RouteColoring
 import com.cowork.bikerecoder.core.video.VideoLength
 import com.cowork.bikerecoder.core.video.VideoOptions
@@ -35,7 +36,7 @@ data class PendingJob(
 )
 
 /**
- * 영상 작업이 휴대폰에 남기는 것(DataStore): 마지막으로 고른 옵션(스펙 §1.2, 음악 제외), 이 휴대폰에서 마지막으로 만든 영상의
+ * 영상 작업이 휴대폰에 남기는 것(DataStore): 마지막으로 고른 옵션(스펙 §1.2, 음악은 곡의 키 또는 "none"이고 고른 파일의 URI는 제외), 이 휴대폰에서 마지막으로 만든 영상의
  * 장당 시간(§3.6), 위성 지도 데이터의 장당 바이트(V1.3.1 §1.4), 진행 중 작업(§5.1). 깨진 값은 없는 것으로 읽고, 읽기가 실패해도 영상 만들기를 막지 않는다.
  */
 class VideoJobStore(private val dataStore: DataStore<Preferences>) {
@@ -124,8 +125,9 @@ class VideoJobStore(private val dataStore: DataStore<Preferences>) {
 }
 
 /**
- * [VideoOptions] ↔ JSON(kotlinx.serialization). [VideoOptions.musicUri]는 쓰지 않고, 읽으면 늘 null이다. 모르는 이름이나
- * 빠진 값은 그 항목만 기본값으로, 깨진 JSON은 기본 옵션으로 읽는다. [TripMedia.optionsJson]·[PendingJob.optionsJson]도 이 형식.
+ * [VideoOptions] ↔ JSON(kotlinx.serialization). [VideoOptions.musicUri]는 쓰지 않고, 읽으면 늘 null이다. 음악은
+ * `"music"`에 담긴 곡의 키 또는 `"none"`(고른 파일도 `"none"`). 모르는 이름이나 빠진 값은 그 항목만 기본값으로
+ * (음악은 햇살 페달), 깨진 JSON은 기본 옵션으로 읽는다. [TripMedia.optionsJson]·[PendingJob.optionsJson]도 이 형식.
  */
 object VideoOptionsJson {
 
@@ -136,6 +138,7 @@ object VideoOptionsJson {
         val photos: Boolean = DEFAULTS.photos,
         val hud: Boolean = DEFAULTS.hud,
         val coloring: String = DEFAULTS.coloring.name,
+        val music: String = DEFAULTS.builtInMusic?.key ?: NONE,
     )
 
     private val DEFAULTS = VideoOptions()
@@ -145,7 +148,7 @@ object VideoOptionsJson {
     }
 
     fun encode(o: VideoOptions): String =
-        json.encodeToString(Entry(o.aspect.name, o.length.name, o.photos, o.hud, o.coloring.name))
+        json.encodeToString(Entry(o.aspect.name, o.length.name, o.photos, o.hud, o.coloring.name, o.builtInMusic?.key ?: NONE))
 
     fun decode(text: String): VideoOptions {
         val e = try {
@@ -160,8 +163,11 @@ object VideoOptionsJson {
             hud = e.hud,
             coloring = RouteColoring.entries.firstOrNull { it.name == e.coloring } ?: DEFAULTS.coloring,
             musicUri = null,
+            builtInMusic = if (e.music == NONE) null else BuiltInMusic.entries.firstOrNull { it.key == e.music } ?: DEFAULTS.builtInMusic,
         )
     }
+
+    private const val NONE = "none"
 }
 
 /** A corrupt file is replaced by an empty one (defaults, no pending job) instead of failing every read. */

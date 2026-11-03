@@ -14,7 +14,7 @@ val MediaKind.mimeType: String
 
 /**
  * 여행에서 만든 영상·이미지 기록(스펙 §5.1). [uri]는 갤러리(MediaStore) 항목, [optionsJson]은 만들 때의 옵션
- * ([VideoOptionsJson], 음악 제외). 여행을 지우면 기록만 사라지고 갤러리 파일은 남는다.
+ * ([VideoOptionsJson], `"music"`은 기본 곡의 키 또는 "none"이고 고른 파일의 URI는 쓰지 않음). 여행을 지우면 기록만 사라지고 갤러리 파일은 남는다.
  */
 data class TripMedia(
     val id: Long,
