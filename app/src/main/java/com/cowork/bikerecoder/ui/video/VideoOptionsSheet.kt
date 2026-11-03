@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -227,25 +228,20 @@ fun VideoOptionsContent(
                 Section("배경음악") {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         val bundled = BuiltInMusic.entries
+                        @Composable
+                        fun RowScope.BuiltInTile(m: BuiltInMusic) = ChoiceTile(
+                            m.title, o.musicUri == null && o.builtInMusic == m, Modifier.weight(1f),
+                            tag = VideoTags.MUSIC_BUILT_IN_PREFIX + m.key, onClick = { onPickBuiltIn(m) },
+                        )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             ChoiceTile(
                                 "없음", o.musicUri == null && o.builtInMusic == null, Modifier.weight(1f),
                                 tag = VideoTags.MUSIC_NONE, onClick = onClearMusic,
                             )
-                            bundled.take(2).forEach { m ->
-                                ChoiceTile(
-                                    m.title, o.musicUri == null && o.builtInMusic == m, Modifier.weight(1f),
-                                    tag = VideoTags.MUSIC_BUILT_IN_PREFIX + m.key, onClick = { onPickBuiltIn(m) },
-                                )
-                            }
+                            bundled.take(2).forEach { BuiltInTile(it) }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            bundled.drop(2).forEach { m ->
-                                ChoiceTile(
-                                    m.title, o.musicUri == null && o.builtInMusic == m, Modifier.weight(1f),
-                                    tag = VideoTags.MUSIC_BUILT_IN_PREFIX + m.key, onClick = { onPickBuiltIn(m) },
-                                )
-                            }
+                            bundled.drop(2).forEach { BuiltInTile(it) }
                             ChoiceTile(
                                 "파일에서 고르기", o.musicUri != null, Modifier.weight(2f),
                                 icon = true, tag = VideoTags.MUSIC_FILE, onClick = onPickMusic,

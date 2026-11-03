@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The bundled background tracks are only reached by name (VideoOptions.musicSource builds an
+  android.resource://<package>/raw/<name> URI), never through R.raw, so the resource shrinker
+  would drop them from release builds. Keep them explicitly. Keep this list equal to BuiltInMusic.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@raw/music_sunny_pedal,@raw/music_wind_road,@raw/music_over_the_hill" />
