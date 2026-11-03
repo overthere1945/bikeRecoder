@@ -4,6 +4,8 @@ import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 /** 영상에 넣을 사진 하나: [moveMs] = 촬영 시각에 해당하는 이동 시각. */
 data class PhotoCue(val mediaId: Long, val moveMs: Long, val takenAt: Long)
@@ -32,6 +34,9 @@ data class FramePlan(
     val alongM: Double = 0.0,
     val speed: Float = 1f,
 )
+
+/** 박에 맞춘 계획(스펙 §5.3): [frames]와, 영상 시각 0에 틀 음악 파일 시각 [musicStartUs]. */
+data class Planned(val frames: List<FramePlan>, val musicStartUs: Long)
 
 /** 영상 시간 배분(스펙 §2): 시작 3초 → 주행(사진 장면 포함) → 끝 4초. */
 object VideoTimeline {
@@ -127,29 +132,170 @@ object VideoTimeline {
      * 이동 시간이 0이면 이동 장면이 없고 시작·사진·끝만 나온다.
      */
     fun plan(timeline: RideTimeline, photos: List<PhotoCue>, options: VideoOptions, dayStarts: List<Pair<Long, String>>): List<FramePlan> {
+        val (pace, chosen) = paceFor(timeline, photos, options)
+        val groups = groupSamePlace(chosen)
+        val alongOf = alongFunction(timeline)
+        val slots = rideSlots(pace, framesOf(pace.seconds), groups.map { alongOf(it.first()) })
+        return emit(timeline, pace, groups, slots, dayStarts, PHOTO_FRAMES, OUTRO_FRAMES, OUTRO_CARD_FROM)
+    }
+
+    /** 사진 장면은 적어도 이만큼의 박(스펙 §5.3). */
+    const val PHOTO_MIN_BEATS = 3
+
+    /** 박에 맞춘 끝 장면은 적어도 이만큼(초). */
+    const val OUTRO_MIN_SECONDS = 3.0
+
+    /** 박에 맞추려고 늘이거나 줄인 이동 장면 한 토막은 원래 길이의 이 비율 이상이어야 한다(스펙 §5.3). */
+    const val PIECE_MIN_RATIO = 0.7
+
+    private val INTRO_US = (INTRO_SECONDS * 1_000_000).roundToLong()
+
+    /**
+     * 장면을 박에 맞춘 계획(스펙 §5.3). [beats]가 null이면 [plan] 그대로, 음악 시작점 0.
+     *
+     * - 음악 시작점 [Planned.musicStartUs] = `첫 박 + m·마디 − 3초` 가운데 `max(0, 첫 박 − 반 마디)` 이상인 가장 작은 값: 이동 장면 시작(3초)이 마디에 온다.
+     *   영상 시각 t의 음악 시각은 t + musicStartUs.
+     * - 사진 장면 = 2초에 가장 가까운 박 수(최소 [PHOTO_MIN_BEATS]박), 끝 장면 = 4초에 가장 가까운 마디 수(최소 [OUTRO_MIN_SECONDS]초),
+     *   끝 카드는 끝 장면 시작 뒤 1.2초에 가장 가까운 박에 나타난다. 솟아오르기 1.5초·어두워짐 마지막 1초는 그대로.
+     * - 박 길이 때문에 최대 길이([VideoLength.seconds])를 넘으면 먼저 이동 장면을 고르게 줄인다([PaceProfile.warped]).
+     * - 사진 장면 시작은 가장 가까운 박으로(반 박 이하), 끝 장면 시작은 가장 가까운 마디로 옮긴다. 끝 장면은 마디에 와야 영상이 마디 끝에서
+     *   끝나므로 옮기는 양의 상한이 반 마디다(판정 P8). 앞에서부터 차례로, 그 전환 바로 앞 이동 장면 토막을 늘이거나 줄여 옮긴다. 토막이
+     *   원래 길이의 [PIECE_MIN_RATIO] 미만이 되거나 영상이 최대 길이를 넘으면 그 전환은 옮기지 않고 (앞 전환이 옮긴 만큼 밀린) 제 시각을 지킨다.
+     * - 옮기는 단위는 장(1/30초)이라 전환은 박에서 반 장 안에 온다.
+     */
+    fun planToBeats(timeline: RideTimeline, photos: List<PhotoCue>, options: VideoOptions,
+                    dayStarts: List<Pair<Long, String>>, beats: Beats?): Planned {
+        if (beats == null) return Planned(plan(timeline, photos, options, dayStarts), 0)
+        val beat = beats.beatUs / 1_000_000.0
+        val bar = beats.barUs / 1_000_000.0
+        val photoFrames = framesOf(max(PHOTO_MIN_BEATS, (PHOTO_SECONDS / beat).roundToInt()) * beat)
+        var bars = max(1, (OUTRO_SECONDS / bar).roundToInt())
+        while (bars * bar < OUTRO_MIN_SECONDS) bars++
+        val outroFrames = framesOf(bars * bar)
+        val cardFrom = framesOf((OUTRO_CARD_FROM_SECONDS / beat).roundToInt() * beat)
+
+        val (paced, chosen) = paceFor(timeline, photos, options)
+        val groups = groupSamePlace(chosen)
+        val alongOf = alongFunction(timeline)
+        val alongs = groups.map { alongOf(it.first()) }
+        val maxFrames = options.length.seconds * FPS
+        val introFrames = OVERVIEW_FRAMES + DESCENT_FRAMES
+
+        // 박 길이로 최대 길이를 넘으면 이동 장면을 고르게 줄인다.
+        var pace = paced
+        var n = framesOf(pace.seconds)
+        val excess = introFrames + n + photoFrames * chosen.size + outroFrames - maxFrames
+        if (excess > 0 && n - excess >= 2) {
+            n -= excess
+            pace = pace.warped(listOf(pace.seconds to n.toDouble() / FPS))
+        }
+        var slots = rideSlots(pace, n, alongs)
+        if (n >= 2) {
+            val snapped = snap(pace, n, groups, alongs, slots, photoFrames, outroFrames, maxFrames, beat * FPS)
+            pace = snapped.first
+            slots = snapped.second
+        }
+        val music = beats.startUs + ceilDiv(max(0L, beats.startUs - beats.barUs / 2) - beats.startUs + INTRO_US, beats.barUs) * beats.barUs - INTRO_US
+        return Planned(emit(timeline, pace, groups, slots, dayStarts, photoFrames, outroFrames, cardFrom), music)
+    }
+
+    /**
+     * [planToBeats]의 전환 옮기기. 격자는 장 단위: 이동 장면 시작(장 [OVERVIEW_FRAMES] + [DESCENT_FRAMES])이 마디, 박 간격 [beatFrames]장.
+     * 사진 묶음 g는 이동 장면 장 [slots]\[g] 앞에 나온다(그 앞 사진 장면 수 × [photoFrames]만큼 뒤). 반환: 늘이고 줄인 곡선과 새 자리.
+     * 옮긴 전환과 옮기지 못한 전환 모두 기준점이 되어(앞 토막이 0인 것은 빼고) 뒤 전환을 옮겨도 제 자리를 지킨다. 기준점의 새 시각은
+     * 새 자리의 장 바로 앞 반 장이라 그 장에서 처음 사진의 거리에 닿는다.
+     */
+    private fun snap(pace: PaceProfile, n: Int, groups: List<List<PhotoCue>>, alongs: List<Double>, slots: IntArray,
+                     photoFrames: Int, outroFrames: Int, maxFrames: Int, beatFrames: Double): Pair<PaceProfile, IntArray> {
+        val introFrames = OVERVIEW_FRAMES + DESCENT_FRAMES
+        fun nearest(frame: Int, step: Double) = (introFrames + ((frame - introFrames) / step).roundToInt() * step).roundToInt()
+        val endFrame = introFrames + n + photoFrames * groups.sumOf { it.size } + outroFrames
+
+        var shift = 0
+        var lastSlot = 0
+        fun tryMove(frame: Int, piece: Int, step: Double): Int {
+            val move = nearest(frame + shift, step) - (frame + shift)
+            val ok = piece > 0 && abs(move) <= step / 2 && piece + move >= max(1.0, PIECE_MIN_RATIO * piece) &&
+                endFrame + shift + move <= maxFrames
+            return if (ok) move else 0
+        }
+
+        val newSlots = IntArray(groups.size)
+        val anchored = ArrayList<Int>()
+        var photosBefore = 0
+        for (g in groups.indices) {
+            val k = slots[g]
+            if (k in 1 until n) {
+                val piece = k - lastSlot
+                shift += tryMove(introFrames + k + photoFrames * photosBefore, piece, beatFrames)
+                if (piece > 0) {
+                    anchored += g
+                    lastSlot = k
+                }
+            }
+            newSlots[g] = k + shift
+            photosBefore += groups[g].size
+        }
+        shift += tryMove(introFrames + n + photoFrames * photosBefore, n - lastSlot, beatFrames * 4)
+        val newN = n + shift
+        for (g in groups.indices) if (slots[g] >= n) newSlots[g] = newN
+
+        val seconds = newN.toDouble() / FPS
+        val step = seconds / (newN - 1)
+        val anchors = ArrayList<Pair<Double, Double>>()
+        for (g in anchored) {
+            val old = pace.secondAt(alongs[g])
+            val new = (newSlots[g] - 0.5) * step
+            val (lastOld, lastNew) = anchors.lastOrNull() ?: (0.0 to 0.0)
+            if (old > lastOld && new > lastNew && old < pace.seconds && new < seconds) anchors += old to new
+        }
+        anchors += pace.seconds to seconds
+        return pace.warped(anchors) to newSlots
+    }
+
+    /**
+     * 사진 묶음마다 앞에 나올 이동 장면 장: [pace]를 [rideFrames]장에 펼 때 거리가 [alongs](시간순)에 처음 닿는 장, 끝까지 안 닿으면 [rideFrames].
+     */
+    private fun rideSlots(pace: PaceProfile, rideFrames: Int, alongs: List<Double>): IntArray {
+        val slots = IntArray(alongs.size) { rideFrames }
+        var next = 0
+        for (k in 0 until rideFrames) {
+            val along = pace.alongAt(rideSecond(k, rideFrames, pace.seconds))
+            while (next < alongs.size && alongs[next] <= along) slots[next++] = k
+        }
+        return slots
+    }
+
+    private fun rideSecond(k: Int, rideFrames: Int, seconds: Double) =
+        if (rideFrames > 1) k.toDouble() / (rideFrames - 1) * seconds else 0.0
+
+    /**
+     * 프레임을 늘어놓는다([plan]·[planToBeats] 공통): 시작 3초 → 이동 장면([pace]를 framesOf(길이)장에, 사진 묶음 g는 장 [slots]\[g] 앞에
+     * 사진마다 [photoFrames]장) → 끝 [outroFrames]장(요약 카드는 [cardFrom]장부터).
+     */
+    private fun emit(timeline: RideTimeline, pace: PaceProfile, groups: List<List<PhotoCue>>, slots: IntArray,
+                     dayStarts: List<Pair<Long, String>>, photoFrames: Int, outroFrames: Int, cardFrom: Int): List<FramePlan> {
         val route = timeline.routeDistance
         val totalMove = timeline.totalMoveMs
-        val (pace, chosen) = paceFor(timeline, photos, options)
         val rideFrames = framesOf(pace.seconds)
         val alongOf = alongFunction(timeline)
 
-        val out = ArrayList<FramePlan>(OVERVIEW_FRAMES + DESCENT_FRAMES + rideFrames + PHOTO_FRAMES * chosen.size + OUTRO_FRAMES)
+        val out = ArrayList<FramePlan>(OVERVIEW_FRAMES + DESCENT_FRAMES + rideFrames + photoFrames * groups.sumOf { it.size } + outroFrames)
         fun emit(kind: SceneKind, moveMs: Long, k: Int, of: Int, photo: PhotoCue? = null, caption: String? = null,
                  fade: Float = 0f, reuseMap: Boolean = false, alongM: Double = 0.0, speed: Float = 1f) {
             val progress = if (of > 1) k.toFloat() / (of - 1) else 0f
-            out += FramePlan(out.size, kind, moveMs, progress, k, of, photo, caption, fade, reuseMap, alongM = alongM, speed = speed)
+            out += FramePlan(out.size, kind, moveMs, progress, k, of, photo, caption, fade, reuseMap, cardFrom, alongM, speed)
         }
 
         // 하늘 위 장면은 카메라가 돌고 사진 장면은 카메라가 사진 위치를 돌아 매 장 새 지도다.
         repeat(OVERVIEW_FRAMES) { emit(SceneKind.INTRO_OVERVIEW, 0, it, OVERVIEW_FRAMES) }
         repeat(DESCENT_FRAMES) { emit(SceneKind.INTRO_DESCENT, 0, it, DESCENT_FRAMES) }
 
-        val groups = groupSamePlace(chosen)
         var nextGroup = 0
         fun emitGroup(group: List<PhotoCue>) {
             val anchor = group.first().moveMs
             val along = alongOf(group.first())
-            for (cue in group) repeat(PHOTO_FRAMES) { emit(SceneKind.PHOTO, anchor, it, PHOTO_FRAMES, photo = cue, alongM = along) }
+            for (cue in group) repeat(photoFrames) { emit(SceneKind.PHOTO, anchor, it, photoFrames, photo = cue, alongM = along) }
         }
 
         val days = dayStarts.sortedBy { it.first }.map { (moveMs, text) -> route.atMove(moveMs) to text }
@@ -157,9 +303,9 @@ object VideoTimeline {
         var caption: String? = null
         var captionLeft = 0
         for (k in 0 until rideFrames) {
-            val second = if (rideFrames > 1) k.toDouble() / (rideFrames - 1) * pace.seconds else 0.0
+            val second = rideSecond(k, rideFrames, pace.seconds)
             val along = pace.alongAt(second)
-            while (nextGroup < groups.size && alongOf(groups[nextGroup].first()) <= along) emitGroup(groups[nextGroup++])
+            while (nextGroup < groups.size && slots[nextGroup] <= k) emitGroup(groups[nextGroup++])
             while (nextDay < days.size && days[nextDay].first <= along) {
                 caption = days[nextDay++].second
                 captionLeft = CAPTION_FRAMES
@@ -169,13 +315,15 @@ object VideoTimeline {
         }
         while (nextGroup < groups.size) emitGroup(groups[nextGroup++])
 
-        repeat(OUTRO_FRAMES) {
-            val fadeK = it - (OUTRO_FRAMES - FADE_FRAMES)
+        repeat(outroFrames) {
+            val fadeK = it - (outroFrames - FADE_FRAMES)
             val fade = if (fadeK < 0) 0f else fadeK.toFloat() / (FADE_FRAMES - 1)
-            emit(SceneKind.OUTRO, totalMove, it, OUTRO_FRAMES, fade = fade, reuseMap = it >= OUTRO_RISE_FRAMES, alongM = route.total)
+            emit(SceneKind.OUTRO, totalMove, it, outroFrames, fade = fade, reuseMap = it >= OUTRO_RISE_FRAMES, alongM = route.total)
         }
         return out
     }
+
+    private fun ceilDiv(a: Long, b: Long): Long = -Math.floorDiv(-a, b)
 
     /** 시간순 사진을 첫 사진 moveMs ±1초 안끼리 묶는다(묶음은 이어서 나온다). */
     private fun groupSamePlace(sorted: List<PhotoCue>): List<List<PhotoCue>> {

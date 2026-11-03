@@ -302,4 +302,143 @@ class VideoTimelineTest {
         assertEquals(120 * 30, frames.size)
         assertTrue(elapsedMs < 1_000, "took $elapsedMs ms")
     }
+
+    // --- 박에 맞춘 계획(스펙 §5.3) ---
+
+    /** 124 BPM, 첫 박 0.4초. */
+    private val beats124 = Beats(startUs = 400_000, beatUs = 483_871)
+
+    private val oneFrame = 1.0 / 30 + 1e-9
+
+    /** 영상 장 [frame]의 시각이 음악 격자([stepUs] 간격, [beats]의 첫 박 기준)에서 떨어진 초. 음악 시각 = 영상 시각 + musicStartUs. */
+    private fun offGrid(frame: Int, planned: Planned, beats: Beats, stepUs: Long): Double {
+        val x = (frame / 30.0 * 1e6 + planned.musicStartUs - beats.startUs) / stepUs
+        return abs(x - Math.round(x)) * stepUs / 1e6
+    }
+
+    private fun photoStarts(frames: List<FramePlan>) = frames.filter { it.kind == SceneKind.PHOTO && it.sceneFrame == 0 }
+
+    private val tenKm by lazy { rideOf(10.0, 3600) }
+    private val fourPhotos = List(4) { cue(it.toLong(), 600_000L * (it + 1)) }
+
+    private fun planned(timeline: RideTimeline = tenKm, photos: List<PhotoCue> = fourPhotos, beats: Beats? = beats124,
+                        options: VideoOptions = VideoOptions()) =
+        VideoTimeline.planToBeats(timeline, photos, options, emptyList(), beats)
+
+    @Test
+    fun rideStartsOnABar() {
+        val p = planned()
+        assertEquals(90, p.frames.indexOfFirst { it.kind == SceneKind.RIDE })
+        val bar = beats124.barUs
+        assertTrue((3_000_000 + p.musicStartUs - beats124.startUs) % bar < 1_000_000 / 30)
+        // 가장 이른 마디: 곡 시작점 − 반 마디보다 이르지 않은 것 가운데.
+        val lower = maxOf(0L, beats124.startUs - bar / 2)
+        assertTrue(p.musicStartUs >= lower && p.musicStartUs - bar < lower, "${p.musicStartUs}")
+    }
+
+    @Test
+    fun photosStartOnBeatsAndLastWholeBeats() {
+        val frames = planned().frames
+        val starts = photoStarts(frames)
+        assertEquals(4, starts.size)
+        val photoFrames = framesOf(4 * beats124.beatUs / 1e6)
+        for (start in starts) {
+            assertTrue(offGrid(start.index, planned(), beats124, beats124.beatUs) <= oneFrame, "photo at ${start.index}")
+            assertEquals(photoFrames, start.sceneFrames)
+            val run = frames.drop(start.index).takeWhile { it.kind == SceneKind.PHOTO && it.photo == start.photo }
+            assertEquals(photoFrames, run.size)
+        }
+    }
+
+    @Test
+    fun outroOnABarAndEndsOnABar() {
+        for (km in listOf(3.0, 10.0, 25.0)) {
+            val p = planned(timeline = rideOf(km, 3600))
+            val bar = beats124.barUs
+            val outro = p.frames.indexOfFirst { it.kind == SceneKind.OUTRO }
+            assertTrue(offGrid(outro, p, beats124, bar) <= oneFrame, "$km km: outro at $outro")
+            assertTrue(offGrid(p.frames.size, p, beats124, bar) <= oneFrame, "$km km: ends at ${p.frames.size}")
+            // 끝 장면 = 4초에 가장 가까운 마디 수(124 BPM: 2마디), 솟아오르기 1.5초, 어두워짐 마지막 1초.
+            val frames = p.frames.drop(outro)
+            assertEquals(framesOf(2 * bar / 1e6), frames.size)
+            assertTrue(frames.all { it.sceneFrames == frames.size })
+            assertEquals(List(45) { false } + List(frames.size - 45) { true }, frames.map { it.reuseMap })
+            assertEquals(0f, frames[frames.size - 30].fade)
+            assertEquals(1f, frames.last().fade)
+            assertTrue(frames.dropLast(30).all { it.fade == 0f })
+        }
+    }
+
+    @Test
+    fun cardOnTheBeatNearest1_2s() {
+        val beat = beats124.beatUs / 1e6
+        val outro = planned().frames.filter { it.kind == SceneKind.OUTRO }
+        assertTrue(outro.all { it.cardFrom == framesOf(beat * Math.round(1.2 / beat)) })
+    }
+
+    @Test
+    fun unreachableEventKeepsItsTime() {
+        // 이동 장면 시작 0.12~0.2초 뒤의 사진: 가장 가까운 박은 이동 장면 시작(3초)이라 앞 토막이 0이 되므로(70 % 미만) 맞추지 않는다.
+        val timeline = tenKm
+        val photo = (1..120).map { cue(1, it * 1_000L) }.first {
+            val pace = VideoTimeline.paceFor(timeline, listOf(it), VideoOptions()).first
+            pace.secondAt(timeline.routeDistance.atMove(it.moveMs)) >= 0.12
+        }
+        val second = VideoTimeline.paceFor(timeline, listOf(photo), VideoOptions()).first
+            .secondAt(timeline.routeDistance.atMove(photo.moveMs))
+        assertTrue(second <= 0.2, "photo at $second s")
+        val plain = photoStarts(VideoTimeline.plan(timeline, listOf(photo), VideoOptions(), emptyList())).single()
+        val p = planned(photos = listOf(photo))
+        val snapped = photoStarts(p.frames).single()
+        assertEquals(plain.index, snapped.index)
+        assertTrue(offGrid(snapped.index, p, beats124, beats124.beatUs) > oneFrame)
+    }
+
+    @Test
+    fun noBeatsIsThePlainPlan() {
+        val p = planned(beats = null)
+        assertEquals(VideoTimeline.plan(tenKm, fourPhotos, VideoOptions(), emptyList()), p.frames)
+        assertEquals(0L, p.musicStartUs)
+    }
+
+    @Test
+    fun shortMusicStillSnaps() {
+        // 20초 곡의 박으로 약 36초 영상: 곡 길이와 상관없이 격자는 이어지고, 음악은 곡 끝까지만 깐다.
+        val beats = Beats(startUs = 250_000, beatUs = 483_871)
+        val p = planned(beats = beats)
+        assertTrue(p.frames.size > 35 * 30)
+        val starts = photoStarts(p.frames)
+        assertEquals(4, starts.size)
+        assertTrue(starts.all { offGrid(it.index, p, beats, beats.beatUs) <= oneFrame })
+        val outro = p.frames.indexOfFirst { it.kind == SceneKind.OUTRO }
+        assertTrue(offGrid(outro, p, beats, beats.barUs) <= oneFrame)
+        val audio = AudioPlanner.plan(20_000_000, p.frames.size * 1_000_000L / 30, p.musicStartUs)
+        assertEquals(20_000_000 - p.musicStartUs, audio.takeUs)
+    }
+
+    @Test
+    fun beatLengthsStayWithinMaxLength() {
+        // 112 BPM: 사진 4박 = 2.14초, 끝 2마디 = 4.29초라 짧게(30초)를 꽉 채운 50 km는 박 길이만으로 30초를 넘는다.
+        val far = rideOf(50.0, 3600)
+        val photos = List(4) { cue(it.toLong(), 600_000L * (it + 1)) }
+        val beats112 = Beats(startUs = 400_000, beatUs = 535_714)
+        val short = VideoOptions(length = VideoLength.SHORT)
+        val plain = VideoTimeline.plan(far, photos, short, emptyList())
+        assertEquals(30 * 30, plain.size)
+        assertTrue(90 + plain.count(SceneKind.RIDE) + 4 * framesOf(4 * 0.535714) + framesOf(8 * 0.535714) > 30 * 30)
+        assertTrue(planned(far, photos, beats112, short).frames.size <= 30 * 30)
+
+        for (length in VideoLength.values()) {
+            for (km in listOf(0.5, 5.0, 50.0, 300.0)) {
+                for (bpmBeatUs in listOf(535_714L, 483_871L, 454_545L)) {
+                    for (count in listOf(0, 20)) {
+                        val cues = List(count) { cue(it.toLong(), 100_000L + it * 150_000L) }
+                        val frames = planned(rideOf(km, 3600), cues, Beats(400_000, bpmBeatUs), VideoOptions(length = length)).frames
+                        assertTrue(frames.size <= length.seconds * 30, "$length $km km $count photos $bpmBeatUs: ${frames.size}")
+                        assertEquals(frames.indices.toList(), frames.map { it.index })
+                    }
+                }
+            }
+        }
+    }
 }
