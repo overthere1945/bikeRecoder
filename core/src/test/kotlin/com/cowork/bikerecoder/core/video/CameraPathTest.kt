@@ -319,20 +319,36 @@ class CameraPathTest {
     fun sameTimeSameBearingAt24And30() {
         // 굽은 길: 따라가기·초당 상한·도는 시점이 모두 시간 기준이라 초당 24장과 30장의 방향이 같은 때(1/6초마다)에 같다(< 2°).
         // 0.5° 안이어야 한다: 따라가기를 장마다 15%로 두면(시간 기준이 아니면) 약 1.5° 어긋난다.
+        // 빠르기는 앞 6초 1.5(빠른 곳), 뒤 6초 0.5(느린 곳): 확대·기울기도 초당 상한으로 같은 때에 같은 값이다(어긋남은 한 장 차이의
+        // 보간 몫, 확대 0.3 × (1/24 − 1/30) = 0.0025, 기울기 4 × (1/24 − 1/30) ≈ 0.033° 이하).
         val timeline = zigzag(6_000.0, 5.0, legM = 400.0)
         val seconds = 12.0
-        val at24 = ridePlans(timeline, seconds, fps = 24).let { plans -> plans.of(SceneKind.RIDE).map { camerasFor(timeline, plans, 24)[it.index] } }
-        val at30 = ridePlans(timeline, seconds, fps = 30).let { plans -> plans.of(SceneKind.RIDE).map { camerasFor(timeline, plans, 30)[it.index] } }
+        val speed = { t: Double -> if (t < 6.0) 1.5 else 0.5 }
+        val at24 = ridePlans(timeline, seconds, fps = 24, speed).let { plans -> plans.of(SceneKind.RIDE).map { camerasFor(timeline, plans, 24)[it.index] } }
+        val at30 = ridePlans(timeline, seconds, fps = 30, speed).let { plans -> plans.of(SceneKind.RIDE).map { camerasFor(timeline, plans, 30)[it.index] } }
         val headings = ArrayList<Double>()
+        val zooms = ArrayList<Double>()
+        val tilts = ArrayList<Double>()
         for (sixth in 0 until (seconds * 6).toInt()) {
             val a = at24[sixth * 4]
             val b = at30[sixth * 5]
             assertTrue(angleDiff(a.bearing, b.bearing) < 0.5, "${sixth / 6.0} s: ${a.bearing} vs ${b.bearing}")
-            assertEquals(a.zoom, b.zoom, 1e-6, "${sixth / 6.0} s zoom")
+            assertEquals(a.zoom, b.zoom, 0.005, "${sixth / 6.0} s zoom")
+            assertEquals(a.tilt, b.tilt, 0.05, "${sixth / 6.0} s tilt")
             headings += normalize(b.bearing - orbit(sixth * 5))
+            zooms += b.zoom
+            tilts += b.tilt
         }
         // 길이 꺾여 방향이 실제로 바뀐다(따라가기를 거친다).
         assertTrue(headings.maxOf { angleDiff(headings.first(), it) } > 20.0, "headings $headings")
+        // 확대는 빠른 곳 z0 − 0.4에서 느린 곳 z0 + 0.3으로, 기울기는 55°에서 60°로 초당 상한에 걸려 천천히 간다(가운데 값을 지난다).
+        val z0 = CameraPath.baseZoom(timeline.routeDistance.total, seconds, midLat(timeline), 1080, ActivityType.BIKE)
+        assertEquals(z0 + CameraPath.FAST_ZOOM, zooms.first(), 1e-9)
+        assertEquals(z0 + CameraPath.SLOW_ZOOM, zooms.last(), 1e-9)
+        assertTrue(zooms.any { it > z0 + CameraPath.FAST_ZOOM + 0.1 && it < z0 + CameraPath.SLOW_ZOOM - 0.1 }, "zooms $zooms")
+        assertEquals(CameraPath.FAST_TILT, tilts.first(), 1e-9)
+        assertEquals(CameraPath.TILT, tilts.last(), 1e-9)
+        assertTrue(tilts.any { it > CameraPath.FAST_TILT + 1.0 && it < CameraPath.TILT - 1.0 }, "tilts $tilts")
     }
 
     @Test
@@ -544,14 +560,18 @@ class CameraPathTest {
 
     @Test
     fun descentSpirals() {
-        // 내려가기 한가운데는 정북 → 첫 방향의 짧은 쪽 보간에서 sin(π·½) × 30° = 30° 더 돌아 있다.
-        val timeline = path(*(listOf(0.0 to 0.0) + walk(0.0 to 0.0, 45.0, 400)).toTypedArray())
-        val (plans, cameras) = plansAndCameras(timeline)
-        val descent = plans.of(SceneKind.INTRO_DESCENT)
-        val firstRide = cameras[plans.first { it.kind == SceneKind.RIDE }.index]
-        val mid = descent[descent.size / 2]
-        val straight = normalize(signedDiff(0.0, firstRide.bearing) * smoothstep(mid.sceneProgress.toDouble()))
-        assertEquals(CameraPath.DESCENT_SPIRAL_DEG, signedDiff(straight, cameras[mid.index].bearing), 3.0)
+        // 내려가기 한가운데는 정북 → 첫 방향의 짧은 쪽 보간에서 sin(π·½) × 30° = 30° 더, 도는 쪽으로 감겨 있다(판정 P11).
+        // 첫 방향 45°(오른쪽으로 돈다)는 +30°, 340°(왼쪽으로 −20°)는 −30°.
+        for ((heading, side) in listOf(45.0 to 1.0, 340.0 to -1.0)) {
+            val timeline = path(*(listOf(0.0 to 0.0) + walk(0.0 to 0.0, heading, 400)).toTypedArray())
+            val (plans, cameras) = plansAndCameras(timeline)
+            val descent = plans.of(SceneKind.INTRO_DESCENT)
+            val firstRide = cameras[plans.first { it.kind == SceneKind.RIDE }.index]
+            assertEquals(heading, firstRide.bearing, 0.5)
+            val mid = descent[descent.size / 2]
+            val straight = normalize(signedDiff(0.0, firstRide.bearing) * smoothstep(mid.sceneProgress.toDouble()))
+            assertEquals(side * CameraPath.DESCENT_SPIRAL_DEG, signedDiff(straight, cameras[mid.index].bearing), 3.0, "$heading")
+        }
     }
 
     /** 첫 방향이 170°(+170° 돌기)나 200°(−160° 돌기)여도 내려가기는 짧은 쪽으로 한 방향으로만 돈다(규칙 F4, 감아 도는 몫을 빼고). */
@@ -573,7 +593,7 @@ class CameraPathTest {
     }
 
     /**
-     * [descent]의 방향에서 감아 도는 몫(sin(π·t) × 30°, t = 진행의 smoothstep)을 빼면 [from]에서 [to]까지 짧은 쪽(|돌기| ≤ 180°)으로,
+     * [descent]의 방향에서 감아 도는 몫(도는 쪽 부호 × sin(π·t) × 30°, t = 진행의 smoothstep)을 빼면 [from]에서 [to]까지 짧은 쪽(|돌기| ≤ 180°)으로,
      * 되돌아가지 않고 한 방향으로만 바뀐다.
      */
     private fun assertTurnsTheShortWay(from: Camera, plans: List<FramePlan>, descent: List<Camera>, to: Camera) {
@@ -581,7 +601,8 @@ class CameraPathTest {
         assertTrue(abs(total) <= 180.0, "turn $total")
         // 지나온 각도(출발 방향 기준, 짧은 쪽 부호)가 0에서 total까지 단조롭게 간다.
         val turned = descent.mapIndexed { i, cam ->
-            val spiral = CameraPath.DESCENT_SPIRAL_DEG * sin(PI * smoothstep(plans[i].sceneProgress.toDouble()))
+            val side = if (signedDiff(0.0, to.bearing) < 0.0) -1.0 else 1.0
+            val spiral = side * CameraPath.DESCENT_SPIRAL_DEG * sin(PI * smoothstep(plans[i].sceneProgress.toDouble()))
             signedDiff(from.bearing, cam.bearing - spiral) * sign(total)
         }
         assertEquals(0.0, turned.first(), 1e-6)
@@ -618,6 +639,32 @@ class CameraPathTest {
         val next = cameras[photo.last().index + 1]
         assertTrue(angleDiff(last.bearing, next.bearing) <= bearingStep, "${last.bearing} → ${next.bearing}")
         assertTrue(abs(next.zoom - last.zoom) <= CameraPath.ZOOM_RATE_PER_S / FPS + 1e-9, "${last.zoom} → ${next.zoom}")
+    }
+
+    @Test
+    fun photoGroupHoldsThePush() {
+        // 한 자리(이동 시각 1초 안)의 사진 두 장은 이어서 나온다. 첫 장에서 주행 확대 + 0.3까지 다가가고, 다음 장은 + 0.6이 아니라
+        // 그 + 0.3을 지킨다. 그 뒤 주행은 그 확대에서 초당 상한으로 돌아간다.
+        val timeline = lPath()
+        val (plans, cameras) = plansAndCameras(timeline, listOf(PhotoCue(7, 30_000L, 30_000L), PhotoCue(8, 30_500L, 30_500L)))
+        val photo = plans.of(SceneKind.PHOTO)
+        assertEquals(2 * VideoTimeline.PHOTO_FRAMES, photo.size)
+        assertEquals(photo.first().index + photo.size - 1, photo.last().index) // 사이에 주행 장이 없다
+        val rideZoom = cameras[photo.first().index - 1].zoom
+        val (first, second) = photo.partition { it.photo!!.mediaId == 7L }
+        assertEquals(rideZoom + CameraPath.PHOTO_PUSH_ZOOM, cameras[first.last().index].zoom, 1e-9)
+        second.forEach { assertEquals(rideZoom + CameraPath.PHOTO_PUSH_ZOOM, cameras[it.index].zoom, 1e-9, "photo ${it.index}") }
+        // 두 장 모두 40°씩 돈다.
+        assertEquals(CameraPath.PHOTO_ORBIT_DEG, signedDiff(cameras[second.first().index].bearing, cameras[second.last().index].bearing), 0.5)
+
+        val after = plans.drop(photo.last().index + 1).takeWhile { it.kind == SceneKind.RIDE }
+        val zooms = listOf(cameras[photo.last().index].zoom) + after.map { cameras[it.index].zoom }
+        val step = CameraPath.ZOOM_RATE_PER_S / FPS
+        zooms.zipWithNext().forEach { (a, b) -> assertTrue(abs(b - a) <= step + 1e-9, "$a → $b") }
+        // 다가간 만큼(+0.3) 이상 떨어진 목표로 첫 장부터 상한만큼 돌아간다.
+        val target = baseZoomOf(timeline, plans) + CameraPath.zoomOffset(after.first().speed.toDouble())
+        assertTrue(zooms.first() - target > step, "photo ${zooms.first()} target $target")
+        assertEquals(zooms.first() - step, zooms[1], 1e-9)
     }
 
     @Test
@@ -708,7 +755,7 @@ class CameraPathTest {
         }
         // 같은 경로라도 칸이 작으면 덜 확대한다(세로 화면 1920 대신 지도 칸 960).
         assertTrue(CameraPath.overview(tall, 1080, 960).zoom < CameraPath.overview(tall, Aspect.PORTRAIT).zoom)
-        // 아주 짧은 경로는 가장 가까운 주행 확대보다 더 들어가지 않는다.
+        // 아주 짧은 경로는 [CameraPath.OVERVIEW_MAX_ZOOM](17.4)보다 더 들어가지 않는다.
         val tiny = CameraPath.overview(listOf(at(0.0, 0.0), at(3.0, 0.0)), Aspect.PORTRAIT)
         assertEquals(CameraPath.OVERVIEW_MAX_ZOOM, tiny.zoom)
         assertEquals(CameraPath.OVERVIEW_MAX_ZOOM, CameraPath.overview(listOf(at(0.0, 0.0)), Aspect.LANDSCAPE).zoom)
@@ -752,7 +799,7 @@ class CameraPathTest {
             val fill = max((xs.max() - xs.min()) / (w - 2.0 * margin), (ys.max() - ys.min()) / (h - 2.0 * margin))
             assertEquals(1.0, fill, 1e-6)
         }
-        // A tiny route is not zoomed in past the riding zoom, as with [overview].
+        // A tiny route is not zoomed in past [CameraPath.OVERVIEW_MAX_ZOOM] (17.4), as with [overview].
         assertEquals(CameraPath.OVERVIEW_MAX_ZOOM, CameraPath.overviewInset(listOf(at(0.0, 0.0), at(3.0, 0.0)), w, h, margin).zoom)
         // 10 % of a 500 px square is 50 px: the same camera as the ratio overview.
         assertEquals(CameraPath.overview(tall, 500, 500).zoom, CameraPath.overviewInset(tall, 500, 500, 50).zoom, 1e-9)
@@ -781,7 +828,7 @@ class CameraPathTest {
             val fill = max((xs.max() - xs.min()) / box.w, (ys.max() - ys.min()) / box.h)
             assertEquals(1.0, fill, 1e-6)
         }
-        // A tiny route is not zoomed in past the riding zoom, and still lands on the box centre.
+        // A tiny route is not zoomed in past [CameraPath.OVERVIEW_MAX_ZOOM] (17.4), and still lands on the box centre.
         val tiny = listOf(at(0.0, 0.0), at(3.0, 0.0))
         val box = Box(65f, 250f, 950f, 690f)
         val cam = CameraPath.overviewInBox(tiny, w, h, box)

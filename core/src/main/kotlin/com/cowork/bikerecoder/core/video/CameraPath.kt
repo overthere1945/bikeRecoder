@@ -50,7 +50,7 @@ object CameraPath {
     const val ORBIT_DEG = 25.0
     const val ORBIT_PERIOD_S = 12.0
 
-    /** 내려가기에서 짧은 쪽 보간에 더하는 감아 돌기: sin(π·t) × 이 값. */
+    /** 내려가기에서 짧은 쪽 보간에 더하는 감아 돌기: 도는 쪽 부호 × sin(π·t) × 이 값(판정 P11: 왼쪽으로 돌면 왼쪽으로 감는다). */
     const val DESCENT_SPIRAL_DEG = 30.0
 
     /**
@@ -144,7 +144,7 @@ object CameraPath {
      *   중심은 [markerLeadM]만큼 진행 방향 앞.
      * - INTRO_OVERVIEW: [overview] 중심, 확대 − 1, 기울기 0, 정북 그대로(규칙 F4: 제목 카드가 떠 있는 동안 돌지 않는다).
      * - INTRO_DESCENT: 그 카메라에서 첫 주행 카메라로 smoothstep 보간. 방향은 정북에서 첫 주행 방향까지 짧은 쪽(|돌기| ≤ 180°)에
-     *   sin(π·t) × 30°를 더해 감아 돌며 내려온다(t = 0, 1에서 0).
+     *   ±sin(π·t) × 30°를 더해 도는 쪽으로 감아 돌며 내려온다(판정 P11: 짧은 쪽이 왼쪽이면 −, 오른쪽이나 0이면 +. t = 0, 1에서 0).
      * - PHOTO: 그 이동 시각의 주행 카메라를 (사진 시작 방향 + 40° × smoothstep)으로 돌며, 확대는 직전 장에서 주행 확대 + 0.3까지
      *   smoothstep으로 다가간다. 기울기는 직전 장 그대로. 끝나면 그 방향·확대에서 다시 따라간다.
      * - OUTRO: 끝 직전 카메라(마지막 주행 장, 끝에 사진이 있으면 그 사진 장)에서 [outro]로 [VideoTimeline.OUTRO_RISE_SECONDS] 동안
@@ -202,6 +202,7 @@ object CameraPath {
         val firstBearing = lookBearing(firstLocated, firstSpeed, overview.bearing)
         val firstRide = riding(firstLocated.point, z0 + zoomOffset(firstSpeed), firstBearing, tiltFor(firstSpeed))
         val high = Camera(overview.center, (overview.zoom - 1).coerceAtLeast(0.0), bearing = 0.0, tilt = 0.0)
+        val spiralSide = if (signedDelta(high.bearing, firstRide.bearing) < 0.0) -1.0 else 1.0
 
         val out = ArrayList<Camera>(plans.size)
         var heading: Double? = null // 평활해 따라가는 진행 방향(도는 시점 전)
@@ -219,11 +220,11 @@ object CameraPath {
                 // 규칙 F4: 제목 카드가 떠 있는 동안은 돌지 않는다(화면 가운데를 축으로 돌면 경로가 제목 위로 쓸려 온다).
                 SceneKind.INTRO_OVERVIEW -> high
                 // 도는 것은 내려가기만: 정북에서 첫 주행 방향까지 짧은 쪽으로(signedDelta), 확대·기울기·중심과 같은 smoothstep에
-                // 감아 돌기를 더한다(시작·끝 카메라는 그대로).
+                // 도는 쪽으로 감아 돌기를 더한다(시작·끝 카메라는 그대로).
                 SceneKind.INTRO_DESCENT -> {
                     val t = smoothstep(plan.sceneProgress.toDouble())
                     val cam = interpolate(high, firstRide, t)
-                    cam.copy(bearing = normalize(cam.bearing + DESCENT_SPIRAL_DEG * sin(PI * t)))
+                    cam.copy(bearing = normalize(cam.bearing + spiralSide * DESCENT_SPIRAL_DEG * sin(PI * t)))
                 }
                 SceneKind.PHOTO -> {
                     if (plan.sceneFrame == 0) photoStart = out.lastOrNull() ?: firstRide
