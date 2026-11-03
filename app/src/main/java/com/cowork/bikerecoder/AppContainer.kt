@@ -410,6 +410,7 @@ class AppContainer(context: Context) {
         scope = videoScope,
         // Map errors may quote a tile URL, and so the key (ruling K1).
         log = VideoMapStyle.redacting(androidWarnLog("VideoJob"), BuildConfig.VWORLD_API_KEY),
+        packageName = appContext.packageName,
     )
 
     /** "서울 강서구" for a trip's title (V1.4.0 spec §2.5): the stored one first, else looked up once and stored. */

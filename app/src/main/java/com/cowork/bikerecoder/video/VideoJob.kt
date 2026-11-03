@@ -12,6 +12,7 @@ import com.cowork.bikerecoder.core.video.RideTitle
 import com.cowork.bikerecoder.core.video.VideoEstimate
 import com.cowork.bikerecoder.core.video.VideoOptions
 import com.cowork.bikerecoder.core.video.VideoTimeline
+import com.cowork.bikerecoder.core.video.musicSource
 import com.cowork.bikerecoder.offline.VideoMaps
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -125,6 +126,8 @@ class VideoJob(
     private val startService: () -> Unit,
     private val scope: CoroutineScope,
     private val log: WarnLog,
+    /** The app's package: a bundled track is read as `android.resource://<it>/raw/…` ([musicSource]). */
+    private val packageName: String,
     private val clock: () -> Long = System::currentTimeMillis,
     private val nanoTime: () -> Long = System::nanoTime,
     private val zone: ZoneId = SEOUL,
@@ -152,14 +155,15 @@ class VideoJob(
             val needed = neededBytes(options)
             if (backend.freeBytes() < needed) return StartResult.NO_SPACE
             // The music's beat before the plan: scene changes land on it (V1.11.0 spec §5.3).
-            val analysis = options.musicUri?.let { uri -> backend.analyzeMusic(uri) ?: return StartResult.MUSIC_UNREADABLE }
+            val musicUri = options.musicSource(packageName)
+            val analysis = musicUri?.let { uri -> backend.analyzeMusic(uri) ?: return StartResult.MUSIC_UNREADABLE }
             val planned = VideoTimeline.planToBeats(inputs.timeline, inputs.photos, options, inputs.dayStarts, analysis?.beats)
             val plans = planned.frames
             if (plans.isEmpty()) return StartResult.NOTHING_TO_MAKE
             // The map before the track is made: offline it answers at once, the encoding takes seconds.
             if (!mapReachable(inputs)) return StartResult.NO_INTERNET
             val satellite = backend.probeSatellite(inputs.start())
-            val music = options.musicUri?.let { uri ->
+            val music = musicUri?.let { uri ->
                 // On the planned bar with a beat, else where the sound starts.
                 val startUs = if (analysis?.beats != null) planned.musicStartUs else analysis?.firstSoundUs ?: 0L
                 backend.loadMusic(uri, plans.size * 1_000_000L / FPS, startUs) ?: return StartResult.MUSIC_UNREADABLE

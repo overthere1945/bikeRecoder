@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.cowork.bikerecoder.core.video.Aspect
+import com.cowork.bikerecoder.core.video.BuiltInMusic
 import com.cowork.bikerecoder.core.video.RouteColoring
 import com.cowork.bikerecoder.core.video.VideoLength
 import com.cowork.bikerecoder.core.video.VideoOptions
@@ -124,8 +125,9 @@ class VideoJobStore(private val dataStore: DataStore<Preferences>) {
 }
 
 /**
- * [VideoOptions] ↔ JSON(kotlinx.serialization). [VideoOptions.musicUri]는 쓰지 않고, 읽으면 늘 null이다. 모르는 이름이나
- * 빠진 값은 그 항목만 기본값으로, 깨진 JSON은 기본 옵션으로 읽는다. [TripMedia.optionsJson]·[PendingJob.optionsJson]도 이 형식.
+ * [VideoOptions] ↔ JSON(kotlinx.serialization). [VideoOptions.musicUri]는 쓰지 않고, 읽으면 늘 null이다. 음악은
+ * `"music"`에 담긴 곡의 키 또는 `"none"`(고른 파일도 `"none"`). 모르는 이름이나 빠진 값은 그 항목만 기본값으로
+ * (음악은 햇살 페달), 깨진 JSON은 기본 옵션으로 읽는다. [TripMedia.optionsJson]·[PendingJob.optionsJson]도 이 형식.
  */
 object VideoOptionsJson {
 
@@ -136,6 +138,7 @@ object VideoOptionsJson {
         val photos: Boolean = DEFAULTS.photos,
         val hud: Boolean = DEFAULTS.hud,
         val coloring: String = DEFAULTS.coloring.name,
+        val music: String = DEFAULTS.builtInMusic?.key ?: NONE,
     )
 
     private val DEFAULTS = VideoOptions()
@@ -145,7 +148,7 @@ object VideoOptionsJson {
     }
 
     fun encode(o: VideoOptions): String =
-        json.encodeToString(Entry(o.aspect.name, o.length.name, o.photos, o.hud, o.coloring.name))
+        json.encodeToString(Entry(o.aspect.name, o.length.name, o.photos, o.hud, o.coloring.name, o.builtInMusic?.key ?: NONE))
 
     fun decode(text: String): VideoOptions {
         val e = try {
@@ -160,8 +163,11 @@ object VideoOptionsJson {
             hud = e.hud,
             coloring = RouteColoring.entries.firstOrNull { it.name == e.coloring } ?: DEFAULTS.coloring,
             musicUri = null,
+            builtInMusic = if (e.music == NONE) null else BuiltInMusic.entries.firstOrNull { it.key == e.music } ?: DEFAULTS.builtInMusic,
         )
     }
+
+    private const val NONE = "none"
 }
 
 /** A corrupt file is replaced by an empty one (defaults, no pending job) instead of failing every read. */

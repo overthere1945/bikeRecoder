@@ -9,6 +9,7 @@ import com.cowork.bikerecoder.core.trip.Trip
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.core.video.Aspect
+import com.cowork.bikerecoder.core.video.BuiltInMusic
 import com.cowork.bikerecoder.core.video.RideTimelineBuilder
 import com.cowork.bikerecoder.core.video.RouteColoring
 import com.cowork.bikerecoder.core.video.VideoEstimate
@@ -227,6 +228,81 @@ class VideoViewModelTest {
         vm.clearMusic()
         assertNull(vm.sheet.value!!.options.musicUri)
         assertNull(vm.sheet.value!!.musicName)
+    }
+
+    @Test
+    fun firstSheetHasSunnyPedal() = runTest(dispatcher) {
+        val vm = vm()
+        vm.open(TRIP, MediaKind.VIDEO)
+        advanceUntilIdle()
+        assertEquals(BuiltInMusic.SUNNY_PEDAL, vm.sheet.value!!.options.builtInMusic)
+        assertNull(vm.sheet.value!!.options.musicUri)
+    }
+
+    @Test
+    fun builtInRemembered() = runTest(dispatcher) {
+        val vm = openVideo()
+        vm.onPickBuiltIn(BuiltInMusic.WIND_ROAD)
+        assertEquals(BuiltInMusic.WIND_ROAD, vm.sheet.value!!.options.builtInMusic)
+        vm.make()
+        advanceUntilIdle()
+        assertEquals(BuiltInMusic.WIND_ROAD, saved.single().builtInMusic)
+        assertEquals(BuiltInMusic.WIND_ROAD, job.videos.single().second.builtInMusic)
+
+        last = saved.single()
+        val next = vm()
+        next.open(TRIP, MediaKind.VIDEO)
+        advanceUntilIdle()
+        assertEquals(BuiltInMusic.WIND_ROAD, next.sheet.value!!.options.builtInMusic)
+    }
+
+    @Test
+    fun pickedFileForgottenNextTime() = runTest(dispatcher) {
+        val vm = openVideo()
+        vm.pickMusic(MUSIC)
+        advanceUntilIdle()
+        assertNull(vm.sheet.value!!.options.builtInMusic)
+        vm.make()
+        advanceUntilIdle()
+        assertEquals(MUSIC, job.videos.single().second.musicUri)
+        assertNull(saved.single().musicUri)
+        assertNull(saved.single().builtInMusic)
+
+        last = saved.single()
+        val next = vm()
+        next.open(TRIP, MediaKind.VIDEO)
+        advanceUntilIdle()
+        assertNull(next.sheet.value!!.options.builtInMusic)
+        assertNull(next.sheet.value!!.options.musicUri)
+    }
+
+    @Test
+    fun `picking a track drops the picked file and its name, and none clears both`() = runTest(dispatcher) {
+        val vm = openVideo()
+        vm.pickMusic(MUSIC)
+        advanceUntilIdle()
+        vm.onPickBuiltIn(BuiltInMusic.OVER_THE_HILL)
+        val sheet = vm.sheet.value!!
+        assertNull(sheet.options.musicUri)
+        assertNull(sheet.musicName)
+        assertEquals(BuiltInMusic.OVER_THE_HILL, sheet.options.builtInMusic)
+
+        vm.clearMusic()
+        assertNull(vm.sheet.value!!.options.builtInMusic)
+        assertNull(vm.sheet.value!!.options.musicUri)
+    }
+
+    @Test
+    fun `unreadable built in music is made again with no music at all`() = runTest(dispatcher) {
+        job.videoResult = StartResult.MUSIC_UNREADABLE
+        val vm = openVideo()
+        vm.make()
+        advanceUntilIdle()
+        job.videoResult = StartResult.STARTED
+        vm.makeWithoutMusic()
+        advanceUntilIdle()
+        assertEquals(listOf(BuiltInMusic.SUNNY_PEDAL, null), job.videos.map { it.second.builtInMusic })
+        assertNull(vm.sheet.value)
     }
 
     // --- entry ------------------------------------------------------------------------------------------------------
@@ -571,6 +647,18 @@ class VideoViewModelTest {
         advanceUntilIdle()
         assertEquals(listOf(TRIP to options.copy(musicUri = null)), job.videos)
         assertNull(vm.dialog.value)
+    }
+
+    @Test
+    fun retryKeepsBuiltIn() = runTest(dispatcher) {
+        val options = VideoOptions(builtInMusic = BuiltInMusic.OVER_THE_HILL)
+        job.pending = PendingJob(TRIP, MediaKind.VIDEO, VideoOptionsJson.encode(options), 1L)
+        val vm = vm()
+        vm.checkUnfinished()
+        advanceUntilIdle()
+        vm.retryUnfinished()
+        advanceUntilIdle()
+        assertEquals(listOf(TRIP to options), job.videos)
     }
 
     @Test

@@ -60,6 +60,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.cowork.bikerecoder.core.post.HrBand
 import com.cowork.bikerecoder.core.post.RideColors
 import com.cowork.bikerecoder.core.video.Aspect
+import com.cowork.bikerecoder.core.video.BuiltInMusic
 import com.cowork.bikerecoder.core.video.RouteColoring
 import com.cowork.bikerecoder.core.video.VideoLength
 import com.cowork.bikerecoder.core.video.VideoOptions
@@ -72,6 +73,9 @@ object VideoTags {
     const val ESTIMATE = "video-estimate"
     const val DATA_NOTICE = "video-data-notice"
     const val MUSIC_NAME = "video-music-name"
+    const val MUSIC_NONE = "video-music-none"
+    const val MUSIC_FILE = "video-music-file"
+    const val MUSIC_BUILT_IN_PREFIX = "video-music-built-in-"
     const val MAKE_VIDEO = "video-entry-video"
     const val MAKE_IMAGE = "video-entry-image"
     const val PROGRESS = "video-progress"
@@ -85,7 +89,7 @@ object VideoTags {
 }
 
 /**
- * The making's sheet and dialogs over any screen ([viewModel] is activity-scoped). [음악 고르기] opens the system file
+ * The making's sheet and dialogs over any screen ([viewModel] is activity-scoped). [파일에서 고르기] opens the system file
  * picker for audio (spec §3.5); the read permission is kept if the provider allows it — the job reads the file only
  * while it starts, so a refusal does not matter.
  */
@@ -109,6 +113,7 @@ fun VideoHost(viewModel: VideoViewModel) {
             onOptions = viewModel::setOptions,
             onPickMusic = { picker.launch(arrayOf("audio/*")) },
             onClearMusic = viewModel::clearMusic,
+            onPickBuiltIn = viewModel::onPickBuiltIn,
             onMake = viewModel::make,
             onDismiss = viewModel::closeSheet,
         )
@@ -131,11 +136,12 @@ fun VideoOptionsSheet(
     onOptions: (VideoOptions) -> Unit,
     onPickMusic: () -> Unit,
     onClearMusic: () -> Unit,
+    onPickBuiltIn: (BuiltInMusic) -> Unit,
     onMake: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        VideoOptionsContent(sheet, onOptions, onPickMusic, onClearMusic, onMake)
+        VideoOptionsContent(sheet, onOptions, onPickMusic, onClearMusic, onPickBuiltIn, onMake)
     }
 }
 
@@ -150,6 +156,7 @@ fun VideoOptionsContent(
     onOptions: (VideoOptions) -> Unit,
     onPickMusic: () -> Unit,
     onClearMusic: () -> Unit,
+    onPickBuiltIn: (BuiltInMusic) -> Unit,
     onMake: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -219,9 +226,30 @@ fun VideoOptionsContent(
                 }
                 Section("배경음악") {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            ChoiceTile("없음", o.musicUri == null, Modifier.weight(1f), onClick = onClearMusic)
-                            ChoiceTile("음악 고르기", o.musicUri != null, Modifier.weight(1f), icon = true, onClick = onPickMusic)
+                        val bundled = BuiltInMusic.entries
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ChoiceTile(
+                                "없음", o.musicUri == null && o.builtInMusic == null, Modifier.weight(1f),
+                                tag = VideoTags.MUSIC_NONE, onClick = onClearMusic,
+                            )
+                            bundled.take(2).forEach { m ->
+                                ChoiceTile(
+                                    m.title, o.musicUri == null && o.builtInMusic == m, Modifier.weight(1f),
+                                    tag = VideoTags.MUSIC_BUILT_IN_PREFIX + m.key, onClick = { onPickBuiltIn(m) },
+                                )
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            bundled.drop(2).forEach { m ->
+                                ChoiceTile(
+                                    m.title, o.musicUri == null && o.builtInMusic == m, Modifier.weight(1f),
+                                    tag = VideoTags.MUSIC_BUILT_IN_PREFIX + m.key, onClick = { onPickBuiltIn(m) },
+                                )
+                            }
+                            ChoiceTile(
+                                "파일에서 고르기", o.musicUri != null, Modifier.weight(2f),
+                                icon = true, tag = VideoTags.MUSIC_FILE, onClick = onPickMusic,
+                            )
                         }
                         if (o.musicUri != null) MusicRow(sheet.musicName)
                     }
@@ -319,9 +347,10 @@ private fun ChoiceTile(
     modifier: Modifier,
     swatch: Brush? = null,
     icon: Boolean = false,
+    tag: String? = null,
     onClick: () -> Unit,
 ) {
-    Tile(selected, modifier, onClick, minHeight = 52.dp) {
+    Tile(selected, if (tag != null) modifier.testTag(tag) else modifier, onClick, minHeight = 52.dp) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
             if (swatch != null) {
                 Box(Modifier.size(width = 18.dp, height = 6.dp).clip(CircleShape).background(swatch))
@@ -458,9 +487,9 @@ fun VideoDialogs(
 internal fun dataNoticeText(mb: Int) = "위성 지도 데이터 약 $mb MB가 듭니다 (Wi-Fi 권장)"
 
 private val LENGTHS = listOf(
-    "짧게(약 30초)" to VideoLength.SHORT,
-    "보통(약 1분)" to VideoLength.NORMAL,
-    "길게(약 2분)" to VideoLength.LONG,
+    "최대 30초" to VideoLength.SHORT,
+    "최대 1분" to VideoLength.NORMAL,
+    "최대 2분" to VideoLength.LONG,
 )
 
 /** The first ride day's colour (the video's [기본]). */

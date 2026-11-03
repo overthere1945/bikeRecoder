@@ -9,6 +9,7 @@ import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.core.video.Aspect
+import com.cowork.bikerecoder.core.video.BuiltInMusic
 import com.cowork.bikerecoder.core.video.Beats
 import com.cowork.bikerecoder.core.video.Camera
 import com.cowork.bikerecoder.core.video.FPS
@@ -73,7 +74,7 @@ class VideoJobTest {
 
     private val labels = FakeTripLabelStore()
     private var inputs = testInputs()
-    private val short = VideoOptions(length = VideoLength.SHORT, photos = false, hud = true)
+    private val short = VideoOptions(length = VideoLength.SHORT, photos = false, hud = true, builtInMusic = null)
     private val plans = VideoTimeline.plan(inputs.timeline, inputs.photos, short, inputs.dayStarts)
 
     private val job by lazy {
@@ -88,7 +89,7 @@ class VideoJobTest {
             regions = regions(),
             startService = { servicesStarted++ },
             scope = scope(),
-            log = { message, _ -> warnings += message },
+            log = { message, _ -> warnings += message }, packageName = "test.pkg",
             clock = { NOW },
             nanoTime = { backend.nanos },
         )
@@ -130,6 +131,23 @@ class VideoJobTest {
         assertEquals("audio:content://music/1", sink.events.first())
         assertEquals(plans.size, sink.events.count { it == "frame" })
         assertEquals(listOf("finish", "close"), sink.events.takeLast(2))
+    }
+
+    @Test
+    fun builtInMusicIsReadFromTheAppsRawResource() = runBlocking {
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short.copy(builtInMusic = BuiltInMusic.WIND_ROAD)))
+        awaitEnd()
+
+        assertEquals("audio:android.resource://test.pkg/raw/music_wind_road", backend.sinks.single().events.first())
+        assertEquals(listOf("analyze", "music"), backend.calls.filter { it == "analyze" || it == "music" })
+    }
+
+    @Test
+    fun noMusicAtAllReadsNothing() = runBlocking {
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
+        awaitEnd()
+
+        assertEquals(emptyList<String>(), backend.calls.filter { it == "analyze" || it == "music" })
     }
 
     /** The trip being made, for its progress card (only that trip's screens show it); none before or after. */
@@ -674,7 +692,7 @@ class VideoJobTest {
     private fun virtualTimeJob(scope: CoroutineScope) = VideoJob(
         loadInputs = { if (it == TRIP) inputs else null }, store = store, tripMedia = media, maps = maps, backend = backend,
         recording = recording, online = { true }, regions = regions(), startService = {}, scope = scope,
-        log = { message, _ -> warnings += message }, clock = { NOW }, nanoTime = { backend.nanos },
+        log = { message, _ -> warnings += message }, packageName = "test.pkg", clock = { NOW }, nanoTime = { backend.nanos },
     )
 
     @Test
@@ -834,7 +852,7 @@ class VideoJobTest {
             loadInputs = { inputs }, store = store, tripMedia = media, maps = maps, backend = backend, recording = recording,
             online = { true }, regions = regions(), startService = {},
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + handler).also { scopes += it },
-            log = { message, _ -> warnings += message }, clock = { NOW }, nanoTime = { backend.nanos },
+            log = { message, _ -> warnings += message }, packageName = "test.pkg", clock = { NOW }, nanoTime = { backend.nanos },
         )
         maps.failDelete = { StackOverflowError("cleanup") }
 
@@ -869,7 +887,7 @@ class VideoJobTest {
         val throwing = VideoJob(
             loadInputs = { inputs }, store = store, tripMedia = media, maps = maps, backend = backend, recording = recording,
             online = { true }, regions = regions(), startService = { throw IllegalStateException("not allowed") }, scope = scope(),
-            log = { message, _ -> warnings += message }, clock = { NOW }, nanoTime = { backend.nanos },
+            log = { message, _ -> warnings += message }, packageName = "test.pkg", clock = { NOW }, nanoTime = { backend.nanos },
         )
         backend.gateAt = 2
 

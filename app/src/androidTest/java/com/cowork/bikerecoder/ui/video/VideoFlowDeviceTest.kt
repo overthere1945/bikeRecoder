@@ -186,7 +186,7 @@ class VideoFlowDeviceTest {
         composeRule.onNodeWithTag(VideoTags.MAKE_VIDEO).performClick()
         waitFor(30_000) { exists(hasTestTag(VideoTags.ESTIMATE) and hasText("걸립니다", substring = true)) }
         composeRule.onNodeWithText("세로 9:16").performClick()
-        composeRule.onNodeWithText("짧게(약 30초)").performClick()
+        composeRule.onNodeWithText("최대 30초").performClick()
         composeRule.waitForIdle()
         waitFor(10_000) { exists(hasTestTag(VideoTags.ESTIMATE) and hasText("걸립니다", substring = true)) }
         SystemClock.sleep(800)
