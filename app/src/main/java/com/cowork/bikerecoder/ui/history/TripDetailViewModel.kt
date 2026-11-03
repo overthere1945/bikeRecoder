@@ -1,5 +1,6 @@
 package com.cowork.bikerecoder.ui.history
 
+import android.content.IntentSender
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -51,6 +52,7 @@ import com.cowork.bikerecoder.ui.photo.setPhotoHidden
 import com.cowork.bikerecoder.ui.share.canShare
 import com.cowork.bikerecoder.ui.video.canMakeMedia
 import com.cowork.bikerecoder.ui.video.missingMedia
+import com.cowork.bikerecoder.video.MediaDeleteResult
 import com.cowork.bikerecoder.video.TripMedia
 import com.cowork.bikerecoder.video.TripMediaStore
 import kotlinx.coroutines.CancellationException
@@ -92,6 +94,9 @@ private class ChartInput(
 /** A heart-rate [series] (null: nothing to draw) and the [samples] it was made from (the read-out falls back to them). */
 private class HeartChart(val series: MetricSeries?, val samples: List<HeartRateSample>)
 
+/** A made file waiting for Android's own delete window ([request], see [MediaDeleteResult.NeedsConfirmation]). */
+class PendingMediaDelete(val media: TripMedia, val request: () -> IntentSender)
+
 /**
  * One trip's segments by date (oldest first) and the trip's totals (spec §3.5), without empty segments
  * ([RideSegment.isEmpty]). An open segment (still being recorded,
@@ -132,6 +137,8 @@ class TripDetailViewModel(
     private val tripMedia: TripMediaStore? = null,
     /** Whether a made file is still in the gallery; throws when that cannot be told. */
     private val mediaExists: suspend (uri: String) -> Boolean = { true },
+    /** Deletes a made file from the gallery, or says Android has to ask first; throws when it cannot. */
+    private val deleteMediaFile: (suspend (uri: String) -> MediaDeleteResult)? = null,
     /** The trip's custom title and stored region (V1.4.0 spec §2.5); without it the screen has no title to change. */
     private val tripLabels: TripLabelStore? = null,
     /** Looks up the region once the first point is known; without it none is looked up. */
@@ -205,6 +212,16 @@ class TripDetailViewModel(
     val canMakeMedia: StateFlow<Boolean> = _canMakeMedia.asStateFlow()
 
     private val _recording = MutableStateFlow(false)
+
+    private val _mediaDeleteConfirmation = MutableStateFlow<PendingMediaDelete?>(null)
+
+    /** A made file only Android's own window can delete; the screen opens it, [onMediaDeleteAnswered] takes the answer. */
+    val mediaDeleteConfirmation: StateFlow<PendingMediaDelete?> = _mediaDeleteConfirmation.asStateFlow()
+
+    private val _mediaDeleteFailed = MutableStateFlow(false)
+
+    /** A made file could not be deleted; [clearMediaDeleteFailed] once told. */
+    val mediaDeleteFailed: StateFlow<Boolean> = _mediaDeleteFailed.asStateFlow()
 
     /** Some segment of the trip, listed or not, is still being recorded: it cannot be exported yet. */
     val recording: StateFlow<Boolean> = _recording.asStateFlow()
@@ -570,6 +587,41 @@ class TripDetailViewModel(
         viewModelScope.launch { guarded("Could not look up the region of trip $tripId") { regions.ensure(tripId, point) } }
     }
 
+    /** [예] on the delete question: the file goes first, so a failure never leaves a file without its tile. */
+    fun deleteMedia(media: TripMedia) {
+        val delete = deleteMediaFile ?: return
+        viewModelScope.launch {
+            try {
+                when (val result = delete(media.uri)) {
+                    MediaDeleteResult.Deleted -> forgetMedia(media)
+                    is MediaDeleteResult.NeedsConfirmation -> _mediaDeleteConfirmation.value = PendingMediaDelete(media, result.request)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.warn("Could not delete made file ${media.id}", e)
+                _mediaDeleteFailed.value = true
+            }
+        }
+    }
+
+    /** The answer in Android's own delete window ([mediaDeleteConfirmation]). */
+    fun onMediaDeleteAnswered(confirmed: Boolean) {
+        val pending = _mediaDeleteConfirmation.value ?: return
+        _mediaDeleteConfirmation.value = null
+        if (confirmed) viewModelScope.launch { forgetMedia(pending.media) }
+    }
+
+    fun clearMediaDeleteFailed() {
+        _mediaDeleteFailed.value = false
+    }
+
+    /** Its row, once the file is gone; if this fails, [pruneMedia] drops the row next time. */
+    private suspend fun forgetMedia(media: TripMedia) {
+        val store = tripMedia ?: return
+        guarded("Could not forget made file ${media.id}") { store.remove(listOf(media.id)) }
+    }
+
     /** The made files gone from the gallery leave "만든 영상·이미지". */
     private suspend fun pruneMedia() {
         val store = tripMedia ?: return
@@ -603,6 +655,7 @@ class TripDetailViewModel(
                     tripRegions = container.tripRegions,
                     imported = container.importStore.observeImported(),
                     mediaExists = { uri -> withContext(Dispatchers.IO) { container.mediaStoreWriter.exists(uri.toUri()) } },
+                    deleteMediaFile = { uri -> withContext(Dispatchers.IO) { container.mediaStoreWriter.deleteOrAsk(uri.toUri()) } },
                     exportTrip = container.tripExporter::exportTrip,
                 )
             }

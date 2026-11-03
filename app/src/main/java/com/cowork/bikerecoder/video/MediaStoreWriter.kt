@@ -2,10 +2,20 @@ package com.cowork.bikerecoder.video
 
 import android.content.ContentResolver
 import android.content.ContentValues
+import android.content.IntentSender
 import android.database.Cursor
 import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
+
+/** [MediaStoreWriter.deleteOrAsk]의 결과. */
+sealed interface MediaDeleteResult {
+    /** 갤러리에서 사라졌다(이미 없던 경우 포함). */
+    data object Deleted : MediaDeleteResult
+
+    /** 앱 소유가 아닌 파일: Android의 삭제 확인 창([request])에서 사용자가 동의해야 지워진다. */
+    class NeedsConfirmation(val request: () -> IntentSender) : MediaDeleteResult
+}
 
 /**
  * 갤러리 저장(스펙 §3.5): 영상은 `Movies/bikeRecoder`, 이미지는 `Pictures/bikeRecoder`. [createPending]으로
@@ -40,6 +50,21 @@ class MediaStoreWriter(private val resolver: ContentResolver) {
         } catch (e: SecurityException) {
             if (exists(uri)) throw e
         }
+    }
+
+    /**
+     * 사용자가 고른 항목을 지운다. 앱이 만든 파일은 바로 지워지고, 다시 설치한 뒤처럼 앱 소유가 아니면 Android 확인 창을 돌려준다.
+     * 휴지통을 거치지 않는다.
+     */
+    fun deleteOrAsk(uri: Uri): MediaDeleteResult {
+        val deleted = try {
+            resolver.delete(uri, null, null)
+        } catch (_: SecurityException) {
+            0
+        }
+        if (deleted > 0 || !exists(uri)) return MediaDeleteResult.Deleted
+        val sender = MediaStore.createDeleteRequest(resolver, listOf(uri)).intentSender
+        return MediaDeleteResult.NeedsConfirmation { sender }
     }
 
     /** 갤러리에 아직 있는지(만드는 중인 항목 포함). 사용자가 갤러리에서 지운 항목은 false. */

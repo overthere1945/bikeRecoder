@@ -14,6 +14,7 @@ import com.cowork.bikerecoder.post.FakePhotoSource
 import com.cowork.bikerecoder.post.FakePostStore
 import com.cowork.bikerecoder.post.PostProcessor
 import com.cowork.bikerecoder.ride.FakeRideStore
+import com.cowork.bikerecoder.video.MediaDeleteResult
 import com.cowork.bikerecoder.video.MediaKind
 import com.cowork.bikerecoder.video.TripMedia
 import com.cowork.bikerecoder.video.TripMediaStore
@@ -51,6 +52,8 @@ class TripDetailMediaTest {
     private val media = FakeTripMedia()
     private val gallery = mutableMapOf<String, Boolean>()
     private val log = RecordingLog()
+    private val deletedFiles = mutableListOf<String>()
+    private var deleteResult: () -> MediaDeleteResult = { MediaDeleteResult.Deleted }
 
     @BeforeEach
     fun setUp() = Dispatchers.setMain(dispatcher)
@@ -76,7 +79,19 @@ class TripDetailMediaTest {
         tripStore = trips,
         tripMedia = media,
         mediaExists = { uri -> gallery[uri] ?: throw IllegalStateException("MediaStore query failed for $uri") },
+        deleteMediaFile = { uri ->
+            deletedFiles += uri
+            deleteResult()
+        },
     )
+
+    private fun TestScope.detailWithOneVideo(): Pair<TripDetailViewModel, TripMedia> {
+        trip(TripStatus.COMPLETED)
+        val video = TripMedia(1, TRIP, MediaKind.VIDEO, "content://video/1", 100L, "{}")
+        media.items.value = listOf(video)
+        gallery[video.uri] = true
+        return detail() to video
+    }
 
     @Test
     fun aCompletedTripWithARideOffersTheButtons() = runTest(dispatcher) {
@@ -140,6 +155,67 @@ class TripDetailMediaTest {
         assertEquals(listOf(listOf(2L)), media.removed)
         assertEquals(listOf(3L, 1L), vm.media.value.map { it.id })
         assertEquals(1, log.messages.count { it.contains("made file 3") })
+    }
+
+    @Test
+    fun deletingAMadeFileRemovesTheFileAndItsRow() = runTest(dispatcher) {
+        val (vm, video) = detailWithOneVideo()
+        advanceUntilIdle()
+
+        vm.deleteMedia(video)
+        advanceUntilIdle()
+
+        assertEquals(listOf(video.uri), deletedFiles)
+        assertEquals(listOf(listOf(1L)), media.removed)
+        assertEquals(emptyList<TripMedia>(), vm.media.value)
+        assertFalse(vm.mediaDeleteFailed.value)
+    }
+
+    /** The file is still on the phone, so the tile stays and the screen says so. */
+    @Test
+    fun aFailedDeleteKeepsTheRowAndTellsTheScreen() = runTest(dispatcher) {
+        val (vm, video) = detailWithOneVideo()
+        advanceUntilIdle()
+        deleteResult = { throw IllegalStateException("MediaStore failed") }
+
+        vm.deleteMedia(video)
+        advanceUntilIdle()
+
+        assertEquals(emptyList<List<Long>>(), media.removed)
+        assertEquals(listOf(video), vm.media.value)
+        assertTrue(vm.mediaDeleteFailed.value)
+        assertEquals(1, log.messages.count { it.contains("made file 1") })
+
+        vm.clearMediaDeleteFailed()
+        assertFalse(vm.mediaDeleteFailed.value)
+    }
+
+    /** A file the app no longer owns: Android asks first, and the row goes only when the user agreed there. */
+    @Test
+    fun androidsOwnWindowDecidesWhenTheFileIsNotTheApps() = runTest(dispatcher) {
+        val (vm, video) = detailWithOneVideo()
+        advanceUntilIdle()
+        val needsConfirmation = MediaDeleteResult.NeedsConfirmation { error("the screen asks for it") }
+        deleteResult = { needsConfirmation }
+
+        vm.deleteMedia(video)
+        advanceUntilIdle()
+        assertEquals(video, vm.mediaDeleteConfirmation.value?.media)
+        assertEquals(emptyList<List<Long>>(), media.removed)
+
+        vm.onMediaDeleteAnswered(confirmed = false)
+        advanceUntilIdle()
+        assertEquals(null, vm.mediaDeleteConfirmation.value)
+        assertEquals(listOf(video), vm.media.value)
+        assertFalse(vm.mediaDeleteFailed.value)
+
+        vm.deleteMedia(video)
+        advanceUntilIdle()
+        vm.onMediaDeleteAnswered(confirmed = true)
+        advanceUntilIdle()
+        assertEquals(null, vm.mediaDeleteConfirmation.value)
+        assertEquals(listOf(listOf(1L)), media.removed)
+        assertEquals(emptyList<TripMedia>(), vm.media.value)
     }
 
     private class FakeTripMedia : TripMediaStore {

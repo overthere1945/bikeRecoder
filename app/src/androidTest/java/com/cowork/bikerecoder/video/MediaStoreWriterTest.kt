@@ -52,6 +52,17 @@ class MediaStoreWriterTest {
     }
 
     @Test
+    fun aFileTheAppMadeIsDeletedWithoutAskingAndAGoneOneCountsAsDeleted() {
+        val uri = create(MediaKind.VIDEO, "bikeRecoder_test_delete_$stamp.mp4")
+        resolver.openOutputStream(uri)!!.use { it.write(ByteArray(16)) }
+        writer.publish(uri)
+
+        assertEquals(MediaDeleteResult.Deleted, writer.deleteOrAsk(uri))
+        assertFalse(writer.exists(uri))
+        assertEquals(MediaDeleteResult.Deleted, writer.deleteOrAsk(uri))
+    }
+
+    @Test
     fun imageGoesToPicturesAndAPendingOneCanBeDeleted() {
         val name = "bikeRecoder_test_$stamp.png"
         val uri = create(MediaKind.IMAGE, name)

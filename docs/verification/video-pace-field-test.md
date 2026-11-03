@@ -40,6 +40,13 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.te
 | `ui.settings.SettingsScreenTest` | 22 | 22 통과 (`V1.11.0`) |
 | `video.VideoEncoderTest` | 3 | 3 통과 (30 fps 인코딩) |
 
+### 만든 영상·이미지 삭제 (Galaxy S22 Ultra, 2026-11-04)
+
+- `ui.video.TripMediaRowTest` 6개, `video.MediaStoreWriterTest` 4개 통과
+- 앱이 만든 영상·이미지: 창 바깥 누르기, 아래로 밀기, [아니오]는 칸과 파일이 그대로. [예]는 칸과 파일이 함께 사라짐
+- 앱을 지웠다 다시 설치한 파일(`owner_package_name` 없음), 사진 권한 허용: 이미지 칸이 보이고 [예] 뒤 Android 확인 창이 뜸. [거부]는 그대로, [허용]은 칸과 파일이 함께 사라짐
+- 같은 조건의 영상과, 사진 권한이 없을 때의 이미지: 앱이 파일을 볼 수 없어 화면을 여는 때 칸이 빠지고 파일은 갤러리에 남음(이전부터의 동작). 이런 파일은 갤러리 앱에서 지움
+
 ### release 빌드
 
 - `:app:assembleRelease`의 `resources.txt`에 `raw:music_*` 세 곡이 "reachable from keep xml file"로 남고, `aapt2 dump resources`에 `raw/music_*` 세 이름이 있음(`res/raw/keep.xml`, `BuiltInMusicResourcesTest`)
@@ -68,6 +75,7 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.te
 | 4 | 음악 박자 | 기본 곡 세 곡을 하나씩 골라 영상을 만들어 봄. 박이 약한 내 음악 파일도 하나 | 기본 곡 세 곡 각각에서 사진·끝 장면이 박에 맞아 들림. 박이 약한 내 음악 파일은 그냥 깔림 | 세 곡 소리 트랙 확인, 박 맞음은 사용자 확인 | 세 곡 모두 만들어지고 고른 곡이 옵션에 저장됨. 소리 분석으로 어림하니 첫 사진의 시작·끝이 박에서 약 50 ms 안, 끝 장면은 재지 못함. 내 음악 파일은 시험하지 않음 |
 | 5 | 만드는 시간 | 1 km 걷기와 10 km 이상 기록의 만드는 시간을 잼 | 1 km 걷기 영상이 V1.10.0보다 빨리 만들어지고, 10 km 이상도 지나치게 늘지 않음 | (대기) | 1.34 km 걷기 36·28·27초, 1.58 km 라이딩(사진 2장) 42초. S25의 V1.10.0 잰 값이 없어 비교 못함, 10 km 기록 없음 |
 | 6 | 오프라인 영상 | 여행 지도를 받아 둔 긴 라이딩을 인터넷 없이 영상으로 만들어 봄 | 높아진 카메라에서도 화면 위쪽이 비지 않음(여행 지도 범위는 경로 좌우 2 km) | (대기) | 최종 검토에서 나온 확인 항목 |
+| 7 | 만든 영상·이미지 삭제 | 활동 기록에서 지워도 되는 영상과 이미지를 하나씩 길게 눌러 봄 | [아니오]와 창 바깥 누르기는 아무것도 지우지 않고, [예]는 칸과 갤러리 파일을 함께 지움. 요약 카드의 ▶와 공유 창에서도 사라짐 | (대기) | V1.11.0 개발 중 추가 |
 
 ### S25 설치와 점검 기록 (2026-11-04)
 
@@ -78,6 +86,6 @@ ANDROID_SERIAL=R5CT43TFS9A ./gradlew :app:connectedDebugAndroidTest -Pandroid.te
 
 ## 판정
 
-- PC 테스트와 기기 테스트가 통과하고 S22 비교 영상이 V1.10.0보다 나으며 점검표 6개 항목이 모두 합격이면 `CHANGELOG.md`의 V1.11.0을 확정하고(「미출시」 표기 제거) 태그를 붙입니다.
+- PC 테스트와 기기 테스트가 통과하고 S22 비교 영상이 V1.10.0보다 나으며 점검표 7개 항목이 모두 합격이면 `CHANGELOG.md`의 V1.11.0을 확정하고(「미출시」 표기 제거) 태그를 붙입니다.
 - 불합격 항목은 원인 수정과 회귀 테스트 추가 뒤 그 항목만 다시 확인하고, 여기에 재검증 결과를 덧붙입니다.
 - S25는 사용자가 요청할 때 DB 백업과 기록 개수 비교 뒤에 설치합니다.

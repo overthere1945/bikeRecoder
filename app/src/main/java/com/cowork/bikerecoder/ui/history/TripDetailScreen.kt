@@ -72,6 +72,9 @@ import com.cowork.bikerecoder.ui.photo.rememberMapPhotos
 import com.cowork.bikerecoder.ui.photo.rememberPhotoViewerState
 import com.cowork.bikerecoder.ui.record.NumberRows
 import com.cowork.bikerecoder.ui.video.MediaThumbnail
+import com.cowork.bikerecoder.ui.video.AndroidDeleteWindow
+import com.cowork.bikerecoder.ui.video.MediaDeleteFailedNotice
+import com.cowork.bikerecoder.ui.video.MediaDeleteSheet
 import com.cowork.bikerecoder.ui.video.TripMediaRow
 import com.cowork.bikerecoder.video.TripMedia
 import java.time.LocalDate
@@ -81,7 +84,7 @@ import java.time.LocalDate
  * [heartRateGate]: the heart-rate permission card or "Health Connect를 사용할 수 없습니다" (spec §3.4; null = none).
  * [map]: the map for its content (replaceable in tests).
  * [mediaEntry]: [영상 만들기] [이미지 만들기] (or the progress card) of this trip, shown when it is completed with a ride to
- * make it from (V1.3.0 spec §1.1); [mediaThumbnail] and [onOpenMedia]: "만든 영상·이미지" (§5.1).
+ * make it from (V1.3.0 spec §1.1); [mediaThumbnail] and [onOpenMedia]: "만든 영상·이미지" (§5.1), where a long press asks to delete the file.
  * [onShare]: the paper plane on the title row, shown while the trip has a finished ride to share (V1.5.0 spec §1.1).
  * [onOpenChart]: a small chart's [지도에 표시] / tap opens the big map on that chart's tab (V1.7.0 spec §2.3, V1.8.0 §2.2).
  * The title row's [⋮] exports the trip as GPX or KML (V1.7.0 spec §4.1, §4.2), through the view model.
@@ -127,6 +130,9 @@ fun TripDetailScreen(
     val exportState by viewModel.exportState.collectAsStateWithLifecycle()
     val recording by viewModel.recording.collectAsStateWithLifecycle()
     val multiDay by viewModel.multiDay.collectAsStateWithLifecycle()
+    val mediaDeleteConfirmation by viewModel.mediaDeleteConfirmation.collectAsStateWithLifecycle()
+    val mediaDeleteFailed by viewModel.mediaDeleteFailed.collectAsStateWithLifecycle()
+    var deletingMediaId by rememberSaveable { mutableStateOf<Long?>(null) }
     var renaming by rememberSaveable { mutableStateOf(false) }
     val access = rememberHeartRateAccess(heartRateGate)
     val viewer = rememberPhotoViewerState()
@@ -187,7 +193,7 @@ fun TripDetailScreen(
         videos = if (canMakeMedia || media.isNotEmpty()) {
             {
                 if (canMakeMedia) mediaEntry()
-                TripMediaRow(media, mediaThumbnail, onOpenMedia)
+                TripMediaRow(media, mediaThumbnail, onOpenMedia, onRequestDelete = { deletingMediaId = it.id })
             }
         } else {
             null
@@ -195,6 +201,18 @@ fun TripDetailScreen(
     )
     PhotoViewerHost(viewer, photos, thumbnails, onToggleHidden = { viewModel.setHidden(it, hidden = !it.hidden) })
     ExportOutcome(exportState, onClear = viewModel::clearExport)
+    media.firstOrNull { it.id == deletingMediaId }?.let { made ->
+        MediaDeleteSheet(
+            made,
+            onDelete = {
+                deletingMediaId = null
+                viewModel.deleteMedia(made)
+            },
+            onDismiss = { deletingMediaId = null },
+        )
+    }
+    AndroidDeleteWindow(mediaDeleteConfirmation?.request, onAnswered = viewModel::onMediaDeleteAnswered)
+    MediaDeleteFailedNotice(mediaDeleteFailed, onShown = viewModel::clearMediaDeleteFailed)
     if (renaming) {
         RenameTripDialog(
             current = customTitle,
