@@ -631,9 +631,10 @@ class VideoJobTest {
 
     @Test
     fun bytesPerFrameRecordedOnlyForSatellite() = runBlocking {
-        assertEquals(900, plans.size)
+        // 600 m: R0 = 6 + 5 × √0.6 s of ride between the 3 s start and the 4 s end.
+        assertEquals(506, plans.size)
         backend.probe = SatelliteCheck.OK
-        backend.received.addAll(listOf(1_000_000L, 37_000_000L))
+        backend.received.addAll(listOf(1_000_000L, 1_000_000L + 40_000L * plans.size))
 
         assertEquals(StartResult.STARTED, job.startVideo(TRIP, short))
         awaitEnd()

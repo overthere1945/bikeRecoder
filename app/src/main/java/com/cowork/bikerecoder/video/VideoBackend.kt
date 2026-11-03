@@ -167,7 +167,7 @@ class AndroidVideoBackend(
     }
 
     override suspend fun writeImage(uri: String, inputs: VideoInputs, aspect: Aspect, satellite: Boolean) {
-        val chosen = VideoTimeline.choosePhotos(inputs.photos, IMAGE_PHOTOS, inputs.timeline.totalMoveMs)
+        val chosen = VideoTimeline.choosePhotos(inputs.photos, IMAGE_PHOTOS, inputs.timeline)
         val photos = chosen.mapNotNull { photo(it.mediaId) }
         val image = SummaryImageRenderer(context, source(satellite)).render(inputs, aspect, photos)
         try {

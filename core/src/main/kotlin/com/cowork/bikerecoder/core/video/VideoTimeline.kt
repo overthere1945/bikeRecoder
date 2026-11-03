@@ -2,8 +2,8 @@ package com.cowork.bikerecoder.core.video
 
 import kotlin.math.abs
 import kotlin.math.floor
+import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.roundToInt
 
 /** 영상에 넣을 사진 하나: [moveMs] = 촬영 시각에 해당하는 이동 시각. */
 data class PhotoCue(val mediaId: Long, val moveMs: Long, val takenAt: Long)
@@ -14,7 +14,8 @@ enum class SceneKind { INTRO_OVERVIEW, INTRO_DESCENT, RIDE, PHOTO, OUTRO }
  * 프레임 한 장의 계획. [sceneFrame] = 그 장면 안 장 번호(0부터), [sceneFrames] = 그 장면의 장 수,
  * [sceneProgress] = 그 장면 안 진행(첫 장 0, 마지막 장 1, = [sceneFrame] / ([sceneFrames] − 1)),
  * [cardFrom] = 끝 장면에서 요약 카드가 나타나기 시작하는 장(끝 장면에서만 쓴다), [caption] = 여러 날 자막,
- * [fade] = 끝의 어두워짐(0~1), [reuseMap] = 앞 프레임의 지도 스냅샷을 그대로 써도 됨(카메라가 멈춰 있는 끝 유지 구간만).
+ * [fade] = 끝의 어두워짐(0~1), [reuseMap] = 앞 프레임의 지도 스냅샷을 그대로 써도 됨(카메라가 멈춰 있는 끝 유지 구간만),
+ * [alongM] = 그 프레임의 경로 거리(시작 0, 사진 = 사진 묶음의 거리, 끝 = 전체), [speed] = 이동 장면의 빠르기 ÷ 평균(그 밖에는 1).
  */
 data class FramePlan(
     val index: Int,
@@ -28,6 +29,8 @@ data class FramePlan(
     val fade: Float,
     val reuseMap: Boolean,
     val cardFrom: Int = VideoTimeline.OUTRO_CARD_FROM,
+    val alongM: Double = 0.0,
+    val speed: Float = 1f,
 )
 
 /** 영상 시간 배분(스펙 §2): 시작 3초 → 주행(사진 장면 포함) → 끝 4초. */
@@ -60,53 +63,81 @@ object VideoTimeline {
     private val photoOrder = compareBy<PhotoCue>({ it.moveMs }, { it.takenAt })
 
     /**
-     * [cues]가 [cap]보다 많으면 이동 시간 축 [0, totalMoveMs]를 cap칸으로 나눠 칸마다 칸 가운데에 가장 가까운 사진을 고른다.
-     * 사진이 없는 칸은 그 칸 가운데에 가장 가까운 남은 사진으로 채운다(사진이 몰려 있어도 cap장). 결과는 시간순.
+     * [cues]가 [cap]보다 많으면 경로 거리 축 [0, [totalM]]을 cap칸으로 나눠 칸마다 칸 가운데에 가장 가까운 사진을 고른다(스펙 §1.3).
+     * 사진의 거리는 [alongOf]. 사진이 없는 칸은 그 칸 가운데에 가장 가까운 남은 사진으로 채운다(사진이 몰려 있어도 cap장). 결과는 시간순.
      */
-    fun choosePhotos(cues: List<PhotoCue>, cap: Int, totalMoveMs: Long): List<PhotoCue> {
+    fun choosePhotos(cues: List<PhotoCue>, cap: Int, totalM: Double, alongOf: (PhotoCue) -> Double): List<PhotoCue> {
         val sorted = cues.sortedWith(photoOrder)
         if (sorted.size <= cap) return sorted
         if (cap <= 0) return emptyList()
-        val binMs = totalMoveMs.toDouble() / cap
-        fun center(bin: Int) = binMs * (bin + 0.5)
-        fun binOf(cue: PhotoCue) = if (binMs <= 0.0) 0 else floor(cue.moveMs / binMs).toInt().coerceIn(0, cap - 1)
+        val along = DoubleArray(sorted.size) { alongOf(sorted[it]) }
+        val binM = totalM / cap
+        fun center(bin: Int) = binM * (bin + 0.5)
+        fun binOf(i: Int) = if (binM <= 0.0) 0 else floor(along[i] / binM).toInt().coerceIn(0, cap - 1)
 
         val picked = IntArray(cap) { -1 }
-        sorted.forEachIndexed { i, cue ->
-            val bin = binOf(cue)
+        sorted.indices.forEach { i ->
+            val bin = binOf(i)
             val current = picked[bin]
-            if (current < 0 || abs(cue.moveMs - center(bin)) < abs(sorted[current].moveMs - center(bin))) picked[bin] = i
+            if (current < 0 || abs(along[i] - center(bin)) < abs(along[current] - center(bin))) picked[bin] = i
         }
         val used = picked.filter { it >= 0 }.toMutableSet()
         for (bin in 0 until cap) {
             if (picked[bin] >= 0) continue
-            val nearest = sorted.indices.filter { it !in used }.minBy { abs(sorted[it].moveMs - center(bin)) }
+            val nearest = sorted.indices.filter { it !in used }.minBy { abs(along[it] - center(bin)) }
             picked[bin] = nearest
             used += nearest
         }
         return used.map { sorted[it] }.sortedWith(photoOrder)
     }
 
+    /** [choosePhotos]를 [timeline]의 경로 거리로(사진의 거리 = 촬영 이동 시각의 경로 거리). */
+    fun choosePhotos(cues: List<PhotoCue>, cap: Int, timeline: RideTimeline): List<PhotoCue> =
+        choosePhotos(cues, cap, timeline.routeDistance.total, alongFunction(timeline))
+
+    private fun alongFunction(timeline: RideTimeline): (PhotoCue) -> Double =
+        if (timeline.points.isEmpty()) { _ -> 0.0 } else { cue -> timeline.routeDistance.atMove(cue.moveMs) }
+
     /**
-     * 프레임 계획. 시작 = 하늘 위 [OVERVIEW_FRAMES] + 내려가기 [DESCENT_FRAMES](합 3초), 끝 = [OUTRO_FRAMES](솟아오르기
-     * [OUTRO_RISE_FRAMES] 뒤 유지, 유지 구간만 [FramePlan.reuseMap]). 주행 장면 R = T − 3 − 4 − 2 × 사진 수(이동 시간이 더 짧으면 이동 시간, 늘이지 않음),
-     * 주행 프레임 i의 moveMs = i / 주행 프레임 수 × 이동 시간. 사진(±1초 묶음)은 그 moveMs에 이르면 멈춘 채 2초씩,
-     * [dayStarts]의 자막은 그 moveMs부터 주행 프레임 [CAPTION_FRAMES](1.5초)장에 붙는다.
+     * 이동 장면의 빠르기 곡선과 영상에 넣을 사진(스펙 §1, §2). 기본 길이 R0 = [VideoPace.rideSeconds](경로 거리 km),
+     * 사진 수 = min(길이의 사진 상한, max(1, ⌊R0 / 4⌋), 사진 수)(사진 끄면 0)를 거리 축에서 고르고,
+     * 이동 장면 길이 R = min(R0, 최대 길이 − 3 − 4 − 2 × 사진 수, 이동 시간)(최소 min(4, 이동 시간); 늘이지 않는다).
+     * 이동 시간이 0이면 R = 0이라 [VideoPace.profile]을 부르지 않고 길이 0의 고른 곡선을 돌려준다(이동 장면 프레임이 없을 때만 쓰인다).
+     */
+    internal fun paceFor(timeline: RideTimeline, photos: List<PhotoCue>, options: VideoOptions): Pair<PaceProfile, List<PhotoCue>> {
+        val route = timeline.routeDistance
+        val r0 = VideoPace.rideSeconds(route.total / 1000.0)
+        val count = if (options.photos) min(options.length.photoCap, max(1, floor(r0 / 4).toInt())) else 0
+        val alongOf = alongFunction(timeline)
+        val chosen = choosePhotos(photos, count, route.total, alongOf)
+        val moving = timeline.totalMoveMs / 1000.0
+        val seconds = min(min(r0, options.length.seconds - INTRO_SECONDS - OUTRO_SECONDS - PHOTO_SECONDS * chosen.size), moving)
+            .coerceAtLeast(min(VideoPace.MIN_RIDE_SECONDS, moving))
+        if (seconds <= 0.0) return PaceProfile.uniform(0.0, route.total) to chosen
+        val pace = VideoPace.profile(timeline, seconds, chosen.map(alongOf), VideoHighlights.alongM(timeline))
+        return pace to chosen
+    }
+
+    /**
+     * 프레임 계획(스펙 §1, §2). 시작 = 하늘 위 [OVERVIEW_FRAMES] + 내려가기 [DESCENT_FRAMES](합 3초), 끝 = [OUTRO_FRAMES](솟아오르기
+     * [OUTRO_RISE_FRAMES] 뒤 유지, 유지 구간만 [FramePlan.reuseMap]). 이동 장면은 [paceFor]의 길이 R·빠르기 곡선을 따른다:
+     * 장 수 n = framesOf(R), 장 k의 시각 = k / (n − 1) × R(n이 1이면 0), 그 장의 [FramePlan.alongM] = 곡선의 경로 거리, [FramePlan.moveMs] = 그 거리의
+     * 이동 시각, [FramePlan.speed] = 곡선의 빠르기 배수. 사진(이동 시각 ±1초 묶음)은 이동 장면의 거리가 그 사진의 거리에 처음 닿을 때
+     * 멈춘 채 2초씩, [dayStarts]의 자막은 거리가 그날 첫 지점의 거리에 처음 닿을 때부터 이동 장면 [CAPTION_FRAMES](1.5초)장에 붙는다.
+     * 이동 시간이 0이면 이동 장면이 없고 시작·사진·끝만 나온다.
      */
     fun plan(timeline: RideTimeline, photos: List<PhotoCue>, options: VideoOptions, dayStarts: List<Pair<Long, String>>): List<FramePlan> {
+        val route = timeline.routeDistance
         val totalMove = timeline.totalMoveMs
-        val chosen = if (options.photos) choosePhotos(photos, options.length.photoCap, totalMove) else emptyList()
-        val n = chosen.size
-        val rideSeconds = min(options.length.seconds - INTRO_SECONDS - OUTRO_SECONDS - PHOTO_SECONDS * n, totalMove / 1000.0)
-            .coerceAtLeast(0.0)
-        val frameCount = ((INTRO_SECONDS + rideSeconds + PHOTO_SECONDS * n + OUTRO_SECONDS) * FPS).roundToInt()
-        val rideFrames = frameCount - OVERVIEW_FRAMES - DESCENT_FRAMES - OUTRO_FRAMES - PHOTO_FRAMES * n
+        val (pace, chosen) = paceFor(timeline, photos, options)
+        val rideFrames = framesOf(pace.seconds)
+        val alongOf = alongFunction(timeline)
 
-        val out = ArrayList<FramePlan>(frameCount)
+        val out = ArrayList<FramePlan>(OVERVIEW_FRAMES + DESCENT_FRAMES + rideFrames + PHOTO_FRAMES * chosen.size + OUTRO_FRAMES)
         fun emit(kind: SceneKind, moveMs: Long, k: Int, of: Int, photo: PhotoCue? = null, caption: String? = null,
-                 fade: Float = 0f, reuseMap: Boolean = false) {
+                 fade: Float = 0f, reuseMap: Boolean = false, alongM: Double = 0.0, speed: Float = 1f) {
             val progress = if (of > 1) k.toFloat() / (of - 1) else 0f
-            out += FramePlan(out.size, kind, moveMs, progress, k, of, photo, caption, fade, reuseMap)
+            out += FramePlan(out.size, kind, moveMs, progress, k, of, photo, caption, fade, reuseMap, alongM = alongM, speed = speed)
         }
 
         // 하늘 위 장면은 카메라가 돌고 사진 장면은 카메라가 사진 위치를 돌아 매 장 새 지도다.
@@ -117,29 +148,31 @@ object VideoTimeline {
         var nextGroup = 0
         fun emitGroup(group: List<PhotoCue>) {
             val anchor = group.first().moveMs
-            for (cue in group) repeat(PHOTO_FRAMES) { emit(SceneKind.PHOTO, anchor, it, PHOTO_FRAMES, photo = cue) }
+            val along = alongOf(group.first())
+            for (cue in group) repeat(PHOTO_FRAMES) { emit(SceneKind.PHOTO, anchor, it, PHOTO_FRAMES, photo = cue, alongM = along) }
         }
 
-        val days = dayStarts.sortedBy { it.first }
+        val days = dayStarts.sortedBy { it.first }.map { (moveMs, text) -> route.atMove(moveMs) to text }
         var nextDay = 0
         var caption: String? = null
         var captionLeft = 0
-        for (i in 0 until rideFrames) {
-            val moveMs = i * totalMove / rideFrames
-            while (nextGroup < groups.size && groups[nextGroup].first().moveMs <= moveMs) emitGroup(groups[nextGroup++])
-            while (nextDay < days.size && days[nextDay].first <= moveMs) {
+        for (k in 0 until rideFrames) {
+            val second = if (rideFrames > 1) k.toDouble() / (rideFrames - 1) * pace.seconds else 0.0
+            val along = pace.alongAt(second)
+            while (nextGroup < groups.size && alongOf(groups[nextGroup].first()) <= along) emitGroup(groups[nextGroup++])
+            while (nextDay < days.size && days[nextDay].first <= along) {
                 caption = days[nextDay++].second
                 captionLeft = CAPTION_FRAMES
             }
             val text = if (captionLeft > 0) caption.also { captionLeft-- } else null
-            emit(SceneKind.RIDE, moveMs, i, rideFrames, caption = text)
+            emit(SceneKind.RIDE, route.moveAt(along), k, rideFrames, caption = text, alongM = along, speed = pace.speedFactor(second).toFloat())
         }
         while (nextGroup < groups.size) emitGroup(groups[nextGroup++])
 
         repeat(OUTRO_FRAMES) {
             val fadeK = it - (OUTRO_FRAMES - FADE_FRAMES)
             val fade = if (fadeK < 0) 0f else fadeK.toFloat() / (FADE_FRAMES - 1)
-            emit(SceneKind.OUTRO, totalMove, it, OUTRO_FRAMES, fade = fade, reuseMap = it >= OUTRO_RISE_FRAMES)
+            emit(SceneKind.OUTRO, totalMove, it, OUTRO_FRAMES, fade = fade, reuseMap = it >= OUTRO_RISE_FRAMES, alongM = route.total)
         }
         return out
     }

@@ -2,6 +2,7 @@ package com.cowork.bikerecoder.core.video
 
 import com.cowork.bikerecoder.core.recording.north
 import java.time.LocalDate
+import kotlin.math.abs
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -10,20 +11,48 @@ class VideoTimelineTest {
 
     private fun cue(id: Long, moveMs: Long) = PhotoCue(mediaId = id, moveMs = moveMs, takenAt = moveMs)
 
+    /** 초당 1 m로 가는 여정의 사진 거리(= 이동 시각 초). */
+    private val alongPerSecond: (PhotoCue) -> Double = { it.moveMs / 1000.0 }
+
     private fun List<FramePlan>.count(kind: SceneKind) = count { it.kind == kind }
 
+    /** [km] km를 [seconds]초 동안 같은 빠르기로 북쪽으로 가는 한 구간짜리 여정. */
+    private fun rideOf(km: Double, seconds: Int): RideTimeline =
+        RideTimelineBuilder.build(listOf(segment(1, 0) to straightPoints(0, seconds + 1, stepM = km * 1000 / seconds)), SEOUL)
+
+    private fun ride(frames: List<FramePlan>) = frames.filter { it.kind == SceneKind.RIDE }
+
     @Test
-    fun frameCountPerLength() {
-        val timeline = simpleTimeline(600)
+    fun lengthFollowsDistance() {
+        val timeline = rideOf(1.0, 600)
+        val expected = 90 + framesOf(11.0) + 120
+        for (length in listOf(VideoLength.NORMAL, VideoLength.LONG)) {
+            val frames = VideoTimeline.plan(timeline, emptyList(), VideoOptions(length = length), emptyList())
+            assertEquals(expected, frames.size)
+            assertEquals(frames.indices.toList(), frames.map { it.index })
+            assertEquals(framesOf(11.0), frames.count(SceneKind.RIDE))
+        }
         val normal = VideoTimeline.plan(timeline, emptyList(), VideoOptions(), emptyList())
-        assertEquals(60 * 30, normal.size)
-        assertEquals(normal.indices.toList(), normal.map { it.index })
-        assertEquals(90, normal.count(SceneKind.INTRO_OVERVIEW) + normal.count(SceneKind.INTRO_DESCENT))
         assertEquals(36, normal.count(SceneKind.INTRO_OVERVIEW))
         assertEquals(54, normal.count(SceneKind.INTRO_DESCENT))
         assertEquals(120, normal.count(SceneKind.OUTRO))
-        assertEquals(30 * 30, VideoTimeline.plan(timeline, emptyList(), VideoOptions(length = VideoLength.SHORT), emptyList()).size)
-        assertEquals(120 * 30, VideoTimeline.plan(timeline, emptyList(), VideoOptions(length = VideoLength.LONG), emptyList()).size)
+        // 50 km는 이동 장면이 41.4초지만 짧게는 30초가 최대다.
+        val far = rideOf(50.0, 3600)
+        assertEquals(30 * 30, VideoTimeline.plan(far, emptyList(), VideoOptions(length = VideoLength.SHORT), emptyList()).size)
+    }
+
+    @Test
+    fun neverLongerThanMaxLength() {
+        for (length in VideoLength.values()) {
+            for (km in listOf(0.5, 5.0, 50.0, 300.0)) {
+                val timeline = rideOf(km, 3600)
+                for (count in listOf(0, 20)) {
+                    val photos = List(count) { cue(it.toLong(), 100_000L + it * 150_000L) }
+                    val frames = VideoTimeline.plan(timeline, photos, VideoOptions(length = length), emptyList())
+                    assertTrue(frames.size <= length.seconds * 30, "$length $km km $count photos: ${frames.size}")
+                }
+            }
+        }
     }
 
     @Test
@@ -36,52 +65,104 @@ class VideoTimelineTest {
     }
 
     @Test
-    fun photosShortenRide() {
-        val timeline = simpleTimeline(600)
-        val photos = List(8) { cue(it.toLong(), 30_000L + it * 70_000L) }
+    fun photoCountFollowsRideLength() {
+        // 1 km(R0 = 11초)는 사진 많아야 2장: 5장이 있어도 2장면.
+        val timeline = rideOf(1.0, 600)
+        val photos = List(5) { cue(it.toLong(), 60_000L + it * 100_000L) }
         val frames = VideoTimeline.plan(timeline, photos, VideoOptions(), emptyList())
-        assertEquals(1800, frames.size)
-        assertEquals(37 * 30, frames.count(SceneKind.RIDE))
-        assertEquals(8 * 60, frames.count(SceneKind.PHOTO))
+        assertEquals(2 * 60, frames.count(SceneKind.PHOTO))
+        assertEquals(2, VideoTimeline.paceFor(timeline, photos, VideoOptions()).second.size)
+        // 이동 장면은 R0에서 사진 2초씩 빼지 않는다: 11초 그대로(최대 60초 안).
+        assertEquals(framesOf(11.0), frames.count(SceneKind.RIDE))
+        assertEquals(90 + framesOf(11.0) + 120 + 120, frames.size)
+    }
+
+    @Test
+    fun photosShortenRideWhenLengthIsTheLimit() {
+        // 50 km(R0 = 41.4초) 짧게(30초): 사진 4장이면 R = 30 − 7 − 8 = 15초.
+        val timeline = rideOf(50.0, 3600)
+        val photos = List(8) { cue(it.toLong(), 200_000L + it * 400_000L) }
+        val frames = VideoTimeline.plan(timeline, photos, VideoOptions(length = VideoLength.SHORT), emptyList())
+        assertEquals(4 * 60, frames.count(SceneKind.PHOTO))
+        assertEquals(framesOf(15.0), frames.count(SceneKind.RIDE))
+        assertEquals(30 * 30, frames.size)
     }
 
     @Test
     fun photosOffIgnoresPhotos() {
-        val timeline = simpleTimeline(600)
+        val timeline = rideOf(1.0, 600)
         val photos = List(8) { cue(it.toLong(), 30_000L + it * 70_000L) }
         val frames = VideoTimeline.plan(timeline, photos, VideoOptions(photos = false), emptyList())
         assertEquals(0, frames.count(SceneKind.PHOTO))
-        assertEquals(53 * 30, frames.count(SceneKind.RIDE))
+        assertEquals(framesOf(11.0), frames.count(SceneKind.RIDE))
     }
 
     @Test
     fun shortMoveIsNotStretched() {
-        val frames = VideoTimeline.plan(simpleTimeline(20), emptyList(), VideoOptions(), emptyList())
-        assertEquals((3 + 20 + 4) * 30, frames.size)
-        assertEquals(20 * 30, frames.count(SceneKind.RIDE))
+        // 20초·100 m: R0 = 6 + 5 × √0.1 = 7.58초 < 이동 시간.
+        val shortRide = VideoTimeline.plan(simpleTimeline(20), emptyList(), VideoOptions(), emptyList())
+        assertEquals(framesOf(VideoPace.rideSeconds(0.1)), shortRide.count(SceneKind.RIDE))
+        // 3초·15 m는 이동 시간이 R0(4초)보다 짧아 이동 시간만큼만.
+        val tiny = VideoTimeline.plan(simpleTimeline(3), emptyList(), VideoOptions(), emptyList())
+        assertEquals(framesOf(3.0), tiny.count(SceneKind.RIDE))
+        // 이동 시간이 200초인 8 m(R0 = 4초, 최소 4초)는 4초.
+        val still = VideoTimeline.plan(rideOf(0.008, 200), emptyList(), VideoOptions(), emptyList())
+        assertEquals(framesOf(4.0), still.count(SceneKind.RIDE))
     }
 
     @Test
-    fun speedProportional() {
-        // 앞 10분은 초당 1 m, 뒤 10분은 초당 5 m.
+    fun noMovingTimeMakesNoRideFrames() {
+        val timeline = RideTimelineBuilder.build(listOf(segment(1, 0) to straightPoints(0, 1)), SEOUL)
+        assertEquals(0L, timeline.totalMoveMs)
+        val frames = VideoTimeline.plan(timeline, emptyList(), VideoOptions(), emptyList())
+        assertEquals(0, frames.count(SceneKind.RIDE))
+        assertEquals(90 + 120, frames.size)
+    }
+
+    @Test
+    fun paceIsByDistanceNotTime() {
+        // 앞 10분은 초당 1 m(600 m), 다음 10분은 초당 5 m(3 km), 마지막 1분은 초당 6 m(360 m, 가장 빠른 곳이 끝에 오게).
+        // 영상은 거리로 폈으므로 앞 600 m는 이동 장면의 약 600/3960. (가장 빠른 곳이 600 m 근처면 거기가 천천히 지나가 몫이 커진다.)
         val slow = straightPoints(0, 601, stepM = 1.0)
         val fast = straightPoints(601_000, 600, startM = 605.0, stepM = 5.0)
-        val timeline = RideTimelineBuilder.build(listOf(segment(1, 0) to slow + fast), SEOUL)
-        assertEquals(1_200_000L, timeline.totalMoveMs)
+        val sprint = straightPoints(1_201_000, 60, startM = 3_606.0, stepM = 6.0)
+        val timeline = RideTimelineBuilder.build(listOf(segment(1, 0) to slow + fast + sprint), SEOUL)
+        assertEquals(1_260_000L, timeline.totalMoveMs)
+        val total = timeline.routeDistance.total
 
-        val ride = VideoTimeline.plan(timeline, emptyList(), VideoOptions(), emptyList()).filter { it.kind == SceneKind.RIDE }
-        assertEquals(0L, ride.first().moveMs)
-        val half = ride[ride.size / 2]
-        assertEquals(timeline.totalMoveMs / 2, half.moveMs)
-        // 영상 절반 = 이동 시간 절반 = 600 m 지점(거리 절반 1,800 m가 아님)
-        assertEquals(north(600.0).lat, timeline.at(half.moveMs).point.lat, 1e-9)
-        assertTrue(ride.zipWithNext().all { (a, b) -> b.moveMs > a.moveMs })
+        val rideFrames = ride(VideoTimeline.plan(timeline, emptyList(), VideoOptions(), emptyList()))
+        assertEquals(0L, rideFrames.first().moveMs)
+        val firstShare = rideFrames.count { it.alongM < 600.0 }.toDouble() / rideFrames.size
+        assertEquals(600.0 / total, firstShare, 0.05)
+        // 시간 기준이었다면 앞 600 m가 이동 시간의 거의 절반이다. 영상 절반의 이동 시각은 그보다 한참 뒤다.
+        val half = rideFrames[rideFrames.size / 2]
+        assertTrue(half.moveMs > 900_000L, "moveMs ${half.moveMs}")
+        assertTrue(rideFrames.zipWithNext().all { (a, b) -> b.alongM >= a.alongM && b.moveMs >= a.moveMs })
+    }
+
+    @Test
+    fun rideFramesCarryAlongAndSpeed() {
+        val timeline = rideOf(3.0, 600)
+        val photos = listOf(cue(1, 300_000))
+        val frames = VideoTimeline.plan(timeline, photos, VideoOptions(), emptyList())
+        val rideFrames = ride(frames)
+        val total = timeline.routeDistance.total
+        assertEquals(0.0, rideFrames.first().alongM, 1e-9)
+        assertEquals(total, rideFrames.last().alongM, 1e-6)
+        assertTrue(rideFrames.zipWithNext().all { (a, b) -> b.alongM >= a.alongM })
+        assertTrue(rideFrames.all { it.speed > 0f })
+        // 천천히 가속해서 처음 장은 평균보다 느리다.
+        assertTrue(rideFrames.first().speed < 1f)
+        assertTrue(frames.filter { it.kind != SceneKind.RIDE }.all { it.speed == 1f })
+        assertTrue(frames.filter { it.kind == SceneKind.PHOTO }.all { abs(it.alongM - total / 2) < 1e-6 })
+        assertTrue(frames.filter { it.kind == SceneKind.OUTRO }.all { it.alongM == total })
+        assertTrue(frames.filter { it.kind == SceneKind.INTRO_OVERVIEW || it.kind == SceneKind.INTRO_DESCENT }.all { it.alongM == 0.0 })
     }
 
     @Test
     fun choosePhotosEvenly() {
         val cues = List(20) { cue(it.toLong(), it * 30_000L + 1_000L) }.shuffled(kotlin.random.Random(7))
-        val chosen = VideoTimeline.choosePhotos(cues, 8, 600_000)
+        val chosen = VideoTimeline.choosePhotos(cues, 8, 600.0, alongPerSecond)
         assertEquals(8, chosen.size)
         assertEquals(chosen.sortedBy { it.moveMs }, chosen)
         // 칸(75초)마다 하나씩, 칸 가운데(37.5초 + 75초·k)에 가장 가까운 것
@@ -92,15 +173,24 @@ class VideoTimelineTest {
     }
 
     @Test
+    fun choosePhotosByDistanceNotTime() {
+        // 시간 칸으로는 [1, 2], 거리 칸으로는 [2, 3].
+        val cues = listOf(cue(1, 10_000), cue(2, 400_000), cue(3, 580_000))
+        val along = mapOf(1L to 100.0, 2L to 300.0, 3L to 950.0)
+        val chosen = VideoTimeline.choosePhotos(cues, 2, 1000.0) { along.getValue(it.mediaId) }
+        assertEquals(listOf(2L, 3L), chosen.map { it.mediaId })
+    }
+
+    @Test
     fun choosePhotosKeepsAllUnderCap() {
         val cues = listOf(cue(1, 500_000), cue(2, 10_000), cue(3, 200_000))
-        assertEquals(listOf(2L, 3L, 1L), VideoTimeline.choosePhotos(cues, 8, 600_000).map { it.mediaId })
+        assertEquals(listOf(2L, 3L, 1L), VideoTimeline.choosePhotos(cues, 8, 600.0, alongPerSecond).map { it.mediaId })
     }
 
     @Test
     fun choosePhotosFillsCapWhenClustered() {
         val cues = List(20) { cue(it.toLong(), 300_000L + it * 100L) }
-        val chosen = VideoTimeline.choosePhotos(cues, 8, 600_000)
+        val chosen = VideoTimeline.choosePhotos(cues, 8, 600.0, alongPerSecond)
         assertEquals(8, chosen.size)
         assertEquals(8, chosen.map { it.mediaId }.toSet().size)
         assertEquals(chosen.sortedBy { it.moveMs }, chosen)
@@ -108,7 +198,8 @@ class VideoTimelineTest {
 
     @Test
     fun samePlacePhotosConsecutive() {
-        val timeline = simpleTimeline(600)
+        // 9 km(R0 = 21초)는 사진 5장까지.
+        val timeline = rideOf(9.0, 600)
         val photos = listOf(cue(1, 300_000), cue(2, 300_500), cue(3, 300_900), cue(4, 302_000))
         val frames = VideoTimeline.plan(timeline, photos, VideoOptions(), emptyList())
         val firstPhoto = frames.indexOfFirst { it.kind == SceneKind.PHOTO }
@@ -124,27 +215,47 @@ class VideoTimelineTest {
         assertEquals(SceneKind.RIDE, before.kind)
         assertTrue(before.moveMs < 302_000L)
         assertTrue(frames[fourth.last().index + 1].moveMs >= 302_000L)
+        // 사진 장면의 경로 거리는 사진 묶음의 거리이고, 앞뒤 이동 장면 사이에서 줄지 않는다.
+        assertTrue(fourth.all { it.alongM == fourth.first().alongM })
+        assertTrue(frames[fourth.first().index - 1].alongM <= fourth.first().alongM)
+        assertTrue(frames[fourth.last().index + 1].alongM >= fourth.first().alongM)
     }
 
     @Test
-    fun multiDayCaption() {
+    fun photosAtSameAlongStayGrouped() {
+        val timeline = rideOf(3.0, 600)
+        val photos = listOf(cue(1, 200_000), cue(2, 200_400), cue(3, 200_800))
+        val frames = VideoTimeline.plan(timeline, photos, VideoOptions(), emptyList())
+        val photoFrames = frames.filter { it.kind == SceneKind.PHOTO }
+        assertEquals(3 * 60, photoFrames.size)
+        assertEquals((photoFrames.first().index until photoFrames.first().index + 180).toList(), photoFrames.map { it.index })
+        assertEquals(listOf(1L, 2L, 3L), photoFrames.map { it.photo!!.mediaId }.distinct())
+        assertEquals(photoFrames.sortedBy { it.photo!!.takenAt }.map { it.photo!!.mediaId }, photoFrames.map { it.photo!!.mediaId })
+    }
+
+    @Test
+    fun multiDayCaptionAtDayStartAlong() {
         val morning = 1_792_278_000_000L // 2026-10-18 08:00 KST
         val timeline = RideTimelineBuilder.build(
             listOf(
                 segment(1, 0, LocalDate.of(2026, 10, 17)) to straightPoints(0, 301),
-                segment(2, morning, LocalDate.of(2026, 10, 18)) to straightPoints(morning, 301, startM = 2_000.0),
+                // 둘째 날은 5 km 떨어진 곳에서 시작한다(건너뛰는 5 km는 경로 거리에 세지 않는다).
+                segment(2, morning, LocalDate.of(2026, 10, 18)) to straightPoints(morning, 301, startM = 6_500.0),
             ),
             SEOUL,
         )
         val dayStart = timeline.dayStarts.single().first
         assertEquals(300_000L, dayStart)
+        assertEquals(3_000.0, timeline.routeDistance.total, 1.0)
+        val dayAlong = timeline.routeDistance.atMove(dayStart)
         val frames = VideoTimeline.plan(timeline, emptyList(), VideoOptions(), timeline.dayStarts)
         val captioned = frames.filter { it.caption != null }
         assertEquals(45, captioned.size)
         assertTrue(captioned.all { it.kind == SceneKind.RIDE && it.caption == "2일째 · 10월 18일" })
         assertEquals((captioned.first().index until captioned.first().index + 45).toList(), captioned.map { it.index })
-        assertTrue(captioned.first().moveMs >= dayStart)
-        assertTrue(frames[captioned.first().index - 1].moveMs < dayStart)
+        assertTrue(captioned.first().alongM >= dayAlong)
+        assertTrue(frames[captioned.first().index - 1].alongM < dayAlong)
+        assertTrue(ride(frames).zipWithNext().all { (a, b) -> b.alongM >= a.alongM && b.moveMs >= a.moveMs })
     }
 
     @Test
@@ -184,7 +295,7 @@ class VideoTimelineTest {
         val cues = List(200) { cue(it.toLong(), it * 200_000L) }
         val started = System.nanoTime()
         val timeline = RideTimelineBuilder.build(listOf(segment(1, 0) to points), SEOUL)
-        val chosen = VideoTimeline.choosePhotos(cues, VideoLength.LONG.photoCap, timeline.totalMoveMs)
+        val chosen = VideoTimeline.choosePhotos(cues, VideoLength.LONG.photoCap, timeline)
         val frames = VideoTimeline.plan(timeline, chosen, VideoOptions(length = VideoLength.LONG), timeline.dayStarts)
         frames.forEach { timeline.at(it.moveMs) }
         val elapsedMs = (System.nanoTime() - started) / 1_000_000

@@ -139,18 +139,20 @@ class VideoViewModelTest {
     @Test
     fun `the estimate follows the length and this phone's seconds per frame`() = runTest(dispatcher) {
         secondsPerFrame = 0.4
+        // 30 km: the ride is 33 s long, so 짧게 (a 30 s limit) makes it shorter and 보통 and 길게 do not.
+        inputs = inputs(canColorByHeart = false, metersPerSecond = 50.0)
         val vm = vm()
         vm.open(TRIP, MediaKind.VIDEO)
         advanceUntilIdle()
         assertEquals(expectedMinutes(VideoOptions(), 0.4), vm.sheet.value!!.minutes)
         assertTrue(vm.sheet.value!!.canMake)
 
-        vm.setOptions(vm.sheet.value!!.options.copy(length = VideoLength.LONG))
+        vm.setOptions(vm.sheet.value!!.options.copy(length = VideoLength.SHORT))
         assertNull(vm.sheet.value!!.minutes, "worked out again")
         assertFalse(vm.sheet.value!!.canMake)
         advanceUntilIdle()
-        assertEquals(expectedMinutes(VideoOptions(length = VideoLength.LONG), 0.4), vm.sheet.value!!.minutes)
-        assertTrue(expectedMinutes(VideoOptions(length = VideoLength.LONG), 0.4) > expectedMinutes(VideoOptions(), 0.4))
+        assertEquals(expectedMinutes(VideoOptions(length = VideoLength.SHORT), 0.4), vm.sheet.value!!.minutes)
+        assertTrue(expectedMinutes(VideoOptions(length = VideoLength.SHORT), 0.4) < expectedMinutes(VideoOptions(), 0.4))
     }
 
     @Test
@@ -190,8 +192,9 @@ class VideoViewModelTest {
         vm.open(TRIP, MediaKind.VIDEO)
         advanceUntilIdle()
         val i = inputs!!
-        assertEquals(900, VideoTimeline.plan(i.timeline, i.photos, VideoOptions(length = VideoLength.SHORT), i.dayStarts).size)
-        assertEquals(45, vm.sheet.value!!.dataNoticeMb, "50,000 B × 900 frames")
+        // 3 km: R0 = 6 + 5 × √3 s of ride, under 짧게's 23 s.
+        assertEquals(649, VideoTimeline.plan(i.timeline, i.photos, VideoOptions(length = VideoLength.SHORT), i.dayStarts).size)
+        assertEquals(33, vm.sheet.value!!.dataNoticeMb, "50,000 B × 649 frames")
 
         vm.closeSheet()
         vm.open(TRIP, MediaKind.IMAGE)
@@ -711,10 +714,10 @@ class VideoViewModelTest {
             SegmentTotals(distanceM, 1_000, 1_000, 5.0, 0.0, 0.0, null, null),
         )
 
-        /** 10 minutes at 5 m/s, one point a second. */
-        fun inputs(canColorByHeart: Boolean): VideoInputs {
+        /** 10 minutes at [metersPerSecond] (5 m/s: 3 km), one point a second. */
+        fun inputs(canColorByHeart: Boolean, metersPerSecond: Double = 5.0): VideoInputs {
             val start = LocalDate.of(2026, 10, 25).atTime(9, 0).atZone(SEOUL).toInstant().toEpochMilli()
-            val track = List(601) { TrackPoint(start + it * 1_000L, GeoPoint(37.52, 126.93 + it * 0.0000565), 20.0, 5f, 5f) }
+            val track = List(601) { TrackPoint(start + it * 1_000L, GeoPoint(37.52, 126.93 + it * 0.0000113 * metersPerSecond), 20.0, 5f, 5f) }
             val totals = SegmentTotals(3_000.0, 600_000, 600_000, 5.5, 3.0, 3.0, 20.0, 23.0)
             val segment = RideSegment(1, TRIP, start, track.last().timeMillis, LocalDate.of(2026, 10, 25), totals)
             return VideoInputs(

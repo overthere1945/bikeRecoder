@@ -188,8 +188,8 @@ class CameraPathTest {
             assertTrue(d <= limit, "프레임 ${b.index}: $d° > $limit°")
         }
 
-        // 북쪽으로 1 km 곧게: 방향 − 경로 방향(0°)이 ±8°로 흔들린다(23초 주행 > 16초 주기).
-        val straight = path(*(listOf(0.0 to 0.0) + walk(0.0 to 0.0, 0.0, 200)).toTypedArray())
+        // 북쪽으로 9 km 곧게: 방향 − 경로 방향(0°)이 ±8°로 흔들린다(이동 장면 21초 > 16초 주기).
+        val straight = path(*(listOf(0.0 to 0.0) + walk(0.0 to 0.0, 0.0, 1800)).toTypedArray())
         val (sPlans, sCameras) = plansAndCameras(straight)
         val off = sPlans.of(SceneKind.RIDE).map { signedDiff(0.0, sCameras[it.index].bearing) }
         assertEquals(CameraPath.SWAY_DEG, off.max(), 0.3)
@@ -309,8 +309,8 @@ class CameraPathTest {
      */
     @Test
     fun longContinuousRideKeepsSmoothing() {
-        // 5 km마다 ±60° 꺾이는 지그재그(북동 30° ↔ 북서 −30°) 104칸 = 520 km. 칸마다 초속 5 m와 10 m를 번갈아(확대가 바뀜),
-        // 10초에 한 점.
+        // 50 km마다 ±60° 꺾이는 지그재그(북동 30° ↔ 북서 −30°) 104칸 = 5,200 km. 칸마다 초속 50 m와 100 m를 번갈아(확대가 바뀜),
+        // 10초에 한 점. 거리를 이만큼 키워야 빠르기 곡선의 천천히 가는 곳에서도 주행 프레임이 500 m 넘게 떨어진다.
         val points = ArrayList<RidePoint>()
         var n = 0.0
         var e = 0.0
@@ -318,8 +318,8 @@ class CameraPathTest {
         points += RidePoint(0L, at(n, e), null, 0L, 0, 0)
         repeat(104) { leg ->
             val r = Math.toRadians(if (leg % 2 == 0) 30.0 else -30.0)
-            val step = if (leg % 2 == 0) 50.0 else 100.0
-            repeat((5_000 / step).toInt()) {
+            val step = if (leg % 2 == 0) 500.0 else 1_000.0
+            repeat((50_000 / step).toInt()) {
                 n += step * cos(r)
                 e += step * sin(r)
                 t += 10_000L
