@@ -36,6 +36,7 @@ import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.trip.TripStatus
 import com.cowork.bikerecoder.core.trip.TripType
 import com.cowork.bikerecoder.core.video.Aspect
+import com.cowork.bikerecoder.core.video.FPS
 import com.cowork.bikerecoder.core.video.SceneKind
 import com.cowork.bikerecoder.core.video.VideoLength
 import com.cowork.bikerecoder.core.video.VideoOptions
@@ -66,13 +67,12 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import java.time.LocalDate
-import kotlin.math.abs
 
 /**
  * The whole making on the phone through the screens, wired as the app wires them (the activity's [VideoViewModel] with
  * [VideoHost] over the trip detail; the preview when the job is done): a completed test trip (about 1.85 km around
  * Yeouido, with one photo at 40 % of the ride) is seeded, then [영상 만들기] → 세로 · 짧게 → [만들기] → the progress card
- * → the preview of a real 30 s video, back, [이미지 만들기] → [만들기] → the image's preview, back → "만든 영상·이미지"
+ * → the preview of a real video (at most 30 s, with the default 햇살 페달 track), back, [이미지 만들기] → [만들기] → the image's preview, back → "만든 영상·이미지"
  * with both. Real map tiles (V1.3.1: the VWorld satellite map with the build's key, so no fallback note), encoder and
  * gallery; the wall time and the bytes the app received for the video are logged. Screenshots of each step go to
  * Download/bikeRecoderTest (pulled by hand). The gallery files, the test photo and the trip are deleted afterwards,
@@ -293,7 +293,7 @@ class VideoFlowDeviceTest {
         val plans = VideoTimeline.plan(inputs.timeline, inputs.photos, options, inputs.dayStarts)
         val first = plans.indexOfFirst { it.kind == SceneKind.PHOTO }
         val last = plans.indexOfLast { it.kind == SceneKind.PHOTO }
-        Log.i(TAG, "frames ${plans.size}; photo scene frames $first..$last = ${first / 24.0}..${(last + 1) / 24.0} s")
+        Log.i(TAG, "frames ${plans.size} (before beat snapping); photo scene frames $first..$last = ${first.toDouble() / FPS}..${(last + 1).toDouble() / FPS} s")
     }
 
     private fun answerLowBattery() {
@@ -321,7 +321,7 @@ class VideoFlowDeviceTest {
         }
     }
 
-    /** 30 s of 1080×1920 (or the 720p fallback) H.264, no music. */
+    /** At most 30 s of 1080×1920 (or the 720p fallback) H.264, with the default track as AAC (V1.11.0: length from the distance). */
     private fun assertVideo(uri: Uri) {
         val extractor = MediaExtractor()
         try {
@@ -331,7 +331,10 @@ class VideoFlowDeviceTest {
             val size = video.getInteger(MediaFormat.KEY_WIDTH) to video.getInteger(MediaFormat.KEY_HEIGHT)
             assertTrue("size $size", size == (1080 to 1920) || size == (720 to 1280))
             val seconds = video.getLong(MediaFormat.KEY_DURATION) / 1e6
-            assertTrue("duration $seconds s", abs(seconds - 30.0) <= 1.0)
+            assertTrue("duration $seconds s", seconds in 10.0..VideoLength.SHORT.seconds + 1.0 / FPS)
+            val audio = (0 until extractor.trackCount).map { extractor.getTrackFormat(it) }
+                .single { it.getString(MediaFormat.KEY_MIME)!!.startsWith("audio/") }
+            assertEquals(MediaFormat.MIMETYPE_AUDIO_AAC, audio.getString(MediaFormat.KEY_MIME))
             assertEquals(MediaFormat.MIMETYPE_VIDEO_AVC, video.getString(MediaFormat.KEY_MIME))
             Log.i(TAG, "video $uri: $size, $seconds s")
         } finally {
