@@ -159,8 +159,9 @@ object VideoTimeline {
      *   끝 카드는 끝 장면 시작 뒤 1.2초에 가장 가까운 박에 나타난다. 솟아오르기 1.5초·어두워짐 마지막 1초는 그대로.
      * - 박 길이 때문에 최대 길이([VideoLength.seconds])를 넘으면 먼저 이동 장면을 고르게 줄인다([PaceProfile.warped]).
      * - 사진 장면 시작은 가장 가까운 박으로(반 박 이하), 끝 장면 시작은 가장 가까운 마디로 옮긴다. 끝 장면은 마디에 와야 영상이 마디 끝에서
-     *   끝나므로 옮기는 양의 상한이 반 마디다(판정 P8). 앞에서부터 차례로, 그 전환 바로 앞 이동 장면 토막을 늘이거나 줄여 옮긴다. 토막이
-     *   원래 길이의 [PIECE_MIN_RATIO] 미만이 되거나 영상이 최대 길이를 넘으면 그 전환은 옮기지 않고 (앞 전환이 옮긴 만큼 밀린) 제 시각을 지킨다.
+     *   끝나므로 옮기는 양의 상한이 반 마디다(판정 P8). 앞에서부터 차례로, 그 전환 바로 앞 이동 장면 토막을 늘이거나 줄여 옮긴다. 뒤 격자점이
+     *   최대 길이에만 막히면 앞 격자점으로 당긴다(판정 P9). 토막이 원래 길이의 [PIECE_MIN_RATIO] 미만이 되거나 영상이 최대 길이를 넘으면
+     *   그 전환은 옮기지 않고 (앞 전환이 옮긴 만큼 밀린) 제 시각을 지킨다([gridMove]).
      * - 옮기는 단위는 장(1/30초)이라 전환은 박에서 반 장 안에 온다.
      */
     fun planToBeats(timeline: RideTimeline, photos: List<PhotoCue>, options: VideoOptions,
@@ -208,17 +209,12 @@ object VideoTimeline {
     private fun snap(pace: PaceProfile, n: Int, groups: List<List<PhotoCue>>, alongs: List<Double>, slots: IntArray,
                      photoFrames: Int, outroFrames: Int, maxFrames: Int, beatFrames: Double): Pair<PaceProfile, IntArray> {
         val introFrames = OVERVIEW_FRAMES + DESCENT_FRAMES
-        fun nearest(frame: Int, step: Double) = (introFrames + ((frame - introFrames) / step).roundToInt() * step).roundToInt()
         val endFrame = introFrames + n + photoFrames * groups.sumOf { it.size } + outroFrames
 
         var shift = 0
         var lastSlot = 0
-        fun tryMove(frame: Int, piece: Int, step: Double): Int {
-            val move = nearest(frame + shift, step) - (frame + shift)
-            val ok = piece > 0 && abs(move) <= step / 2 && piece + move >= max(1.0, PIECE_MIN_RATIO * piece) &&
-                endFrame + shift + move <= maxFrames
-            return if (ok) move else 0
-        }
+        fun tryMove(frame: Int, piece: Int, step: Double): Int =
+            gridMove(frame + shift, step, piece, room = maxFrames - (endFrame + shift))
 
         val newSlots = IntArray(groups.size)
         val anchored = ArrayList<Int>()
@@ -251,6 +247,24 @@ object VideoTimeline {
         }
         anchors += pace.seconds to seconds
         return pace.warped(anchors) to newSlots
+    }
+
+    /**
+     * 장 [frame]의 전환을 격자(이동 장면 시작 장부터 [step]장 간격: 박 또는 마디)에 맞출 때 옮길 장 수(스펙 §5.3). [piece] = 그 전환 바로
+     * 앞 이동 장면 토막의 장 수, [room] = 영상이 최대 길이까지 더 늘 수 있는 장 수. 못 맞추면 0.
+     * - 가장 가까운 격자점까지의 (반올림 전) 거리가 반 칸 이하이고(판정 P8), 토막이 [PIECE_MIN_RATIO]·1장 이상 남고, [room]을 넘지 않으면 그리로.
+     * - 가장 가까운 점이 뒤에 있어 최대 길이만 막으면 바로 앞 격자점으로 당긴다(판정 P9). 그 점은 반 칸보다 멀지만 한 칸 안이고, 토막 규칙은 같다.
+     */
+    internal fun gridMove(frame: Int, step: Double, piece: Int, room: Int): Int {
+        if (piece <= 0) return 0
+        val introFrames = OVERVIEW_FRAMES + DESCENT_FRAMES
+        val nearest = introFrames + ((frame - introFrames) / step).roundToInt() * step
+        fun keepsPiece(move: Int) = piece + move >= max(1.0, PIECE_MIN_RATIO * piece)
+        val move = nearest.roundToInt() - frame
+        if (abs(nearest - frame) > step / 2 || !keepsPiece(move)) return 0
+        if (move <= room) return move
+        val earlier = (nearest - step).roundToInt() - frame
+        return if (nearest > frame && keepsPiece(earlier) && earlier <= room) earlier else 0
     }
 
     /**

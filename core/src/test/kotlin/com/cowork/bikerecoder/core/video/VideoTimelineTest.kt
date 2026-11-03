@@ -441,4 +441,41 @@ class VideoTimelineTest {
             }
         }
     }
+
+    @Test
+    fun maxBlockedOutroFallsBackToTheEarlierBar() {
+        // 판정 P9: 짧게(30초)를 꽉 채운 영상은 뒤 마디로 가면 30초를 넘으므로 앞 마디로 당겨 마디 끝에서 끝난다.
+        val short = VideoOptions(length = VideoLength.SHORT)
+        val cases = listOf(12.0, 20.0, 50.0).map { it to 0 } + listOf(5.0, 8.0, 12.0, 20.0, 50.0).map { it to 4 }
+        for ((km, count) in cases) {
+            run {
+                val timeline = rideOf(km, 3600)
+                // 사진은 앞 1/3에: 끝 앞 토막이 길어야 한 마디 가까이 당겨도 70 % 이상 남는다.
+                val photos = List(count) { cue(it.toLong(), 300_000L * (it + 1)) }
+                assertEquals(30 * 30, VideoTimeline.plan(timeline, photos, short, emptyList()).size, "$km km $count photos")
+                val p = planned(timeline, photos, beats124, short)
+                assertTrue(p.frames.size <= 30 * 30, "$km km $count photos: ${p.frames.size}")
+                assertTrue(offGrid(p.frames.size, p, beats124, beats124.barUs) <= oneFrame, "$km km $count photos: ends at ${p.frames.size}")
+            }
+        }
+    }
+
+    @Test
+    fun capIsOnTheUnroundedGridDistance() {
+        // 117 BPM: 박 15.385장. 장 113은 박(105.38장)까지 7.62장으로 반 박(7.69장) 안이다. 반올림한 105장까지는 8장이지만 맞춘다.
+        val beatFrames = 512_821 / 1e6 * 30
+        assertEquals(-8, VideoTimeline.gridMove(113, beatFrames, piece = 100, room = 100))
+    }
+
+    @Test
+    fun slowTempoLengths() {
+        // 70 BPM(박 0.857초): 사진 = 2초에 가장 가까운 2박이 3박보다 적어 3박, 끝 = 1마디(3.43초), 카드 = 1박(26장).
+        val beats70 = Beats(startUs = 400_000, beatUs = 857_143)
+        val frames = planned(beats = beats70).frames
+        assertTrue(photoStarts(frames).all { it.sceneFrames == framesOf(3 * 0.857143) })
+        val outro = frames.filter { it.kind == SceneKind.OUTRO }
+        assertEquals(framesOf(3.428572), outro.size)
+        assertEquals(103, outro.size)
+        assertTrue(outro.all { it.cardFrom == 26 })
+    }
 }
