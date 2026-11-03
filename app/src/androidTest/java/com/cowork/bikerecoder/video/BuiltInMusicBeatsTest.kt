@@ -29,7 +29,7 @@ class BuiltInMusicBeatsTest {
         val uri = Uri.parse("android.resource://${context.packageName}/raw/$name")
         val started = SystemClock.elapsedRealtime()
         val beats = runBlocking { maker.analyze(uri) }.beats
-        // 분석 시간(스펙 §5.2, 판정 P12: 150초 곡에 2초 이하 목표). logcat 태그 BuiltInMusicBeats.
+        // 분석 시간(스펙 §5.1: S22에서 150초 곡에 약 5초, 플랫폼 AAC 풀기가 한계). logcat 태그 BuiltInMusicBeats.
         Log.i(TAG, "$name analysed in ${SystemClock.elapsedRealtime() - started} ms")
         assertNotNull("$name: no beat", beats)
         val found = 60_000_000.0 / beats!!.beatUs
