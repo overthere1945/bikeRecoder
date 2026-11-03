@@ -304,7 +304,7 @@ object CameraPath {
     private fun smoothstep(t: Double) = t.coerceIn(0.0, 1.0).let { it * it * (3 - 2 * it) }
 
     /** a → b 초기 방위각(0~360°). */
-    private fun bearing(a: GeoPoint, b: GeoPoint): Double {
+    internal fun bearing(a: GeoPoint, b: GeoPoint): Double {
         val lat1 = Math.toRadians(a.lat)
         val lat2 = Math.toRadians(b.lat)
         val dLon = Math.toRadians(b.lon - a.lon)
@@ -324,7 +324,7 @@ object CameraPath {
     }
 
     /** from에서 to로 가는 가장 짧은 회전(-180~180°). */
-    private fun signedDelta(from: Double, to: Double): Double = ((to - from) % 360 + 540) % 360 - 180
+    internal fun signedDelta(from: Double, to: Double): Double = ((to - from) % 360 + 540) % 360 - 180
 
     private fun normalize(deg: Double): Double = ((deg % 360) + 360) % 360
 
