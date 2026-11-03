@@ -539,7 +539,7 @@ class FrameRenderer(
         /**
          * The sky view's camera for a [width]×[height] frame (ruling F3): the whole route fitted, north up and flat, into
          * the part of the frame above the opening title ([FrameLayout.title], less [TITLE_CLEARANCE]), like [outroCamera]
-         * above the closing card. Pass it as `overview` to `CameraPath.cameras(plans, timeline, overview, outro, heightPx)`,
+         * above the closing card. Pass it as `overview` to `CameraPath.cameras(plans, timeline, overview, outro, widthPx, heightPx)`,
          * which shows it one zoom out (spec §2.2 "overview − 1"): zooming out about the middle draws the route in, so it
          * stays above the title, which starts below the middle.
          */
@@ -550,7 +550,7 @@ class FrameRenderer(
 
         /**
          * The OUTRO camera for a [width]×[height] frame (the encoder's size, 720p fallback included): the whole route fitted
-         * above the closing card ([CameraPath.outro]). Pass it to `CameraPath.cameras(plans, timeline, overview, outro, heightPx)`.
+         * above the closing card ([CameraPath.outro]). Pass it to `CameraPath.cameras(plans, timeline, overview, outro, widthPx, heightPx)`.
          */
         fun outroCamera(inputs: VideoInputs, width: Int, height: Int): Camera =
             CameraPath.outro(inputs.timeline.points.map { it.point }, width, height, outroCard(inputs, width, height).y)

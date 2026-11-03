@@ -79,7 +79,7 @@ class FrameRendererTest {
     private fun camerasFor(plans: List<FramePlan>, width: Int, height: Int, videoInputs: VideoInputs = inputs): List<Camera> =
         CameraPath.cameras(
             plans, videoInputs.timeline, FrameRenderer.introCamera(videoInputs, width, height),
-            FrameRenderer.outroCamera(videoInputs, width, height), heightPx = height,
+            FrameRenderer.outroCamera(videoInputs, width, height), widthPx = width, heightPx = height,
             segmentActivities = videoInputs.activitiesBySegment(),
         )
 

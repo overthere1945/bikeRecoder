@@ -466,7 +466,7 @@ class VideoJobTest {
 
     /** Ruling C3: the sky view above the opening title, the outro above the closing card, the frame's own height. */
     private fun camerasAt(w: Int, h: Int) = CameraPath.cameras(
-        plans, inputs.timeline, FrameRenderer.introCamera(inputs, w, h), FrameRenderer.outroCamera(inputs, w, h), heightPx = h,
+        plans, inputs.timeline, FrameRenderer.introCamera(inputs, w, h), FrameRenderer.outroCamera(inputs, w, h), widthPx = w, heightPx = h,
     )
 
     @Test
