@@ -1,13 +1,19 @@
 package com.cowork.bikerecoder.ui.video
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import com.cowork.bikerecoder.core.video.Aspect
 import com.cowork.bikerecoder.core.video.VideoOptions
+import com.cowork.bikerecoder.ui.common.ChoiceSheetTags
 import com.cowork.bikerecoder.video.MediaKind
 import com.cowork.bikerecoder.video.TripMedia
 import com.cowork.bikerecoder.video.VideoOptionsJson
@@ -45,6 +51,42 @@ class TripMediaRowTest {
         assertEquals(listOf(image, video), opened)
         composeRule.waitForIdle()
         assertEquals(setOf(video.uri, image.uri), asked.toSet())
+    }
+
+    @Test
+    fun aLongPressAsksAboutThatFileAndNotATap() {
+        val opened = mutableListOf<TripMedia>()
+        val asked = mutableListOf<TripMedia>()
+        composeRule.setContent {
+            MaterialTheme {
+                TripMediaRow(listOf(video, image), thumbnail = { _, _ -> null }, onOpen = { opened += it }, onRequestDelete = { asked += it })
+            }
+        }
+        composeRule.onNodeWithTag(VideoTags.media(1)).performTouchInput { longClick() }
+        composeRule.waitForIdle()
+        assertEquals(listOf(image), asked)
+        assertEquals(emptyList<TripMedia>(), opened)
+    }
+
+    @Test
+    fun theDeleteSheetNamesTheKindAndAnswersYesOrNo() {
+        var deleted = 0
+        var dismissed = 0
+        var showing by mutableStateOf(video)
+        composeRule.setContent {
+            MaterialTheme { MediaDeleteSheet(showing, onDelete = { deleted++ }, onDismiss = { dismissed++ }) }
+        }
+        composeRule.onNodeWithText("이 영상을 삭제할까요?").assertIsDisplayed()
+        composeRule.onNodeWithTag(ChoiceSheetTags.card("no")).performClick()
+        composeRule.waitForIdle()
+        assertEquals(1, dismissed)
+        assertEquals(0, deleted)
+
+        showing = image
+        composeRule.onNodeWithText("이 이미지를 삭제할까요?").assertIsDisplayed()
+        composeRule.onNodeWithTag(ChoiceSheetTags.card("yes")).performClick()
+        composeRule.waitForIdle()
+        assertEquals(1, deleted)
     }
 
     @Test

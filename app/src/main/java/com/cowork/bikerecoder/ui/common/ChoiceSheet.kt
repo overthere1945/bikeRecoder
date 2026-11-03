@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.CallSplit
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Bedtime
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Navigation
@@ -77,6 +78,9 @@ enum class ChoiceIcon {
 
     /** 저장 (a short ride, V1.9.2). */
     KEEP,
+
+    /** 아니오 (a question that changes nothing when refused). */
+    CANCEL,
 }
 
 /**
@@ -229,6 +233,7 @@ private fun ChoiceIcon.vector(): ImageVector = when (this) {
     ChoiceIcon.STOP_RECORDING -> Icons.Rounded.Stop
     ChoiceIcon.DISCARD -> Icons.Rounded.DeleteOutline
     ChoiceIcon.KEEP -> Icons.Rounded.Save
+    ChoiceIcon.CANCEL -> Icons.Rounded.Close
 }
 
 /** What a screen reader says after the recommended card ([SheetChoice.recommended]). */
