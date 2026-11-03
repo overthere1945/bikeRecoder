@@ -7,10 +7,10 @@ import java.io.File
 
 class AppVersionTest {
     @Test
-    fun `debug version name is 1_10_0-dev`() = assertEquals("1.10.0-dev", BuildConfig.VERSION_NAME)
+    fun `debug version name is 1_11_0-dev`() = assertEquals("1.11.0-dev", BuildConfig.VERSION_NAME)
 
     @Test
-    fun `version code follows rule`() = assertEquals(11000, BuildConfig.VERSION_CODE)
+    fun `version code follows rule`() = assertEquals(11100, BuildConfig.VERSION_CODE)
 
     @Test
     fun `display strips dev suffix and prefixes V`() {
