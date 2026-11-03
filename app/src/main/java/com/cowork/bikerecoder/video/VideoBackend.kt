@@ -65,8 +65,11 @@ interface VideoBackend {
     /** Free bytes on the shared storage the gallery writes to. */
     fun freeBytes(): Long
 
-    /** The chosen music cut to [durationUs] and encoded; null when the file cannot be read. */
-    suspend fun loadMusic(uri: String, durationUs: Long): MusicTrack?
+    /** The chosen music's beat and first sound, read before the video is planned (V1.11.0 spec §5); null when the file cannot be read. */
+    suspend fun analyzeMusic(uri: String): MusicAnalysis?
+
+    /** The chosen music from [startUs] (its file time) cut to [durationUs] and encoded; null when the file cannot be read. */
+    suspend fun loadMusic(uri: String, durationUs: Long, startUs: Long): MusicTrack?
 
     suspend fun existingNames(kind: MediaKind): Set<String>
 
@@ -119,8 +122,17 @@ class AndroidVideoBackend(
         return StatFs(dir.path).availableBytes
     }
 
-    override suspend fun loadMusic(uri: String, durationUs: Long): MusicTrack? = try {
-        Music(AudioTrackMaker(context).make(Uri.parse(uri), durationUs))
+    override suspend fun analyzeMusic(uri: String): MusicAnalysis? = try {
+        AudioTrackMaker(context).analyze(Uri.parse(uri))
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        log.warn("Music $uri cannot be analysed", e)
+        null
+    }
+
+    override suspend fun loadMusic(uri: String, durationUs: Long, startUs: Long): MusicTrack? = try {
+        Music(AudioTrackMaker(context).make(Uri.parse(uri), durationUs, startUs))
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {

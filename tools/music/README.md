@@ -4,9 +4,9 @@
 
 | 파일 | 제목 | 빠르기 | 느낌 |
 |---|---|---|---|
-| `tracks/sunny_pedal.m4a` | 햇살 페달 | 124 BPM, C장조 | 네 박 킥, 뜯는 아르페지오, 밝은 리드 |
-| `tracks/wind_road.m4a` | 바람길 | 112 BPM, G장조 | 우쿨렐레풍 스트럼, 셰이커, 통통 튀는 베이스 |
-| `tracks/over_the_hill.m4a` | 언덕 너머 | 132 BPM, D장조 | 달리는 북, 신스 스탭, 높은 리드 |
+| `app/src/main/res/raw/music_sunny_pedal.m4a` | 햇살 페달 | 124 BPM, C장조 | 네 박 킥, 뜯는 아르페지오, 밝은 리드 |
+| `app/src/main/res/raw/music_wind_road.m4a` | 바람길 | 112 BPM, G장조 | 우쿨렐레풍 스트럼, 셰이커, 통통 튀는 베이스 |
+| `app/src/main/res/raw/music_over_the_hill.m4a` | 언덕 너머 | 132 BPM, D장조 | 달리는 북, 신스 스탭, 높은 리드 |
 
 ## 다시 만들기
 
@@ -18,4 +18,4 @@ for f in sunny_pedal wind_road over_the_hill; do
 done
 ```
 
-그 뒤 제목 태그를 붙여 `tracks/`에 둔다(`ffmpeg -i X.norm.m4a -c copy -metadata title="햇살 페달" -metadata artist=bikeRecoder tracks/sunny_pedal.m4a`). 크기는 곡마다 약 2.6 MB(AAC 128 kbps), 소리 크기는 −14 LUFS로 맞춘다.
+그 뒤 제목 태그를 붙여 앱의 `app/src/main/res/raw/`에 `music_` 이름으로 둔다(`ffmpeg -i X.norm.m4a -c copy -metadata title="햇살 페달" -metadata artist=bikeRecoder app/src/main/res/raw/music_sunny_pedal.m4a`, 저장소 맨 위에서). 앱이 이 파일을 그대로 넣어 배포한다. 크기는 곡마다 약 2.6 MB(AAC 128 kbps), 소리 크기는 −14 LUFS로 맞춘다.

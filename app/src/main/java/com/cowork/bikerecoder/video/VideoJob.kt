@@ -100,9 +100,10 @@ interface VideoJobControl {
 /**
  * The one video or summary-image job (spec §3.1–3.4), outside any screen. One at a time; never while recording.
  *
- * Start checks (busy, recording, something to make, storage = [VideoEstimate.bytes] against what is free, a map: online
+ * Start checks (busy, recording, something to make, storage = [VideoEstimate.bytes] against what is free, the music's beat
+ * read ([VideoBackend.analyzeMusic]) and the frames planned to it ([VideoTimeline.planToBeats], V1.11.0 spec §5), a map: online
  * or the trip's own, then the satellite tile under the start ([VideoBackend.probeSatellite], V1.3.1 spec §1.3), the
- * music opened and encoded up front) refuse with a [StartResult] before anything is written. A failed probe makes the
+ * music encoded up front) refuse with a [StartResult] before anything is written. A failed probe makes the
  * job on the plain map ([VideoJobState.Done.satelliteFallback]). Then, in [scope]: pending job
  * ([VideoJobStore.setPending]) → the region for the title ([regions], at most 5 s, §3.8; none for a custom title, V1.4.0 §2.5) → map around the track
  * ([VideoMaps.downloadForTrack]) → gallery item (`IS_PENDING`) → frames ([VideoBackend.openVideo], cameras at the
@@ -150,13 +151,18 @@ class VideoJob(
             val inputs = loadInputs(tripId) ?: return StartResult.NOTHING_TO_MAKE
             val needed = neededBytes(options)
             if (backend.freeBytes() < needed) return StartResult.NO_SPACE
-            val plans = VideoTimeline.plan(inputs.timeline, inputs.photos, options, inputs.dayStarts)
+            // The music's beat before the plan: scene changes land on it (V1.11.0 spec §5.3).
+            val analysis = options.musicUri?.let { uri -> backend.analyzeMusic(uri) ?: return StartResult.MUSIC_UNREADABLE }
+            val planned = VideoTimeline.planToBeats(inputs.timeline, inputs.photos, options, inputs.dayStarts, analysis?.beats)
+            val plans = planned.frames
             if (plans.isEmpty()) return StartResult.NOTHING_TO_MAKE
-            // The map first: offline it answers at once, the music takes seconds.
+            // The map before the track is made: offline it answers at once, the encoding takes seconds.
             if (!mapReachable(inputs)) return StartResult.NO_INTERNET
             val satellite = backend.probeSatellite(inputs.start())
             val music = options.musicUri?.let { uri ->
-                backend.loadMusic(uri, plans.size * 1_000_000L / FPS) ?: return StartResult.MUSIC_UNREADABLE
+                // On the planned bar with a beat, else where the sound starts.
+                val startUs = if (analysis?.beats != null) planned.musicStartUs else analysis?.firstSoundUs ?: 0L
+                backend.loadMusic(uri, plans.size * 1_000_000L / FPS, startUs) ?: return StartResult.MUSIC_UNREADABLE
             }
             // The probe (up to 10 s) and the music take time: a recording that started meanwhile is refused here, before launch.
             if (recording.first()) return StartResult.RECORDING

@@ -9,6 +9,7 @@ import com.cowork.bikerecoder.core.recording.RideSegment
 import com.cowork.bikerecoder.core.recording.SegmentTotals
 import com.cowork.bikerecoder.core.recording.TrackPoint
 import com.cowork.bikerecoder.core.video.Aspect
+import com.cowork.bikerecoder.core.video.Beats
 import com.cowork.bikerecoder.core.video.Camera
 import com.cowork.bikerecoder.core.video.CameraPath
 import com.cowork.bikerecoder.core.video.FramePlan
@@ -516,16 +517,62 @@ class VideoJobTest {
         assertNothingStarted()
     }
 
-    /** The probe comes after the map check and before the music (spec §1.3). */
+    /** The probe comes after the map check and before the music is made (spec §1.3); the analysis before both (V1.11.0 spec §5). */
     @Test
     fun theProbeComesBeforeTheMusic() = runBlocking {
         backend.probe = SatelliteCheck.FAILED
-        backend.musicReadable = false
+        backend.musicLoadable = false
 
         assertEquals(StartResult.MUSIC_UNREADABLE, job.startVideo(TRIP, short.copy(musicUri = "content://music/broken")))
 
         assertEquals(1, backend.probed.size)
-        assertEquals(listOf("probe", "music"), backend.calls)
+        assertEquals(listOf("analyze", "probe", "music"), backend.calls)
+        assertNothingStarted()
+    }
+
+    /**
+     * The music's beat is read before the video is planned (V1.11.0 spec §5.3): the frames are [VideoTimeline.planToBeats]
+     * with its beats, and the track starts at the planned [com.cowork.bikerecoder.core.video.Planned.musicStartUs].
+     */
+    @Test
+    fun musicAnalysedBeforePlanning() = runBlocking {
+        val beats = Beats(startUs = 400_000, beatUs = 500_000)
+        backend.analysis = MusicAnalysis(beats, firstSoundUs = 300_000)
+        val planned = VideoTimeline.planToBeats(inputs.timeline, inputs.photos, short, inputs.dayStarts, beats)
+        assertNotEquals(plans, planned.frames) // the beats change the plan here
+
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short.copy(musicUri = "content://music/1")))
+        assertTrue(awaitEnd() is VideoJobState.Done)
+
+        assertEquals(listOf("analyze", "probe", "music"), backend.calls)
+        assertEquals(planned.frames, backend.sinks.single().plans)
+        assertEquals(listOf(planned.musicStartUs), backend.musicStarts)
+        assertEquals(listOf(planned.frames.size * 1_000_000L / 30), backend.musicDurations)
+    }
+
+    /** Music that cannot be read is refused at the analysis: no probe, no map, no pending job. */
+    @Test
+    fun unreadableMusicRefusedBeforeAnything() = runBlocking {
+        online = false
+        backend.musicReadable = false
+
+        assertEquals(StartResult.MUSIC_UNREADABLE, job.startVideo(TRIP, short.copy(musicUri = "content://music/broken")))
+
+        assertEquals(listOf("analyze"), backend.calls)
+        assertEquals(emptyList<List<GeoPoint>>(), maps.downloads)
+        assertNothingStarted()
+    }
+
+    /** No clear beat: the plan without beats, and the track starts where the sound starts. */
+    @Test
+    fun noBeatMusicStartsAtFirstSound() = runBlocking {
+        backend.analysis = MusicAnalysis(beats = null, firstSoundUs = 1_500_000)
+
+        assertEquals(StartResult.STARTED, job.startVideo(TRIP, short.copy(musicUri = "content://music/1")))
+        assertTrue(awaitEnd() is VideoJobState.Done)
+
+        assertEquals(plans, backend.sinks.single().plans)
+        assertEquals(listOf(1_500_000L), backend.musicStarts)
     }
 
     @Test
@@ -845,7 +892,14 @@ class VideoJobTest {
     private inner class FakeBackend : VideoBackend {
         var nanos = 0L
         var free = 10_000_000_000L
+        /** False: [analyzeMusic] cannot read the file (null). */
         var musicReadable = true
+
+        /** False: the file was analysed but [loadMusic] cannot make the track (null). */
+        var musicLoadable = true
+
+        /** What [analyzeMusic] finds: no beat, sound from the start by default (the plan without beats). */
+        var analysis = MusicAnalysis(beats = null, firstSoundUs = 0)
         var downscale = false
         var failAt = -1
         var onFail: () -> Unit = {}
@@ -861,6 +915,7 @@ class VideoJobTest {
         val published = mutableListOf<String>()
         val deleted: MutableList<String> = Collections.synchronizedList(mutableListOf())
         val musicDurations = mutableListOf<Long>()
+        val musicStarts = mutableListOf<Long>()
         val sinks = mutableListOf<FakeSink>()
         val images = mutableListOf<Pair<String, Aspect>>()
         var firstStateSeen: VideoJobState? = null
@@ -889,10 +944,16 @@ class VideoJobTest {
 
         override fun freeBytes(): Long = free
 
-        override suspend fun loadMusic(uri: String, durationUs: Long): MusicTrack? {
+        override suspend fun analyzeMusic(uri: String): MusicAnalysis? {
+            calls += "analyze"
+            return if (musicReadable) analysis else null
+        }
+
+        override suspend fun loadMusic(uri: String, durationUs: Long, startUs: Long): MusicTrack? {
             calls += "music"
             musicDurations += durationUs
-            return if (musicReadable) FakeMusic(uri) else null
+            musicStarts += startUs
+            return if (musicLoadable) FakeMusic(uri) else null
         }
 
         override suspend fun existingNames(kind: MediaKind): Set<String> = names.toSet()

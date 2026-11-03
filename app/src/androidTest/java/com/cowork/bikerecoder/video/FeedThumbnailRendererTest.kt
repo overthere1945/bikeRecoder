@@ -49,7 +49,8 @@ class FeedThumbnailRendererTest {
         override suspend fun probeSatellite(at: GeoPoint): SatelliteCheck = check.also { asked += at }
 
         override fun freeBytes(): Long = TODO()
-        override suspend fun loadMusic(uri: String, durationUs: Long): MusicTrack? = TODO()
+        override suspend fun analyzeMusic(uri: String): MusicAnalysis? = TODO()
+        override suspend fun loadMusic(uri: String, durationUs: Long, startUs: Long): MusicTrack? = TODO()
         override suspend fun existingNames(kind: MediaKind): Set<String> = TODO()
         override suspend fun createPending(kind: MediaKind, displayName: String): String = TODO()
         override suspend fun publish(uri: String) = TODO()

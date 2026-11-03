@@ -7,6 +7,7 @@ import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.cowork.bikerecoder.core.video.Aspect
+import com.cowork.bikerecoder.core.video.FPS
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -37,13 +38,13 @@ class AudioTrackMakerTest {
     private fun sine(seconds: Double, sampleRate: Int = 44_100, channels: Int = 2): File =
         newFile(".m4a").also { TestMedia.writeSineM4a(it, seconds, sampleRate, channels) }
 
-    /** 2초(48장) 영상에 [music]을 넣어 MP4를 만든다. */
+    /** 2초(2·[FPS]장) 영상에 [music]을 넣어 MP4를 만든다. */
     private fun videoWith(music: AudioTrackMaker.Encoded?): File {
         val file = newFile(".mp4")
         TestMedia.openForWrite(file).use { pfd ->
             VideoEncoder.open(pfd.fileDescriptor, Aspect.PORTRAIT).first.use { encoder ->
                 encoder.addAudio(music)
-                repeat(48) { encoder.drawFrame { it.drawColor(Color.DKGRAY) } }
+                repeat(2 * FPS) { encoder.drawFrame { it.drawColor(Color.DKGRAY) } }
                 encoder.finish()
             }
         }
@@ -93,6 +94,24 @@ class AudioTrackMakerTest {
         // 반복하거나 영상 길이(2초)까지 늘리지 않는다: 트랙 = 음악 길이.
         assertAbout(music.durationUs, TestMedia.tracks(video, "audio/").single().durationUs)
         assertAbout(2_000_000L, TestMedia.tracks(video, "video/").single().durationUs)
+    }
+
+    /** 음악 파일 1초부터(박에 맞춘 시작점, 스펙 §5.3): 트랙 길이 = min(파일 − 1초, 영상). */
+    @Test
+    fun makeFromOffset() {
+        // 3초 곡, 5초 영상: 1초부터 곡 끝까지 약 2초(앞을 건너뛰지 않으면 3초).
+        val short = runBlocking { maker.make(Uri.fromFile(sine(3.0)), 5_000_000L, startUs = 1_000_000L) }
+        assertAbout(2_000_000L, short.durationUs)
+        assertAac441Stereo(short.format)
+
+        // 5초 곡, 2초 영상: 영상 길이 그대로.
+        val long = runBlocking { maker.make(Uri.fromFile(sine(5.0)), 2_000_000L, startUs = 1_000_000L) }
+        assertAbout(2_000_000L, long.durationUs, 1_000L)
+
+        // 곡보다 뒤에서 시작하면 쓸 소리가 없다.
+        assertThrows(AudioTrackMaker.Unreadable::class.java) {
+            runBlocking { maker.make(Uri.fromFile(sine(1.0)), 2_000_000L, startUs = 3_000_000L) }
+        }
     }
 
     @Test
