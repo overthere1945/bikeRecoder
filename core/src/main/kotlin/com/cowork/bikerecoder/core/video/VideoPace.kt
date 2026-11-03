@@ -27,7 +27,10 @@ object VideoPace {
     /** 솎은 축: 앞에 남긴 지점에서 직선으로 이만큼 떨어진 지점만 남긴다(판정 P1). */
     const val THIN_M = 10.0
 
-    /** 칸 경계 사이가 이보다 가까우면 앞 칸 방향을 쓴다. */
+    /** 점수를 매기는 표본 간격의 상한(판정 P4: min(5 m, 칸 길이)). */
+    const val SAMPLE_M = 5.0
+
+    /** 방향을 잰 표본 경계에서 이보다 가까운 경계는 앞 방향을 쓴다. */
     const val BEARING_MIN_M = 15.0
 
     const val CURVE_WINDOW_M = 50.0
@@ -83,53 +86,84 @@ object VideoPace {
         return PaceProfile(seconds, totalM, edgeSeconds, edgeAxis, axis.axis, axis.route)
     }
 
-    /** 칸마다 점수(스펙 §2.2). [photos]·[highlights]는 솎은 축 거리. */
+    /**
+     * 칸마다 점수(스펙 §2.2): 칸을 [SAMPLE_M] 이하 간격의 고른 표본으로 나눠 표본마다 매긴 점수의 평균(판정 P4).
+     * 창은 모두 미터라 칸 크기와 상관없다. [photos]·[highlights]는 솎은 축 거리.
+     */
     private fun scores(axis: ThinnedAxis, bins: Int, binM: Double, photos: List<Double>, highlights: List<Double>): DoubleArray {
-        val bearings = binBearings(axis, bins, binM)
-        val straightWindow = min(STRAIGHT_WINDOW_M, axis.length / 20)
-        return DoubleArray(bins) { j ->
-            val centre = (j + 0.5) * binM
-            val theta = spread(bearings, j, (CURVE_WINDOW_M / binM).toInt())
-            val curve = 1.0 + SCORE_CURVE_EXTRA * min(theta / 90.0, 1.0)
+        val perBin = max(1, ceil(binM / SAMPLE_M - 1e-9).toInt())
+        val step = binM / perBin
+        val directions = sampleBearings(axis, bins * perBin, step)
+        val curveHalf = (CURVE_WINDOW_M / step + 1e-9).toInt()
+        val straightHalf = (min(STRAIGHT_WINDOW_M, axis.length / 20) / step + 1e-9).toInt()
+        val sample = DoubleArray(bins * perBin) { i ->
+            val centre = (i + 0.5) * step
+            val theta = directions.spread(i, curveHalf)
+            // 굽은 길은 곧은 길 문턱(20°)을 넘을 때만 조건으로 친다(판정 P5).
+            val curved = theta > STRAIGHT_MAX_DEG
             val nearPhoto = photos.any { centre in (it - PHOTO_BEFORE_M)..it }
             val nearHighlight = highlights.any { abs(centre - it) <= HIGHLIGHT_M }
-            when {
-                nearPhoto || nearHighlight -> max(curve, if (nearPhoto) SCORE_PHOTO else SCORE_HIGHLIGHT)
-                spread(bearings, j, (straightWindow / binM).toInt()) <= STRAIGHT_MAX_DEG -> SCORE_STRAIGHT
-                else -> curve
+            if (!curved && !nearPhoto && !nearHighlight && directions.spread(i, straightHalf) <= STRAIGHT_MAX_DEG) {
+                SCORE_STRAIGHT
+            } else {
+                maxOf(
+                    1.0,
+                    if (curved) 1.0 + SCORE_CURVE_EXTRA * min(theta / 90.0, 1.0) else 1.0,
+                    if (nearPhoto) SCORE_PHOTO else 1.0,
+                    if (nearHighlight) SCORE_HIGHLIGHT else 1.0,
+                )
             }
+        }
+        return DoubleArray(bins) { j -> (j * perBin until (j + 1) * perBin).sumOf { sample[it] } / perBin }
+    }
+
+    /** 표본마다 방향(0~360°, 모르면 NaN)과 그 방향을 잰 구간. */
+    private class Directions(val bearings: DoubleArray, val segments: IntArray) {
+
+        /** 표본 [i]를 가운데로 앞뒤 [half]표본 안, 같은 구간 방향들이 [i]의 방향에서 벌어진 폭(°, 가장 왼쪽에서 가장 오른쪽까지). */
+        fun spread(i: Int, half: Int): Double {
+            val own = bearings[i]
+            if (own.isNaN()) return 0.0
+            var lo = 0.0
+            var hi = 0.0
+            for (k in max(0, i - half)..min(bearings.lastIndex, i + half)) {
+                if (segments[k] != segments[i] || bearings[k].isNaN()) continue
+                val d = CameraPath.signedDelta(own, bearings[k])
+                lo = min(lo, d)
+                hi = max(hi, d)
+            }
+            return hi - lo
         }
     }
 
     /**
-     * 칸마다 방향(0~360°). 칸 경계 점을 차례로 보며, 앞에서 방향을 잰 경계에서 [BEARING_MIN_M] 이상 떨어진 경계가 나오면
-     * 그 사이 칸들에 두 경계 사이 방위각을 준다. 그보다 가까운 경계(짧은 칸, GPS 흔들림)는 앞 칸 방향을 그대로 쓴다.
+     * 표본(길이 [step])마다 방향. 표본 경계를 차례로 보며, 앞에서 방향을 잰 경계에서 [BEARING_MIN_M] 이상 떨어진 경계가 나오면
+     * 그 사이 표본들에 두 경계 사이 방위각을 준다. 그보다 가까운 경계(GPS 흔들림)는 앞 방향을 그대로 쓴다.
+     * 구간이 바뀌는 곳을 건너는 직선은 방향으로 치지 않는다: 그 앞 표본은 앞 구간의 마지막 방향, 다음 구간은 새로 잰다.
      */
-    private fun binBearings(axis: ThinnedAxis, bins: Int, binM: Double): DoubleArray {
-        val edges = Array(bins + 1) { axis.pointAt(it * binM) }
-        val out = DoubleArray(bins)
+    private fun sampleBearings(axis: ThinnedAxis, samples: Int, step: Double): Directions {
+        val edges = Array(samples + 1) { axis.pointAt(it * step) }
+        val edgeSegments = IntArray(samples + 1) { axis.segmentAt(it * step) }
+        val bearings = DoubleArray(samples) { Double.NaN }
+        val segments = IntArray(samples)
         var from = 0
         var last = Double.NaN
-        for (j in 1..bins) {
-            if (GeoMath.distanceM(edges[from], edges[j]) < BEARING_MIN_M) continue
-            last = CameraPath.bearing(edges[from], edges[j])
-            out.fill(last, from, j)
-            from = j
+        fun give(until: Int) {
+            bearings.fill(last, from, until)
+            segments.fill(edgeSegments[from], from, until)
+            from = until
         }
-        out.fill(if (last.isNaN()) 0.0 else last, from, bins)
-        return out
-    }
-
-    /** 칸 [j]를 가운데로 앞뒤 [half]칸 안 방향들이 [j]의 방향에서 벌어진 폭(°, 가장 왼쪽에서 가장 오른쪽까지). */
-    private fun spread(bearings: DoubleArray, j: Int, half: Int): Double {
-        var lo = 0.0
-        var hi = 0.0
-        for (k in max(0, j - half)..min(bearings.lastIndex, j + half)) {
-            val d = CameraPath.signedDelta(bearings[j], bearings[k])
-            lo = min(lo, d)
-            hi = max(hi, d)
+        for (j in 1..samples) {
+            if (edgeSegments[j] != edgeSegments[from]) {
+                give(j)
+                last = Double.NaN
+            } else if (GeoMath.distanceM(edges[from], edges[j]) >= BEARING_MIN_M) {
+                last = CameraPath.bearing(edges[from], edges[j])
+                give(j)
+            }
         }
-        return hi - lo
+        give(samples)
+        return Directions(bearings, segments)
     }
 
     /**
@@ -200,12 +234,15 @@ object VideoPace {
      * 솎은 축: 경로 지점 중 앞에 남긴 지점에서 직선으로 [THIN_M] 이상 떨어진 지점과 처음·끝·구간의 첫·마지막 지점만 남기고,
      * 남긴 지점 사이 직선거리로 잰 축(구간이 바뀌는 곳은 0). [route]는 남긴 지점의 경로 거리([RouteDistance.cumulative]).
      */
-    private class ThinnedAxis(val points: List<GeoPoint>, val axis: DoubleArray, val route: DoubleArray) {
+    private class ThinnedAxis(val points: List<GeoPoint>, val segments: IntArray, val axis: DoubleArray, val route: DoubleArray) {
 
         val length: Double get() = axis.last()
 
         /** 경로 거리 → 솎은 축 거리. */
         fun fromRoute(alongM: Double): Double = interpolateFirst(route, axis, alongM)
+
+        /** 솎은 축 거리 [at]이 속한 구간(구간이 바뀌는 곳에서는 다음 구간). */
+        fun segmentAt(at: Double): Int = segments[lastAtOrBefore(axis, at).coerceAtLeast(0)]
 
         /** 솎은 축 거리 [at]의 위치(남긴 지점 사이 직선 보간). */
         fun pointAt(at: Double): GeoPoint {
@@ -234,7 +271,12 @@ object VideoPace {
                     val b = all[kept[k]]
                     axis[k] = axis[k - 1] + if (a.segmentIndex == b.segmentIndex) GeoMath.distanceM(a.point, b.point) else 0.0
                 }
-                return ThinnedAxis(kept.map { all[it].point }, axis, DoubleArray(kept.size) { cumulative[kept[it]] })
+                return ThinnedAxis(
+                    kept.map { all[it].point },
+                    IntArray(kept.size) { all[kept[it]].segmentIndex },
+                    axis,
+                    DoubleArray(kept.size) { cumulative[kept[it]] },
+                )
             }
         }
     }
@@ -258,7 +300,7 @@ class PaceProfile internal constructor(
     fun alongAt(second: Double): Double {
         if (second <= 0.0) return 0.0
         if (second >= seconds) return totalM
-        return interpolateLast(keptAxis, keptRoute, interpolateLast(curveSeconds, curveAxis, second))
+        return interpolateLast(keptAxis, keptRoute, axisAt(second))
     }
 
     /** 경로 거리 [alongM]에 처음 닿는 시각([alongAt]의 역). */
@@ -266,16 +308,21 @@ class PaceProfile internal constructor(
         interpolateFirst(curveAxis, curveSeconds, interpolateFirst(keptRoute, keptAxis, alongM.coerceIn(0.0, totalM)))
 
     /**
-     * 시각 [second]의 빠르기(앞뒤 [SPEED_HALF_S]초 동안의 경로 미터/초) ÷ 평균 빠르기([totalM] / [seconds]).
-     * 제자리 흔들림을 지나는 순간은 경로 거리가 몰려 있어 크게 튈 수 있다. 전체 거리가 0이면 1.
+     * 시각 [second]의 빠르기 ÷ 평균 빠르기. 솎은 축에서 잰다(판정 P2): 앞뒤 [SPEED_HALF_S]초 동안의 솎은 축 미터/초 ÷
+     * (솎은 축 전체 / [seconds]). 경로 미터로 재면 제자리 흔들림을 지나는 순간 크게 튀어, 이 값으로 높이를 바꾸는 카메라(스펙 §4.2)가 흔들린다.
+     * 전체 거리가 0이면 1.
      */
     fun speedFactor(second: Double): Double {
-        if (totalM <= 0.0) return 1.0
+        val axisTotal = curveAxis.last()
+        if (axisTotal <= 0.0) return 1.0
         val from = (second - SPEED_HALF_S).coerceIn(0.0, seconds)
         val to = (second + SPEED_HALF_S).coerceIn(0.0, seconds)
         if (to <= from) return 1.0
-        return (alongAt(to) - alongAt(from)) / (to - from) / (totalM / seconds)
+        return (axisAt(to) - axisAt(from)) / (to - from) / (axisTotal / seconds)
     }
+
+    /** 시각 [second](0~[seconds])의 솎은 축 거리. */
+    private fun axisAt(second: Double): Double = interpolateLast(curveSeconds, curveAxis, second)
 
     /**
      * 박자 맞추기(스펙 §5.3): [anchors] = (옛 시각, 새 시각), 둘 다 늘어나는 순서, (0, 0)은 따로 적지 않는다.
@@ -302,7 +349,7 @@ class PaceProfile internal constructor(
             seconds = news.last(),
             totalM = totalM,
             curveSeconds = DoubleArray(breaks.size) { interpolateLast(olds, news, breaks[it]) },
-            curveAxis = DoubleArray(breaks.size) { interpolateLast(curveSeconds, curveAxis, breaks[it]) },
+            curveAxis = DoubleArray(breaks.size) { axisAt(breaks[it]) },
             keptAxis = keptAxis,
             keptRoute = keptRoute,
         )
